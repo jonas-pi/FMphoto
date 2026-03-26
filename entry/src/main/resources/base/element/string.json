@@ -159,6 +159,22 @@
     {
       "name": "perm_write_imagevideo_reason",
       "value": "保存 NAS 图片/视频到本机相册时需要写入权限"
+    },
+    {
+      "name": "legal_notice_title",
+      "value": "!!! 重要免责声明 !!!"
+    },
+    {
+      "name": "legal_notice_message",
+      "value": "此程序未经任何人审核，作者不对程序的功能、安全、合规等作出任何保证；本程序仅供学习交流使用，下载后请于 24 小时内删除，不得私自分发、转载、逆向或破解，否则由行为人自行承担被相关法律主体追责的风险。"
+    },
+    {
+      "name": "legal_notice_disagree",
+      "value": "不同意并退出"
+    },
+    {
+      "name": "legal_notice_agree",
+      "value": "同意并继续"
     }
   ]
 }

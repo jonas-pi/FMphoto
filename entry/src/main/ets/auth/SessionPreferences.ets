@@ -20,6 +20,8 @@ const K_FNOS_LONG_TOKEN = 'fnos_long_token';
 const K_LOGIN_VIA_WS = 'login_via_ws';
 /** WS HMAC：解密 secret 得到的密钥原始字节，以 Base64 存储（与 Python hmac_key 一致） */
 const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
+/** 首次启动免责声明同意标记：1=已同意，0/空=未同意 */
+const K_LEGAL_ACCEPTED = 'legal_notice_accepted';
 
 export interface StoredSession {
   baseUrl: string;
@@ -50,6 +52,19 @@ async function openPrefs(ctx: common.UIAbilityContext) {
 }
 
 export class SessionPreferences {
+  /** 是否已同意启动免责声明 */
+  static async isLegalNoticeAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
+    const p = await openPrefs(ctx);
+    return (await p.get(K_LEGAL_ACCEPTED, '0') as string) === '1';
+  }
+
+  /** 持久化启动免责声明同意状态 */
+  static async setLegalNoticeAccepted(ctx: common.UIAbilityContext, accepted: boolean): Promise<void> {
+    const p = await openPrefs(ctx);
+    await p.put(K_LEGAL_ACCEPTED, accepted ? '1' : '0');
+    await p.flush();
+  }
+
   static async load(ctx: common.UIAbilityContext): Promise<StoredSession | null> {
     const p = await openPrefs(ctx);
     const token = await p.get(K_TOKEN, '') as string;

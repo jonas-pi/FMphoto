@@ -19,6 +19,58 @@ struct Index {
   @State private hint: string = '正在初始化…';
 
   aboutToAppear(): void {
+    void this.bootstrapFlow();
+  }
+
+  /** 启动流程：先展示首次免责声明，再进入既有会话恢复逻辑。 */
+  private async bootstrapFlow(): Promise<void> {
+    const accepted = await this.ensureLegalNoticeAccepted();
+    if (!accepted) {
+      this.busy = false;
+      return;
+    }
+    this.restoreSessionAndRoute();
+  }
+
+  /**
+   * 首次启动醒目提示：
+   * - 标题加入警示符号；
+   * - 未同意时终止应用；
+   * - 同意后仅记录一次，后续不重复打扰。
+   */
+  private async ensureLegalNoticeAccepted(): Promise<boolean> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      const accepted = await SessionPreferences.isLegalNoticeAccepted(ctx);
+      if (accepted) {
+        return true;
+      }
+      const dlg = await this.getUIContext().getPromptAction().showDialog({
+        title: $r('app.string.legal_notice_title'),
+        message: $r('app.string.legal_notice_message'),
+        buttons: [
+          { text: $r('app.string.legal_notice_disagree'), color: '#FFFF3B30' },
+          { text: $r('app.string.legal_notice_agree'), color: '#FF2563EB' }
+        ]
+      });
+      if (dlg.index === 1) {
+        await SessionPreferences.setLegalNoticeAccepted(ctx, true);
+        return true;
+      }
+      this.hint = '未同意免责声明，应用已退出';
+      try {
+        await ctx.terminateSelf();
+      } catch (_e) {
+      }
+      return false;
+    } catch (_e) {
+      // 若弹窗能力异常，避免阻塞启动。
+      return true;
+    }
+  }
+
+  /** 恢复会话并跳转登录或主页。 */
+  private restoreSessionAndRoute(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     AppSession.restore(ctx).then((s) => {
       if (s === null || s.token.length === 0) {
