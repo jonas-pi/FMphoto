@@ -118,6 +118,27 @@ export interface GalleryGetListData {
   total?: number;
 }
 
+/** POST /p/api/v1/magic-search/do 请求体 */
+export interface MagicSearchDoBody {
+  keyword: string;
+}
+
+/**
+ * magic-search/do 返回单条结果：
+ * - 新版：通常直接返回与 gallery/getList 接近的完整媒体字段（含 category/fileType/additional.thumbnail）
+ * - 旧版：仅返回 id + session，需要客户端拼接缩略图 URL
+ */
+export interface MagicSearchItem extends GalleryListItem {
+  /** 旧版接口常见字段：缩略图会话 */
+  session?: string;
+}
+
+/** magic-search/do 返回的 data */
+export interface MagicSearchData {
+  list?: MagicSearchItem[];
+  total?: number;
+}
+
 /** 本客户端 HTTP 层统一结果 */
 export interface FnClientResult<T> {
   success: boolean;

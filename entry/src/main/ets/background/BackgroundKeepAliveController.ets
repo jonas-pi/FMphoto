@@ -6,6 +6,11 @@
  *    须在 module.json5 声明 backgroundModes 与 KEEP_BACKGROUND_RUNNING。
  *
  * 配额与策略由系统统一下发，应用不得假设「永久后台」。
+ *
+ * 崩溃防护：
+ *   - 所有系统 API 均包裹在独立 try-catch 中，防止单点异常扩散
+ *   - startBackgroundRunning 使用枚举值 BackgroundMode.DATA_TRANSFER（非字符串）
+ *   - 回前台/销毁时优先 stopBackgroundRunning，再 cancelSuspendDelay
  */
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { common, wantAgent } from '@kit.AbilityKit';
@@ -14,28 +19,22 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const DOMAIN = 0xFF00;
 const TAG = 'BgKeepAlive';
-
-/** 申请短时挂起时传入的原因说明（系统日志/调试可见） */
 const SUSPEND_REASON = 'FNOS: background grace for session state';
 
 export class BackgroundKeepAliveController {
   private static suspendRequestId: number = -1;
   private static longRunningActive: boolean = false;
 
-  /**
-   * UIAbility 进入后台时调用（宜在 onBackground 内尽快调用）。
-   */
+  /** UIAbility 进入后台时调用 */
   static onAbilityBackground(context: common.UIAbilityContext): void {
     BackgroundKeepAliveController.requestSuspendDelaySafe();
     void BackgroundKeepAliveController.startDataTransferBackgroundSafe(context);
   }
 
-  /**
-   * UIAbility 回到前台或即将销毁时调用，释放后台任务。
-   */
+  /** UIAbility 回到前台或即将销毁时调用 */
   static onAbilityForegroundOrDestroy(context: common.UIAbilityContext): void {
-    BackgroundKeepAliveController.cancelSuspendDelaySafe();
     void BackgroundKeepAliveController.stopDataTransferBackgroundSafe(context);
+    BackgroundKeepAliveController.cancelSuspendDelaySafe();
   }
 
   // ── 短时任务 ───────────────────────────────────────────────────────────
@@ -44,14 +43,14 @@ export class BackgroundKeepAliveController {
     BackgroundKeepAliveController.cancelSuspendDelaySafe();
     try {
       const delayInfo = backgroundTaskManager.requestSuspendDelay(SUSPEND_REASON, (): void => {
-        hilog.warn(DOMAIN, TAG, 'suspend delay quota callback, cancel id=%{public}d',
+        hilog.warn(DOMAIN, TAG, 'suspend quota callback, cancel id=%{public}d',
           BackgroundKeepAliveController.suspendRequestId);
         BackgroundKeepAliveController.cancelSuspendDelaySafe();
       });
       BackgroundKeepAliveController.suspendRequestId = delayInfo.requestId;
       hilog.info(DOMAIN, TAG, 'requestSuspendDelay ok id=%{public}d', delayInfo.requestId);
     } catch (e) {
-      hilog.error(DOMAIN, TAG, 'requestSuspendDelay failed: %{public}s', String(e));
+      hilog.warn(DOMAIN, TAG, 'requestSuspendDelay failed: %{public}s', String(e));
     }
   }
 
@@ -59,12 +58,13 @@ export class BackgroundKeepAliveController {
     if (BackgroundKeepAliveController.suspendRequestId < 0) {
       return;
     }
-    try {
-      backgroundTaskManager.cancelSuspendDelay(BackgroundKeepAliveController.suspendRequestId);
-    } catch (_e) {
-      // 已失效或系统回收时忽略
-    }
+    const id = BackgroundKeepAliveController.suspendRequestId;
     BackgroundKeepAliveController.suspendRequestId = -1;
+    try {
+      backgroundTaskManager.cancelSuspendDelay(id);
+    } catch (_e) {
+      // 已失效或被系统回收，忽略
+    }
   }
 
   // ── 长时任务（数据传输模式） ─────────────────────────────────────────────
@@ -74,23 +74,35 @@ export class BackgroundKeepAliveController {
       return;
     }
     try {
-      const bundleName = context.abilityInfo.bundleName;
-      const abilityName = context.abilityInfo.name;
-      if (bundleName.length === 0 || abilityName.length === 0) {
-        hilog.warn(DOMAIN, TAG, 'skip startBackgroundRunning: empty bundle or ability name');
+      // abilityInfo 在少数机型/时序下可能未就绪，全量保护
+      if (context.abilityInfo === null || context.abilityInfo === undefined) {
+        hilog.warn(DOMAIN, TAG, 'skip startBackgroundRunning: abilityInfo not ready');
         return;
       }
+      const bundleName: string = context.abilityInfo.bundleName ?? '';
+      const abilityName: string = context.abilityInfo.name ?? '';
+      if (bundleName.length === 0 || abilityName.length === 0) {
+        hilog.warn(DOMAIN, TAG, 'skip startBackgroundRunning: empty bundle/ability name');
+        return;
+      }
+
       const agent: WantAgent = await wantAgent.getWantAgent({
         wants: [{ bundleName: bundleName, abilityName: abilityName }],
         actionType: wantAgent.OperationType.START_ABILITY,
         requestCode: 0
       });
-      const bgModes: string[] = ['dataTransfer'];
-      await backgroundTaskManager.startBackgroundRunning(context, bgModes, agent);
+
+      // 使用官方枚举值（DATA_TRANSFER = 1），避免传 string[] 导致运行时 TypeError
+      await backgroundTaskManager.startBackgroundRunning(
+        context,
+        backgroundTaskManager.BackgroundMode.DATA_TRANSFER,
+        agent
+      );
       BackgroundKeepAliveController.longRunningActive = true;
       hilog.info(DOMAIN, TAG, 'startBackgroundRunning DATA_TRANSFER ok');
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'startBackgroundRunning skipped or failed: %{public}s', String(e));
+      // 不设 longRunningActive，允许下次重试
     }
   }
 
@@ -98,12 +110,12 @@ export class BackgroundKeepAliveController {
     if (!BackgroundKeepAliveController.longRunningActive) {
       return;
     }
+    BackgroundKeepAliveController.longRunningActive = false;
     try {
       await backgroundTaskManager.stopBackgroundRunning(context);
       hilog.info(DOMAIN, TAG, 'stopBackgroundRunning ok');
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'stopBackgroundRunning: %{public}s', String(e));
     }
-    BackgroundKeepAliveController.longRunningActive = false;
   }
 }

@@ -2,17 +2,41 @@
  * 设置：相册 parent_guid、FN ID 说明
  */
 import { common } from '@kit.AbilityKit';
-import { router } from '@kit.ArkUI';
+import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 
 @Entry
 @Component
 struct Settings {
   @State private albumParentGuid: string = '';
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
 
   aboutToAppear(): void {
     const s = AppSession.getStored();
     this.albumParentGuid = s !== null ? s.albumParentGuid : '';
+  }
+
+  onPageShow(): void {
+    this.applySystemBarTheme();
+  }
+
+  onColorModeChanged(): void {
+    this.applySystemBarTheme();
+  }
+
+  private applySystemBarTheme(): void {
+    try {
+      const dark = this.colorMode === 1;
+      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
+      const content = dark ? '#FFFFFFFF' : '#FF000000';
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win): void => {
+        win.setWindowSystemBarProperties({
+          statusBarColor: bg, navigationBarColor: bg,
+          statusBarContentColor: content, navigationBarContentColor: content
+        }).catch((_e: Error): void => {});
+      }).catch((_e: Error): void => {});
+    } catch (_e) {}
   }
 
   build() {
@@ -21,7 +45,7 @@ struct Settings {
         Button($r('app.string.cancel'))
           .type(ButtonType.Normal)
           .onClick((): void => {
-            router.back();
+            this.getUIContext().getRouter().back();
           })
         Blank()
         Text($r('app.string.settings'))
@@ -30,10 +54,10 @@ struct Settings {
         Blank()
         Button($r('app.string.save'))
           .onClick((): void => {
-            const ctx = getContext(this) as common.UIAbilityContext;
+            const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
             AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
             void AppSession.persist(ctx).then(() => {
-              router.back();
+              this.getUIContext().getRouter().back();
             });
           })
       }

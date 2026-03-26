@@ -10,7 +10,7 @@ import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CertPolicy } from './CertPolicy';
 import { genFnAuthx, generateRandomDigits } from './AuthxSigner';
-import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet } from './FnGalleryAuthx';
+import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPost } from './FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX, fnPhotoLongTokenProbePaths } from './FnPhotoRoutes';
 import { fnWebDefaultUserAgent, mergeGalleryWebCookieIntoNativeHeader } from './FnWebCookies';
 import { fnWebViewBaseUrl } from './ServerUrl';
@@ -24,6 +24,8 @@ import {
   ItemListResponse,
   LoginResultData,
   LogoutResultData,
+  MagicSearchData,
+  MagicSearchDoBody,
   UserInfoData
 } from '../model/FnApiTypes';
 
@@ -878,6 +880,24 @@ export class FnHttpClient {
     return undefined;
   }
 
+  /**
+   * 图库流媒体（如 `/p/api/v1/stream/v/{id}`）的 HTTP 请求头，与 `fetchGalleryImageBuffer` 鉴权一致。
+   * 原生 `Video` 组件直连 URL 不会携带 Cookie/authx，需用 `AVPlayer` + `createMediaSourceWithUrl` 拉流。
+   * 媒体请求将 Accept 改为通配（见方法内对 h['Accept'] 的赋值），避免沿用 JSON 的 Accept 导致部分网关异常。
+   */
+  async getGalleryStreamHeaders(fullUrl: string): Promise<Record<string, string>> {
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const parsed = FnHttpClient.parseGalleryAssetUrl(fullUrl);
+    const authx = await genFnGalleryAuthxGet(parsed.signPath, parsed.queryParams);
+    const h = this.buildGalleryFetchHeaders(authx, cookie);
+    h['Accept'] = '*/*';
+    return h;
+  }
+
   /** 从完整 URL 中提取签名路径与 query 参数（供 genFnGalleryAuthxGet） */
   private static parseGalleryAssetUrl(fullUrl: string): GalleryAssetSignParts {
     const qIdx = fullUrl.indexOf('?');
@@ -934,6 +954,55 @@ export class FnHttpClient {
    * 相册图片列表：GET gallery/getList（签名 path 恒为 /p/api/v1/gallery/getList，与 Py 一致）
    * 时间格式须为「年:月:日 时:分:秒」空格分隔（与前端 dayjs / Python _day_time_range_str 一致）。
    */
+  /**
+   * AI 语义搜索（magic search）：POST /p/api/v1/magic-search/do
+   * 使用与图库 GET 相同的 Cookie + authx 认证体系。
+   */
+  async doMagicSearch(keyword: string, timeoutMs: number = 20000): Promise<FnClientResult<MagicSearchData>> {
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/magic-search/do`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const body: MagicSearchDoBody = { keyword: keyword };
+      // ArkTS 禁止无对应接口的对象字面量：先建空 Record 再逐字段赋值
+      const signBody: Record<string, FnJsonValue> = {};
+      signBody['keyword'] = keyword;
+      const authx = await genFnGalleryAuthxPost(path, signBody);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const bodyStr = JSON.stringify(body);
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '搜索结果解析失败' };
+      }
+      if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+        const code = FnHttpClient.envelopeCodeNum(parsed);
+        const errLine = FnHttpClient.envelopeErrorLine(parsed);
+        const show = errLine.length > 0 ? `: ${errLine}` : '';
+        return { success: false, message: `搜索请求失败 (${code})${show}` };
+      }
+      return { success: true, data: parsed['data'] as MagicSearchData };
+    } catch (e) {
+      return { success: false, message: String(e) || '搜索请求异常' };
+    }
+  }
+
   async getGalleryList(
     startTime: string,
     endTime: string,

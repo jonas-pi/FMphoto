@@ -3,8 +3,8 @@
  * getRSAPub → encrypted(user.login)；会话持久化 token 与 wsSignKeyB64（后续 WS 帧 HMAC 用）
  */
 import { common } from '@kit.AbilityKit';
-import { promptAction, router } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { window } from '@kit.ArkUI';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
@@ -24,9 +24,33 @@ struct Login {
   @State private useHttps: boolean = true;
   @State private loading: boolean = false;
   @State private errorText: string = '';
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+
+  onPageShow(): void {
+    this.applySystemBarTheme();
+  }
+
+  onColorModeChanged(): void {
+    this.applySystemBarTheme();
+  }
+
+  private applySystemBarTheme(): void {
+    try {
+      const dark = this.colorMode === 1;
+      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
+      const content = dark ? '#FFFFFFFF' : '#FF000000';
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win): void => {
+        win.setWindowSystemBarProperties({
+          statusBarColor: bg, navigationBarColor: bg,
+          statusBarContentColor: content, navigationBarContentColor: content
+        }).catch((_e: Error): void => {});
+      }).catch((_e: Error): void => {});
+    } catch (_e) {}
+  }
 
   aboutToAppear(): void {
-    const ctx = getContext(this) as common.UIAbilityContext;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void SessionPreferences.loadLoginFormDefaults(ctx).then((d) => {
       if (d.domainInput.length > 0) {
         this.domainInput = d.domainInput;
@@ -94,7 +118,7 @@ struct Login {
       return;
     }
     AppSession.apply(stored);
-    router.replaceUrl({ url: 'pages/Home' }).catch(() => {
+    this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
     });
   }
 
@@ -116,7 +140,7 @@ struct Login {
     }
     if (wsRes.certificateError === true && !trusted) {
       try {
-        const dlg = await promptAction.showDialog({
+        const dlg = await this.getUIContext().getPromptAction().showDialog({
           title: '证书不可信',
           message:
             'WebSocket（WSS）无法校验服务器证书。是否信任当前地址并继续？信任后将仅重试 WebSocket 登录。',
@@ -152,7 +176,7 @@ struct Login {
       return;
     }
     this.loading = true;
-    const ctx = getContext(this) as common.UIAbilityContext;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       await this.attemptLoginWebSocketOnly(ctx, server, this.username.trim(), this.password);
     } catch (e) {
