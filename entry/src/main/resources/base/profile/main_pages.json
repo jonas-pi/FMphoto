@@ -4,6 +4,7 @@
     "pages/Login",
     "pages/Home",
     "pages/GalleryPreview",
+    "pages/CategoryGallery",
     "pages/Settings"
   ]
 }

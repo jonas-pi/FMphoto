@@ -77,6 +77,8 @@ export interface GalleryListItem {
   category?: string;
   /** 文件类型/后缀，如 "jpg"/"mp4"/"gif" */
   fileType?: string;
+  /** 拍摄/创建时间，格式 "YYYY:MM:DD HH:mm:ss" */
+  dateTime?: string;
   /** 原图相对路径（`_pick_original_rel`） */
   originalUrl?: string;
   thumb?: string;
@@ -137,6 +139,64 @@ export interface MagicSearchItem extends GalleryListItem {
 export interface MagicSearchData {
   list?: MagicSearchItem[];
   total?: number;
+}
+
+/** 媒体分类单项（接口字段存在版本差异，尽量做宽松兼容） */
+export interface MediaCategoryItem {
+  id?: string | number;
+  key?: string;
+  name?: string;
+  title?: string;
+  label?: string;
+  cover?: string;
+  thumb?: string;
+  thumbnail?: string | GalleryThumbnailBlock;
+  count?: number;
+  total?: number;
+  /** 部分版本会把该分类下媒体直接下发 */
+  list?: GalleryListItem[];
+  items?: GalleryListItem[];
+}
+
+/** GET /p/api/v1/media_category/list 返回的 data */
+export interface MediaCategoryData {
+  list?: MediaCategoryItem[];
+  items?: MediaCategoryItem[];
+}
+
+/** 智能分类海报信息（ai-smart-rec/categories） */
+export interface SmartCategoryPoster {
+  photoId?: string | number;
+  uuid?: string;
+}
+
+/** 智能分类单项 */
+export interface SmartCategoryItem {
+  id?: string | number;
+  name?: string;
+  count?: number;
+  total?: number;
+  itemCount?: number;
+  item_count?: number;
+  photoCount?: number;
+  photo_count?: number;
+  num?: number;
+  size?: number;
+  poster?: SmartCategoryPoster;
+}
+
+/** GET /p/api/v1/ai-smart-rec/categories 返回 data */
+export interface SmartCategoryData {
+  list?: SmartCategoryItem[];
+  items?: SmartCategoryItem[];
+}
+
+/** /p/api/v1/search/results 返回 data 的常见结构 */
+export interface SearchResultsData {
+  list?: GalleryListItem[];
+  items?: GalleryListItem[];
+  photos?: GalleryListItem[];
+  records?: GalleryListItem[];
 }
 
 /** 本客户端 HTTP 层统一结果 */

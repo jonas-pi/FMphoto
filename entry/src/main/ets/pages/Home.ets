@@ -211,14 +211,21 @@ struct Home {
    * ColorMode.LIGHT = 0，ColorMode.DARK = 1
    */
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  /**
+   * 用 @State 镜像深色标志：@StorageProp 在嵌套方法链中依赖追踪可能丢失，
+   * @State 变更则必定触发 build() 重渲染，保证背景色实时同步。
+   */
+  @State private isDarkTheme: boolean = false;
 
   // ── 系统栏颜色 ────────────────────────────────────────────────────────────
 
   onPageShow(): void {
+    this.isDarkTheme = this.colorMode === 1;
     this.applySystemBarTheme();
   }
 
   onColorModeChanged(): void {
+    this.isDarkTheme = this.colorMode === 1;
     this.applySystemBarTheme();
   }
 
@@ -261,6 +268,7 @@ struct Home {
   }
 
   aboutToAppear(): void {
+    this.isDarkTheme = this.colorMode === 1;
     const s = AppSession.getStored();
     if (s !== null && s.token.length > 0 && s.baseUrl.length > 0) {
       let b = s.baseUrl;
@@ -382,7 +390,7 @@ struct Home {
               MePanel()
                 .width('100%')
                 .height('100%')
-                .backgroundColor($r('app.color.page_background'))
+                .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
             }
           }
           .width('100%')
@@ -397,9 +405,9 @@ struct Home {
             this.tabItem(2, $r('sys.symbol.person'), $r('app.string.tab_me'))
           }
           .width('100%')
-          .backgroundColor($r('app.color.page_background'))
+          .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
           .borderWidth({ top: 0.5 })
-          .borderColor('#1A000000')
+          .borderColor(this.isDarkTheme ? '#1AFFFFFF' : '#1A000000')
           .padding({ bottom: 4 })
         }
         .width('100%')
@@ -408,7 +416,7 @@ struct Home {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

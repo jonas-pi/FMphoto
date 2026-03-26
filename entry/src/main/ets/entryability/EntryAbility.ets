@@ -6,6 +6,9 @@ import { BackgroundKeepAliveController } from '../background/BackgroundKeepAlive
 /** 应用日志域（与网络模块 FnHttp 同域便于筛选，取值需在 0x0～0xFFFF） */
 const DOMAIN = 0xFF00;
 const LOG_TAG = 'FNOSClient';
+interface AbilityConfigUpdate {
+  colorMode?: number;
+}
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -17,6 +20,15 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onCreate');
   }
 
+  /** 系统深浅色模式切换时同步更新 AppStorage，使所有 @StorageProp('colorMode') 组件立即响应 */
+  onConfigurationUpdate(newConfig: AbilityConfigUpdate): void {
+    try {
+      const dark = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      AppStorage.set<number>('colorMode', dark ? 1 : 0);
+      hilog.info(DOMAIN, LOG_TAG, 'onConfigurationUpdate colorMode=%{public}d', dark ? 1 : 0);
+    } catch (_e) {}
+  }
+
   onDestroy(): void {
     BackgroundKeepAliveController.onAbilityForegroundOrDestroy(this.context);
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onDestroy');
@@ -24,6 +36,13 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onWindowStageCreate');
+
+    // 在加载页面内容前初始化 colorMode，确保第一帧即可正确读取深浅色模式
+    try {
+      const dark = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      AppStorage.setOrCreate<number>('colorMode', dark ? 1 : 0);
+      hilog.info(DOMAIN, LOG_TAG, 'initial colorMode=%{public}d', dark ? 1 : 0);
+    } catch (_e) {}
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {

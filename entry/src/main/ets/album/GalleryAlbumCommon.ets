@@ -164,6 +164,76 @@ export function nasUrl(base: string, ref: string): string {
   return t.startsWith('/') ? `${b}${t}` : `${b}/${t}`;
 }
 
+/**
+ * 自动检测并裁掉 PixelMap 四周的纯黑边（letterbox/pillarbox）。
+ * 仅处理近似正方形图像（服务端预填充为正方形的视频帧缩略图最常见此问题）。
+ * 直接修改传入的 PixelMap（in-place crop），无返回值。
+ */
+async function autoCropBlackBorders(pix: PixelMap): Promise<void> {
+  try {
+    const info = pix.getImageInfoSync();
+    const w = info.size.width;
+    const h = info.size.height;
+    if (w < 8 || h < 8) { return; }
+
+    // 只处理近似正方形（约 2:3 ~ 3:2），真正的横幅/竖幅图片不会有此问题
+    const ratio = w / h;
+    if (ratio < 0.67 || ratio > 1.5) { return; }
+
+    // 只处理 4 字节/像素的格式（RGBA_8888=3, BGRA_8888=4）
+    const fmt = info.pixelFormat as number;
+    if (fmt !== 3 && fmt !== 4) { return; }
+
+    const totalBytes = w * h * 4;
+    const buf = new ArrayBuffer(totalBytes);
+    await pix.readPixelsToBuffer(buf);
+    const v = new Uint8Array(buf);
+
+    // 判断某行中间 80% 像素是否绝大多数为纯黑（前三通道 < 18）
+    const isRowBlack = (y: number): boolean => {
+      const x0 = Math.floor(w * 0.1);
+      const x1 = Math.floor(w * 0.9);
+      let dark = 0;
+      for (let x = x0; x < x1; x++) {
+        const i = (y * w + x) * 4;
+        if (v[i] < 18 && v[i + 1] < 18 && v[i + 2] < 18) { dark++; }
+      }
+      return (x1 - x0) > 0 && dark >= (x1 - x0) * 0.9;
+    };
+
+    const isColBlack = (x: number): boolean => {
+      const y0 = Math.floor(h * 0.1);
+      const y1 = Math.floor(h * 0.9);
+      let dark = 0;
+      for (let y = y0; y < y1; y++) {
+        const i = (y * w + x) * 4;
+        if (v[i] < 18 && v[i + 1] < 18 && v[i + 2] < 18) { dark++; }
+      }
+      return (y1 - y0) > 0 && dark >= (y1 - y0) * 0.9;
+    };
+
+    let top = 0;
+    while (top < h / 2 && isRowBlack(top)) { top++; }
+
+    let bottom = h;
+    while (bottom > h / 2 && isRowBlack(bottom - 1)) { bottom--; }
+
+    let left = 0;
+    while (left < w / 2 && isColBlack(left)) { left++; }
+
+    let right = w;
+    while (right > w / 2 && isColBlack(right - 1)) { right--; }
+
+    const trimW = right - left;
+    const trimH = bottom - top;
+    // 只有裁掉 > 3% 才值得处理，避免误裁正常图片
+    if (trimW > 0 && trimH > 0 &&
+      (top > h * 0.03 || bottom < h * 0.97 || left > w * 0.03 || right < w * 0.97)) {
+      await pix.crop({ x: left, y: top, size: { width: trimW, height: trimH } });
+    }
+  } catch (_e) {}
+}
+
 export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) { return undefined; }
   const cached = thumbPixCache.get(fullUrl);
@@ -184,9 +254,12 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
       return undefined;
     }
     const src = image.createImageSource(buf);
-    // 不指定 desiredSize：按服务端缩略图原始尺寸解码，避免强制方形缩放导致发糊、比例失真；网格由 ImageFit.Cover 裁切
-    const pix = await src.createPixelMap();
+    // 按服务端缩略图原始尺寸解码；启用 HDR 解码以保留 HDR Vivid 增益图；解码后再裁黑边
+    // HDR PixelMap 格式为 RGBA_F16(7)，autoCropBlackBorders 会自动跳过
+    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.HDR });
     src.release();
+    // 裁掉服务端已预烘焙的 letterbox/pillarbox 黑边
+    await autoCropBlackBorders(pix);
     if (thumbPixCache.size >= THUMB_CACHE_MAX) {
       let firstKey: string | undefined = undefined;
       for (const k of thumbPixCache.keys()) {
@@ -219,7 +292,9 @@ export async function loadFullPix(fullUrl: string): Promise<PixelMap | undefined
   }
   try {
     const src = image.createImageSource(buf);
-    const pix = await src.createPixelMap();
+    // 启用 HDR 解码：若源图为 HDR Vivid/HEIF 则保留增益图，输出 RGBA_F16 PixelMap；
+    // 普通 SDR 图片不受影响，仍按原始格式解码。
+    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.HDR });
     src.release();
     return pix;
   } catch (_e) {
@@ -229,6 +304,7 @@ export async function loadFullPix(fullUrl: string): Promise<PixelMap | undefined
 
 @Component
 export struct GalleryThumbSkeleton {
+  @StorageProp('colorMode') private colorMode: number = 0;
   @State private alpha: number = 0.45;
 
   aboutToAppear(): void {
@@ -244,7 +320,7 @@ export struct GalleryThumbSkeleton {
     Column()
       .width('100%')
       .aspectRatio(1)
-      .backgroundColor('#E8EAED')
+      .backgroundColor(this.colorMode === 1 ? '#2C2C2E' : '#E8EAED')
       .borderRadius(8)
       .opacity(this.alpha)
   }
@@ -255,6 +331,7 @@ export struct GalleryNetworkThumb {
   @Prop @Watch('onUriChange') uri: string = '';
   @Prop isVideo: boolean = false;
   @Prop isGif: boolean = false;
+  @StorageProp('colorMode') private colorMode: number = 0;
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
   @State private pixAlpha: number = 0;
@@ -304,25 +381,32 @@ export struct GalleryNetworkThumb {
           .opacity(this.pixAlpha)
       }
       if (this.isVideo) {
-        Column() {
-          Text('▶').fontSize(20).fontColor(Color.White)
+        // 使用鸿蒙官方 Symbol 图标
+        Stack({ alignContent: Alignment.Center }) {
+          Circle()
+            .width(34).height(34)
+            .fill('#66000000')
+          SymbolGlyph($r('sys.symbol.play_fill'))
+            .fontSize(16)
+            .fontColor([Color.White])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
         }
-        .width(36).height(36).borderRadius(18)
-        .backgroundColor('#80000000')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
       }
       if (this.isGif) {
-        Text('GIF').fontSize(10).fontColor(Color.White)
-          .backgroundColor('#80000000')
-          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
-          .borderRadius(3)
-          .position({ x: 4, y: 4 })
+        Text('GIF')
+          .fontSize(10)
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+          .backgroundColor('#66000000')
+          .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+          .borderRadius(4)
+          .position({ x: 5, y: 5 })
       }
     }
     .width('100%')
     .aspectRatio(1)
     .borderRadius(6)
+    .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
   }
 }
