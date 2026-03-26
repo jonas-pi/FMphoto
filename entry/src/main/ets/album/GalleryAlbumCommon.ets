@@ -13,15 +13,41 @@ export const GALLERY_PREVIEW_ZOOM_EPS = 0.02;
 export const GALLERY_PREVIEW_SNAP_EPS = 0.12;
 
 export const THUMB_CACHE_MAX = 250;
-const thumbPixCache = new Map<string, PixelMap | null>();
+const thumbPixCache = new Map<string, PixelMap>();
+const thumbLoadFailAt = new Map<string, number>();
+const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
+/** 原图下载智能超时：先短后长，兼顾小图响应与大图成功率 */
+const FULL_IMAGE_TIMEOUT_STEPS_MS: number[] = [12000, 25000, 45000];
+
+function fullImageTimeoutSteps(expectedBytes?: number): number[] {
+  if (expectedBytes === undefined || expectedBytes <= 0) {
+    return FULL_IMAGE_TIMEOUT_STEPS_MS;
+  }
+  const mb = expectedBytes / (1024 * 1024);
+  // 大图（如 40MB+）给更长读超时，避免在弱网下“长时间加载后直接消失”
+  if (mb >= 64) {
+    return [30000, 90000, 150000];
+  }
+  if (mb >= 32) {
+    return [25000, 75000, 120000];
+  }
+  if (mb >= 16) {
+    return [18000, 50000, 90000];
+  }
+  return FULL_IMAGE_TIMEOUT_STEPS_MS;
+}
 
 /**
  * 缩略图并发加载限流器：最多同时进行 MAX_THUMB_CONCURRENT 个网络请求 + 解码。
  * 超出时排入等待队列，前一个完成后自动释放并启动下一个，避免大量并发导致主线程和网络拥塞。
+ * 队列采用“可见优先 + 公平退避”：
+ * - 常态优先最近进入视区的任务（近似 LIFO）；
+ * - 每隔若干次切换到最早排队任务，避免老任务长期饥饿导致“永远不加载”。
  */
 const MAX_THUMB_CONCURRENT = 4;
 let thumbLoadActive = 0;
 const thumbLoadWaiters: Array<() => void> = [];
+let thumbWakeCount = 0;
 
 function acquireThumbSlot(): Promise<void> {
   if (thumbLoadActive < MAX_THUMB_CONCURRENT) {
@@ -35,7 +61,8 @@ function acquireThumbSlot(): Promise<void> {
 
 function releaseThumbSlot(): void {
   if (thumbLoadWaiters.length > 0) {
-    const next = thumbLoadWaiters.shift();
+    thumbWakeCount++;
+    const next = (thumbWakeCount % 4 === 0) ? thumbLoadWaiters.shift() : thumbLoadWaiters.pop();
     if (next !== undefined) { next(); }
   } else {
     thumbLoadActive--;
@@ -51,7 +78,7 @@ export function getThumbPixCached(uri: string): PixelMap | undefined {
     return undefined;
   }
   const v = thumbPixCache.get(uri);
-  return v !== undefined ? (v ?? undefined) : undefined;
+  return v;
 }
 
 export function itemFileExt(it: GalleryListItem): string {
@@ -237,20 +264,24 @@ async function autoCropBlackBorders(pix: PixelMap): Promise<void> {
 export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) { return undefined; }
   const cached = thumbPixCache.get(fullUrl);
-  if (cached !== undefined) { return cached ?? undefined; }
+  if (cached !== undefined) { return cached; }
+  const failAt = thumbLoadFailAt.get(fullUrl);
+  if (failAt !== undefined && Date.now() - failAt < THUMB_FAIL_RETRY_COOLDOWN_MS) {
+    return undefined;
+  }
 
   // 等待并发槽位，避免大量同时下载解码导致卡顿
   await acquireThumbSlot();
   try {
     // 二次检查：等待期间可能已由其他协程填充缓存
     const cached2 = thumbPixCache.get(fullUrl);
-    if (cached2 !== undefined) { return cached2 ?? undefined; }
+    if (cached2 !== undefined) { return cached2; }
 
     const client = AppSession.getClient();
     if (client === null) { return undefined; }
     const buf = await client.fetchGalleryImageBuffer(fullUrl, 8000);
     if (buf === undefined || buf.byteLength === 0) {
-      thumbPixCache.set(fullUrl, null);
+      thumbLoadFailAt.set(fullUrl, Date.now());
       return undefined;
     }
     const src = image.createImageSource(buf);
@@ -269,16 +300,17 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
       if (firstKey !== undefined) { thumbPixCache.delete(firstKey); }
     }
     thumbPixCache.set(fullUrl, pix);
+    thumbLoadFailAt.delete(fullUrl);
     return pix;
   } catch (_e) {
-    thumbPixCache.set(fullUrl, null);
+    thumbLoadFailAt.set(fullUrl, Date.now());
     return undefined;
   } finally {
     releaseThumbSlot();
   }
 }
 
-export async function loadFullPix(fullUrl: string): Promise<PixelMap | undefined> {
+export async function loadFullPix(fullUrl: string, expectedBytes?: number): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) {
     return undefined;
   }
@@ -286,7 +318,20 @@ export async function loadFullPix(fullUrl: string): Promise<PixelMap | undefined
   if (client === null) {
     return undefined;
   }
-  const buf = await client.fetchGalleryImageBuffer(fullUrl, 20000);
+  let buf: ArrayBuffer | undefined = undefined;
+  /**
+   * 智能下载策略：
+   * 1) 首轮用较短超时，保证普通图片快速失败/快速成功；
+   * 2) 若失败则逐步放宽超时，提升超大原图（弱网/高时延）成功率；
+   * 3) 任一阶段成功即停止，避免无谓等待。
+   */
+  const timeoutSteps = fullImageTimeoutSteps(expectedBytes);
+  for (let i = 0; i < timeoutSteps.length; i++) {
+    buf = await client.fetchGalleryImageBuffer(fullUrl, timeoutSteps[i]);
+    if (buf !== undefined && buf.byteLength > 0) {
+      break;
+    }
+  }
   if (buf === undefined || buf.byteLength === 0) {
     return undefined;
   }
@@ -335,11 +380,17 @@ export struct GalleryNetworkThumb {
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
   @State private pixAlpha: number = 0;
+  /** 递增版本号：避免滚动复用后旧异步任务回写到新卡片 */
+  private loadVersion: number = 0;
+  /** 失败重试次数：用于弱网/短时请求失败后自动补偿加载 */
+  private retryCount: number = 0;
 
   onUriChange(): void {
+    this.loadVersion++;
     this.pix = undefined;
     this.pixAlpha = 0;
     this.loading = false;
+    this.retryCount = 0;
     void this.loadPix();
   }
 
@@ -347,24 +398,45 @@ export struct GalleryNetworkThumb {
     void this.loadPix();
   }
 
+  aboutToDisappear(): void {
+    // 组件离屏后提升版本号，阻止旧任务回写
+    this.loadVersion++;
+  }
+
   private async loadPix(): Promise<void> {
     if (this.uri.length === 0 || this.loading) {
       return;
     }
+    const versionAtStart = this.loadVersion;
     const cached = thumbPixCache.get(this.uri);
     if (cached !== undefined) {
-      this.pix = cached ?? undefined;
+      this.pix = cached;
       this.pixAlpha = 1;
       return;
     }
     this.loading = true;
     const pix = await loadThumbPix(this.uri);
+    if (versionAtStart !== this.loadVersion) {
+      this.loading = false;
+      return;
+    }
     this.loading = false;
     if (pix !== undefined) {
       this.pix = pix;
+      this.retryCount = 0;
       this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
         this.pixAlpha = 1;
       });
+    } else if (this.retryCount < 2) {
+      this.retryCount++;
+      const retryVersion = this.loadVersion;
+      const delay = this.retryCount * 700;
+      setTimeout((): void => {
+        if (retryVersion !== this.loadVersion || this.pix !== undefined) {
+          return;
+        }
+        void this.loadPix();
+      }, delay);
     }
   }
 

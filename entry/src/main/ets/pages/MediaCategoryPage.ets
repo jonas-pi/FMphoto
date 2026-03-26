@@ -1,8 +1,14 @@
-import { router } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryListItem, MediaCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION
+} from '../common/FnMotion';
 
 @Entry
 @Component
@@ -14,7 +20,7 @@ struct MediaCategoryPage {
   @State private items: MediaCategoryItem[] = [];
 
   onBackPress(): boolean {
-    router.back();
+    this.getUIContext().getRouter().back();
     return true;
   }
 
@@ -142,36 +148,15 @@ struct MediaCategoryPage {
 
   build() {
     Column() {
-      Row() {
-        Button('返回')
-          .height(34)
-          .onClick((): void => { router.back(); })
-        Text('媒体分类')
-          .layoutWeight(1)
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-        Blank().width(56)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 10, bottom: 8 })
+      FnTopBar({
+        title: '媒体分类'
+      })
 
       if (this.loading) {
-        Row({ space: 10 }) {
-          LoadingProgress().width(28).height(28)
-          Text('加载中…').fontSize(14).fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-      } else if (this.error.length > 0) {
-        Text(this.error)
+        FnInlineLoading({ text: '加载中…' })
           .layoutWeight(1)
-          .width('100%')
-          .padding({ left: 24, right: 24, top: 40 })
-          .textAlign(TextAlign.Center)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+      } else if (this.error.length > 0) {
+        FnStateText({ text: this.error })
       } else {
         Stack({ alignContent: Alignment.Center }) {
           Grid() {
@@ -202,7 +187,7 @@ struct MediaCategoryPage {
                     .justifyContent(FlexAlign.Center)
                     .alignItems(HorizontalAlign.Center)
                     .padding({ left: 12, right: 12 })
-                    .backgroundColor('#90000000')
+                    .backgroundColor($r('app.color.overlay_mask'))
                   }
                   .width('100%')
                   .aspectRatio(1)
@@ -222,17 +207,11 @@ struct MediaCategoryPage {
           .rowsGap(8)
           .layoutWeight(1)
           .width('100%')
+          .cachedCount(4)
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })
 
           if (this.opening) {
-            Column({ space: 10 }) {
-              LoadingProgress().width(48).height(48).color(Color.White)
-              Text('打开中…').fontSize(14).fontColor(Color.White)
-            }
-            .width('100%').height('100%')
-            .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-            .backgroundColor('#80000000')
-            .hitTestBehavior(HitTestMode.Block)
+            FnFullLoadingMask({ text: '打开中…' })
           }
         }
         .layoutWeight(1)
@@ -242,5 +221,15 @@ struct MediaCategoryPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 12, y: 0 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: -8, y: 0 });
   }
 }

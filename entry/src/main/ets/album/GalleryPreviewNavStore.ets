@@ -3,7 +3,7 @@
  * 退出预览页后应 clear，释放引用。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { UIContext } from '@kit.ArkUI';
+import { router } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 
 const DOMAIN = 0xFF00;
@@ -17,8 +17,7 @@ export class GalleryPreviewNavStore {
   static openPreview(
     baseUrl: string,
     items: GalleryListItem[],
-    startIndex: number,
-    uiCtx: UIContext
+    startIndex: number
   ): void {
     GalleryPreviewNavStore.baseUrl = baseUrl;
     GalleryPreviewNavStore.items = items.slice();
@@ -28,7 +27,7 @@ export class GalleryPreviewNavStore {
       hilog.warn(DOMAIN, TAG, 'openPreview skipped: empty list');
       return;
     }
-    uiCtx.getRouter().pushUrl({
+    router.pushUrl({
       url: 'pages/GalleryPreview',
       params: { idx: `${GalleryPreviewNavStore.startIndex}` }
     }).catch((e: Error) => {

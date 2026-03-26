@@ -16,6 +16,16 @@ import {
   fnWebLocalStorageSecretInjectScript,
   injectFnWebCookies
 } from '../network/FnWebCookies';
+import { FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION,
+  FN_TAB_SWITCH_CURVE,
+  FN_TAB_SWITCH_IN_DURATION,
+  FN_TAB_SWITCH_OUT_DURATION
+} from '../common/FnMotion';
 
 const DOMAIN = 0xFF00;
 const TAG = 'Home';
@@ -142,9 +152,7 @@ struct NasWebPanel {
             event.handler.handleConfirm();
           }
         })
-      Button($r('app.string.web_reload'))
-        .fontSize(13)
-        .height(40)
+      FnSecondaryButton({ text: $r('app.string.web_reload') })
         .margin({ right: 10, bottom: 56 })
         .onClick((): void => {
           this.applyWebLoad();
@@ -165,7 +173,7 @@ struct MePanel {
         .width('100%')
         .margin({ top: 24 })
 
-      Button($r('app.string.settings'))
+      FnSecondaryButton({ text: $r('app.string.settings') })
         .width('100%')
         .onClick((): void => {
           this.getUIContext().getRouter().pushUrl({ url: 'pages/Settings' }).catch(() => {
@@ -174,7 +182,10 @@ struct MePanel {
 
       Button($r('app.string.logout'))
         .width('100%')
+        .height($r('app.float.button_height'))
         .backgroundColor('#E11D48')
+        .fontColor(Color.White)
+        .borderRadius($r('app.float.radius_medium'))
         .onClick((): void => {
           const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
           void SessionPreferences.clearSession(ctx).then(() => {
@@ -254,13 +265,13 @@ struct Home {
     if (target === this.bottomNavIndex) {
       return;
     }
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, (): void => {
+    this.getUIContext().animateTo({ duration: FN_TAB_SWITCH_OUT_DURATION, curve: FN_TAB_SWITCH_CURVE }, (): void => {
       this.contentOpacity = 0.92;
       this.contentScale = 0.996;
     });
     setTimeout((): void => {
       this.bottomNavIndex = target;
-      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, (): void => {
+      this.getUIContext().animateTo({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE }, (): void => {
         this.contentOpacity = 1;
         this.contentScale = 1;
       });
@@ -316,14 +327,14 @@ struct Home {
         .height(3)
         .borderRadius(1.5)
         .backgroundColor($r('app.color.brand_primary'))
-        .animation({ duration: 220, curve: Curve.EaseOut })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
 
       SymbolGlyph(symbol)
         .fontSize(this.bottomNavIndex === idx ? 25 : 23)
         .fontColor([this.bottomNavIndex === idx
           ? $r('app.color.brand_primary')
           : $r('app.color.text_secondary')])
-        .animation({ duration: 220, curve: Curve.EaseOut })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
 
       Text(label)
         .fontSize(11)
@@ -331,7 +342,7 @@ struct Home {
         .fontColor(this.bottomNavIndex === idx
           ? $r('app.color.brand_primary')
           : $r('app.color.text_secondary'))
-        .animation({ duration: 220, curve: Curve.EaseOut })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     }
     .layoutWeight(1)
     .height(60)
@@ -353,7 +364,7 @@ struct Home {
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
-          Button($r('app.string.back_to_login'))
+          FnPrimaryButton({ text: $r('app.string.back_to_login') })
             .width('100%')
             .onClick((): void => {
               this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
@@ -418,5 +429,14 @@ struct Home {
     .height('100%')
     .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 12, y: 0 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: -8, y: 0 });
   }
 }

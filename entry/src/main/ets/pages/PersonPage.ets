@@ -1,8 +1,14 @@
-import { router } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { AiPersonItem, GalleryGetListData, GalleryListItem } from '../model/FnApiTypes';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION
+} from '../common/FnMotion';
 
 const DATE_FEED_BATCH = 50;
 const DAY_MAX_ROUNDS = 300;
@@ -40,7 +46,7 @@ struct PersonPage {
   @State private items: AiPersonItem[] = [];
 
   onBackPress(): boolean {
-    router.back();
+    this.getUIContext().getRouter().back();
     return true;
   }
 
@@ -267,30 +273,14 @@ struct PersonPage {
 
   build() {
     Column() {
-      Row() {
-        Button('返回').height(34).onClick((): void => { router.back(); })
-        Text('人物').layoutWeight(1).fontSize(20).fontWeight(FontWeight.Medium).textAlign(TextAlign.Center)
-        Blank().width(56)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 10, bottom: 8 })
+      FnTopBar({
+        title: '人物'
+      })
 
       if (this.loading) {
-        Row({ space: 10 }) {
-          LoadingProgress().width(28).height(28)
-          Text('人物加载中…').fontSize(14).fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
+        FnInlineLoading({ text: '人物加载中…' }).layoutWeight(1)
       } else if (this.error.length > 0) {
-        Text(this.error)
-          .layoutWeight(1)
-          .width('100%')
-          .padding({ left: 24, right: 24, top: 40 })
-          .textAlign(TextAlign.Center)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+        FnStateText({ text: this.error })
       } else {
         Stack({ alignContent: Alignment.Center }) {
           Grid() {
@@ -322,21 +312,13 @@ struct PersonPage {
           .columnsTemplate('1fr 1fr 1fr')
           .columnsGap(8)
           .rowsGap(8)
+          .cachedCount(6)
           .layoutWeight(1)
           .width('100%')
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })
 
           if (this.opening && !this.loading) {
-            Column({ space: 12 }) {
-              LoadingProgress().width(48).height(48).color(Color.White)
-              Text('加载人物媒体中…').fontSize(14).fontColor(Color.White)
-            }
-            .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .backgroundColor('#80000000')
-            .hitTestBehavior(HitTestMode.Block)
+            FnFullLoadingMask({ text: '加载人物媒体中…' })
           }
         }
         .layoutWeight(1)
@@ -346,5 +328,15 @@ struct PersonPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 12, y: 0 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: -8, y: 0 });
   }
 }

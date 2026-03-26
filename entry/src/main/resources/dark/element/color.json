@@ -23,6 +23,38 @@
     {
       "name": "icon_primary",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "card_background",
+      "value": "#2C2C2E"
+    },
+    {
+      "name": "card_border",
+      "value": "#26FFFFFF"
+    },
+    {
+      "name": "overlay_mask",
+      "value": "#80000000"
+    },
+    {
+      "name": "button_primary_bg",
+      "value": "#0A84FF"
+    },
+    {
+      "name": "button_primary_fg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "button_secondary_bg",
+      "value": "#33FFFFFF"
+    },
+    {
+      "name": "button_secondary_fg",
+      "value": "#F2F2F7"
+    },
+    {
+      "name": "list_item_background",
+      "value": "#2C2C2E"
     }
   ]
 }
