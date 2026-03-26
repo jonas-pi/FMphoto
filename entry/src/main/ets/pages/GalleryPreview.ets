@@ -16,7 +16,7 @@ import { systemShare } from '@kit.ShareKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryListItem } from '../model/FnApiTypes';
-import { isVideoItem, nasUrl, pickOriginal, pickThumb } from '../album/GalleryAlbumCommon';
+import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
 
 /** 与 LazyForEach 配套的轻量数据源 */
@@ -165,6 +165,16 @@ struct GalleryPreview {
     return pickOriginal(item).length > 0 && !isVideoItem(item);
   }
 
+  private currentImageExt(): string {
+    const item = this.currentItem();
+    if (item === null) { return 'jpg'; }
+    const ext = itemFileExt(item);
+    if (ext === 'gif') { return 'gif'; }
+    if (ext === 'png') { return 'png'; }
+    if (ext === 'webp') { return 'webp'; }
+    return 'jpg';
+  }
+
   private titleCounter(): string {
     return this.totalCount > 0 ? `${this.swiperIndex + 1} / ${this.totalCount}` : '';
   }
@@ -231,7 +241,8 @@ struct GalleryPreview {
     let saveUri = '';
     try {
       const saveOptions = new picker.PhotoSaveOptions();
-      saveOptions.newFileNames = [`photo_${Date.now()}.jpg`];
+      const ext = this.currentImageExt();
+      saveOptions.newFileNames = [`photo_${Date.now()}.${ext}`];
       const uris = await new picker.PhotoViewPicker().save(saveOptions);
       if (uris.length === 0) {
         this.toast('已取消保存');
@@ -280,7 +291,8 @@ struct GalleryPreview {
     }
 
     // 写入临时缓存文件，供系统分享面板读取
-    const tempPath = `${ctx.cacheDir}/share_preview.jpg`;
+    const ext = this.currentImageExt();
+    const tempPath = `${ctx.cacheDir}/share_preview.${ext}`;
     try {
       const tmpFile = fileIo.openSync(tempPath,
         fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);

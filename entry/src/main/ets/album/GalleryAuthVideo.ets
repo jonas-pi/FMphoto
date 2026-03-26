@@ -14,19 +14,54 @@ import { AppSession } from '../auth/AppSession';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryAuthVideo';
+const LONG_PRESS_RATE = 2.0;
+
+interface SpeedOption {
+  label: string;
+  rate: number;
+}
+
+const SPEED_OPTIONS: SpeedOption[] = [
+  { label: '0.75x', rate: 0.75 },
+  { label: '1.0x', rate: 1.0 },
+  { label: '1.25x', rate: 1.25 },
+  { label: '1.75x', rate: 1.75 },
+  { label: '2.0x', rate: 2.0 }
+];
 
 @Component
 export struct GalleryAuthVideo {
   @Prop @Watch('onUrlChange') videoUrl: string = '';
   @State private hint: string = '加载中…';
+  @State private controlsVisible: boolean = true;
+  @State private isPlaying: boolean = false;
+  @State private currentMs: number = 0;
+  @State private durationMs: number = 0;
+  @State private dragRatio: number = 0;
+  @State private draggingSeek: boolean = false;
+  @State private speedRate: number = 1.0;
+  @State private longPressSpeeding: boolean = false;
+  @State private progressW: number = 1;
 
   private xController: XComponentController = new XComponentController();
   private avPlayer: media.AVPlayer | null = null;
   private playGen: number = 0;
   private surfaceReady: boolean = false;
+  private dragStartRatio: number = 0;
+  private wasPlayingBeforeSeek: boolean = false;
+  private seekResumePending: boolean = false;
 
   onUrlChange(): void {
     this.playGen++;
+    this.isPlaying = false;
+    this.currentMs = 0;
+    this.durationMs = 0;
+    this.draggingSeek = false;
+    this.dragRatio = 0;
+    this.wasPlayingBeforeSeek = false;
+    this.seekResumePending = false;
+    this.speedRate = 1.0;
+    this.longPressSpeeding = false;
     if (this.videoUrl.length > 0) {
       this.hint = '加载中…';
     }
@@ -43,6 +78,131 @@ export struct GalleryAuthVideo {
   private static safeRelease(p: media.AVPlayer | null): void {
     if (p === null) { return; }
     p.release().catch((): void => {});
+  }
+
+  private progressRatio(): number {
+    if (this.draggingSeek) {
+      return this.dragRatio;
+    }
+    if (this.durationMs <= 0) {
+      return 0;
+    }
+    const r = this.currentMs / this.durationMs;
+    return Math.max(0, Math.min(1, r));
+  }
+
+  private fmtTime(ms: number): string {
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    const ss = s < 10 ? `0${s}` : `${s}`;
+    return `${m}:${ss}`;
+  }
+
+  /**
+   * 与图片预览一致：完整显示（Contain）。
+   * 横视频优先贴合屏幕宽度，超高竖视频优先贴合屏幕高度，不做裁切。
+   */
+  private applyContainMode(player: media.AVPlayer): void {
+    player.videoScaleType = media.VideoScaleType.VIDEO_SCALE_TYPE_SCALED_ASPECT;
+  }
+
+  private applySpeed(player: media.AVPlayer, rate: number): void {
+    try {
+      player.setPlaybackRate(rate);
+    } catch (_e) {
+      try {
+        if (rate <= 0.75) {
+          player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_0_75_X);
+        } else if (rate <= 1.0) {
+          player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_00_X);
+        } else if (rate <= 1.25) {
+          player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_25_X);
+        } else if (rate <= 1.75) {
+          player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_75_X);
+        } else {
+          player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_2_00_X);
+        }
+      } catch (_e2) {
+      }
+    }
+  }
+
+  private async togglePlayPause(): Promise<void> {
+    const p = this.avPlayer;
+    if (p === null) { return; }
+    try {
+      if (this.isPlaying) {
+        await p.pause();
+      } else {
+        await p.play();
+      }
+    } catch (_e) {
+    }
+  }
+
+  private seekByRatio(ratio: number): void {
+    const p = this.avPlayer;
+    if (p === null || this.durationMs <= 0) {
+      return;
+    }
+    const clamped = Math.max(0, Math.min(1, ratio));
+    const toMs = Math.floor(this.durationMs * clamped);
+    try {
+      p.seek(toMs, media.SeekMode.SEEK_CLOSEST);
+      this.currentMs = toMs;
+    } catch (_e) {
+    }
+  }
+
+  private async beginSeekDrag(): Promise<void> {
+    const p = this.avPlayer;
+    this.draggingSeek = true;
+    this.dragStartRatio = this.progressRatio();
+    this.dragRatio = this.dragStartRatio;
+    this.wasPlayingBeforeSeek = this.isPlaying;
+    this.seekResumePending = false;
+    if (p !== null && this.wasPlayingBeforeSeek) {
+      try {
+        await p.pause();
+      } catch (_e) {
+      }
+    }
+  }
+
+  private endSeekDrag(): void {
+    this.seekByRatio(this.dragRatio);
+    this.draggingSeek = false;
+    this.seekResumePending = this.wasPlayingBeforeSeek;
+  }
+
+  private async chooseSpeed(): Promise<void> {
+    try {
+      const choice = await this.getUIContext().getPromptAction().showActionMenu({
+        title: '播放倍速',
+        buttons: [
+          { text: '0.75x', color: '#007AFF' },
+          { text: '1.0x', color: '#007AFF' },
+          { text: '1.25x', color: '#007AFF' },
+          { text: '1.75x', color: '#007AFF' },
+          { text: '2.0x', color: '#007AFF' }
+        ]
+      });
+      const idx = choice.index;
+      if (idx < 0 || idx >= SPEED_OPTIONS.length) {
+        return;
+      }
+      const p = this.avPlayer;
+      if (p === null) {
+        return;
+      }
+      const picked = SPEED_OPTIONS[idx].rate;
+      this.speedRate = picked;
+      if (!this.longPressSpeeding) {
+        this.applySpeed(p, picked);
+      }
+    } catch (_e) {
+    }
   }
 
   private async startPlay(): Promise<void> {
@@ -101,6 +261,23 @@ export struct GalleryAuthVideo {
       hilog.error(DOMAIN, TAG, 'avplayer error: %{public}s', String(err));
       if (gen === this.playGen) {
         this.hint = '播放失败';
+        this.isPlaying = false;
+      }
+    });
+    player.on('timeUpdate', (time: number): void => {
+      if (gen !== this.playGen || this.draggingSeek) { return; }
+      this.currentMs = time;
+    });
+    player.on('durationUpdate', (d: number): void => {
+      if (gen !== this.playGen) { return; }
+      this.durationMs = d > 0 ? d : this.durationMs;
+    });
+    player.on('seekDone', (time: number): void => {
+      if (gen !== this.playGen) { return; }
+      this.currentMs = time;
+      if (this.seekResumePending) {
+        this.seekResumePending = false;
+        player.play().catch((_e: Error): void => {});
       }
     });
 
@@ -117,6 +294,9 @@ export struct GalleryAuthVideo {
           this.hint = '视频准备失败';
         });
       } else if (state === 'prepared') {
+        this.durationMs = player.duration > 0 ? player.duration : this.durationMs;
+        this.applyContainMode(player);
+        this.applySpeed(player, this.speedRate);
         player.play().catch((e: Error): void => {
           if (gen !== this.playGen) { return; }
           hilog.error(DOMAIN, TAG, 'play err: %{public}s', String(e));
@@ -124,9 +304,13 @@ export struct GalleryAuthVideo {
         });
       } else if (state === 'playing') {
         this.hint = '';
+        this.isPlaying = true;
+      } else if (state === 'paused' || state === 'completed' || state === 'stopped') {
+        this.isPlaying = false;
       } else if (state === 'error') {
         hilog.error(DOMAIN, TAG, 'state error');
         this.hint = '播放失败';
+        this.isPlaying = false;
       }
     });
 
@@ -152,6 +336,32 @@ export struct GalleryAuthVideo {
       })
         .width('100%')
         .height('100%')
+        .onClick((): void => {
+          this.controlsVisible = !this.controlsVisible;
+        })
+        .gesture(
+          LongPressGesture({ repeat: false })
+            .onAction((): void => {
+              const p = this.avPlayer;
+              if (p === null) { return; }
+              this.longPressSpeeding = true;
+              this.applySpeed(p, LONG_PRESS_RATE);
+            })
+            .onActionEnd((): void => {
+              const p = this.avPlayer;
+              this.longPressSpeeding = false;
+              if (p !== null) {
+                this.applySpeed(p, this.speedRate);
+              }
+            })
+            .onActionCancel((): void => {
+              const p = this.avPlayer;
+              this.longPressSpeeding = false;
+              if (p !== null) {
+                this.applySpeed(p, this.speedRate);
+              }
+            })
+        )
         .onLoad((): void => {
           this.surfaceReady = true;
           void this.startPlay();
@@ -165,6 +375,92 @@ export struct GalleryAuthVideo {
           .fontSize(14)
           .fontColor('#CCCCCC')
           .padding(16)
+      }
+
+      if (this.controlsVisible) {
+        Column() {
+          Blank().layoutWeight(1)
+          Column({ space: 8 }) {
+            Row({ space: 10 }) {
+              Button({ type: ButtonType.Circle, stateEffect: true }) {
+                SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+                  .fontSize(20)
+                  .fontColor([Color.White])
+              }
+              .width(40).height(40).backgroundColor('#55000000')
+              .onClick((): void => { void this.togglePlayPause(); })
+
+              Button({ type: ButtonType.Capsule, stateEffect: true }) {
+                Text(this.longPressSpeeding ? '2.0x' : `${this.speedRate.toFixed(2)}x`)
+                  .fontSize(13)
+                  .fontColor(Color.White)
+              }
+              .height(36).backgroundColor('#55000000')
+              .onClick((): void => { void this.chooseSpeed(); })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+
+            Row({ space: 8 }) {
+              Text(this.fmtTime(this.currentMs))
+                .fontSize(11)
+                .fontColor('#DDFFFFFF')
+                .width(44)
+              Stack({ alignContent: Alignment.Start }) {
+                Row()
+                  .width('100%')
+                  .height(3)
+                  .backgroundColor('#44FFFFFF')
+                  .borderRadius(2)
+                Row()
+                  .width(`${Math.round(this.progressRatio() * 100)}%`)
+                  .height(3)
+                  .backgroundColor('#FFFFFFFF')
+                  .borderRadius(2)
+              }
+              .layoutWeight(1)
+              .height(24)
+              .onAreaChange((_old, area): void => {
+                const w = area.width as number;
+                this.progressW = w > 1 ? w : 1;
+              })
+              .gesture(
+                PanGesture({ direction: PanDirection.Horizontal })
+                  .onActionStart((): void => {
+                    void this.beginSeekDrag();
+                  })
+                  .onActionUpdate((ev: GestureEvent): void => {
+                    const delta = this.progressW > 0 ? ev.offsetX / this.progressW : 0;
+                    const r = this.dragStartRatio + delta;
+                    this.dragRatio = Math.max(0, Math.min(1, r));
+                    if (this.durationMs > 0) {
+                      this.currentMs = Math.floor(this.durationMs * this.dragRatio);
+                    }
+                  })
+                  .onActionEnd((): void => {
+                    this.endSeekDrag();
+                  })
+                  .onActionCancel((): void => {
+                    this.draggingSeek = false;
+                    this.seekResumePending = false;
+                  })
+              )
+
+              Text(this.fmtTime(this.durationMs))
+                .fontSize(11)
+                .fontColor('#DDFFFFFF')
+                .width(44)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12, bottom: 18, top: 10 })
+          .backgroundColor('#33000000')
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
       }
     }
     .width('100%')
