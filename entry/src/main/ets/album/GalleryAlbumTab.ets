@@ -13,6 +13,7 @@
  * 大图预览：独立页面 pages/GalleryPreview（Swiper 跟手、规范转场）。
  */
 import { common } from '@kit.AbilityKit';
+import { picker } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
@@ -35,6 +36,7 @@ import {
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
+import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
 import { FnFullLoadingMask } from '../common/FnUiCommon';
 import {
   FN_TAB_SWITCH_CURVE,
@@ -149,6 +151,8 @@ function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
 export struct GalleryAlbumTab {
   @Prop baseUrl: string = '';
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
+  /** Home.onPageShow() 递增 → 触发删除同步（安全保障，不依赖子组件 onPageShow 传播） */
+  @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
 
   @State private bootLoading: boolean = false;
   @State private loadError: string = '';
@@ -177,6 +181,9 @@ export struct GalleryAlbumTab {
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
+  /** 上传状态 */
+  @State private uploading: boolean = false;
+  @State private uploadText: string = '';
   /** 模式切换时内容层动效（淡入 + 轻微位移） */
   @State private modeSwitchOpacity: number = 1;
   @State private modeSwitchOffsetY: number = 0;
@@ -196,6 +203,8 @@ export struct GalleryAlbumTab {
   /** 每天连续空页计数（防止单次空页误切日） */
   private dayEmptyRounds: Map<string, number> = new Map<string, number>();
   private scrollerRef: Scroller = new Scroller();
+  /** 上次已处理的删除同步版本号 */
+  private handledDeleteSyncVersion: number = 0;
 
   // ── 扁平列表（供跳转独立预览页） ─────────────────────────────────────────
 
@@ -257,6 +266,71 @@ export struct GalleryAlbumTab {
       return;
     }
     GalleryPreviewNavStore.openPreview(this.baseUrl, this.flatItems(), flatIndex);
+  }
+
+  private itemIdOf(it: GalleryListItem): string {
+    if (it.id === undefined || it.id === null) {
+      return '';
+    }
+    return String(it.id).trim();
+  }
+
+  /**
+   * 处理预览页删除同步：只做列表增量删除，不触发 bootstrap，
+   * 以尽量保留主列表当前滚动位置与用户上下文。
+   */
+  private applyDeleteSyncIfNeeded(): void {
+    if (this.handledDeleteSyncVersion === GalleryDeleteSyncStore.version) {
+      return;
+    }
+    const ids = GalleryDeleteSyncStore.snapshotIds();
+    if (ids.length === 0) {
+      this.handledDeleteSyncVersion = GalleryDeleteSyncStore.version;
+      return;
+    }
+    // 主列表数据尚未完成 bootstrap 时，不提前消费删除版本号。
+    if (this.sections.length === 0 && this.searchResults.length === 0) {
+      return;
+    }
+    let changed = false;
+    // 主图库 sections：删除命中的条目，并清理空 section
+    for (let si = this.sections.length - 1; si >= 0; si--) {
+      const sec = this.sections[si];
+      const kept: GalleryListItem[] = [];
+      for (let i = 0; i < sec.items.length; i++) {
+        const id = this.itemIdOf(sec.items[i]);
+        if (id.length > 0 && ids.indexOf(id) >= 0) {
+          changed = true;
+          continue;
+        }
+        kept.push(sec.items[i]);
+      }
+      if (kept.length !== sec.items.length) {
+        sec.items = kept;
+      }
+      if (sec.items.length === 0) {
+        this.sections.splice(si, 1);
+      }
+    }
+    // 搜索结果视图（若当前在搜索模式）也同步删除
+    if (this.searchResults.length > 0) {
+      const searchKept: GalleryListItem[] = [];
+      for (let i = 0; i < this.searchResults.length; i++) {
+        const id = this.itemIdOf(this.searchResults[i]);
+        if (id.length > 0 && ids.indexOf(id) >= 0) {
+          changed = true;
+          continue;
+        }
+        searchKept.push(this.searchResults[i]);
+      }
+      if (searchKept.length !== this.searchResults.length) {
+        this.searchResults = searchKept;
+      }
+    }
+    if (changed) {
+      this.rebuildFlow();
+    }
+    this.handledDeleteSyncVersion = GalleryDeleteSyncStore.version;
   }
 
   // ── 搜索 ──────────────────────────────────────────────────────────────────
@@ -378,6 +452,56 @@ export struct GalleryAlbumTab {
         }
       );
     }, 90);
+  }
+
+  private startUpload(): void {
+    if (this.uploading) {
+      return;
+    }
+    void this.pickAndUpload();
+  }
+
+  private async pickAndUpload(): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.toast('未登录');
+      return;
+    }
+    let uris: string[] = [];
+    try {
+      const opt = new picker.PhotoSelectOptions();
+      opt.maxSelectNumber = 20;
+      opt.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      const out = await new picker.PhotoViewPicker().select(opt);
+      uris = out.photoUris ?? [];
+    } catch (_e) {
+      return;
+    }
+    if (uris.length === 0) {
+      return;
+    }
+    this.uploading = true;
+    this.uploadText = `上传中 0/${uris.length}…`;
+    let ok = 0;
+    let firstFailMsg = '';
+    for (let i = 0; i < uris.length; i++) {
+      this.uploadText = `上传中 ${i + 1}/${uris.length}…`;
+      const res = await client.uploadPhotoByUri(uris[i], 150000);
+      if (res.success) {
+        ok++;
+      } else if (firstFailMsg.length === 0) {
+        const em = res.message ?? '';
+        firstFailMsg = em.length > 0 ? em : '上传失败';
+      }
+    }
+    this.uploading = false;
+    this.uploadText = '';
+    if (ok > 0) {
+      this.toast(`上传完成 ${ok}/${uris.length}`);
+      void this.bootstrap();
+    } else {
+      this.toast(firstFailMsg.length > 0 ? firstFailMsg : '上传失败，请稍后重试');
+    }
   }
 
   private parseCategoryMedia(item: MediaCategoryItem): GalleryListItem[] {
@@ -884,11 +1008,19 @@ export struct GalleryAlbumTab {
     setTimeout((): void => { void this.bootstrap(); }, 0);
   }
 
+  private onPageShowSignal(): void {
+    this.applyDeleteSyncIfNeeded();
+  }
+
   aboutToAppear(): void {
     // 页面重新出现时重置打开态，避免手势返回后被旧遮罩状态卡住
     this.personOpening = false;
     this.categoryOpening = false;
     setTimeout((): void => { void this.bootstrap(); }, 0);
+  }
+
+  onPageShow(): void {
+    this.applyDeleteSyncIfNeeded();
   }
 
   // ── sections 更新 ────────────────────────────────────────────────────────
@@ -1161,7 +1293,8 @@ export struct GalleryAlbumTab {
   // ── build ──────────────────────────────────────────────────────────────────
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      Column() {
       // ── 顶部标题栏 ──────────────────────────────────────────────────────────
       Row() {
         if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
@@ -1732,9 +1865,33 @@ export struct GalleryAlbumTab {
           })
         }
       }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.page_background'))
+
+      // 仅在图库主视图显示上传入口，避免与子模式操作冲突
+      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
+        if (this.uploading) {
+          FnFullLoadingMask({ text: this.uploadText.length > 0 ? this.uploadText : '上传中…' })
+        }
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(24)
+            .fontColor([Color.White])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+        }
+        .width(56)
+        .height(56)
+        .backgroundColor($r('app.color.brand_primary'))
+        .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 6 })
+        .margin({ right: 18, bottom: 88 })
+        .onClick((): void => {
+          this.startUpload();
+        })
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
   }
 }

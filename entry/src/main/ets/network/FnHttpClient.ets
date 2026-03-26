@@ -8,6 +8,9 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { util } from '@kit.ArkTS';
 import { CertPolicy } from './CertPolicy';
 import { genFnAuthx, generateRandomDigits } from './AuthxSigner';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPost, genFnGalleryAuthxPostRaw } from './FnGalleryAuthx';
@@ -60,6 +63,22 @@ function buildFnApiCookieHeader(token: string, longToken: string = ''): string {
     s += `; fnos-long-token=${longToken}`;
   }
   s += `; Trim-MC-token=${token}; mode=relay`;
+  return s;
+}
+
+/**
+ * /upload 专用 Cookie：只保留与官方 Web 一致的三项，
+ * 不含 Trim-MC-token 和 mode=relay，防止 nginx 将上传路由到中继服务。
+ */
+function buildUploadCookieHeader(token: string, longToken: string = ''): string {
+  let s = '';
+  if (longToken.length > 0) {
+    s = `fnos-long-token=${longToken}`;
+  }
+  s += (s.length > 0 ? '; ' : '') + 'language=zh-CN';
+  if (token.length > 0) {
+    s += `; fnos-token=${token}`;
+  }
   return s;
 }
 
@@ -116,9 +135,24 @@ interface GalleryAssetSignParts {
   queryParams: Record<string, string | number | boolean>;
 }
 
+interface LocalDayRange {
+  start: string;
+  end: string;
+}
+
 interface AssetBufferCacheEntry {
   timeMs: number;
   data: ArrayBuffer;
+}
+
+interface UploadNoticeResult {
+  ok: boolean;
+  message: string;
+}
+
+class MultipartBodyData {
+  contentType: string = '';
+  body: ArrayBuffer = new ArrayBuffer(0);
 }
 
 /** 从响应头解析 Set-Cookie 中的 fnos-long-token（与浏览器首页 Cookie 一致） */
@@ -183,6 +217,252 @@ function mergePostBody(data: Record<string, FnJsonValue> | undefined): Record<st
   return out;
 }
 
+function escapeJsonString(input: string): string {
+  return input.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function decodeUriPartSafely(input: string): string {
+  try {
+    return decodeURIComponent(input);
+  } catch (_e) {
+    return input;
+  }
+}
+
+function trimJoinPath(dirPath: string, fileName: string): string {
+  const d = dirPath.trim();
+  const f = fileName.trim();
+  if (d.length === 0) {
+    return f;
+  }
+  if (f.length === 0) {
+    return d;
+  }
+  if (d.endsWith('/')) {
+    return `${d}${f}`;
+  }
+  return `${d}/${f}`;
+}
+
+/**
+ * trim-path 头的编码：保留 "/"，仅编码路径段字符（与浏览器抓包形态一致）。
+ */
+function encodeTrimPath(path: string): string {
+  const p = path.trim();
+  if (p.length === 0) {
+    return '';
+  }
+  const segs = p.split('/');
+  const out: string[] = [];
+  for (let i = 0; i < segs.length; i++) {
+    const one = segs[i];
+    if (one.length === 0) {
+      out.push('');
+      continue;
+    }
+    out.push(encodeURIComponent(one));
+  }
+  return out.join('/');
+}
+
+function pad2(v: number): string {
+  return v < 10 ? `0${v}` : String(v);
+}
+
+function localDayRangeNow(): LocalDayRange {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const start = `${y}:${pad2(m)}:${pad2(day)} 00:00:00`;
+  const end = `${y}:${pad2(m)}:${pad2(day)} 23:59:59`;
+  const out: LocalDayRange = { start: start, end: end };
+  return out;
+}
+
+/**
+ * 按时间轴单元（year/month/day）构造 getList 所需的日范围字符串。
+ * 上传后的入库日期不一定等于“今天”（例如按 EXIF 回写历史日期），
+ * 因此校验时优先依据 timeline 分桶来查对应日期。
+ */
+function localDayRangeByYmd(year: number, month: number, day: number): LocalDayRange {
+  const start = `${year}:${pad2(month)}:${pad2(day)} 00:00:00`;
+  const end = `${year}:${pad2(month)}:${pad2(day)} 23:59:59`;
+  const out: LocalDayRange = { start: start, end: end };
+  return out;
+}
+
+function lowerExtFromName(fileName: string): string {
+  const n = fileName.trim();
+  const dot = n.lastIndexOf('.');
+  if (dot < 0 || dot >= n.length - 1) {
+    return '';
+  }
+  return n.substring(dot + 1).toLowerCase();
+}
+
+function nameStem(fileName: string): string {
+  const n = fileName.trim();
+  const dot = n.lastIndexOf('.');
+  return dot > 0 ? n.substring(0, dot) : n;
+}
+
+function utf8EncodeLocal(str: string): Uint8Array {
+  const utf8: number[] = [];
+  for (let i = 0; i < str.length; i++) {
+    let c = str.charCodeAt(i);
+    if (c < 0x80) {
+      utf8.push(c);
+    } else if (c < 0x800) {
+      utf8.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    } else if (c < 0xd800 || c >= 0xe000) {
+      utf8.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    } else {
+      i++;
+      c = 0x10000 + (((c & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
+      utf8.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    }
+  }
+  return new Uint8Array(utf8);
+}
+
+function escapeMultipartFileName(fileName: string): string {
+  return fileName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function uint8ArrayToBase64Local(data: Uint8Array): string {
+  const helper = new util.Base64Helper();
+  return helper.encodeToStringSync(data);
+}
+
+function base64ToUint8Local(b64: string): Uint8Array {
+  const helper = new util.Base64Helper();
+  return helper.decodeSync(b64);
+}
+
+async function sha256DigestLocal(data: Uint8Array): Promise<Uint8Array> {
+  const md = cryptoFramework.createMd('SHA256');
+  await md.update({ data: data });
+  const out = await md.digest();
+  return out.data;
+}
+
+function concatUint8Local(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const r = new Uint8Array(a.length + b.length);
+  r.set(a, 0);
+  r.set(b, a.length);
+  return r;
+}
+
+async function hmacSha256DigestLocal(key: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
+  const block = 64;
+  let k = key;
+  if (k.length > block) {
+    k = await sha256DigestLocal(k);
+  }
+  const kb = new Uint8Array(block);
+  kb.set(k, 0);
+  const ipad = new Uint8Array(block);
+  const opad = new Uint8Array(block);
+  for (let i = 0; i < block; i++) {
+    const x = kb[i] as number;
+    ipad[i] = x ^ 0x36;
+    opad[i] = x ^ 0x5c;
+  }
+  const inner = await sha256DigestLocal(concatUint8Local(ipad, message));
+  return sha256DigestLocal(concatUint8Local(opad, inner));
+}
+
+async function buildTrimSignCandidates(
+  trimPath: string,
+  trimMtim: string,
+  token: string,
+  wsSignKeyB64: string
+): Promise<string[]> {
+  const out: string[] = [];
+  const push = (s: string): void => {
+    const v = s.trim();
+    if (v.length > 0 && out.indexOf(v) < 0) {
+      out.push(v);
+    }
+  };
+  // 签名消息候选：优先用最常见的拼接格式
+  const msgs: string[] = [
+    `${trimPath}\n${trimMtim}`,
+    trimPath,
+    `${trimPath}\n${trimMtim}\n1\n1`
+  ];
+  // 优先级 1：secret（wsSignKeyB64）做 HMAC—— 官方 upload.worker 使用此方式
+  if (wsSignKeyB64.length > 0) {
+    try {
+      const secKey = base64ToUint8Local(wsSignKeyB64);
+      for (let i = 0; i < msgs.length; i++) {
+        const mac = await hmacSha256DigestLocal(secKey, utf8EncodeLocal(msgs[i]));
+        push(uint8ArrayToBase64Local(mac));
+      }
+    } catch (_e) {}
+  }
+  // 优先级 2：token 做 HMAC
+  if (token.length > 0) {
+    const key = utf8EncodeLocal(token);
+    for (let i = 0; i < msgs.length; i++) {
+      const mac = await hmacSha256DigestLocal(key, utf8EncodeLocal(msgs[i]));
+      push(uint8ArrayToBase64Local(mac));
+    }
+  }
+  // 优先级 3：纯 SHA256（无 HMAC key）
+  for (let i = 0; i < msgs.length; i++) {
+    const m = utf8EncodeLocal(msgs[i]);
+    const plain = await sha256DigestLocal(m);
+    push(uint8ArrayToBase64Local(plain));
+  }
+  return out;
+}
+
+/** 根据扩展名返回 MIME 类型，对齐浏览器 FormData 默认行为 */
+function mimeFromExt(ext: string): string {
+  const e = ext.toLowerCase();
+  if (e === 'png') return 'image/png';
+  if (e === 'jpg' || e === 'jpeg') return 'image/jpeg';
+  if (e === 'gif') return 'image/gif';
+  if (e === 'webp') return 'image/webp';
+  if (e === 'bmp') return 'image/bmp';
+  if (e === 'heic' || e === 'heif') return 'image/heif';
+  if (e === 'mp4') return 'video/mp4';
+  if (e === 'mov') return 'video/quicktime';
+  return 'application/octet-stream';
+}
+
+/**
+ * 组装 multipart/form-data，仅含一个 file 字段，
+ * 与官方 Web upload.worker 的 FormData.append('file', blob, filename) 行为对齐。
+ */
+function buildMultipartUploadBody(fileName: string, payload: ArrayBuffer): MultipartBodyData {
+  const boundary = `----WebKitFormBoundary${Date.now()}${Math.floor(Math.random() * 1000000)}`;
+  const safeName = escapeMultipartFileName(fileName);
+  const ext = lowerExtFromName(fileName);
+  const mime = mimeFromExt(ext);
+  const head =
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+    `Content-Type: ${mime}\r\n\r\n`;
+  const tail = `\r\n--${boundary}--\r\n`;
+  const a = utf8EncodeLocal(head);
+  const b = new Uint8Array(payload);
+  const d = utf8EncodeLocal(tail);
+  const out = new Uint8Array(a.length + b.length + d.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  out.set(d, a.length + b.length);
+  const ret = new MultipartBodyData();
+  ret.contentType = `multipart/form-data; boundary=${boundary}`;
+  const bodyBuf = new ArrayBuffer(out.byteLength);
+  const bodyView = new Uint8Array(bodyBuf);
+  bodyView.set(out);
+  ret.body = bodyBuf;
+  return ret;
+}
+
 function isRedirectCode(code: number): boolean {
   return code === 301 || code === 302 || code === 307 || code === 308;
 }
@@ -236,6 +516,8 @@ export class FnHttpClient {
   private token: string = '';
   /** 与 Web Cookie「fnos-long-token」一致，/p/api 等相册接口常依赖 */
   private longToken: string = '';
+  /** WebSocket secret 解密后的 key（Base64），用于 upload trim-sign 兼容签名 */
+  private wsSignKeyB64: string = '';
   /** 当前仍在进行的 HTTP 请求（用于页面关闭时主动释放连接） */
   private pendingRequests: http.HttpRequest[] = [];
   /** 资源下载去重：同 URL 并发仅发起一次请求 */
@@ -245,10 +527,11 @@ export class FnHttpClient {
   private static readonly ASSET_CACHE_TTL_MS: number = 15000;
   private static readonly ASSET_CACHE_MAX: number = 120;
 
-  constructor(baseUrl: string, token: string = '', longToken: string = '') {
+  constructor(baseUrl: string, token: string = '', longToken: string = '', wsSignKeyB64: string = '') {
     this.baseUrl = baseUrl;
     this.token = token;
     this.longToken = longToken;
+    this.wsSignKeyB64 = wsSignKeyB64;
   }
 
   private cookieHeader(): string {
@@ -1771,5 +2054,702 @@ export class FnHttpClient {
       return { success: true, data: [] };
     }
     return { success: true, data: FnHttpClient.normalizeFolderViewItems(list as GalleryListItem[]) };
+  }
+
+  /**
+   * 将媒体移入回收站：POST /p/api/v1/recycle-bin/add
+   * 由于不同版本 NAS 请求体字段存在差异，这里按多种候选 body 依次尝试，提升兼容性。
+   */
+  async addPhotoToRecycleBin(
+    photoId: string,
+    timeoutMs: number = 15000
+  ): Promise<FnClientResult<Object>> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return { success: false, message: 'photoId 不能为空' };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/recycle-bin/add`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const escapedId = escapeJsonString(id);
+      const parsedNum = Number(id);
+      const hasNumericId = Number.isFinite(parsedNum) && parsedNum >= 0;
+      const bodyCandidates: string[] = [];
+      // 优先命中抓包实参：{ ids: [84238] }
+      if (hasNumericId) {
+        bodyCandidates.push(`{"ids":[${Math.floor(parsedNum)}]}`);
+      }
+      bodyCandidates.push(
+        `{"ids":["${escapedId}"]}`,
+        `{"id":"${escapedId}"}`,
+        `{"photoId":"${escapedId}"}`,
+        `{"photoIds":["${escapedId}"]}`,
+        `{"list":["${escapedId}"]}`,
+        `{"itemIds":["${escapedId}"]}`
+      );
+      let lastMsg = '移入回收站失败';
+      for (let i = 0; i < bodyCandidates.length; i++) {
+        const bodyStr = bodyCandidates[i];
+        try {
+          const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          headers['Content-Type'] = 'application/json';
+          const raw = await this.rawRequest(
+            `${activeBase}${path}`,
+            http.RequestMethod.POST,
+            headers,
+            bodyStr,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            lastMsg = `HTTP ${raw.code}`;
+            continue;
+          }
+          let parsed: Record<string, string | number | Object | undefined>;
+          try {
+            parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+          } catch (_e) {
+            lastMsg = '删除响应解析失败';
+            continue;
+          }
+          if (FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+            return { success: true, data: parsed['data'] as Object };
+          }
+          const errLine = FnHttpClient.envelopeErrorLine(parsed);
+          if (errLine.length > 0) {
+            lastMsg = errLine;
+            const low = errLine.toLowerCase();
+            if (errLine.indexOf('已在回收站') >= 0 || low.indexOf('already') >= 0) {
+              return { success: true, data: parsed['data'] as Object };
+            }
+          }
+        } catch (e) {
+          lastMsg = String(e) || '删除请求异常';
+        }
+      }
+      return { success: false, message: lastMsg };
+    } catch (e) {
+      return { success: false, message: String(e) || '删除请求异常' };
+    }
+  }
+
+  private static fileNameFromUri(uri: string): string {
+    const q = uri.indexOf('?');
+    const base = q >= 0 ? uri.substring(0, q) : uri;
+    const slash = Math.max(base.lastIndexOf('/'), base.lastIndexOf('\\'));
+    const raw = slash >= 0 ? base.substring(slash + 1) : base;
+    const out = decodeUriPartSafely(raw.trim());
+    return out.length > 0 ? out : `upload_${Date.now()}.jpg`;
+  }
+
+  private static readAllBytesFromUri(uri: string): ArrayBuffer | undefined {
+    let fdNum = -1;
+    try {
+      const f = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      fdNum = f.fd;
+      const st = fileIo.statSync(fdNum);
+      const size = Number(st.size);
+      if (!Number.isFinite(size) || size <= 0) {
+        return undefined;
+      }
+      const whole = new ArrayBuffer(Math.floor(size));
+      const readLen = fileIo.readSync(fdNum, whole);
+      if (!Number.isFinite(readLen) || readLen <= 0) {
+        return undefined;
+      }
+      if (readLen < whole.byteLength) {
+        return whole.slice(0, readLen);
+      }
+      return whole;
+    } catch (_e) {
+      return undefined;
+    } finally {
+      if (fdNum >= 0) {
+        try {
+          fileIo.closeSync(fdNum);
+        } catch (_e) {}
+      }
+    }
+  }
+
+  /**
+   * 从上传接口响应中尽量提取可用于后续补偿的 photoId。
+   * 兼容常见结构：
+   * - { id: 1 } / { photoId: 1 }
+   * - { data: { id: 1 } }
+   * - { data: { ids: [1] } } / { ids: [1] }
+   */
+  private static firstUploadPhotoIdFromResponse(rawBody: string): string {
+    if (rawBody.length === 0) {
+      return '';
+    }
+    let parsed: Record<string, string | number | Object | undefined>;
+    try {
+      parsed = JSON.parse(rawBody) as Record<string, string | number | Object | undefined>;
+    } catch (_e) {
+      return '';
+    }
+    const pickDirect = (obj: Record<string, string | number | Object | undefined>): string => {
+      const one = obj['id'] ?? obj['photoId'] ?? obj['fileId'] ?? obj['itemId'];
+      if (one !== undefined && one !== null) {
+        const s = String(one).trim();
+        if (s.length > 0 && s !== 'null' && s !== 'undefined') {
+          return s;
+        }
+      }
+      const arrOne = obj['ids'] ?? obj['photoIds'] ?? obj['list'] ?? obj['itemIds'];
+      if (Array.isArray(arrOne) && arrOne.length > 0) {
+        // ArkTS 禁止隐式 any/unknown：对数组元素做显式类型约束。
+        const typedArr = arrOne as Array<string | number | Object | undefined>;
+        const first = typedArr[0];
+        if (first !== undefined && first !== null) {
+          const fs = String(first).trim();
+          if (fs.length > 0 && fs !== 'null' && fs !== 'undefined') {
+            return fs;
+          }
+        }
+      }
+      return '';
+    };
+    const rootPicked = pickDirect(parsed);
+    if (rootPicked.length > 0) {
+      return rootPicked;
+    }
+    const dataObj = parsed['data'];
+    if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+      const nested = dataObj as Record<string, string | number | Object | undefined>;
+      return pickDirect(nested);
+    }
+    return '';
+  }
+
+  /**
+   * 从对象中提取“路径类”字段，兼容常见命名。
+   */
+  private static firstPathLikeFromRecord(obj: Record<string, string | number | Object | undefined>): string {
+    const direct = obj['path'] ?? obj['filePath'] ?? obj['uploadPath'] ?? obj['targetPath'] ?? obj['dstPath'] ?? obj['destPath'];
+    if (direct !== undefined && direct !== null) {
+      const s = String(direct).trim();
+      if (s.length > 0 && s !== 'null' && s !== 'undefined') {
+        return s;
+      }
+    }
+    const arrLike = obj['paths'] ?? obj['filePaths'] ?? obj['uploadPaths'] ?? obj['list'];
+    if (Array.isArray(arrLike) && arrLike.length > 0) {
+      const typedArr = arrLike as Array<string | number | Object | undefined>;
+      const first = typedArr[0];
+      if (first !== undefined && first !== null) {
+        const fs = String(first).trim();
+        if (fs.length > 0 && fs !== 'null' && fs !== 'undefined') {
+          return fs;
+        }
+      }
+    }
+    return '';
+  }
+
+  /**
+   * 从响应 JSON 中提取上传路径提示（用于 notice 入参兼容）。
+   */
+  private static firstUploadPathFromResponse(rawBody: string): string {
+    if (rawBody.length === 0) {
+      return '';
+    }
+    let parsed: Record<string, string | number | Object | undefined>;
+    try {
+      parsed = JSON.parse(rawBody) as Record<string, string | number | Object | undefined>;
+    } catch (_e) {
+      return '';
+    }
+    const root = FnHttpClient.firstPathLikeFromRecord(parsed);
+    if (root.length > 0) {
+      return root;
+    }
+    const dataObj = parsed['data'];
+    if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+      const nested = dataObj as Record<string, string | number | Object | undefined>;
+      return FnHttpClient.firstPathLikeFromRecord(nested);
+    }
+    return '';
+  }
+
+  /**
+   * 对齐 Web 侧上传前预请求：
+   * GET /p/api/v2/photo/upload/path（不同版本参数可能不同，按候选尝试）。
+   * 返回可用的路径提示（若服务端未返回则为空串，不阻断上传）。
+   */
+  private async requestUploadPathHint(fileName: string, timeoutMs: number): Promise<string> {
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const path = '/p/api/v2/photo/upload/path';
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const paramsCandidates: Array<Record<string, string | number | boolean>> = [
+      GALLERY_QUERY_EMPTY,
+      { 'name': fileName },
+      { 'fileName': fileName },
+      { 'filename': fileName }
+    ];
+    for (let i = 0; i < paramsCandidates.length; i++) {
+      try {
+        const oneParams = paramsCandidates[i];
+        const qs = buildGallerySortedQuery(oneParams);
+        const urlPath = qs.length > 0 ? `${path}?${qs}` : path;
+        const authx = await genFnGalleryAuthxGet(path, oneParams);
+        const headers = this.buildGalleryFetchHeaders(authx, cookie);
+        const raw = await this.rawRequest(
+          `${activeBase}${urlPath}`,
+          http.RequestMethod.GET,
+          headers,
+          undefined,
+          timeoutMs,
+          CertPolicy.isTrusted(activeBase)
+        );
+        if (raw.code < 200 || raw.code >= 300) {
+          continue;
+        }
+        const p = FnHttpClient.firstUploadPathFromResponse(raw.body);
+        if (p.length > 0) {
+          return p;
+        }
+      } catch (_e) {}
+    }
+    return '';
+  }
+
+  /**
+   * 上传后兜底恢复：某些版本会把新文件先挂到回收站，再要求显式 restore。
+   * 仅在 photo/upload/notice 失败时触发，不影响现有已可用链路。
+   */
+  private async restoreUploadedPhoto(
+    photoId: string,
+    timeoutMs: number
+  ): Promise<boolean> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return false;
+    }
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const path = `${FN_PHOTO_API_PREFIX}/recycle-bin/restore`;
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const escapedId = escapeJsonString(id);
+    const parsedNum = Number(id);
+    const hasNumericId = Number.isFinite(parsedNum) && parsedNum >= 0;
+    const bodyCandidates: string[] = [];
+    if (hasNumericId) {
+      bodyCandidates.push(`{"ids":[${Math.floor(parsedNum)}]}`);
+    }
+    bodyCandidates.push(
+      `{"ids":["${escapedId}"]}`,
+      `{"id":"${escapedId}"}`,
+      `{"photoId":"${escapedId}"}`
+    );
+    for (let i = 0; i < bodyCandidates.length; i++) {
+      try {
+        const bodyStr = bodyCandidates[i];
+        const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+        const headers = this.buildGalleryFetchHeaders(authx, cookie);
+        headers['Content-Type'] = 'application/json';
+        const raw = await this.rawRequest(
+          `${activeBase}${path}`,
+          http.RequestMethod.POST,
+          headers,
+          bodyStr,
+          timeoutMs,
+          CertPolicy.isTrusted(activeBase)
+        );
+        if (raw.code < 200 || raw.code >= 300) {
+          continue;
+        }
+        let parsed: Record<string, string | number | Object | undefined>;
+        try {
+          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+        } catch (_e) {
+          continue;
+        }
+        if (FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+          return true;
+        }
+      } catch (_e) {}
+    }
+    return false;
+  }
+
+  private async notifyPhotoUploaded(
+    fileName: string,
+    sourceUri: string,
+    timeoutMs: number,
+    pathHints: string[] = []
+  ): Promise<UploadNoticeResult> {
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const path = `${FN_PHOTO_API_PREFIX}/photo/upload/notice`;
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const escName = escapeJsonString(fileName);
+    const escUri = escapeJsonString(sourceUri);
+    const bodyCandidates: string[] = [];
+    const pushCandidate = (v: string): void => {
+      if (bodyCandidates.indexOf(v) < 0) {
+        bodyCandidates.push(v);
+      }
+    };
+    pushCandidate(`{"name":"${escName}"}`);
+    pushCandidate(`{"fileName":"${escName}"}`);
+    pushCandidate(`{"filename":"${escName}"}`);
+    pushCandidate(`{"uri":"${escUri}","name":"${escName}"}`);
+    pushCandidate(`{"items":[{"name":"${escName}"}]}`);
+    for (let i = 0; i < pathHints.length; i++) {
+      const p = pathHints[i].trim();
+      if (p.length === 0) {
+        continue;
+      }
+      const ep = escapeJsonString(p);
+      pushCandidate(`{"path":"${ep}"}`);
+      pushCandidate(`{"filePath":"${ep}"}`);
+      pushCandidate(`{"uploadPath":"${ep}"}`);
+      pushCandidate(`{"paths":["${ep}"]}`);
+      pushCandidate(`{"name":"${escName}","path":"${ep}"}`);
+      pushCandidate(`{"fileName":"${escName}","path":"${ep}"}`);
+      pushCandidate(`{"uri":"${escUri}","name":"${escName}","path":"${ep}"}`);
+      pushCandidate(`{"items":[{"name":"${escName}","path":"${ep}"}]}`);
+    }
+    let lastMsg = '入库通知失败';
+    for (let i = 0; i < bodyCandidates.length; i++) {
+      try {
+        const bodyStr = bodyCandidates[i];
+        const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+        const headers = this.buildGalleryFetchHeaders(authx, cookie);
+        headers['Content-Type'] = 'application/json';
+        const raw = await this.rawRequest(
+          `${activeBase}${path}`,
+          http.RequestMethod.POST,
+          headers,
+          bodyStr,
+          timeoutMs,
+          CertPolicy.isTrusted(activeBase)
+        );
+        if (raw.code < 200 || raw.code >= 300) {
+          lastMsg = `notice HTTP ${raw.code}`;
+          continue;
+        }
+        let parsed: Record<string, string | number | Object | undefined>;
+        try {
+          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+        } catch (_e) {
+          lastMsg = 'notice 响应解析失败';
+          continue;
+        }
+        if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+          const em = FnHttpClient.envelopeErrorLine(parsed);
+          lastMsg = em.length > 0 ? em : 'notice 业务失败';
+          continue;
+        }
+        // 对齐 upload.worker：code==0 但 list[0].error 非空也算失败。
+        const dataObj = parsed['data'];
+        if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+          const dataRec = dataObj as Record<string, string | number | Object | undefined>;
+          const listObj = dataRec['list'];
+          if (Array.isArray(listObj) && listObj.length > 0) {
+            const typedArr = listObj as Array<Object>;
+            const first = typedArr[0];
+            if (first !== undefined && first !== null && typeof first === 'object' && !Array.isArray(first)) {
+              const fr = first as Record<string, string | number | Object | undefined>;
+              const errTxtRaw = fr['error'];
+              const errTxt = errTxtRaw !== undefined && errTxtRaw !== null ? String(errTxtRaw).trim() : '';
+              const errCodeRaw = fr['errorCode'];
+              const errCode = errCodeRaw !== undefined && Number.isFinite(Number(errCodeRaw))
+                ? Math.floor(Number(errCodeRaw))
+                : 0;
+              if (errTxt.length > 0 || errCode !== 0) {
+                lastMsg = errTxt.length > 0 ? errTxt : `notice errorCode=${errCode}`;
+                continue;
+              }
+            }
+          }
+        }
+        const okRes: UploadNoticeResult = { ok: true, message: '' };
+        return okRes;
+      } catch (_e) {}
+    }
+    const failRes: UploadNoticeResult = { ok: false, message: lastMsg };
+    return failRes;
+  }
+
+  /**
+   * 上传后核验：某些后端返回口径不稳定（notice 失败但实际已入库），
+   * 这里短轮询当天列表，按文件名词干/后缀/大小匹配，命中即视为成功。
+   */
+  private async verifyUploadedAppeared(
+    fileName: string,
+    payloadBytes: number
+  ): Promise<boolean> {
+    const ext = lowerExtFromName(fileName);
+    const stem = nameStem(fileName).toLowerCase();
+    const attempts = 3;
+    const checkedDays: Record<string, boolean> = {};
+    const ranges: LocalDayRange[] = [];
+    // 兜底：无论 timeline 是否可用，都至少检查“今天”。
+    const today = localDayRangeNow();
+    ranges.push(today);
+    checkedDays[today.start] = true;
+    // 先取官方 timeline 的最新日期分桶，再按桶查 getList。
+    // 这样能覆盖“上传成功但归档日期不是当天”的场景，减少误判失败。
+    const timelineRes = await this.getGalleryTimeline();
+    if (timelineRes.success && timelineRes.data !== undefined) {
+      const dayList = timelineRes.data.list;
+      if (Array.isArray(dayList) && dayList.length > 0) {
+        // 只取最近若干天，避免单次校验请求过多。
+        const maxDays = Math.min(dayList.length, 8);
+        for (let di = 0; di < maxDays; di++) {
+          const cell = dayList[di];
+          const y = Number(cell.year);
+          const m = Number(cell.month);
+          const d = Number(cell.day);
+          if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+            continue;
+          }
+          const yy = Math.floor(y);
+          const mm = Math.floor(m);
+          const dd = Math.floor(d);
+          if (yy <= 0 || mm <= 0 || mm > 12 || dd <= 0 || dd > 31) {
+            continue;
+          }
+          const oneRange = localDayRangeByYmd(yy, mm, dd);
+          if (checkedDays[oneRange.start]) {
+            continue;
+          }
+          ranges.push(oneRange);
+          checkedDays[oneRange.start] = true;
+        }
+      }
+    }
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0) {
+        await FnHttpClient.sleep(800 + i * 700);
+      }
+      for (let ri = 0; ri < ranges.length; ri++) {
+        const range = ranges[ri];
+        const one = await this.getGalleryList(range.start, range.end, 60, 0, 'index');
+        if (!one.success || one.data === undefined) {
+          continue;
+        }
+        const rawList = one.data.list ?? one.data.items ?? one.data.photos ?? one.data.records;
+        if (!Array.isArray(rawList) || rawList.length === 0) {
+          continue;
+        }
+        const typed: GalleryListItem[] = [];
+        for (let ti = 0; ti < rawList.length; ti++) {
+          const row = rawList[ti];
+          if (typeof row === 'object' && row !== null) {
+            typed.push(row as GalleryListItem);
+          }
+        }
+        for (let k = 0; k < typed.length; k++) {
+          const it = typed[k];
+          const rec = it as Record<string, string | number | Object | undefined>;
+          const itNameRaw = rec['fileName'] ?? rec['filename'];
+          const itName = (itNameRaw !== undefined && itNameRaw !== null ? String(itNameRaw) : '').toLowerCase();
+          const itExt = (it.fileType ?? '').toLowerCase();
+          const itSizeRaw = rec['fileSize'] ?? rec['filesize'];
+          const itSize = Number(itSizeRaw);
+          const nameHit = stem.length > 0 && itName.indexOf(stem) >= 0;
+          const extHit = ext.length === 0 || itExt === ext;
+          const sizeHit = Number.isFinite(itSize) && Math.abs(Math.floor(itSize) - payloadBytes) <= 8;
+          if ((nameHit && extHit) || (extHit && sizeHit)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 通过 photo picker 选择的 URI 上传单文件：
+   * 1) POST /upload 上传二进制；
+   * 2) POST /p/api/v1/photo/upload/notice 通知服务端入库（失败时尝试 restore 兜底）。
+   *
+   * 兼容策略：
+   * - 上传前尝试请求 /p/api/v2/photo/upload/path，拿到路径提示用于 notice；
+   * - /upload 若返回 JSON 外壳 code!=0，则按失败处理（不再仅看 HTTP 200）；
+   * - notice / restore 都失败时，明确返回失败，避免“假成功”。
+   */
+  async uploadPhotoByUri(uri: string, timeoutMs: number = 120000): Promise<FnClientResult<Object>> {
+    const oneUri = uri.trim();
+    if (oneUri.length === 0) {
+      return { success: false, message: '文件 URI 为空' };
+    }
+    const payload = FnHttpClient.readAllBytesFromUri(oneUri);
+    if (payload === undefined || payload.byteLength <= 0) {
+      return { success: false, message: '读取待上传文件失败' };
+    }
+    const fileName = FnHttpClient.fileNameFromUri(oneUri);
+    const pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+    const hintedFullPath = pathHintBeforeUpload.length > 0 ? trimJoinPath(pathHintBeforeUpload, fileName) : '';
+    const uploadPath = '/upload';
+    const uploadUrl = `${fnWebViewBaseUrl(this.baseUrl)}${uploadPath}`;
+    const req = http.createHttp();
+    this.registerPendingRequest(req);
+    let uploadRespText = '';
+    try {
+      const multipart = buildMultipartUploadBody(fileName, payload);
+      const trimMtim = String(Math.floor(Date.now() / 1000));
+      const encodedTrimPath = hintedFullPath.length > 0 ? encodeTrimPath(hintedFullPath) : '';
+
+      // 只生成最可能的签名候选（secret HMAC > token HMAC > 无签名），
+      // 避免用 15+ 种候选重复上传完整文件。
+      const signCandidates = await buildTrimSignCandidates(
+        encodedTrimPath,
+        trimMtim,
+        this.token,
+        this.wsSignKeyB64
+      );
+      // 最多尝试 3 个候选签名（避免整文件重传太多次）
+      const maxSignTries = 3;
+      const allSigns: string[] = [];
+      for (let i = 0; i < signCandidates.length && allSigns.length < maxSignTries; i++) {
+        allSigns.push(signCandidates[i]);
+      }
+      if (allSigns.length === 0) {
+        allSigns.push('');
+      }
+
+      let uploadOk = false;
+      let lastHttpCode = 0;
+      let lastDetail = '';
+      let softUploadAccepted = false;
+      // 上传专用 Cookie：不含 mode=relay / Trim-MC-token，对齐官方 Web 行为
+      const uploadCookie = buildUploadCookieHeader(this.token, this.longToken);
+      for (let si = 0; si < allSigns.length; si++) {
+        const oneSign = allSigns[si];
+        const headers: Record<string, string> = {
+          'Cookie': uploadCookie,
+          'Content-Type': multipart.contentType,
+          'Accept': 'application/json, text/plain, */*',
+          'trim-flags': '1',
+          'trim-overwrite': '1',
+          'trim-mtim': trimMtim
+        };
+        if (encodedTrimPath.length > 0) {
+          headers['trim-path'] = encodedTrimPath;
+        }
+        if (this.token.length > 0) {
+          headers['trim-token'] = this.token;
+        }
+        if (oneSign.length > 0) {
+          headers['trim-sign'] = oneSign;
+        }
+        const opt: http.HttpRequestOptions = {
+          method: http.RequestMethod.POST,
+          header: headers,
+          expectDataType: http.HttpDataType.STRING,
+          connectTimeout: timeoutMs,
+          readTimeout: timeoutMs,
+          extraData: multipart.body
+        };
+        if (CertPolicy.isTrusted(this.baseUrl)) {
+          opt.remoteValidation = 'skip';
+        }
+        const rawResp = await req.request(uploadUrl, opt);
+        const code = Number(rawResp.responseCode);
+        lastHttpCode = code;
+        uploadRespText = typeof rawResp.result === 'string' ? rawResp.result : JSON.stringify(rawResp.result);
+        if (!(code >= 200 && code < 300)) {
+          if (uploadRespText.length > 0) {
+            try {
+              const parsed = JSON.parse(uploadRespText) as Record<string, string | number | Object | undefined>;
+              const em = FnHttpClient.envelopeErrorLine(parsed);
+              lastDetail = em.length > 0 ? em : '';
+            } catch (_e) {
+              lastDetail = uploadRespText.length > 120 ? `${uploadRespText.substring(0, 120)}...` : uploadRespText;
+            }
+          }
+          continue;
+        }
+        // HTTP 2xx：检查 body 是否有业务错误
+        if (uploadRespText.length > 0) {
+          try {
+            const parsed = JSON.parse(uploadRespText) as Record<string, string | number | Object | undefined>;
+            if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+              const em = FnHttpClient.envelopeErrorLine(parsed);
+              lastDetail = em.length > 0 ? em : '上传失败';
+              const low = lastDetail.toLowerCase();
+              if (low.indexOf('update failed') >= 0) {
+                softUploadAccepted = true;
+              }
+              continue;
+            }
+          } catch (_e) {
+            // 无 body 或非 JSON 均视为成功（官方 Web /upload 返回空 body + content-length:0）
+          }
+        }
+        uploadOk = true;
+        break;
+      }
+      if (!uploadOk) {
+        if (softUploadAccepted && lastHttpCode >= 200 && lastHttpCode < 300) {
+          // 走后续 notice/verify 流程，由入库侧再确认最终结果。
+        } else {
+          return {
+            success: false,
+            message: lastDetail.length > 0 ? `上传失败 HTTP ${lastHttpCode}：${lastDetail}` : `上传失败 HTTP ${lastHttpCode}`
+          };
+        }
+      }
+    } catch (e) {
+      return { success: false, message: String(e) || '上传请求异常' };
+    } finally {
+      this.unregisterPendingRequest(req);
+      try {
+        req.destroy();
+      } catch (_e) {}
+    }
+    const noticeTimeout = Math.min(30000, timeoutMs);
+    const pathHintFromUpload = FnHttpClient.firstUploadPathFromResponse(uploadRespText);
+    const noticePathHints: string[] = [];
+    if (pathHintBeforeUpload.length > 0) {
+      noticePathHints.push(pathHintBeforeUpload);
+    }
+    if (hintedFullPath.length > 0 && noticePathHints.indexOf(hintedFullPath) < 0) {
+      noticePathHints.push(hintedFullPath);
+    }
+    if (pathHintFromUpload.length > 0 && noticePathHints.indexOf(pathHintFromUpload) < 0) {
+      noticePathHints.push(pathHintFromUpload);
+    }
+    const noticeRes = await this.notifyPhotoUploaded(fileName, oneUri, noticeTimeout, noticePathHints);
+    let noticed = noticeRes.ok;
+    let failReason = noticeRes.message;
+    if (!noticed) {
+      // 上传成功但 notice 失败时，尝试用上传响应里的 photoId 做 restore 兼容兜底。
+      const uploadPhotoId = FnHttpClient.firstUploadPhotoIdFromResponse(uploadRespText);
+      if (uploadPhotoId.length > 0) {
+        noticed = await this.restoreUploadedPhoto(uploadPhotoId, noticeTimeout);
+        if (!noticed && failReason.length === 0) {
+          failReason = 'restore 补偿失败';
+        }
+      } else if (failReason.length === 0) {
+        failReason = 'notice 失败且未返回 photoId';
+      }
+    }
+    if (!noticed) {
+      const verified = await this.verifyUploadedAppeared(fileName, payload.byteLength);
+      if (verified) {
+        return { success: true, message: '上传成功（已入库）' };
+      }
+      const em = failReason.length > 0 ? `上传完成但入库通知失败：${failReason}` : '上传完成但入库通知失败';
+      return { success: false, message: em };
+    }
+    return { success: true };
   }
 }

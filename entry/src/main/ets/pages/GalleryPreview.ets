@@ -16,6 +16,7 @@ import { systemShare } from '@kit.ShareKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
+import { GalleryDeleteSyncStore } from '../album/GalleryDeleteSyncStore';
 import { GalleryListItem, GalleryPhotoDetailData } from '../model/FnApiTypes';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
@@ -68,6 +69,7 @@ struct GalleryPreview {
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
   @State private sharing: boolean = false;
+  @State private deleting: boolean = false;
   /** 右上角详情面板开关 */
   @State private detailsVisible: boolean = false;
   /** 详情请求加载态 */
@@ -96,6 +98,8 @@ struct GalleryPreview {
   @State private isDarkTheme: boolean = false;
 
   private itemSource: PreviewItemsDataSource = new PreviewItemsDataSource();
+  private previewItems: GalleryListItem[] = [];
+  private swiperCtrl: SwiperController = new SwiperController();
 
   // ── 生命周期 ──────────────────────────────────────────────────────────────
 
@@ -116,8 +120,9 @@ struct GalleryPreview {
 
   aboutToAppear(): void {
     this.baseUrl = GalleryPreviewNavStore.baseUrl;
-    this.itemSource.reloadAll(GalleryPreviewNavStore.items);
-    this.totalCount = GalleryPreviewNavStore.items.length;
+    this.previewItems = GalleryPreviewNavStore.items.slice();
+    this.itemSource.reloadAll(this.previewItems);
+    this.totalCount = this.previewItems.length;
     this.swiperIndex = GalleryPreviewNavStore.startIndex;
     this.isDarkTheme = this.colorMode === 1;
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
@@ -212,6 +217,90 @@ struct GalleryPreview {
     }
     const id = String(item.id).trim();
     return id.length > 0 ? id : '';
+  }
+
+  /** 删除后同步本地预览列表与导航缓存，并切换到相邻图片 */
+  private applyDeleteCurrentItem(): void {
+    if (this.swiperIndex < 0 || this.swiperIndex >= this.previewItems.length) {
+      return;
+    }
+    const deleted = this.previewItems[this.swiperIndex];
+    const deletedId = deleted?.id !== undefined && deleted?.id !== null ? String(deleted.id).trim() : '';
+    const oldIdx = this.swiperIndex;
+    this.previewItems.splice(oldIdx, 1);
+    const left = this.previewItems.length;
+    this.totalCount = left;
+    this.detailsVisible = false;
+    this.detailsData = undefined;
+    this.detailsPhotoId = '';
+    this.originalShowing = false;
+    // 同步给背后页面（主图库/分类图库）做增量删除，避免返回后整页刷新导致位置丢失。
+    if (deletedId.length > 0) {
+      GalleryDeleteSyncStore.markDeleted(deletedId);
+    }
+    if (left <= 0) {
+      this.itemSource.reloadAll([]);
+      GalleryPreviewNavStore.items = [];
+      GalleryPreviewNavStore.startIndex = 0;
+      this.toast('已移入回收站');
+      this.getUIContext().getRouter().back();
+      return;
+    }
+    // 删除的不是最后一张 → 显示下一张（即同位置）；删除最后一张 → 显示前一张
+    let targetIdx = oldIdx;
+    if (targetIdx >= left) {
+      targetIdx = left - 1;
+    }
+    this.swiperIndex = targetIdx;
+    this.itemSource.reloadAll(this.previewItems);
+    GalleryPreviewNavStore.items = this.previewItems.slice();
+    GalleryPreviewNavStore.startIndex = targetIdx;
+    // 使用 SwiperController 确保 Swiper 跳到目标位置（避免 index 未变化时 UI 不刷新）
+    setTimeout((): void => {
+      this.swiperCtrl.changeIndex(targetIdx, false);
+    }, 50);
+    this.toast('已移入回收站');
+  }
+
+  private async deleteCurrentItem(): Promise<void> {
+    if (this.deleting) {
+      return;
+    }
+    const id = this.currentItemId();
+    if (id.length === 0) {
+      this.toast('当前媒体无有效 ID');
+      return;
+    }
+    try {
+      const choice = await this.getUIContext().getPromptAction().showActionMenu({
+        title: '确认删除当前媒体？',
+        buttons: [
+          { text: '删除（移入回收站）', color: '#E5484D' },
+          { text: '取消', color: '#007AFF' }
+        ]
+      });
+      if (choice.index !== 0) {
+        return;
+      }
+    } catch (_e) {
+      return;
+    }
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.toast('未登录');
+      return;
+    }
+    this.deleting = true;
+    try {
+      const res = await client.addPhotoToRecycleBin(id, 20000);
+      if (!res.success) {
+        this.toast(res.message ?? '删除失败');
+        return;
+      }
+      this.applyDeleteCurrentItem();
+    } finally {
+      this.deleting = false;
+    }
   }
 
   private currentHasOriginal(): boolean {
@@ -743,7 +832,7 @@ struct GalleryPreview {
 
       // ── 内容区（Swiper 铺满整个屏幕，包括工具栏背后区域） ──────────────────
       if (this.totalCount > 0) {
-        Swiper() {
+        Swiper(this.swiperCtrl) {
           LazyForEach(this.itemSource, (item: GalleryListItem, idx: number) => {
             GalleryPreviewSlide({
               baseUrl: this.baseUrl,
@@ -759,7 +848,7 @@ struct GalleryPreview {
               onOriginalLoaded: (): void => { this.originalShowing = true; },
               onOriginalLoadFailed: (msg: string): void => { this.toast(msg); }
             })
-          }, (_item: GalleryListItem, i: number) => `gp_slide_${i}`)
+          }, (item: GalleryListItem, i: number) => `gp_${item.id}_${i}`)
         }
         .width('100%').height('100%')
         .index(this.swiperIndex).indicator(false).loop(false)
@@ -830,7 +919,8 @@ struct GalleryPreview {
           this.bottomAction($r('sys.symbol.download'), '下载', this.downloading,
             (): void => { this.downloadCurrentImage(); })
           this.bottomAction($r('sys.symbol.star'), '收藏', false, (): void => {}, true)
-          this.bottomAction($r('sys.symbol.trash'), '删除', false, (): void => {}, true)
+          this.bottomAction($r('sys.symbol.trash'), '删除', this.deleting,
+            (): void => { void this.deleteCurrentItem(); })
         }
         .width('100%')
         .backgroundColor(this.toolbarBg())

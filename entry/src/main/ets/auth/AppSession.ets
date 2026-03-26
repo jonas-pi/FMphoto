@@ -21,7 +21,8 @@ export class AppSession {
   static apply(s: StoredSession): void {
     AppSession.stored = s;
     const long = s.fnosLongToken !== undefined && s.fnosLongToken.length > 0 ? s.fnosLongToken : '';
-    AppSession.client = new FnHttpClient(s.baseUrl, s.token, long);
+    const signKey = s.wsSignKeyB64 !== undefined ? s.wsSignKeyB64 : '';
+    AppSession.client = new FnHttpClient(s.baseUrl, s.token, long, signKey);
   }
 
   static updateAlbumParentGuid(guid: string): void {

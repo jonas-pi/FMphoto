@@ -14,6 +14,7 @@ import {
 } from '../album/GalleryAlbumCommon';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import { GalleryDeleteSyncStore } from '../album/GalleryDeleteSyncStore';
 import { AppSession } from '../auth/AppSession';
 import { FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
@@ -122,6 +123,8 @@ struct CategoryGallery {
   private flatItems: GalleryListItem[] = [];
   /** 每组在 flatItems 中的起始偏移 */
   private groupOffsets: number[] = [];
+  /** 上次已处理的删除同步版本号 */
+  private handledDeleteSyncVersion: number = 0;
 
   onBackPress(): boolean {
     this.getUIContext().getRouter().back();
@@ -149,6 +152,7 @@ struct CategoryGallery {
   }
 
   onPageShow(): void {
+    this.applyDeleteSyncIfNeeded();
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBar();
   }
@@ -202,6 +206,62 @@ struct CategoryGallery {
       this.flatItems,
       base + idxInGroup
     );
+  }
+
+  private itemIdOf(it: GalleryListItem): string {
+    if (it.id === undefined || it.id === null) {
+      return '';
+    }
+    return String(it.id).trim();
+  }
+
+  /**
+   * 按当前 flatItems 重建分组与偏移，不触发路由重建，尽量保持滚动位置。
+   */
+  private rebuildByFlatItems(): void {
+    this.groups = groupByDate(this.flatItems);
+    this.groupOffsets = [];
+    let offset = 0;
+    for (let gi = 0; gi < this.groups.length; gi++) {
+      this.groupOffsets.push(offset);
+      offset += this.groups[gi].count;
+    }
+  }
+
+  /**
+   * 从预览页返回时，按删除同步仓做增量删除；
+   * 仅修改当前数据，不走整页重载，避免打断用户当前位置。
+   */
+  private applyDeleteSyncIfNeeded(): void {
+    if (this.handledDeleteSyncVersion === GalleryDeleteSyncStore.version) {
+      return;
+    }
+    const ids = GalleryDeleteSyncStore.snapshotIds();
+    if (ids.length === 0) {
+      this.handledDeleteSyncVersion = GalleryDeleteSyncStore.version;
+      return;
+    }
+    // 数据尚未就绪时不消费版本号，避免删除同步被提前“吃掉”。
+    if (this.flatItems.length === 0) {
+      return;
+    }
+    const kept: GalleryListItem[] = [];
+    let changed = false;
+    for (let i = 0; i < this.flatItems.length; i++) {
+      const id = this.itemIdOf(this.flatItems[i]);
+      if (id.length > 0 && ids.indexOf(id) >= 0) {
+        changed = true;
+        continue;
+      }
+      kept.push(this.flatItems[i]);
+    }
+    if (changed) {
+      this.flatItems = kept;
+      this.rebuildByFlatItems();
+      // 与当前页面会话源保持一致，避免二次进入时回弹已删项。
+      CategoryGalleryNavStore.items = kept.slice();
+    }
+    this.handledDeleteSyncVersion = GalleryDeleteSyncStore.version;
   }
 
   @Builder
