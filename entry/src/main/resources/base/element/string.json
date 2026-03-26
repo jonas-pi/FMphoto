@@ -1,0 +1,160 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "飞牛 NAS 客户端（鸿蒙）"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "FNOS for OpenHarmony"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "飞牛客户端"
+    },
+    {
+      "name": "perm_internet_reason",
+      "value": "访问局域网或远程 NAS 上的飞牛服务"
+    },
+    {
+      "name": "perm_get_network_info_reason",
+      "value": "供内置网页引擎感知网络状态，减少连接异常日志"
+    },
+    {
+      "name": "perm_keep_background_reason",
+      "value": "在后台短时保持与 NAS 的数据同步与传输能力（系统管控配额，符合 Background Tasks Kit）"
+    },
+    {
+      "name": "login_title",
+      "value": "登录飞牛 NAS"
+    },
+    {
+      "name": "hint_server",
+      "value": "IP/域名或完整 URL；未写端口时默认 HTTP:5666、HTTPS:5667；IPv6 建议 [fe80::1] 或 [fe80::1]:端口"
+    },
+    {
+      "name": "use_https",
+      "value": "使用 HTTPS"
+    },
+    {
+      "name": "hint_username",
+      "value": "用户名"
+    },
+    {
+      "name": "hint_password",
+      "value": "密码"
+    },
+    {
+      "name": "login_action",
+      "value": "登录"
+    },
+    {
+      "name": "logging_in",
+      "value": "登录中…"
+    },
+    {
+      "name": "cert_dialog_title",
+      "value": "证书不可信"
+    },
+    {
+      "name": "cert_dialog_message",
+      "value": "无法校验服务器证书（常见于自签证书）。是否信任当前地址并继续？"
+    },
+    {
+      "name": "cancel",
+      "value": "取消"
+    },
+    {
+      "name": "trust",
+      "value": "信任并继续"
+    },
+    {
+      "name": "fnid_hint",
+      "value": "FN ID 远程登录需 Web OAuth，当前版本请使用局域网 IP/域名。"
+    },
+    {
+      "name": "tab_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_album",
+      "value": "相册"
+    },
+    {
+      "name": "tab_me",
+      "value": "我的"
+    },
+    {
+      "name": "settings",
+      "value": "设置"
+    },
+    {
+      "name": "album_parent_hint",
+      "value": "请在设置中填写媒体库目录的 parent_guid（可从飞牛影视 Web 调试或接口文档获取），用于拉取 item/list。"
+    },
+    {
+      "name": "album_empty",
+      "value": "暂无条目"
+    },
+    {
+      "name": "reload",
+      "value": "刷新"
+    },
+    {
+      "name": "logout",
+      "value": "退出登录"
+    },
+    {
+      "name": "album_parent_label",
+      "value": "相册/媒体库 parent_guid"
+    },
+    {
+      "name": "save",
+      "value": "保存"
+    },
+    {
+      "name": "fnid_deferred",
+      "value": "FN ID（OAuth）登录将在后续版本提供。"
+    },
+    {
+      "name": "home_session_missing",
+      "value": "未获取到登录会话，网页无法加载。"
+    },
+    {
+      "name": "home_session_hint",
+      "value": "请返回重新登录。若已登录仍空白，请确认地址端口（HTTPS 常见 5667），并尝试底部「我的」页。"
+    },
+    {
+      "name": "back_to_login",
+      "value": "返回登录"
+    },
+    {
+      "name": "gallery_prev_day",
+      "value": "上一天"
+    },
+    {
+      "name": "gallery_next_day",
+      "value": "下一天"
+    },
+    {
+      "name": "gallery_refresh",
+      "value": "刷新"
+    },
+    {
+      "name": "gallery_loading",
+      "value": "加载相册…"
+    },
+    {
+      "name": "gallery_empty",
+      "value": "当日无照片"
+    },
+    {
+      "name": "gallery_thumb_alt",
+      "value": "缩略图"
+    },
+    {
+      "name": "web_reload",
+      "value": "刷新网页"
+    }
+  ]
+}
