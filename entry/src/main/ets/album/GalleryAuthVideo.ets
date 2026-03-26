@@ -32,7 +32,12 @@ const SPEED_OPTIONS: SpeedOption[] = [
 @Component
 export struct GalleryAuthVideo {
   @Prop @Watch('onUrlChange') videoUrl: string = '';
-  @State private hint: string = '加载中…';
+  /** 当前是否为 Swiper 可见页；不可见时暂停以避免后台串音 */
+  @Prop @Watch('onActiveChanged') active: boolean = true;
+  /** 底部额外安全间距，由父页面传入以避开底部工具栏 */
+  @Prop bottomPadding: number = 0;
+  @State private videoLoading: boolean = false;
+  @State private hint: string = '';
   @State private controlsVisible: boolean = true;
   @State private isPlaying: boolean = false;
   @State private currentMs: number = 0;
@@ -62,10 +67,33 @@ export struct GalleryAuthVideo {
     this.seekResumePending = false;
     this.speedRate = 1.0;
     this.longPressSpeeding = false;
-    if (this.videoUrl.length > 0) {
-      this.hint = '加载中…';
-    }
+    this.hint = '';
+    this.videoLoading = this.active && this.videoUrl.length > 0;
     void this.startPlay();
+  }
+
+  onActiveChanged(): void {
+    const p = this.avPlayer;
+    if (!this.active) {
+      this.videoLoading = false;
+      this.isPlaying = false;
+      if (p !== null) {
+        p.pause().catch((): void => {});
+      }
+      return;
+    }
+    // 恢复到可见页：优先续播已有实例；没有实例则按正常链路重建
+    if (this.videoUrl.length === 0) {
+      return;
+    }
+    if (p !== null) {
+      p.play().catch((): void => {});
+      return;
+    }
+    if (this.surfaceReady) {
+      this.videoLoading = true;
+      void this.startPlay();
+    }
   }
 
   aboutToDisappear(): void {
@@ -208,7 +236,7 @@ export struct GalleryAuthVideo {
   private async startPlay(): Promise<void> {
     const gen = ++this.playGen;
 
-    if (!this.surfaceReady || this.videoUrl.length === 0) {
+    if (!this.active || !this.surfaceReady || this.videoUrl.length === 0) {
       return;
     }
     const surfaceId: string = this.xController.getXComponentSurfaceId();
@@ -226,7 +254,11 @@ export struct GalleryAuthVideo {
     if (gen !== this.playGen) { return; }
 
     const client = AppSession.getClient();
-    if (client === null) { this.hint = '未登录'; return; }
+    if (client === null) {
+      this.videoLoading = false;
+      this.hint = '未登录';
+      return;
+    }
 
     // 获取鉴权头
     let headers: Record<string, string>;
@@ -235,6 +267,7 @@ export struct GalleryAuthVideo {
     } catch (e) {
       if (gen !== this.playGen) { return; }
       hilog.error(DOMAIN, TAG, 'getHeaders err: %{public}s', String(e));
+      this.videoLoading = false;
       this.hint = '获取鉴权头失败';
       return;
     }
@@ -247,6 +280,7 @@ export struct GalleryAuthVideo {
     } catch (e) {
       if (gen !== this.playGen) { return; }
       hilog.error(DOMAIN, TAG, 'createAVPlayer err: %{public}s', String(e));
+      this.videoLoading = false;
       this.hint = '播放器创建失败';
       return;
     }
@@ -260,6 +294,7 @@ export struct GalleryAuthVideo {
     player.on('error', (err: Error): void => {
       hilog.error(DOMAIN, TAG, 'avplayer error: %{public}s', String(err));
       if (gen === this.playGen) {
+        this.videoLoading = false;
         this.hint = '播放失败';
         this.isPlaying = false;
       }
@@ -291,24 +326,30 @@ export struct GalleryAuthVideo {
         player.prepare().catch((e: Error): void => {
           if (gen !== this.playGen) { return; }
           hilog.error(DOMAIN, TAG, 'prepare err: %{public}s', String(e));
+          this.videoLoading = false;
           this.hint = '视频准备失败';
         });
       } else if (state === 'prepared') {
         this.durationMs = player.duration > 0 ? player.duration : this.durationMs;
         this.applyContainMode(player);
         this.applySpeed(player, this.speedRate);
-        player.play().catch((e: Error): void => {
-          if (gen !== this.playGen) { return; }
-          hilog.error(DOMAIN, TAG, 'play err: %{public}s', String(e));
-          this.hint = '视频播放失败';
-        });
+        if (this.active) {
+          player.play().catch((e: Error): void => {
+            if (gen !== this.playGen) { return; }
+            hilog.error(DOMAIN, TAG, 'play err: %{public}s', String(e));
+            this.videoLoading = false;
+            this.hint = '视频播放失败';
+          });
+        }
       } else if (state === 'playing') {
+        this.videoLoading = false;
         this.hint = '';
         this.isPlaying = true;
       } else if (state === 'paused' || state === 'completed' || state === 'stopped') {
         this.isPlaying = false;
       } else if (state === 'error') {
         hilog.error(DOMAIN, TAG, 'state error');
+        this.videoLoading = false;
         this.hint = '播放失败';
         this.isPlaying = false;
       }
@@ -323,6 +364,7 @@ export struct GalleryAuthVideo {
     } catch (e) {
       if (gen !== this.playGen) { return; }
       hilog.error(DOMAIN, TAG, 'setMediaSource err: %{public}s', String(e));
+      this.videoLoading = false;
       this.hint = '无法加载视频';
     }
   }
@@ -370,11 +412,17 @@ export struct GalleryAuthVideo {
           this.surfaceReady = false;
         });
 
-      if (this.hint.length > 0) {
+      if (this.videoLoading) {
+        Column({ space: 12 }) {
+          LoadingProgress().width(48).height(48).color(Color.White)
+        }
+        .hitTestBehavior(HitTestMode.None)
+      } else if (this.hint.length > 0) {
         Text(this.hint)
           .fontSize(14)
           .fontColor('#CCCCCC')
           .padding(16)
+          .hitTestBehavior(HitTestMode.None)
       }
 
       if (this.controlsVisible) {
@@ -455,7 +503,7 @@ export struct GalleryAuthVideo {
             .alignItems(VerticalAlign.Center)
           }
           .width('100%')
-          .padding({ left: 12, right: 12, bottom: 18, top: 10 })
+          .padding({ left: 12, right: 12, bottom: 18 + this.bottomPadding, top: 10 })
           .backgroundColor('#33000000')
         }
         .width('100%')
@@ -465,5 +513,8 @@ export struct GalleryAuthVideo {
     }
     .width('100%')
     .height('100%')
+    // 透明背景：XComponent 表面始终为黑（视频渲染区域），四周留白区域由父组件
+    // GalleryPreviewSlide 的主题背景透出（深色模式=黑，浅色模式=白），跟随系统主题
+    .backgroundColor(Color.Transparent)
   }
 }

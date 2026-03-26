@@ -19,7 +19,9 @@ import { SessionPreferences } from '../auth/SessionPreferences';
 import {
   GalleryGetListData,
   GalleryListItem,
-  MagicSearchItem
+  MagicSearchItem,
+  MediaCategoryItem,
+  SmartCategoryItem
 } from '../model/FnApiTypes';
 import {
   GalleryNetworkThumb,
@@ -31,6 +33,7 @@ import {
 } from './GalleryAlbumCommon';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
+import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryTab';
@@ -151,6 +154,16 @@ export struct GalleryAlbumTab {
   @State private searchResults: GalleryListItem[] = [];
   @State private searchLoading: boolean = false;
   @State private searchError: string = '';
+  @State private inCategoryMode: boolean = false;
+  @State private categoryLoading: boolean = false;
+  @State private categoryOpening: boolean = false;
+  @State private categoryError: string = '';
+  @State private categoryItems: MediaCategoryItem[] = [];
+  @State private inSmartCategoryMode: boolean = false;
+  @State private smartCategoryLoading: boolean = false;
+  @State private smartCategoryError: string = '';
+  @State private smartSceneItems: SmartCategoryItem[] = [];
+  @State private smartInfoItems: SmartCategoryItem[] = [];
   /** WaterFlow + LazyForEach 数据源（与 sections 同步） */
   private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
@@ -237,6 +250,8 @@ export struct GalleryAlbumTab {
       return;
     }
     this.inSearchMode = true;
+    this.inCategoryMode = false;
+    this.inSmartCategoryMode = false;
     this.searchLoading = true;
     this.searchError = '';
     this.searchResults = [];
@@ -293,6 +308,242 @@ export struct GalleryAlbumTab {
     this.searchResults = [];
     this.searchError = '';
     this.searchLoading = false;
+  }
+
+  private clearCategory(): void {
+    this.inCategoryMode = false;
+    this.categoryLoading = false;
+    this.categoryError = '';
+    this.categoryItems = [];
+  }
+
+  private clearSmartCategory(): void {
+    this.inSmartCategoryMode = false;
+    this.smartCategoryLoading = false;
+    this.smartCategoryError = '';
+    this.smartSceneItems = [];
+    this.smartInfoItems = [];
+  }
+
+  private parseCategoryMedia(item: MediaCategoryItem): GalleryListItem[] {
+    const raw = item.list ?? item.items;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    const out: GalleryListItem[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const it = raw[i];
+      if (typeof it === 'object' && it !== null) {
+        out.push(it as GalleryListItem);
+      }
+    }
+    return out;
+  }
+
+  private categoryTitle(item: MediaCategoryItem): string {
+    // normalizeCategoryItem 已将名称统一映射到 item.name
+    const t = item.name ?? item.title ?? item.label;
+    return t !== undefined && t.length > 0 ? t : '未命名分类';
+  }
+
+  private categoryCount(item: MediaCategoryItem): number {
+    // normalizeCategoryItem 已将数量统一映射到 item.count
+    const c = item.count ?? item.total;
+    return c !== undefined && Number.isFinite(Number(c)) ? Math.max(0, Math.floor(Number(c))) : 0;
+  }
+
+  private categoryCover(item: MediaCategoryItem): string {
+    // normalizeCategoryItem 已将封面 URL 统一映射到 item.cover
+    if (item.cover !== undefined && item.cover.length > 0) {
+      return item.cover;
+    }
+    if (item.thumb !== undefined && item.thumb.length > 0) {
+      return item.thumb;
+    }
+    if (typeof item.thumbnail === 'string' && (item.thumbnail as string).length > 0) {
+      return item.thumbnail as string;
+    }
+    if (typeof item.thumbnail === 'object' && item.thumbnail !== null) {
+      const tb = item.thumbnail;
+      const u = tb.mUrl ?? tb.sUrl ?? tb.xsUrl ?? tb.xxsUrl ?? tb.originalUrl;
+      if (u !== undefined && u.length > 0) {
+        return u;
+      }
+    }
+    return '';
+  }
+
+  private async loadMediaCategories(): Promise<void> {
+    this.inSearchMode = false;
+    this.inCategoryMode = true;
+    this.inSmartCategoryMode = false;
+    this.categoryLoading = true;
+    this.categoryError = '';
+    this.categoryItems = [];
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.categoryError = '未登录';
+      this.categoryLoading = false;
+      return;
+    }
+    try {
+      const res = await client.getMediaCategoryList();
+      if (!res.success || res.data === undefined) {
+        this.categoryError = res.message ?? '媒体分类加载失败';
+        this.categoryLoading = false;
+        return;
+      }
+      const raw = res.data.list ?? res.data.items ?? [];
+      const out: MediaCategoryItem[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        const el = raw[i];
+        if (typeof el === 'object' && el !== null) {
+          out.push(el as MediaCategoryItem);
+        }
+      }
+      this.categoryItems = out;
+      if (out.length === 0) {
+        this.categoryError = '暂无媒体分类（接口返回为空或字段不匹配）';
+      }
+    } catch (e) {
+      this.categoryError = String(e) || '媒体分类加载异常';
+    }
+    this.categoryLoading = false;
+  }
+
+  private smartCategoryName(item: SmartCategoryItem): string {
+    const n = item.name;
+    return n !== undefined && n.length > 0 ? n : '未命名分类';
+  }
+
+  private smartCategoryCount(item: SmartCategoryItem): number {
+    const directVals: Array<number | undefined> = [
+      item.count,
+      item.total,
+      item.itemCount,
+      item.item_count,
+      item.photoCount,
+      item.photo_count,
+      item.num,
+      item.size
+    ];
+    for (let i = 0; i < directVals.length; i++) {
+      const v = directVals[i];
+      if (v !== undefined && Number.isFinite(Number(v))) {
+        return Math.max(0, Math.floor(Number(v)));
+      }
+    }
+    // 兼容服务端字段变更：从原始对象中按常见计数字段名兜底提取
+    const raw = item as unknown as Record<string, string | number | Object | undefined>;
+    const keys: string[] = ['count', 'total', 'itemCount', 'item_count', 'photoCount', 'photo_count', 'num', 'size'];
+    for (let i = 0; i < keys.length; i++) {
+      const v = raw[keys[i]];
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        return Math.max(0, Math.floor(v));
+      }
+      if (typeof v === 'string') {
+        const n = Number(v);
+        if (Number.isFinite(n)) {
+          return Math.max(0, Math.floor(n));
+        }
+      }
+    }
+    return 0;
+  }
+
+  private smartCategoryCover(item: SmartCategoryItem): string {
+    const p = item.poster;
+    if (p === undefined || p === null) {
+      return '';
+    }
+    const id = p.photoId !== undefined ? String(p.photoId) : '';
+    const uuid = p.uuid !== undefined ? p.uuid : '';
+    if (id.length === 0 || uuid.length === 0) {
+      return '';
+    }
+    return `/p/api/v1/stream/p/t/${id}/s/${uuid}`;
+  }
+
+  private async loadSmartCategories(): Promise<void> {
+    this.inSearchMode = false;
+    this.inCategoryMode = false;
+    this.inSmartCategoryMode = true;
+    this.smartCategoryLoading = true;
+    this.smartCategoryError = '';
+    this.smartSceneItems = [];
+    this.smartInfoItems = [];
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.smartCategoryError = '未登录';
+      this.smartCategoryLoading = false;
+      return;
+    }
+    try {
+      const sceneRes = await client.getSmartRecCategories('scene', -1);
+      const infoRes = await client.getSmartRecCategories('information', -1);
+      const sceneRaw = sceneRes.success && sceneRes.data !== undefined ? (sceneRes.data.list ?? sceneRes.data.items ?? []) : [];
+      const infoRaw = infoRes.success && infoRes.data !== undefined ? (infoRes.data.list ?? infoRes.data.items ?? []) : [];
+      const sceneOut: SmartCategoryItem[] = [];
+      const infoOut: SmartCategoryItem[] = [];
+      for (let i = 0; i < sceneRaw.length; i++) {
+        const el = sceneRaw[i];
+        if (typeof el === 'object' && el !== null) {
+          sceneOut.push(el as SmartCategoryItem);
+        }
+      }
+      for (let i = 0; i < infoRaw.length; i++) {
+        const el = infoRaw[i];
+        if (typeof el === 'object' && el !== null) {
+          infoOut.push(el as SmartCategoryItem);
+        }
+      }
+      this.smartSceneItems = sceneOut;
+      this.smartInfoItems = infoOut;
+      if (sceneOut.length === 0 && infoOut.length === 0) {
+        this.smartCategoryError = '暂无智能分类（请先在系统设置中开启智能识别）';
+      }
+    } catch (e) {
+      this.smartCategoryError = String(e) || '智能分类加载异常';
+    }
+    this.smartCategoryLoading = false;
+  }
+
+  private toast(msg: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: msg });
+    } catch (_e) {
+    }
+  }
+
+  private async openCategory(cat: MediaCategoryItem): Promise<void> {
+    if (this.categoryOpening) {
+      return;
+    }
+    this.categoryOpening = true;
+    const catTitle = this.categoryTitle(cat);
+
+    try {
+      // 优先用分类项自带的媒体列表
+      const local = this.parseCategoryMedia(cat);
+      if (local.length > 0) {
+        CategoryGalleryNavStore.open(this.baseUrl, catTitle, local, this.getUIContext());
+        return;
+      }
+      const client = AppSession.getClient();
+      if (client === null) {
+        this.toast('未登录');
+        return;
+      }
+      // 使用 search/results，首选 {keyword:"", filters:[{file_type}], antiFilters:[]} 格式
+      const fetched = await client.searchResultsByCategory(cat);
+      if (!fetched.success || fetched.data === undefined || fetched.data.length === 0) {
+        this.toast(fetched.message ?? '该分类暂无可预览媒体');
+        return;
+      }
+      CategoryGalleryNavStore.open(this.baseUrl, catTitle, fetched.data, this.getUIContext());
+    } finally {
+      this.categoryOpening = false;
+    }
   }
 
   // ── 生命周期 ─────────────────────────────────────────────────────────────
@@ -578,12 +829,12 @@ export struct GalleryAlbumTab {
     Column() {
       // ── 顶部标题栏 ──────────────────────────────────────────────────────────
       Row() {
-        Text(this.inSearchMode ? 'AI 搜索结果' : '图库')
+        Text(this.inSearchMode ? 'AI 搜索结果' : (this.inCategoryMode ? '媒体分类' : (this.inSmartCategoryMode ? '智能分类' : '图库')))
           .fontSize(22)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
         Blank()
-        if (!this.inSearchMode) {
+        if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode) {
           Button($r('app.string.gallery_refresh'), { type: ButtonType.Capsule, stateEffect: true })
             .fontSize(14)
             .height(36)
@@ -596,6 +847,8 @@ export struct GalleryAlbumTab {
             .height(36)
             .onClick((): void => {
               this.clearSearch();
+              this.clearCategory();
+              this.clearSmartCategory();
             })
         }
       }
@@ -603,36 +856,62 @@ export struct GalleryAlbumTab {
       .alignItems(VerticalAlign.Center)
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
-      // ── 搜索栏 ──────────────────────────────────────────────────────────────
-      Row({ space: 8 }) {
-        TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
-          .layoutWeight(1)
+      // ── 搜索栏（仅在“图库”主页面显示）─────────────────────────────────────────
+      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode) {
+        Row({ space: 8 }) {
+          TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(20)
+            .backgroundColor($r('app.color.card_background'))
+            .fontSize(14)
+            .placeholderColor($r('app.color.text_secondary'))
+            .onChange((val: string): void => {
+              this.searchQuery = val;
+            })
+            .onSubmit((): void => {
+              void this.runSearch(this.searchQuery);
+            })
+          Button() {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(18)
+              .fontColor([$r('app.color.icon_primary')])
+          }
+          .width(40)
           .height(40)
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
-          .fontSize(14)
-          .placeholderColor($r('app.color.text_secondary'))
-          .onChange((val: string): void => {
-            this.searchQuery = val;
-          })
-          .onSubmit((): void => {
+          .onClick((): void => {
             void this.runSearch(this.searchQuery);
           })
-        Button() {
-          SymbolGlyph($r('sys.symbol.magnifyingglass'))
-            .fontSize(18)
-            .fontColor([$r('app.color.icon_primary')])
+          Button() {
+            Text('分类')
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .height(40)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_background'))
+          .onClick((): void => {
+            void this.loadMediaCategories();
+          })
+          Button() {
+            Text('智能')
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .height(40)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_background'))
+          .onClick((): void => {
+            void this.loadSmartCategories();
+          })
         }
-        .width(40)
-        .height(40)
-        .borderRadius(20)
-        .backgroundColor($r('app.color.card_background'))
-        .onClick((): void => {
-          void this.runSearch(this.searchQuery);
-        })
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 8 })
 
       // ── 搜索结果视图 ──────────────────────────────────────────────────────────
       if (this.inSearchMode) {
@@ -687,8 +966,217 @@ export struct GalleryAlbumTab {
         .layoutWeight(1)
       }
 
+      if (this.inCategoryMode) {
+        Column() {
+          if (this.categoryLoading) {
+            Row() {
+              LoadingProgress().width(28).height(28)
+              Text('媒体分类加载中…').fontSize(14).fontColor($r('app.color.text_secondary')).margin({ left: 10 })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding({ top: 40 })
+          } else if (this.categoryError.length > 0) {
+            Text(this.categoryError)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 40, left: 24, right: 24 })
+          } else {
+            Stack({ alignContent: Alignment.Center }) {
+              Grid() {
+                ForEach(this.categoryItems, (cat: MediaCategoryItem, idx: number) => {
+                  GridItem() {
+                    Column({ space: 8 }) {
+                      GalleryNetworkThumb({
+                        uri: nasUrl(this.baseUrl, this.categoryCover(cat)),
+                        isVideo: false,
+                        isGif: false,
+                      })
+                        .width('100%')
+                        .aspectRatio(1)
+                      Text(this.categoryTitle(cat))
+                        .fontSize(13)
+                        .fontColor($r('app.color.text_primary'))
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        .width('100%')
+                      Text(`${this.categoryCount(cat)} 项`)
+                        .fontSize(11)
+                        .fontColor($r('app.color.text_secondary'))
+                        .width('100%')
+                    }
+                    .width('100%')
+                    .padding({ left: 2, right: 2, bottom: 8 })
+                    .onClick((): void => {
+                      void this.openCategory(cat);
+                    })
+                  }
+                }, (cat: MediaCategoryItem, i: number) => `mc_${i}_${this.categoryTitle(cat)}`)
+              }
+              .columnsTemplate('1fr 1fr')
+              .columnsGap(8)
+              .rowsGap(8)
+              .width('100%')
+              .height('100%')
+              .padding({ left: 12, right: 12, top: 8 })
+              .scrollBar(BarState.Auto)
+              .edgeEffect(EdgeEffect.Spring)
+
+              // 点击分类后等待网络响应时的加载遮罩
+              if (this.categoryOpening) {
+                Column({ space: 12 }) {
+                  LoadingProgress().width(48).height(48).color(Color.White)
+                  Text('加载中…')
+                    .fontSize(14)
+                    .fontColor(Color.White)
+                }
+                .width('100%')
+                .height('100%')
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+                .backgroundColor('#80000000')
+                .hitTestBehavior(HitTestMode.Block)
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }
+
+      if (this.inSmartCategoryMode) {
+        Column() {
+          if (this.smartCategoryLoading) {
+            Row() {
+              LoadingProgress().width(28).height(28)
+              Text('智能分类加载中…').fontSize(14).fontColor($r('app.color.text_secondary')).margin({ left: 10 })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding({ top: 40 })
+          } else if (this.smartCategoryError.length > 0) {
+            Text(this.smartCategoryError)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 40, left: 24, right: 24 })
+          } else {
+            List() {
+              if (this.smartSceneItems.length > 0) {
+                ListItem() {
+                  Text('场景事物')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+                    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+                }
+                ListItem() {
+                  Grid() {
+                    ForEach(this.smartSceneItems, (item: SmartCategoryItem, idx: number) => {
+                      GridItem() {
+                        Column({ space: 8 }) {
+                          GalleryNetworkThumb({
+                            uri: nasUrl(this.baseUrl, this.smartCategoryCover(item)),
+                            isVideo: false,
+                            isGif: false,
+                          })
+                            .width('100%')
+                            .aspectRatio(1)
+                          Text(this.smartCategoryName(item))
+                            .fontSize(13)
+                            .fontColor($r('app.color.text_primary'))
+                            .maxLines(1)
+                            .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            .width('100%')
+                          Text('点击发起AI搜索')
+                            .fontSize(11)
+                            .fontColor($r('app.color.text_secondary'))
+                            .width('100%')
+                        }
+                        .width('100%')
+                        .padding({ left: 2, right: 2, bottom: 8 })
+                        .onClick((): void => {
+                          this.searchQuery = this.smartCategoryName(item);
+                          void this.runSearch(this.smartCategoryName(item));
+                        })
+                      }
+                    }, (_item: SmartCategoryItem, i: number) => `sc_scene_${i}`)
+                  }
+                  .columnsTemplate('1fr 1fr')
+                  .columnsGap(8)
+                  .rowsGap(8)
+                  .width('100%')
+                  .padding({ left: 12, right: 12 })
+                }
+              }
+              if (this.smartInfoItems.length > 0) {
+                ListItem() {
+                  Text('资料记录')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+                    .padding({ left: 14, right: 14, top: 16, bottom: 8 })
+                }
+                ListItem() {
+                  Grid() {
+                    ForEach(this.smartInfoItems, (item: SmartCategoryItem, idx: number) => {
+                      GridItem() {
+                        Column({ space: 8 }) {
+                          GalleryNetworkThumb({
+                            uri: nasUrl(this.baseUrl, this.smartCategoryCover(item)),
+                            isVideo: false,
+                            isGif: false,
+                          })
+                            .width('100%')
+                            .aspectRatio(1)
+                          Text(this.smartCategoryName(item))
+                            .fontSize(13)
+                            .fontColor($r('app.color.text_primary'))
+                            .maxLines(1)
+                            .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            .width('100%')
+                          Text('点击发起AI搜索')
+                            .fontSize(11)
+                            .fontColor($r('app.color.text_secondary'))
+                            .width('100%')
+                        }
+                        .width('100%')
+                        .padding({ left: 2, right: 2, bottom: 8 })
+                        .onClick((): void => {
+                          this.searchQuery = this.smartCategoryName(item);
+                          void this.runSearch(this.smartCategoryName(item));
+                        })
+                      }
+                    }, (_item: SmartCategoryItem, i: number) => `sc_info_${i}`)
+                  }
+                  .columnsTemplate('1fr 1fr')
+                  .columnsGap(8)
+                  .rowsGap(8)
+                  .width('100%')
+                  .padding({ left: 12, right: 12, bottom: 10 })
+                }
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+            .divider({ strokeWidth: 0 })
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }
+
       // ── 图库视图 ──────────────────────────────────────────────────────────────
-      if (!this.inSearchMode) {
+      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode) {
         if (this.bootLoading) {
           Column({ space: 8 }) {
             ForEach([0, 1, 2, 3], (row: number) => {

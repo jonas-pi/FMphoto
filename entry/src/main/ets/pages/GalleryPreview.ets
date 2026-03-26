@@ -11,12 +11,12 @@
 import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 // picker.PhotoViewPicker.save() 通过系统弹窗让用户选择保存位置，无需 WRITE_IMAGEVIDEO 等受限权限
-import { fileIo, picker } from '@kit.CoreFileKit';
+import { fileIo, picker, fileUri as fileUriUtil } from '@kit.CoreFileKit';
 import { systemShare } from '@kit.ShareKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryListItem } from '../model/FnApiTypes';
-import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb } from '../album/GalleryAlbumCommon';
+import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
 
 /** 与 LazyForEach 配套的轻量数据源 */
@@ -56,6 +56,8 @@ struct GalleryPreview {
   @State private loadOriginalReq: boolean = false;
   @State private downloading: boolean = false;
   @State private sharing: boolean = false;
+  /** 底部工具栏实测高度（初始值 80vp 防止第一帧进度条与按钮重叠，onAreaChange 后更新为实测值） */
+  @State private bottomBarHeight: number = 80;
   /** 当前图片是否已切换到原图（用于隐藏"原图"按钮） */
   @State private originalShowing: boolean = false;
   /**
@@ -104,6 +106,10 @@ struct GalleryPreview {
   }
 
   aboutToDisappear(): void {
+    const client = AppSession.getClient();
+    if (client !== null) {
+      client.cancelPendingRequests();
+    }
     GalleryPreviewNavStore.clear();
   }
 
@@ -111,6 +117,7 @@ struct GalleryPreview {
 
   private applySystemBar(): void {
     try {
+      // 状态栏/导航栏始终跟随系统深浅色，不再按视频页强制纯黑
       const dark = this.colorMode === 1;
       const bg = dark ? '#FF000000' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
@@ -136,14 +143,23 @@ struct GalleryPreview {
    */
   private pageBg(): string { return this.isDark() ? '#FF000000' : '#FFF5F5F5'; }
 
-  /** 工具栏底色（完全不透明） */
-  private toolbarBg(): string { return this.isDark() ? '#FF000000' : '#FFF5F5F5'; }
+  /** 工具栏底色：视频页始终深色半透明（与黑色视频背景保持一致），图片页跟随系统主题 */
+  private toolbarBg(): string {
+    if (this.currentItemIsVideo()) { return '#CC000000'; }
+    return this.isDark() ? '#FF000000' : '#FFF5F5F5';
+  }
 
-  /** 工具栏前景色（文字/图标） */
-  private fgColor(): ResourceColor { return this.isDark() ? Color.White : Color.Black; }
+  /** 工具栏前景色（文字/图标）：视频页工具栏始终深色背景，前景色强制白色 */
+  private fgColor(): ResourceColor {
+    if (this.currentItemIsVideo()) { return Color.White; }
+    return this.isDark() ? Color.White : Color.Black;
+  }
 
-  /** 圆形按钮背景色 */
-  private btnBg(): string { return this.isDark() ? '#33FFFFFF' : '#22000000'; }
+  /** 圆形按钮背景色：视频页工具栏始终深色，按钮用亮色遮罩 */
+  private btnBg(): string {
+    if (this.currentItemIsVideo()) { return '#33FFFFFF'; }
+    return this.isDark() ? '#33FFFFFF' : '#22000000';
+  }
 
   // ── 工具 ─────────────────────────────────────────────────────────────────
 
@@ -157,6 +173,11 @@ struct GalleryPreview {
   private currentItem(): GalleryListItem | null {
     if (this.totalCount === 0 || this.swiperIndex >= this.totalCount) { return null; }
     return this.itemSource.getData(this.swiperIndex);
+  }
+
+  private currentItemIsVideo(): boolean {
+    const item = this.currentItem();
+    return item !== null && isVideoItem(item);
   }
 
   private currentHasOriginal(): boolean {
@@ -173,6 +194,17 @@ struct GalleryPreview {
     if (ext === 'png') { return 'png'; }
     if (ext === 'webp') { return 'webp'; }
     return 'jpg';
+  }
+
+  /** 当前视频扩展名（用于下载文件名）；未知时回退 mp4 */
+  private currentVideoExt(): string {
+    const item = this.currentItem();
+    if (item === null) { return 'mp4'; }
+    const ext = itemFileExt(item);
+    if (ext === 'mp4' || ext === 'mov' || ext === 'm4v' || ext === 'mkv' || ext === 'avi' || ext === 'webm') {
+      return ext;
+    }
+    return 'mp4';
   }
 
   private titleCounter(): string {
@@ -208,6 +240,18 @@ struct GalleryPreview {
     return client.fetchGalleryImageBuffer(imgUrl, useOriginal ? 60000 : 15000);
   }
 
+  /** 获取当前视频 buffer（直链视频流，不再走图片缩略图/原图链路） */
+  private async fetchCurrentVideoBuffer(): Promise<ArrayBuffer | undefined> {
+    const item = this.currentItem();
+    if (item === null) { return undefined; }
+    const videoUrl = nasUrl(this.baseUrl, pickVideo(item));
+    if (videoUrl.length === 0) { return undefined; }
+    const client = AppSession.getClient();
+    if (client === null) { return undefined; }
+    // 视频下载通常更大，给更长超时
+    return client.fetchGalleryImageBuffer(videoUrl, 120000);
+  }
+
   // ── 下载 ─────────────────────────────────────────────────────────────────
 
   private downloadCurrentImage(): void {
@@ -219,9 +263,12 @@ struct GalleryPreview {
   }
 
   private async doDownload(): Promise<void> {
-    // ① 若有原图可选，弹出质量选择菜单（本地 UI，立即响应）
+    const isVideo = this.currentItemIsVideo();
+
+    // ① 图片：若有原图可选，弹出质量选择菜单（本地 UI，立即响应）
+    //    视频：不弹质量选择，直接下载原视频文件。
     let useOriginal = false;
-    if (this.currentHasOriginal()) {
+    if (!isVideo && this.currentHasOriginal()) {
       try {
         const choice = await this.getUIContext().getPromptAction().showActionMenu({
           title: '选择下载质量',
@@ -241,8 +288,8 @@ struct GalleryPreview {
     let saveUri = '';
     try {
       const saveOptions = new picker.PhotoSaveOptions();
-      const ext = this.currentImageExt();
-      saveOptions.newFileNames = [`photo_${Date.now()}.${ext}`];
+      const ext = isVideo ? this.currentVideoExt() : this.currentImageExt();
+      saveOptions.newFileNames = [`${isVideo ? 'video' : 'photo'}_${Date.now()}.${ext}`];
       const uris = await new picker.PhotoViewPicker().save(saveOptions);
       if (uris.length === 0) {
         this.toast('已取消保存');
@@ -254,10 +301,12 @@ struct GalleryPreview {
       return;
     }
 
-    // ③ 用户已选择目标位置，按所选质量下载并写入
-    const buf = await this.fetchCurrentImageBuffer(useOriginal);
+    // ③ 用户已选择目标位置，按媒体类型下载并写入
+    const buf = isVideo
+      ? await this.fetchCurrentVideoBuffer()
+      : await this.fetchCurrentImageBuffer(useOriginal);
     if (buf === undefined || buf.byteLength === 0) {
-      this.toast('图片加载失败，请重试');
+      this.toast(isVideo ? '视频加载失败，请重试' : '图片加载失败，请重试');
       return;
     }
 
@@ -265,7 +314,11 @@ struct GalleryPreview {
       const saveFile = await fileIo.open(saveUri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
       await fileIo.write(saveFile.fd, buf);
       await fileIo.close(saveFile.fd);
-      this.toast(useOriginal ? '原图已保存到相册' : '缩略图已保存到相册');
+      if (isVideo) {
+        this.toast('视频已保存到相册');
+      } else {
+        this.toast(useOriginal ? '原图已保存到相册' : '缩略图已保存到相册');
+      }
     } catch (_e) {
       this.toast('写入失败，请重试');
     }
@@ -283,15 +336,18 @@ struct GalleryPreview {
 
   private async doShare(): Promise<void> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const isVideo = this.currentItemIsVideo();
 
-    const buf = await this.fetchCurrentImageBuffer();
+    const buf = isVideo
+      ? await this.fetchCurrentVideoBuffer()
+      : await this.fetchCurrentImageBuffer();
     if (buf === undefined || buf.byteLength === 0) {
-      this.toast('图片加载失败，请重试');
+      this.toast(isVideo ? '视频加载失败，请重试' : '图片加载失败，请重试');
       return;
     }
 
-    // 写入临时缓存文件，供系统分享面板读取
-    const ext = this.currentImageExt();
+    // 写入临时缓存文件，供系统分享面板读取（按媒体类型区分后缀）
+    const ext = isVideo ? this.currentVideoExt() : this.currentImageExt();
     const tempPath = `${ctx.cacheDir}/share_preview.${ext}`;
     try {
       const tmpFile = fileIo.openSync(tempPath,
@@ -304,16 +360,18 @@ struct GalleryPreview {
     }
 
     try {
-      // 调起鸿蒙官方系统分享面板（@kit.ShareKit / @hms.collaboration.systemShare）
+      // 调起鸿蒙官方系统分享面板（@kit.ShareKit）
+      // 使用 fileUri.getUriFromPath 生成系统可访问的正确 URI 格式
+      const shareUri = fileUriUtil.getUriFromPath(tempPath);
       const record: systemShare.SharedRecord = {
-        utd: 'general.image',
-        uri: `file://${tempPath}`,
-        title: '分享图片'
+        utd: isVideo ? 'general.video' : 'general.image',
+        uri: shareUri,
+        title: isVideo ? '分享视频' : '分享图片'
       };
       const shareData = new systemShare.SharedData(record);
       const ctrl = new systemShare.ShareController(shareData);
       await ctrl.show(ctx, {
-        selectionMode: 0,
+        selectionMode: systemShare.SelectionMode.SINGLE,
         previewMode: systemShare.SharePreviewMode.DETAIL
       });
     } catch (_e) {
@@ -336,7 +394,8 @@ struct GalleryPreview {
     .layoutWeight(1)
     .padding({ top: 14, bottom: 14 })
     .alignItems(HorizontalAlign.Center)
-    .onClick(dimmed ? (): void => {} : action)
+    // 双重守卫：dimmed 置灰 + 工具栏不可见时均不响应，防止进度条操作误触下载
+    .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
@@ -352,6 +411,8 @@ struct GalleryPreview {
               baseUrl: this.baseUrl,
               item: item,
               loadOriginalReq: this.loadOriginalReq,
+              active: idx === this.swiperIndex,
+              videoBottomPadding: this.toolbarVisible ? this.bottomBarHeight : 0,
               onZoomLockChange: (locked: boolean): void => { this.swiperLocked = locked; },
               onVerticalDragProgress: (p: number): void => {
                 this.dismissDragProgress = Math.max(0, Math.min(1, p));
@@ -376,6 +437,8 @@ struct GalleryPreview {
               this.toolbarVisible = true;
             });
           }
+          // 切换媒体类型时（图片↔视频）重新同步系统栏颜色
+          this.applySystemBar();
         })
       } else {
         Column() {
@@ -425,6 +488,7 @@ struct GalleryPreview {
         .padding({ left: 8, right: 8 })
         .alignItems(VerticalAlign.Center)
         .backgroundColor(this.toolbarBg())
+        .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
 
         // 中间透明区域：点击穿透到 Swiper
         Blank().layoutWeight(1)
@@ -440,6 +504,11 @@ struct GalleryPreview {
         }
         .width('100%')
         .backgroundColor(this.toolbarBg())
+        .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
+        .onAreaChange((_old, area): void => {
+          const h = area.height as number;
+          if (h > 0) { this.bottomBarHeight = h; }
+        })
 
       }
       .width('100%').height('100%')

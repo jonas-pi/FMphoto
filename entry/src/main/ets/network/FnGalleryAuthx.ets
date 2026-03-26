@@ -90,3 +90,21 @@ export async function genFnGalleryAuthxPost(
   const sign = await md5HexUtf8(chain);
   return `nonce=${nonce}&timestamp=${timestamp}&sign=${sign}`;
 }
+
+/**
+ * 生成图库 POST 的 Authx 头值（原始 JSON 字符串版本）。
+ * 用于 body 包含嵌套对象/数组时，直接对已序列化的 JSON 字符串签名，
+ * 确保签名内容与实际发送 body 完全一致。
+ */
+export async function genFnGalleryAuthxPostRaw(
+  signPathOnly: string,
+  bodyJson: string
+): Promise<string> {
+  const pathOnly = signPathOnly.split('?')[0];
+  const inner = await md5HexUtf8(bodyJson);
+  const nonce = galleryNonceLikePython();
+  const timestamp = Date.now();
+  const chain = `${GALLERY_AUTHX_KEY}_${pathOnly}_${nonce}_${timestamp}_${inner}_${GALLERY_AUTHX_UUID}`;
+  const sign = await md5HexUtf8(chain);
+  return `nonce=${nonce}&timestamp=${timestamp}&sign=${sign}`;
+}

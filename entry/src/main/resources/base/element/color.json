@@ -13,8 +13,16 @@
       "value": "#007AFF"
     },
     {
+      "name": "text_primary",
+      "value": "#000000"
+    },
+    {
       "name": "text_secondary",
       "value": "#6D6D72"
+    },
+    {
+      "name": "icon_primary",
+      "value": "#000000"
     }
   ]
 }

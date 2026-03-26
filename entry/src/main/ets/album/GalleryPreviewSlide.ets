@@ -28,7 +28,10 @@ import { GalleryAuthVideo } from './GalleryAuthVideo';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem } from '../model/FnApiTypes';
 
-const PAN_RESISTANCE = 0.5;
+// 越界阻尼系数：1.0 为无阻尼，拖拽位移与手指位移保持一致
+const PAN_RESISTANCE = 1.0;
+// 放大状态下的拖拽增益：补偿手势事件位移衰减，提升跟手性
+const PAN_DRAG_GAIN = 1.8;
 const DISMISS_THRESHOLD_Y = 96;
 const DISMISS_FULL_Y = 240;
 
@@ -36,8 +39,17 @@ const DISMISS_FULL_Y = 240;
 export struct GalleryPreviewSlide {
   @Prop baseUrl: string = '';
   @Prop @Watch('onItemChanged') item: GalleryListItem | null = null;
+  /** 当前是否为 Swiper 可见页（用于控制视频播放器活跃态，避免串音） */
+  @Prop active: boolean = true;
+  /** 视频模式下，控件距屏幕底部的额外偏移（避开外部工具栏） */
+  @Prop videoBottomPadding: number = 0;
   /** 跟随系统深浅色模式，用于 loading 指示器颜色 */
-  @StorageProp('colorMode') private colorMode: number = 0;
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  /**
+   * 用 @State 镜像深色标志：@StorageProp 在嵌套方法链中依赖追踪可能丢失，
+   * @State 变更则必定触发 build() 重渲染。
+   */
+  @State private isDarkTheme: boolean = false;
   /**
    * 父页面（GalleryPreview）触发加载原图：每次设为 true 时执行一次加载。
    * 父页面切换 Slide 后会重置为 false，下次点击"原图"再设为 true。
@@ -66,11 +78,15 @@ export struct GalleryPreviewSlide {
   private panBaseX: number = 0;
   private panBaseY: number = 0;
 
-  private isDark(): boolean { return this.colorMode === 1; }
-  private spinnerColor(): ResourceColor { return this.isDark() ? Color.White : Color.Black; }
-  private hintColor(): string { return this.isDark() ? '#CCCCCC' : '#666666'; }
+  private isDark(): boolean { return this.isDarkTheme; }
+  private spinnerColor(): ResourceColor { return this.isDarkTheme ? Color.White : Color.Black; }
+  private hintColor(): string { return this.isDarkTheme ? '#CCCCCC' : '#666666'; }
 
   // ── 事件响应 ─────────────────────────────────────────────────────────────
+
+  onColorModeChanged(): void {
+    this.isDarkTheme = this.colorMode === 1;
+  }
 
   onLoadOriginalReqChanged(): void {
     if (this.loadOriginalReq) {
@@ -94,6 +110,7 @@ export struct GalleryPreviewSlide {
   }
 
   aboutToAppear(): void {
+    this.isDarkTheme = this.colorMode === 1;
     this.prepareContent();
   }
 
@@ -242,17 +259,26 @@ export struct GalleryPreviewSlide {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isVideo()) {
         // 视频：鉴权 AVPlayer + Surface；勿在外层挂缩放手势，避免抢占播放控件触摸
-        GalleryAuthVideo({ videoUrl: this.videoSrc })
+        GalleryAuthVideo({ videoUrl: this.videoSrc, active: this.active, bottomPadding: this.videoBottomPadding })
           .width('100%')
           .height('100%')
       } else {
         Column() {
           Stack({ alignContent: Alignment.Center }) {
             if (this.isGif() && this.gifUri.length > 0) {
+              // GIF 已下载完成，直接播放
               Image(this.gifUri)
                 .width('100%')
                 .height('100%')
                 .objectFit(ImageFit.Contain)
+            } else if (this.isGif()) {
+              // GIF 下载中，显示单一加载状态
+              Column({ space: 8 }) {
+                LoadingProgress().width(48).height(48).color(this.spinnerColor())
+                Text('GIF 加载中…').fontSize(13).fontColor(this.hintColor())
+              }
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
             } else if (this.thumbPix === undefined) {
               LoadingProgress().width(48).height(48).color(this.spinnerColor())
             } else {
@@ -262,7 +288,8 @@ export struct GalleryPreviewSlide {
                 .objectFit(ImageFit.Contain)
                 .dynamicRangeMode(DynamicRangeMode.HIGH)
             }
-            if (this.fullLoading) {
+            // 原图加载进度叠加层仅对普通图片显示
+            if (this.fullLoading && !this.isGif()) {
               Column() {
                 LoadingProgress().width(32).height(32).color(this.spinnerColor())
                 Text('原图加载中…').fontSize(12).fontColor(this.hintColor()).margin({ top: 8 })
@@ -307,14 +334,19 @@ export struct GalleryPreviewSlide {
                 this.snapOrClamp();
                 this.emitZoomLock();
               }),
-            PanGesture({ direction: PanDirection.Vertical })
+            // 未放大时仅处理纵向下拉关闭（保留 Swiper 左右切页）；
+            // 放大后切换为全向拖拽，支持单指左右平移。
+            PanGesture({ direction: this.isImageZoomed() ? PanDirection.All : PanDirection.Vertical })
               .onActionStart((): void => {
                 this.panBaseX = this.previewPanX;
                 this.panBaseY = this.previewPanY;
               })
               .onActionUpdate((event: GestureEvent): void => {
                 if (this.isImageZoomed()) {
-                  this.previewPanY = this.resist(this.panBaseY + event.offsetY, this.maxPanY());
+                  const nextX = this.panBaseX + event.offsetX * PAN_DRAG_GAIN;
+                  const nextY = this.panBaseY + event.offsetY * PAN_DRAG_GAIN;
+                  this.previewPanX = this.resist(nextX, this.maxPanX());
+                  this.previewPanY = this.resist(nextY, this.maxPanY());
                   this.onVerticalDragProgress(0);
                   return;
                 }
@@ -348,6 +380,7 @@ export struct GalleryPreviewSlide {
       }
     }
     .width('100%').height('100%')
+    .backgroundColor(this.isDark() ? Color.Black : Color.White)
     .onAreaChange((_old, newArea): void => {
       const w = newArea.width as number;
       const h = newArea.height as number;
