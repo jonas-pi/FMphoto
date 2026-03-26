@@ -19,16 +19,19 @@ export class CategoryGalleryNavStore {
     title: string,
     items: GalleryListItem[],
     uiCtx: UIContext
-  ): void {
+  ): Promise<boolean> {
     if (items.length === 0) {
       hilog.warn(DOMAIN, TAG, 'open skipped: empty items');
-      return;
+      return Promise.resolve(false);
     }
     CategoryGalleryNavStore.baseUrl = baseUrl;
     CategoryGalleryNavStore.title = title;
     CategoryGalleryNavStore.items = items.slice();
-    uiCtx.getRouter().pushUrl({ url: 'pages/CategoryGallery' }).catch((e: Error) => {
+    return uiCtx.getRouter().pushUrl({ url: 'pages/CategoryGallery' }).then((): boolean => {
+      return true;
+    }).catch((e: Error): boolean => {
       hilog.error(DOMAIN, TAG, 'pushUrl CategoryGallery: %{public}s', String(e));
+      return false;
     });
   }
 

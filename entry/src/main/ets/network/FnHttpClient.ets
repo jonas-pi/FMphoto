@@ -19,6 +19,7 @@ import {
   FnJsonValue,
   GalleryGetListData,
   GalleryListItem,
+  GalleryPhotoDetailData,
   GalleryTimelineData,
   ItemListRequest,
   ItemListResponse,
@@ -29,6 +30,8 @@ import {
   MediaCategoryItem,
   MediaCategoryData,
   SmartCategoryData,
+  AiPersonData,
+  AiPersonDetailData,
   SearchResultsData,
   UserInfoData
 } from '../model/FnApiTypes';
@@ -72,6 +75,18 @@ const GALLERY_GETLIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/gallery/getList`;
 const GALLERY_GETLIST_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/gallery/getList`,
   '/api/v1/gallery/getList'
+];
+/** getOne 详情接口：与 getList 同签名体系 */
+const GALLERY_GETONE_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/gallery/getOne`;
+const GALLERY_GETONE_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/gallery/getOne`,
+  '/api/v1/gallery/getOne'
+];
+/** folder_view 文件列表（按文件夹路径取媒体） */
+const GALLERY_FOLDER_FILELIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/folder_view/getFileList`;
+const GALLERY_FOLDER_FILELIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/folder_view/getFileList`,
+  '/api/v1/folder_view/getFileList'
 ];
 
 /** 疑似证书类错误码（NetStack） */
@@ -1133,6 +1148,155 @@ export class FnHttpClient {
   }
 
   /**
+   * 人物：GET /p/api/v1/ai-person/list?getAll=true&limit=-1&orderBy=0
+   */
+  async getAiPersonList(
+    getAll: boolean = true,
+    limit: number = -1,
+    orderBy: number = 0,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<AiPersonData>> {
+    try {
+      const params: Record<string, string | number | boolean> = {};
+      params['getAll'] = getAll;
+      params['limit'] = limit;
+      params['orderBy'] = orderBy;
+      const qs = buildGallerySortedQuery(params);
+      const signPath = `${FN_PHOTO_API_PREFIX}/ai-person/list`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/ai-person/list?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<AiPersonData>(pathCandidates, gallerySign, timeoutMs, 3);
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '人物列表加载失败' };
+      }
+      return { success: true, data: res.data };
+    } catch (e) {
+      return { success: false, message: String(e) || '人物列表加载异常' };
+    }
+  }
+
+  /** 人物详情：GET /p/api/v1/ai-person/detail?id=xxx */
+  async getAiPersonDetail(
+    personId: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<AiPersonDetailData>> {
+    try {
+      if (personId.length === 0) {
+        return { success: false, message: 'personId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['id'] = personId;
+      const qs = buildGallerySortedQuery(params);
+      const signPath = `${FN_PHOTO_API_PREFIX}/ai-person/detail`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/ai-person/detail?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<AiPersonDetailData>(
+        pathCandidates, gallerySign, timeoutMs, 3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '人物详情加载失败' };
+      }
+      return { success: true, data: res.data };
+    } catch (e) {
+      return { success: false, message: String(e) || '人物详情加载异常' };
+    }
+  }
+
+  /** 人物时间线：GET /p/api/v1/ai-person/photoLibrary/timeLine?id=xxx */
+  async getAiPersonPhotoTimeline(
+    personId: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryTimelineData>> {
+    try {
+      if (personId.length === 0) {
+        return { success: false, message: 'personId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['id'] = personId;
+      const qs = buildGallerySortedQuery(params);
+      const signPath = `${FN_PHOTO_API_PREFIX}/ai-person/photoLibrary/timeLine`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/ai-person/photoLibrary/timeLine?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<GalleryTimelineData>(pathCandidates, gallerySign, timeoutMs, 3);
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '人物时间线加载失败' };
+      }
+      return { success: true, data: res.data };
+    } catch (e) {
+      return { success: false, message: String(e) || '人物时间线加载异常' };
+    }
+  }
+
+  /**
+   * 人物照片列表：GET /p/api/v1/ai-person/photoLibrary/list
+   * 与官方抓包一致，兼容同时下发 start_time/startTime 与 end_time/endTime、personId 与 album_id。
+   */
+  async getAiPersonPhotoList(
+    personId: string,
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    try {
+      if (personId.length === 0) {
+        return { success: false, message: 'personId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['personId'] = personId;
+      params['album_id'] = personId;
+      params['start_time'] = startTime;
+      params['end_time'] = endTime;
+      params['startTime'] = startTime;
+      params['endTime'] = endTime;
+      params['limit'] = limit;
+      params['offset'] = offset;
+      const qs = buildGallerySortedQuery(params);
+      const signPath = `${FN_PHOTO_API_PREFIX}/ai-person/photoLibrary/list`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/ai-person/photoLibrary/list?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+        pathCandidates, gallerySign, timeoutMs, 3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '人物照片加载失败' };
+      }
+      const payload = res.data as GalleryGetListData | GalleryListItem[];
+      if (Array.isArray(payload)) {
+        return { success: true, data: { list: payload } };
+      }
+      return { success: true, data: payload as GalleryGetListData };
+    } catch (e) {
+      return { success: false, message: String(e) || '人物照片加载异常' };
+    }
+  }
+
+  /**
    * 从接口 data 字段提取分类数组，尝试多种键名。
    * 每条原始记录都经过 normalizeCategoryItem 做字段名映射。
    */
@@ -1234,6 +1398,40 @@ export class FnHttpClient {
       }
     }
     return [];
+  }
+
+  /**
+   * folder_view/getFileList 常见只返回 id + photoUUID + filePath 等基础字段，
+   * 不带 additional.thumbnail。这里补齐缩略图/原图路径，供网格与预览共用。
+   */
+  private static normalizeFolderViewItems(items: GalleryListItem[]): GalleryListItem[] {
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] as Record<string, string | number | Object | undefined>;
+      const idVal = it['id'];
+      const uuidVal = it['photoUUID'];
+      if (idVal === undefined || idVal === null || uuidVal === undefined || uuidVal === null) {
+        continue;
+      }
+      const id = String(idVal).trim();
+      const uuid = String(uuidVal).trim();
+      if (id.length === 0 || uuid.length === 0) {
+        continue;
+      }
+      // 1) 顶层 thumb / originalUrl 兜底（GalleryAlbumCommon.pickThumb/pickOriginal 会读取）
+      const thumbNow = it['thumb'];
+      if (thumbNow === undefined || String(thumbNow).trim().length === 0) {
+        // 目录视图优先使用 m 档，避免跳转后缩略图明显发糊
+        it['thumb'] = `${FN_PHOTO_API_PREFIX}/stream/p/t/${id}/m/${uuid}`;
+      }
+      const origNow = it['originalUrl'];
+      if (origNow === undefined || String(origNow).trim().length === 0) {
+        it['originalUrl'] = `${FN_PHOTO_API_PREFIX}/stream/p/t/${id}/o/${uuid}`;
+      }
+
+      // 2) 为避免 ArkTS 未类型化对象字面量限制，这里只补顶层字段；
+      //    GalleryAlbumCommon.pickThumb/pickOriginal 已能读取 thumb/originalUrl。
+    }
+    return items;
   }
 
   /**
@@ -1437,5 +1635,83 @@ export class FnHttpClient {
       };
     }
     return res as FnClientResult<GalleryGetListData>;
+  }
+
+  /**
+   * 相册单条详情：GET /p/api/v1/gallery/getOne?id=xxx
+   * 用于预览页右上角「详情」展示完整 EXIF/位置信息。
+   */
+  async getGalleryPhotoDetail(
+    photoId: string,
+    timeoutMs: number = 15000
+  ): Promise<FnClientResult<GalleryPhotoDetailData>> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return { success: false, message: 'photoId 不能为空' };
+    }
+    const params: Record<string, string | number | boolean> = {};
+    params['id'] = id;
+    const qs = buildGallerySortedQuery(params);
+    const pathCandidates: string[] = [];
+    for (let i = 0; i < GALLERY_GETONE_PATH_CANDIDATES.length; i++) {
+      pathCandidates.push(`${GALLERY_GETONE_PATH_CANDIDATES[i]}?${qs}`);
+    }
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: GALLERY_GETONE_SIGN_PATH,
+      queryParams: params
+    };
+    return this.requestGalleryGetJson<GalleryPhotoDetailData>(pathCandidates, gallerySign, timeoutMs, 3);
+  }
+
+  /**
+   * 目录媒体列表：GET /p/api/v1/folder_view/getFileList
+   * 点击详情中的文件夹路径时，用该接口打开同目录下全部媒体。
+   */
+  async getFolderViewFileList(
+    folderPath: string,
+    limit: number = 100,
+    offset: number = 0,
+    desc: boolean = false,
+    orderBy: number = 2,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryListItem[]>> {
+    const fp = folderPath.trim();
+    if (fp.length === 0) {
+      return { success: false, message: 'folderPath 不能为空' };
+    }
+    const params: Record<string, string | number | boolean> = {};
+    params['folderPath'] = fp;
+    params['desc'] = desc;
+    params['orderBy'] = orderBy;
+    params['limit'] = limit;
+    params['offset'] = offset;
+    const qs = buildGallerySortedQuery(params);
+    const pathCandidates: string[] = [];
+    for (let i = 0; i < GALLERY_FOLDER_FILELIST_PATH_CANDIDATES.length; i++) {
+      pathCandidates.push(`${GALLERY_FOLDER_FILELIST_PATH_CANDIDATES[i]}?${qs}`);
+    }
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: GALLERY_FOLDER_FILELIST_SIGN_PATH,
+      queryParams: params
+    };
+    const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+      pathCandidates,
+      gallerySign,
+      timeoutMs,
+      3
+    );
+    if (!res.success || res.data === undefined) {
+      return { success: false, message: res.message ?? '文件夹媒体加载失败' };
+    }
+    const payload = res.data as GalleryGetListData | GalleryListItem[];
+    if (Array.isArray(payload)) {
+      return { success: true, data: FnHttpClient.normalizeFolderViewItems(payload as GalleryListItem[]) };
+    }
+    const dataObj = payload as GalleryGetListData;
+    const list = dataObj.list ?? dataObj.items ?? dataObj.photos ?? dataObj.records ?? [];
+    if (!Array.isArray(list)) {
+      return { success: true, data: [] };
+    }
+    return { success: true, data: FnHttpClient.normalizeFolderViewItems(list as GalleryListItem[]) };
   }
 }
