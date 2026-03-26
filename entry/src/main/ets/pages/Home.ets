@@ -214,6 +214,8 @@ struct Home {
   @State private bottomNavIndex: number = 0;
   /** 递增以触发 GalleryAlbumTab 重新拉 timeline */
   @State private albumReloadEpoch: number = 0;
+  /** 页面可见时递增 → 通知 GalleryAlbumTab 做删除同步 */
+  @State private pageShowSignal: number = 0;
   /** 内容区淡入缩放过渡 */
   @State private contentOpacity: number = 1;
   @State private contentScale: number = 1;
@@ -233,6 +235,7 @@ struct Home {
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBarTheme();
+    this.pageShowSignal++;
   }
 
   onColorModeChanged(): void {
@@ -392,7 +395,8 @@ struct Home {
             if (this.bottomNavIndex === 1) {
               GalleryAlbumTab({
                 baseUrl: this.snapWebBase,
-                albumReloadEpoch: this.albumReloadEpoch
+                albumReloadEpoch: this.albumReloadEpoch,
+                pageShowSignal: this.pageShowSignal
               })
                 .width('100%')
                 .height('100%')
