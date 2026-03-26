@@ -7,11 +7,13 @@
  * 平移限位：基于视口尺寸精确计算，超界 50% 阻力，松手 EaseOut 弹回。
  */
 import {
+  itemFileExt,
   GALLERY_PREVIEW_SCALE_MAX,
   GALLERY_PREVIEW_SCALE_MIN,
   GALLERY_PREVIEW_SNAP_EPS,
   GALLERY_PREVIEW_ZOOM_EPS,
   getThumbPixCached,
+  isGifItem,
   isVideoItem,
   loadFullPix,
   loadThumbPix,
@@ -20,7 +22,10 @@ import {
   pickThumb,
   pickVideo
 } from './GalleryAlbumCommon';
+import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { GalleryAuthVideo } from './GalleryAuthVideo';
+import { AppSession } from '../auth/AppSession';
 import { GalleryListItem } from '../model/FnApiTypes';
 
 const PAN_RESISTANCE = 0.5;
@@ -50,6 +55,7 @@ export struct GalleryPreviewSlide {
   @State private showingOriginal: boolean = false;
   @State private fullLoading: boolean = false;
   @State private videoSrc: string = '';
+  @State private gifUri: string = '';
   @State private previewScale: number = 1;
   @State private previewPanX: number = 0;
   @State private previewPanY: number = 0;
@@ -78,6 +84,7 @@ export struct GalleryPreviewSlide {
     this.showingOriginal = false;
     this.fullLoading = false;
     this.videoSrc = '';
+    this.gifUri = '';
     this.previewScale = 1;
     this.previewPanX = 0;
     this.previewPanY = 0;
@@ -98,6 +105,10 @@ export struct GalleryPreviewSlide {
       this.videoSrc = nasUrl(this.baseUrl, pickVideo(this.item as GalleryListItem));
       return;
     }
+    if (this.isGif()) {
+      void this.prepareGifContent();
+      return;
+    }
     const tUrl = this.thumbUrl();
     if (tUrl.length === 0) { return; }
     // 优先同步读缓存，保证页面首帧即有内容（无 loading 空白）
@@ -109,6 +120,37 @@ export struct GalleryPreviewSlide {
     void loadThumbPix(tUrl).then((p: PixelMap | undefined) => {
       this.thumbPix = p;
     });
+  }
+
+  private async prepareGifContent(): Promise<void> {
+    const src = this.gifSourceUrl();
+    if (src.length === 0) { return; }
+    this.fullLoading = true;
+    try {
+      const client = AppSession.getClient();
+      if (client === null) {
+        this.fullLoading = false;
+        return;
+      }
+      const buf = await client.fetchGalleryImageBuffer(src, 20000);
+      if (buf === undefined || buf.byteLength === 0) {
+        this.fullLoading = false;
+        return;
+      }
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const sid = this.item !== null && this.item.id !== undefined ? String(this.item.id) : `${Date.now()}`;
+      const safeId = sid.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const tempPath = `${ctx.cacheDir}/preview_${safeId}.gif`;
+      const f = await fileIo.open(tempPath, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      try {
+        await fileIo.write(f.fd, buf);
+      } finally {
+        await fileIo.close(f.fd);
+      }
+      this.gifUri = `file://${tempPath}`;
+    } catch (_e) {
+    }
+    this.fullLoading = false;
   }
 
   private loadOriginal(): void {
@@ -129,6 +171,15 @@ export struct GalleryPreviewSlide {
   // ── 工具函数 ─────────────────────────────────────────────────────────────
 
   private isVideo(): boolean { return this.item !== null && isVideoItem(this.item); }
+  private isGif(): boolean { return this.item !== null && isGifItem(this.item); }
+  private gifSourceUrl(): string {
+    if (this.item === null) { return ''; }
+    const ext = itemFileExt(this.item);
+    if (ext !== 'gif') { return ''; }
+    const orig = nasUrl(this.baseUrl, pickOriginal(this.item));
+    if (orig.length > 0) { return orig; }
+    return nasUrl(this.baseUrl, pickThumb(this.item));
+  }
   private thumbUrl(): string { return this.item !== null ? nasUrl(this.baseUrl, pickThumb(this.item)) : ''; }
   private originalUrl(): string { return this.item !== null ? nasUrl(this.baseUrl, pickOriginal(this.item)) : ''; }
   private isImageZoomed(): boolean { return !this.isVideo() && this.previewScale > 1 + GALLERY_PREVIEW_ZOOM_EPS; }
@@ -197,7 +248,12 @@ export struct GalleryPreviewSlide {
       } else {
         Column() {
           Stack({ alignContent: Alignment.Center }) {
-            if (this.thumbPix === undefined) {
+            if (this.isGif() && this.gifUri.length > 0) {
+              Image(this.gifUri)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Contain)
+            } else if (this.thumbPix === undefined) {
               LoadingProgress().width(48).height(48).color(this.spinnerColor())
             } else {
               Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
