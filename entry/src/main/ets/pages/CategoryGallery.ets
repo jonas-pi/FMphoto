@@ -2,7 +2,7 @@
  * 媒体分类浏览页：展示某一分类（照片/视频/动图等）内所有媒体，
  * 按日期降序分组，3 列网格，点击进入大图预览。
  */
-import { router, window } from '@kit.ArkUI';
+import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryListItem } from '../model/FnApiTypes';
 import {
@@ -15,6 +15,13 @@ import {
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { AppSession } from '../auth/AppSession';
+import { FnStateText, FnTopBar } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION
+} from '../common/FnMotion';
 
 // ─── 数据模型 ─────────────────────────────────────────────────────────────────
 
@@ -117,7 +124,7 @@ struct CategoryGallery {
   private groupOffsets: number[] = [];
 
   onBackPress(): boolean {
-    router.back();
+    this.getUIContext().getRouter().back();
     return true;
   }
 
@@ -127,7 +134,7 @@ struct CategoryGallery {
   private applySystemBar(): void {
     try {
       const dark = this.isDarkTheme;
-      const bg = dark ? '#FF000000' : '#FFFFFFFF';
+      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win): void => {
@@ -156,8 +163,22 @@ struct CategoryGallery {
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
     const raw = CategoryGalleryNavStore.items;
-    this.flatItems = raw.slice();
     this.groups = groupByDate(raw);
+    // 预览数据顺序必须与网格展示顺序一致，否则会出现“点这张打开另一张”
+    const ordered: GalleryListItem[] = [];
+    for (let gi = 0; gi < this.groups.length; gi++) {
+      const rows = this.groups[gi].rows;
+      for (let ri = 0; ri < rows.length; ri++) {
+        ordered.push(rows[ri].c0);
+        if (rows[ri].c1 !== undefined) {
+          ordered.push(rows[ri].c1 as GalleryListItem);
+        }
+        if (rows[ri].c2 !== undefined) {
+          ordered.push(rows[ri].c2 as GalleryListItem);
+        }
+      }
+    }
+    this.flatItems = ordered;
     let offset = 0;
     this.groupOffsets = [];
     for (let gi = 0; gi < this.groups.length; gi++) {
@@ -179,8 +200,7 @@ struct CategoryGallery {
     GalleryPreviewNavStore.openPreview(
       this.baseUrl,
       this.flatItems,
-      base + idxInGroup,
-      this.getUIContext()
+      base + idxInGroup
     );
   }
 
@@ -200,47 +220,14 @@ struct CategoryGallery {
 
   build() {
     Column() {
-      // ── 顶部导航栏 ────────────────────────────────────────────────────────
-      Row() {
-        Button() {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(20)
-            .fontColor([$r('app.color.icon_primary')])
-        }
-        .width(40)
-        .height(40)
-        .borderRadius(20)
-        .backgroundColor(Color.Transparent)
-        .onClick((): void => {
-          router.back();
-        })
-
-        Text(this.title.length > 0 ? this.title : '媒体分类')
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-          .margin({ left: 4 })
-
-        Text(`${this.flatItems.length} 项`)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-          .margin({ right: 4 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: 8, right: 16, top: 12, bottom: 8 })
+      FnTopBar({
+        title: this.title.length > 0 ? this.title : '媒体分类',
+        rightText: `${this.flatItems.length} 项`
+      })
 
       // ── 日期分组列表 ──────────────────────────────────────────────────────
       if (this.groups.length === 0) {
-        Column() {
-          Text('暂无媒体')
-            .fontSize(15)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
+        FnStateText({ text: '暂无媒体' })
       } else {
         List() {
           ForEach(this.groups, (group: DayGroup, groupIdx: number) => {
@@ -279,6 +266,7 @@ struct CategoryGallery {
         }
         .width('100%')
         .layoutWeight(1)
+        .cachedCount(3)
         .scrollBar(BarState.Off)
         .backgroundColor(Color.Transparent)
         .edgeEffect(EdgeEffect.Spring)
@@ -287,7 +275,16 @@ struct CategoryGallery {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDark() ? '#FF000000' : '#FFFFFFFF')
+    .backgroundColor($r('app.color.page_background'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 12, y: 0 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: -8, y: 0 });
   }
 }

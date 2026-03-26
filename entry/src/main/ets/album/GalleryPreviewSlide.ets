@@ -28,12 +28,17 @@ import { GalleryAuthVideo } from './GalleryAuthVideo';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem } from '../model/FnApiTypes';
 
-// 越界阻尼系数：1.0 为无阻尼，拖拽位移与手指位移保持一致
-const PAN_RESISTANCE = 1.0;
-// 放大状态下的拖拽增益：补偿手势事件位移衰减，提升跟手性
-const PAN_DRAG_GAIN = 1.8;
+// 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
+const PAN_RESISTANCE = 0.55;
+// 放大状态下的拖拽增益：适当降低，减少单指拖动瞬时位移导致的卡顿
+const PAN_DRAG_GAIN = 1.25;
+// 轻度放大区间（刚超过 1x）改用更保守的拖拽参数，避免“刚放大一点就卡”
+const LIGHT_ZOOM_MAX_SCALE = 1.35;
+const PAN_DRAG_GAIN_LIGHT = 0.9;
 const DISMISS_THRESHOLD_Y = 96;
 const DISMISS_FULL_Y = 240;
+const PAN_UPDATE_MIN_INTERVAL_MS = 12;
+const PAN_UPDATE_MIN_INTERVAL_LIGHT_ZOOM_MS = 20;
 
 @Component
 export struct GalleryPreviewSlide {
@@ -51,16 +56,18 @@ export struct GalleryPreviewSlide {
    */
   @State private isDarkTheme: boolean = false;
   /**
-   * 父页面（GalleryPreview）触发加载原图：每次设为 true 时执行一次加载。
-   * 父页面切换 Slide 后会重置为 false，下次点击"原图"再设为 true。
+   * 父页面（GalleryPreview）触发加载原图：每次 token 变化都会执行一次加载。
+   * 使用递增 token 而不是布尔值，确保“同页多次点击原图”每次都能触发。
    */
-  @Prop @Watch('onLoadOriginalReqChanged') loadOriginalReq: boolean = false;
+  @Prop @Watch('onLoadOriginalReqChanged') loadOriginalToken: number = 0;
 
   onZoomLockChange: (locked: boolean) => void = () => {};
   onVerticalDragProgress: (progress: number) => void = (_: number) => {};
   onVerticalDismiss: () => void = () => {};
   /** 原图加载完成后通知父页面，父页面可据此隐藏"原图"按钮 */
   onOriginalLoaded: () => void = () => {};
+  /** 原图加载失败后通知父页面，父页面可提示用户并保持可重试 */
+  onOriginalLoadFailed: (msg: string) => void = (_: string) => {};
 
   @State private thumbPix: PixelMap | undefined = undefined;
   @State private fullPix: PixelMap | undefined = undefined;
@@ -77,6 +84,7 @@ export struct GalleryPreviewSlide {
   private pinchBaseScale: number = 1;
   private panBaseX: number = 0;
   private panBaseY: number = 0;
+  private lastPanUpdateMs: number = 0;
 
   private isDark(): boolean { return this.isDarkTheme; }
   private spinnerColor(): ResourceColor { return this.isDarkTheme ? Color.White : Color.Black; }
@@ -89,9 +97,7 @@ export struct GalleryPreviewSlide {
   }
 
   onLoadOriginalReqChanged(): void {
-    if (this.loadOriginalReq) {
-      this.loadOriginal();
-    }
+    this.loadOriginal();
   }
 
   onItemChanged(): void {
@@ -174,14 +180,22 @@ export struct GalleryPreviewSlide {
     const oUrl = this.originalUrl();
     if (oUrl.length === 0 || this.fullLoading) {
       if (this.fullPix !== undefined) { this.showingOriginal = true; }
+      if (oUrl.length === 0) {
+        this.onOriginalLoadFailed('原图地址无效');
+      }
       return;
     }
     this.fullLoading = true;
-    void loadFullPix(oUrl).then((p: PixelMap | undefined) => {
+    const expectedBytes = this.tryReadOriginalBytes();
+    void loadFullPix(oUrl, expectedBytes).then((p: PixelMap | undefined) => {
       this.fullLoading = false;
       this.fullPix = p;
       this.showingOriginal = p !== undefined;
-      if (this.showingOriginal) { this.onOriginalLoaded(); }
+      if (this.showingOriginal) {
+        this.onOriginalLoaded();
+      } else {
+        this.onOriginalLoadFailed('原图加载失败，已保留重试入口');
+      }
     });
   }
 
@@ -189,6 +203,20 @@ export struct GalleryPreviewSlide {
 
   private isVideo(): boolean { return this.item !== null && isVideoItem(this.item); }
   private isGif(): boolean { return this.item !== null && isGifItem(this.item); }
+  private tryReadOriginalBytes(): number | undefined {
+    if (this.item === null) {
+      return undefined;
+    }
+    const raw = this.item.originalSize !== undefined ? this.item.originalSize : this.item.fileSize;
+    if (raw === undefined || raw === null) {
+      return undefined;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      return undefined;
+    }
+    return Math.floor(n);
+  }
   private gifSourceUrl(): string {
     if (this.item === null) { return ''; }
     const ext = itemFileExt(this.item);
@@ -204,6 +232,14 @@ export struct GalleryPreviewSlide {
 
   private maxPanX(): number { return this.previewScale > 1 ? this.viewW * (this.previewScale - 1) / 2 : 0; }
   private maxPanY(): number { return this.previewScale > 1 ? this.viewH * (this.previewScale - 1) / 2 : 0; }
+  private isLightZoom(): boolean {
+    return this.previewScale > 1 + GALLERY_PREVIEW_ZOOM_EPS && this.previewScale <= LIGHT_ZOOM_MAX_SCALE;
+  }
+
+  private clampToLimit(value: number, limit: number): number {
+    if (limit <= 0) { return 0; }
+    return Math.min(limit, Math.max(-limit, value));
+  }
 
   private resist(value: number, limit: number): number {
     if (limit <= 0) { return 0; }
@@ -338,15 +374,31 @@ export struct GalleryPreviewSlide {
             // 放大后切换为全向拖拽，支持单指左右平移。
             PanGesture({ direction: this.isImageZoomed() ? PanDirection.All : PanDirection.Vertical })
               .onActionStart((): void => {
-                this.panBaseX = this.previewPanX;
-                this.panBaseY = this.previewPanY;
+                this.panBaseX = this.clampedPanX();
+                this.panBaseY = this.clampedPanY();
+                this.lastPanUpdateMs = 0;
               })
               .onActionUpdate((event: GestureEvent): void => {
                 if (this.isImageZoomed()) {
-                  const nextX = this.panBaseX + event.offsetX * PAN_DRAG_GAIN;
-                  const nextY = this.panBaseY + event.offsetY * PAN_DRAG_GAIN;
-                  this.previewPanX = this.resist(nextX, this.maxPanX());
-                  this.previewPanY = this.resist(nextY, this.maxPanY());
+                  const now = Date.now();
+                  const minInterval = this.isLightZoom()
+                    ? PAN_UPDATE_MIN_INTERVAL_LIGHT_ZOOM_MS
+                    : PAN_UPDATE_MIN_INTERVAL_MS;
+                  if (this.lastPanUpdateMs > 0 && now - this.lastPanUpdateMs < minInterval) {
+                    return;
+                  }
+                  this.lastPanUpdateMs = now;
+                  const gain = this.isLightZoom() ? PAN_DRAG_GAIN_LIGHT : PAN_DRAG_GAIN;
+                  const nextX = this.panBaseX + event.offsetX * gain;
+                  const nextY = this.panBaseY + event.offsetY * gain;
+                  if (this.isLightZoom()) {
+                    // 轻度放大时直接限位，避免在小位移下频繁触发阻尼计算导致卡顿感
+                    this.previewPanX = this.clampToLimit(nextX, this.maxPanX());
+                    this.previewPanY = this.clampToLimit(nextY, this.maxPanY());
+                  } else {
+                    this.previewPanX = this.resist(nextX, this.maxPanX());
+                    this.previewPanY = this.resist(nextY, this.maxPanY());
+                  }
                   this.onVerticalDragProgress(0);
                   return;
                 }

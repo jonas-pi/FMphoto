@@ -3,6 +3,30 @@
     {
       "name": "page_text_font_size",
       "value": "50fp"
+    },
+    {
+      "name": "radius_small",
+      "value": "10vp"
+    },
+    {
+      "name": "radius_medium",
+      "value": "16vp"
+    },
+    {
+      "name": "radius_large",
+      "value": "20vp"
+    },
+    {
+      "name": "space_page_h",
+      "value": "16vp"
+    },
+    {
+      "name": "space_card",
+      "value": "12vp"
+    },
+    {
+      "name": "button_height",
+      "value": "40vp"
     }
   ]
 }

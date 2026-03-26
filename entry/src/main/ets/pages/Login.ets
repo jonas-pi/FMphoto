@@ -11,6 +11,13 @@ import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
 import { fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
+import { FnPrimaryButton } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION
+} from '../common/FnMotion';
 
 const LOGIN_DOMAIN = 0xFF00;
 const LOGIN_TAG = 'Login';
@@ -203,6 +210,10 @@ struct Login {
             this.domainInput = v;
           })
           .width('100%')
+          .height(44)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.radius_medium'))
+          .padding({ left: 12, right: 12 })
 
         Row() {
           Text($r('app.string.use_https'))
@@ -223,6 +234,10 @@ struct Login {
             this.username = v;
           })
           .width('100%')
+          .height(44)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.radius_medium'))
+          .padding({ left: 12, right: 12 })
 
         TextInput({ placeholder: $r('app.string.hint_password'), text: this.password })
           .type(InputType.Password)
@@ -231,6 +246,10 @@ struct Login {
             this.password = v;
           })
           .width('100%')
+          .height(44)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.radius_medium'))
+          .padding({ left: 12, right: 12 })
 
         if (this.errorText.length > 0) {
           Text(this.errorText)
@@ -239,7 +258,7 @@ struct Login {
             .width('100%')
         }
 
-        Button(this.loading ? $r('app.string.logging_in') : $r('app.string.login_action'))
+        FnPrimaryButton({ text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action') })
           .width('100%')
           .enabled(!this.loading)
           .onClick((): void => {
@@ -254,9 +273,20 @@ struct Login {
       }
       .padding({ left: 24, right: 24, bottom: 32 })
       .constraintSize({ minHeight: '100%' })
+      .backgroundColor($r('app.color.page_background'))
     }
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 0, y: 16 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: 0, y: -8 });
   }
 }

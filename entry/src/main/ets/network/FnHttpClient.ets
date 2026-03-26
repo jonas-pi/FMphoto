@@ -116,6 +116,11 @@ interface GalleryAssetSignParts {
   queryParams: Record<string, string | number | boolean>;
 }
 
+interface AssetBufferCacheEntry {
+  timeMs: number;
+  data: ArrayBuffer;
+}
+
 /** 从响应头解析 Set-Cookie 中的 fnos-long-token（与浏览器首页 Cookie 一致） */
 function parseFnosLongTokenFromHeaders(headers: object): string | undefined {
   const h = headers as Record<string, string | Array<string>>;
@@ -233,6 +238,12 @@ export class FnHttpClient {
   private longToken: string = '';
   /** 当前仍在进行的 HTTP 请求（用于页面关闭时主动释放连接） */
   private pendingRequests: http.HttpRequest[] = [];
+  /** 资源下载去重：同 URL 并发仅发起一次请求 */
+  private static readonly inflightAssetReq: Map<string, Promise<ArrayBuffer | undefined>> = new Map();
+  /** 资源短时缓存：减少连续滚动/返回时重复下载 */
+  private static readonly assetBufferCache: Map<string, AssetBufferCacheEntry> = new Map();
+  private static readonly ASSET_CACHE_TTL_MS: number = 15000;
+  private static readonly ASSET_CACHE_MAX: number = 120;
 
   constructor(baseUrl: string, token: string = '', longToken: string = '') {
     this.baseUrl = baseUrl;
@@ -896,6 +907,32 @@ export class FnHttpClient {
    * 失败返回 undefined，不抛出。
    */
   async fetchGalleryImageBuffer(fullUrl: string, timeoutMs: number = 8000): Promise<ArrayBuffer | undefined> {
+    const now = Date.now();
+    const cached = FnHttpClient.assetBufferCache.get(fullUrl);
+    if (cached !== undefined && now - cached.timeMs <= FnHttpClient.ASSET_CACHE_TTL_MS) {
+      return cached.data;
+    }
+    const inflight = FnHttpClient.inflightAssetReq.get(fullUrl);
+    if (inflight !== undefined) {
+      return await inflight;
+    }
+    const job = this.fetchGalleryImageBufferInternal(fullUrl, timeoutMs);
+    FnHttpClient.inflightAssetReq.set(fullUrl, job);
+    try {
+      const out = await job;
+      if (out !== undefined && out.byteLength > 0) {
+        FnHttpClient.putAssetBufferCache(fullUrl, out);
+      }
+      return out;
+    } finally {
+      FnHttpClient.inflightAssetReq.delete(fullUrl);
+    }
+  }
+
+  private async fetchGalleryImageBufferInternal(
+    fullUrl: string,
+    timeoutMs: number = 8000
+  ): Promise<ArrayBuffer | undefined> {
     try {
       const activeBase = fnWebViewBaseUrl(this.baseUrl);
       const cookie = mergeGalleryWebCookieIntoNativeHeader(
@@ -932,6 +969,27 @@ export class FnHttpClient {
     } catch (_e) {
     }
     return undefined;
+  }
+
+  private static putAssetBufferCache(url: string, data: ArrayBuffer): void {
+    if (FnHttpClient.assetBufferCache.size >= FnHttpClient.ASSET_CACHE_MAX) {
+      let oldestKey: string | undefined = undefined;
+      let oldestTime = Number.MAX_SAFE_INTEGER;
+      const keys = Array.from(FnHttpClient.assetBufferCache.keys());
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const one = FnHttpClient.assetBufferCache.get(key);
+        if (one !== undefined && one.timeMs < oldestTime) {
+          oldestTime = one.timeMs;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey !== undefined) {
+        FnHttpClient.assetBufferCache.delete(oldestKey);
+      }
+    }
+    const entry: AssetBufferCacheEntry = { timeMs: Date.now(), data: data };
+    FnHttpClient.assetBufferCache.set(url, entry);
   }
 
   /**

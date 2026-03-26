@@ -1,8 +1,14 @@
-import { router } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryListItem, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION
+} from '../common/FnMotion';
 
 @Entry
 @Component
@@ -15,7 +21,7 @@ struct SmartCategoryPage {
   @State private infoItems: SmartCategoryItem[] = [];
 
   onBackPress(): boolean {
-    router.back();
+    this.getUIContext().getRouter().back();
     return true;
   }
 
@@ -63,8 +69,13 @@ struct SmartCategoryPage {
       return;
     }
     try {
-      const sceneRes = await client.getSmartRecCategories('scene', -1);
-      const infoRes = await client.getSmartRecCategories('information', -1);
+      // 并发拉取两组分类，减少总等待时长
+      const pair = await Promise.all([
+        client.getSmartRecCategories('scene', -1),
+        client.getSmartRecCategories('information', -1)
+      ]);
+      const sceneRes = pair[0];
+      const infoRes = pair[1];
       const sceneRaw = sceneRes.success && sceneRes.data !== undefined ? (sceneRes.data.list ?? sceneRes.data.items ?? []) : [];
       const infoRaw = infoRes.success && infoRes.data !== undefined ? (infoRes.data.list ?? infoRes.data.items ?? []) : [];
       const sceneOut: SmartCategoryItem[] = [];
@@ -161,7 +172,7 @@ struct SmartCategoryPage {
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
                 .padding({ left: 12, right: 12 })
-                .backgroundColor('#90000000')
+                .backgroundColor($r('app.color.overlay_mask'))
               }
               .width('100%')
               .aspectRatio(1)
@@ -179,6 +190,7 @@ struct SmartCategoryPage {
       .columnsTemplate('1fr 1fr')
       .columnsGap(8)
       .rowsGap(8)
+      .cachedCount(4)
       .width('100%')
       .padding({ left: 12, right: 12 })
     }
@@ -186,20 +198,14 @@ struct SmartCategoryPage {
 
   build() {
     Column() {
-      Row() {
-        Button('返回').height(34).onClick((): void => { router.back(); })
-        Text('AI智能分类').layoutWeight(1).fontSize(20).fontWeight(FontWeight.Medium).textAlign(TextAlign.Center)
-        Blank().width(56)
-      }.width('100%').padding({ left: 12, right: 12, top: 10, bottom: 8 })
+      FnTopBar({
+        title: '智能分类'
+      })
 
       if (this.loading) {
-        Row({ space: 10 }) {
-          LoadingProgress().width(28).height(28)
-          Text('加载中…').fontSize(14).fontColor($r('app.color.text_secondary'))
-        }.layoutWeight(1).width('100%').justifyContent(FlexAlign.Center)
+        FnInlineLoading({ text: '加载中…' }).layoutWeight(1)
       } else if (this.error.length > 0) {
-        Text(this.error).layoutWeight(1).width('100%').padding({ left: 24, right: 24, top: 40 })
-          .textAlign(TextAlign.Center).fontSize(14).fontColor($r('app.color.text_secondary'))
+        FnStateText({ text: this.error })
       } else {
         Stack({ alignContent: Alignment.Center }) {
           Scroll() {
@@ -211,14 +217,7 @@ struct SmartCategoryPage {
           }.layoutWeight(1).width('100%')
 
           if (this.opening) {
-            Column({ space: 10 }) {
-              LoadingProgress().width(48).height(48).color(Color.White)
-              Text('打开中…').fontSize(14).fontColor(Color.White)
-            }
-            .width('100%').height('100%')
-            .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
-            .backgroundColor('#80000000')
-            .hitTestBehavior(HitTestMode.Block)
+            FnFullLoadingMask({ text: '打开中…' })
           }
         }.layoutWeight(1).width('100%')
       }
@@ -226,5 +225,15 @@ struct SmartCategoryPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 12, y: 0 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: -8, y: 0 });
   }
 }

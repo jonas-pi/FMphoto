@@ -19,6 +19,17 @@ import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryListItem, GalleryPhotoDetailData } from '../model/FnApiTypes';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
+import { FnInlineLoading, FnSecondaryButton, FnStateText } from '../common/FnUiCommon';
+import {
+  FN_PREVIEW_PAGE_ENTER_CURVE,
+  FN_PREVIEW_PAGE_ENTER_DURATION,
+  FN_PREVIEW_PAGE_EXIT_CURVE,
+  FN_PREVIEW_PAGE_EXIT_DURATION,
+  FN_SWIPER_CURVE,
+  FN_SWIPER_DURATION,
+  FN_UI_FADE_TOGGLE_CURVE,
+  FN_UI_FADE_TOGGLE_DURATION
+} from '../common/FnMotion';
 
 /** 与 LazyForEach 配套的轻量数据源 */
 interface PreviewDataChangeListener {
@@ -54,7 +65,7 @@ struct GalleryPreview {
   @State private totalCount: number = 0;
   @State private dismissDragProgress: number = 0;
   @State private toolbarVisible: boolean = true;
-  @State private loadOriginalReq: boolean = false;
+  @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
   @State private sharing: boolean = false;
   /** 右上角详情面板开关 */
@@ -239,7 +250,7 @@ struct GalleryPreview {
   }
 
   private toggleToolbar(): void {
-    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, (): void => {
+    this.getUIContext().animateTo({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE }, (): void => {
       this.toolbarVisible = !this.toolbarVisible;
     });
   }
@@ -716,6 +727,15 @@ struct GalleryPreview {
     .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
   }
 
+  @Builder
+  private topCircleAction(icon: Resource, action: () => void) {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      SymbolGlyph(icon).fontSize(20).fontColor([this.fgColor()])
+    }
+    .width(40).height(40).backgroundColor(this.btnBg())
+    .onClick(action)
+  }
+
   // ── build ─────────────────────────────────────────────────────────────────
 
   build() {
@@ -728,7 +748,7 @@ struct GalleryPreview {
             GalleryPreviewSlide({
               baseUrl: this.baseUrl,
               item: item,
-              loadOriginalReq: this.loadOriginalReq,
+              loadOriginalToken: this.loadOriginalToken,
               active: idx === this.swiperIndex,
               videoBottomPadding: this.toolbarVisible ? this.bottomBarHeight : 0,
               onZoomLockChange: (locked: boolean): void => { this.swiperLocked = locked; },
@@ -736,22 +756,22 @@ struct GalleryPreview {
                 this.dismissDragProgress = Math.max(0, Math.min(1, p));
               },
               onVerticalDismiss: (): void => { this.getUIContext().getRouter().back(); },
-              onOriginalLoaded: (): void => { this.originalShowing = true; }
+              onOriginalLoaded: (): void => { this.originalShowing = true; },
+              onOriginalLoadFailed: (msg: string): void => { this.toast(msg); }
             })
           }, (_item: GalleryListItem, i: number) => `gp_slide_${i}`)
         }
         .width('100%').height('100%')
         .index(this.swiperIndex).indicator(false).loop(false)
-        .duration(300).curve(Curve.EaseInOut).cachedCount(2)
+        .duration(FN_SWIPER_DURATION).curve(FN_SWIPER_CURVE).cachedCount(2)
         .disableSwipe(this.swiperLocked)
         .onClick((): void => { this.toggleToolbar(); })
         .onChange((idx: number): void => {
           this.swiperIndex = idx;
           this.dismissDragProgress = 0;
-          this.loadOriginalReq = false;
           this.originalShowing = false;
           if (!this.toolbarVisible) {
-            this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, (): void => {
+            this.getUIContext().animateTo({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE }, (): void => {
               this.toolbarVisible = true;
             });
           }
@@ -759,9 +779,7 @@ struct GalleryPreview {
           this.applySystemBar();
         })
       } else {
-        Column() {
-          Text('暂无预览').fontSize(16).fontColor('#CCCCCC')
-        }.width('100%').height('100%').justifyContent(FlexAlign.Center)
+        FnStateText({ text: '暂无预览' })
       }
 
       // ── 工具栏叠层（覆盖在 Swiper 上方）──────────────────────────────────
@@ -773,11 +791,9 @@ struct GalleryPreview {
         Row() {
           // 左侧区域（固定 88px，与右侧等宽，确保标题真正居中）
           Row() {
-            Button({ type: ButtonType.Circle, stateEffect: true }) {
-              SymbolGlyph($r('sys.symbol.chevron_backward')).fontSize(22).fontColor([this.fgColor()])
-            }
-            .width(40).height(40).backgroundColor(this.btnBg())
-            .onClick((): void => { this.getUIContext().getRouter().back(); })
+            this.topCircleAction($r('sys.symbol.chevron_backward'), (): void => {
+              this.getUIContext().getRouter().back();
+            })
           }
           .width(88).justifyContent(FlexAlign.Start)
 
@@ -789,18 +805,12 @@ struct GalleryPreview {
           // 右侧区域（固定 88px）：原图（已加载后消失）+ 更多
           Row({ space: 8 }) {
             if (this.currentHasOriginal() && !this.originalShowing) {
-              Button({ type: ButtonType.Circle, stateEffect: true }) {
-                // “查看原图”使用图片语义图标，避免与“下载”动作混淆
-                SymbolGlyph($r('sys.symbol.picture')).fontSize(20).fontColor([this.fgColor()])
-              }
-              .width(40).height(40).backgroundColor(this.btnBg())
-              .onClick((): void => { this.loadOriginalReq = true; })
+              // “查看原图”使用图片语义图标，避免与“下载”动作混淆
+              this.topCircleAction($r('sys.symbol.picture'), (): void => {
+                this.loadOriginalToken++;
+              })
             }
-            Button({ type: ButtonType.Circle, stateEffect: true }) {
-              SymbolGlyph($r('sys.symbol.more')).fontSize(20).fontColor([this.fgColor()])
-            }
-            .width(40).height(40).backgroundColor(this.btnBg())
-            .onClick((): void => { this.openDetailsPanel(); })
+            this.topCircleAction($r('sys.symbol.more'), (): void => { this.openDetailsPanel(); })
           }
           .width(88).justifyContent(FlexAlign.End)
         }
@@ -834,7 +844,7 @@ struct GalleryPreview {
       .width('100%').height('100%')
       .hitTestBehavior(HitTestMode.Transparent)
       .opacity(this.toolbarVisible ? this.toolbarAlpha() : 0)
-      .animation({ duration: 220, curve: Curve.EaseInOut })
+      .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
       // 详情底部弹层：由右上角「更多」按钮触发
       if (this.detailsVisible) {
@@ -850,32 +860,21 @@ struct GalleryPreview {
                 .fontWeight(FontWeight.Medium)
                 .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
               Blank()
-              Button('关闭', { type: ButtonType.Normal, stateEffect: true })
-                .fontSize(13)
+              FnSecondaryButton({ text: '关闭' })
                 .height(30)
                 .padding({ left: 10, right: 10 })
-                .backgroundColor(this.isDark() ? '#33FFFFFF' : '#12000000')
-                .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
                 .onClick((): void => { this.closeDetailsPanel(); })
             }
             .width('100%')
             .margin({ bottom: 8 })
 
             if (this.detailsLoading) {
-              Row({ space: 10 }) {
-                LoadingProgress().width(22).height(22).color(this.fgColor())
-                Text('详情加载中…')
-                  .fontSize(13)
-                  .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
-              }
-              .width('100%')
-              .padding({ top: 18, bottom: 20 })
+              FnInlineLoading({ text: '详情加载中…' })
+                .padding({ top: 18, bottom: 20 })
             } else if (this.detailsError.length > 0) {
-              Text(this.detailsError)
-                .fontSize(13)
-                .fontColor('#FFE0483E')
-                .width('100%')
-                .padding({ top: 12, bottom: 16 })
+              FnStateText({ text: this.detailsError, isError: true })
+                .layoutWeight(0)
+                .padding({ left: 0, right: 0, top: 12, bottom: 16 })
             } else {
               Scroll() {
                 Column() {
@@ -927,7 +926,7 @@ struct GalleryPreview {
         }
         .width('100%')
         .height('100%')
-        .backgroundColor('#66000000')
+        .backgroundColor($r('app.color.overlay_mask'))
       }
 
     }
@@ -937,9 +936,9 @@ struct GalleryPreview {
   }
 
   pageTransition(): void {
-    PageTransitionEnter({ duration: 240, curve: Curve.EaseOut })
+    PageTransitionEnter({ duration: FN_PREVIEW_PAGE_ENTER_DURATION, curve: FN_PREVIEW_PAGE_ENTER_CURVE })
       .opacity(0).scale({ x: 0.95, y: 0.95 })
-    PageTransitionExit({ duration: 200, curve: Curve.EaseIn })
+    PageTransitionExit({ duration: FN_PREVIEW_PAGE_EXIT_DURATION, curve: FN_PREVIEW_PAGE_EXIT_CURVE })
       .opacity(0).scale({ x: 0.95, y: 0.95 })
   }
 }

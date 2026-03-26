@@ -4,6 +4,13 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
+import { FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
+import {
+  FN_PAGE_ENTER_CURVE,
+  FN_PAGE_ENTER_DURATION,
+  FN_PAGE_EXIT_CURVE,
+  FN_PAGE_EXIT_DURATION
+} from '../common/FnMotion';
 
 @Entry
 @Component
@@ -42,8 +49,9 @@ struct Settings {
   build() {
     Column({ space: 16 }) {
       Row() {
-        Button($r('app.string.cancel'))
-          .type(ButtonType.Normal)
+        FnSecondaryButton({
+          text: $r('app.string.cancel')
+        })
           .onClick((): void => {
             this.getUIContext().getRouter().back();
           })
@@ -52,7 +60,9 @@ struct Settings {
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
         Blank()
-        Button($r('app.string.save'))
+        FnPrimaryButton({
+          text: $r('app.string.save')
+        })
           .onClick((): void => {
             const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
             AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
@@ -73,6 +83,9 @@ struct Settings {
           this.albumParentGuid = v;
         })
         .width('100%')
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius($r('app.float.radius_small'))
+        .padding({ left: 12, right: 12 })
 
       Text($r('app.string.album_parent_hint'))
         .fontSize(13)
@@ -90,5 +103,15 @@ struct Settings {
     .height('100%')
     .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  pageTransition(): void {
+    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+      .opacity(0)
+      .translate({ x: 12, y: 0 });
+    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+      .opacity(0)
+      .translate({ x: -8, y: 0 });
   }
 }

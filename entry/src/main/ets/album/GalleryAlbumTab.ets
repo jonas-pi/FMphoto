@@ -35,6 +35,12 @@ import {
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
+import { FnFullLoadingMask } from '../common/FnUiCommon';
+import {
+  FN_TAB_SWITCH_CURVE,
+  FN_TAB_SWITCH_IN_DURATION,
+  FN_TAB_SWITCH_OUT_DURATION
+} from '../common/FnMotion';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryTab';
@@ -171,6 +177,9 @@ export struct GalleryAlbumTab {
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
+  /** 模式切换时内容层动效（淡入 + 轻微位移） */
+  @State private modeSwitchOpacity: number = 1;
+  @State private modeSwitchOffsetY: number = 0;
   /** WaterFlow + LazyForEach 数据源（与 sections 同步） */
   private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
@@ -247,7 +256,7 @@ export struct GalleryAlbumTab {
     if (flatIndex < 0) {
       return;
     }
-    GalleryPreviewNavStore.openPreview(this.baseUrl, this.flatItems(), flatIndex, this.getUIContext());
+    GalleryPreviewNavStore.openPreview(this.baseUrl, this.flatItems(), flatIndex);
   }
 
   // ── 搜索 ──────────────────────────────────────────────────────────────────
@@ -258,6 +267,7 @@ export struct GalleryAlbumTab {
     if (kw.length === 0) {
       return;
     }
+    this.playModeSwitchMotion();
     this.inSearchMode = true;
     this.inCategoryMode = false;
     this.inSmartCategoryMode = false;
@@ -342,6 +352,34 @@ export struct GalleryAlbumTab {
     this.personItems = [];
   }
 
+  private backToGallery(): void {
+    this.playModeSwitchMotion();
+    this.clearSearch();
+    this.clearCategory();
+    this.clearSmartCategory();
+    this.clearPerson();
+  }
+
+  /** 统一模式切换动效，减少硬切感 */
+  private playModeSwitchMotion(): void {
+    this.getUIContext().animateTo(
+      { duration: FN_TAB_SWITCH_OUT_DURATION, curve: FN_TAB_SWITCH_CURVE },
+      (): void => {
+        this.modeSwitchOpacity = 0.9;
+        this.modeSwitchOffsetY = 10;
+      }
+    );
+    setTimeout((): void => {
+      this.getUIContext().animateTo(
+        { duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE },
+        (): void => {
+          this.modeSwitchOpacity = 1;
+          this.modeSwitchOffsetY = 0;
+        }
+      );
+    }, 90);
+  }
+
   private parseCategoryMedia(item: MediaCategoryItem): GalleryListItem[] {
     const raw = item.list ?? item.items;
     if (!Array.isArray(raw)) {
@@ -391,6 +429,7 @@ export struct GalleryAlbumTab {
   }
 
   private async loadMediaCategories(): Promise<void> {
+    this.playModeSwitchMotion();
     this.inSearchMode = false;
     this.inCategoryMode = true;
     this.inSmartCategoryMode = false;
@@ -474,6 +513,7 @@ export struct GalleryAlbumTab {
   }
 
   private async loadSmartCategories(): Promise<void> {
+    this.playModeSwitchMotion();
     this.inSearchMode = false;
     this.inCategoryMode = false;
     this.inSmartCategoryMode = true;
@@ -489,8 +529,12 @@ export struct GalleryAlbumTab {
       return;
     }
     try {
-      const sceneRes = await client.getSmartRecCategories('scene', -1);
-      const infoRes = await client.getSmartRecCategories('information', -1);
+      const pair = await Promise.all([
+        client.getSmartRecCategories('scene', -1),
+        client.getSmartRecCategories('information', -1)
+      ]);
+      const sceneRes = pair[0];
+      const infoRes = pair[1];
       const sceneRaw = sceneRes.success && sceneRes.data !== undefined ? (sceneRes.data.list ?? sceneRes.data.items ?? []) : [];
       const infoRaw = infoRes.success && infoRes.data !== undefined ? (infoRes.data.list ?? infoRes.data.items ?? []) : [];
       const sceneOut: SmartCategoryItem[] = [];
@@ -650,6 +694,7 @@ export struct GalleryAlbumTab {
   }
 
   private async loadPersons(): Promise<void> {
+    this.playModeSwitchMotion();
     // 进入人物列表时先清理“打开人物媒体”遮罩状态，避免从主页进入误显示
     this.personOpening = false;
     this.inSearchMode = false;
@@ -1171,10 +1216,7 @@ export struct GalleryAlbumTab {
             .fontSize(14)
             .height(36)
             .onClick((): void => {
-              this.clearSearch();
-              this.clearCategory();
-              this.clearSmartCategory();
-              this.clearPerson();
+              this.backToGallery();
             })
         }
       }
@@ -1195,6 +1237,7 @@ export struct GalleryAlbumTab {
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
           .onClick((): void => {
+            this.playModeSwitchMotion();
             this.getUIContext().getRouter().pushUrl({
               url: 'pages/MediaCategoryPage',
               params: { baseUrl: this.baseUrl }
@@ -1203,7 +1246,7 @@ export struct GalleryAlbumTab {
             });
           })
           Button() {
-            Text('AI智能分类')
+            Text('智能分类')
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
           }
@@ -1212,11 +1255,12 @@ export struct GalleryAlbumTab {
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
           .onClick((): void => {
+            this.playModeSwitchMotion();
             this.getUIContext().getRouter().pushUrl({
               url: 'pages/SmartCategoryPage',
               params: { baseUrl: this.baseUrl }
             }).catch((_e: Error): void => {
-              this.toast('打开AI智能分类失败');
+              this.toast('打开智能分类失败');
             });
           })
           Button() {
@@ -1229,6 +1273,7 @@ export struct GalleryAlbumTab {
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
           .onClick((): void => {
+            this.playModeSwitchMotion();
             this.getUIContext().getRouter().pushUrl({
               url: 'pages/PersonPage',
               params: { baseUrl: this.baseUrl }
@@ -1273,7 +1318,7 @@ export struct GalleryAlbumTab {
                   .aspectRatio(1)
                   .onClick((): void => {
                     GalleryPreviewNavStore.openPreview(
-                      this.baseUrl, this.searchResults, idx, this.getUIContext()
+                      this.baseUrl, this.searchResults, idx
                     );
                   })
                 }
@@ -1282,6 +1327,7 @@ export struct GalleryAlbumTab {
             .columnsTemplate('1fr 1fr 1fr')
             .columnsGap(2)
             .rowsGap(2)
+            .cachedCount(6)
             .width('100%')
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -1292,6 +1338,9 @@ export struct GalleryAlbumTab {
         }
         .width('100%')
         .layoutWeight(1)
+        .opacity(this.modeSwitchOpacity)
+        .translate({ x: 0, y: this.modeSwitchOffsetY })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
       }
 
       if (this.inCategoryMode) {
@@ -1346,6 +1395,7 @@ export struct GalleryAlbumTab {
               .columnsTemplate('1fr 1fr')
               .columnsGap(8)
               .rowsGap(8)
+              .cachedCount(4)
               .width('100%')
               .height('100%')
               .padding({ left: 12, right: 12, top: 8 })
@@ -1354,18 +1404,7 @@ export struct GalleryAlbumTab {
 
               // 点击分类后等待网络响应时的加载遮罩
               if (this.categoryOpening) {
-                Column({ space: 12 }) {
-                  LoadingProgress().width(48).height(48).color(Color.White)
-                  Text('加载中…')
-                    .fontSize(14)
-                    .fontColor(Color.White)
-                }
-                .width('100%')
-                .height('100%')
-                .justifyContent(FlexAlign.Center)
-                .alignItems(HorizontalAlign.Center)
-                .backgroundColor('#80000000')
-                .hitTestBehavior(HitTestMode.Block)
+                FnFullLoadingMask({ text: '加载中…' })
               }
             }
             .width('100%')
@@ -1374,6 +1413,9 @@ export struct GalleryAlbumTab {
         }
         .width('100%')
         .layoutWeight(1)
+        .opacity(this.modeSwitchOpacity)
+        .translate({ x: 0, y: this.modeSwitchOffsetY })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
       }
 
       if (this.inSmartCategoryMode) {
@@ -1439,6 +1481,7 @@ export struct GalleryAlbumTab {
                   .columnsTemplate('1fr 1fr')
                   .columnsGap(8)
                   .rowsGap(8)
+                  .cachedCount(4)
                   .width('100%')
                   .padding({ left: 12, right: 12 })
                 }
@@ -1487,6 +1530,7 @@ export struct GalleryAlbumTab {
                   .columnsTemplate('1fr 1fr')
                   .columnsGap(8)
                   .rowsGap(8)
+                  .cachedCount(4)
                   .width('100%')
                   .padding({ left: 12, right: 12, bottom: 10 })
                 }
@@ -1501,6 +1545,9 @@ export struct GalleryAlbumTab {
         }
         .width('100%')
         .layoutWeight(1)
+        .opacity(this.modeSwitchOpacity)
+        .translate({ x: 0, y: this.modeSwitchOffsetY })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
       }
 
       if (this.inPersonMode) {
@@ -1553,29 +1600,22 @@ export struct GalleryAlbumTab {
             .columnsTemplate('1fr 1fr 1fr')
             .columnsGap(8)
             .rowsGap(8)
+            .cachedCount(6)
             .width('100%')
             .layoutWeight(1)
             .padding({ left: 12, right: 12, top: 8, bottom: 10 })
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
             if (this.personOpening) {
-              Column({ space: 12 }) {
-                LoadingProgress().width(48).height(48).color(Color.White)
-                Text('加载人物媒体中…')
-                  .fontSize(14)
-                  .fontColor(Color.White)
-              }
-              .width('100%')
-              .height('100%')
-              .justifyContent(FlexAlign.Center)
-              .alignItems(HorizontalAlign.Center)
-              .backgroundColor('#80000000')
-              .hitTestBehavior(HitTestMode.Block)
+              FnFullLoadingMask({ text: '加载人物媒体中…' })
             }
           }
         }
         .width('100%')
         .layoutWeight(1)
+        .opacity(this.modeSwitchOpacity)
+        .translate({ x: 0, y: this.modeSwitchOffsetY })
+        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
       }
 
       // ── 图库视图 ──────────────────────────────────────────────────────────────
