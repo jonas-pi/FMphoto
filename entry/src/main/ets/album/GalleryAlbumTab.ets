@@ -9,20 +9,28 @@
  *   不依赖滚动事件，彻底规避 "Drag gesture has been canceled" 导致的加载停滞。
  *   onDidScroll 仅作备份重启触发（泵因错误暂停时由滚动重启）。
  *
- * 缩略图：鉴权下载 → PixelMap（保持原比例）→ LRU 缓存 → 骨架屏 → 淡入
- * 全屏预览：左右滑动切换、下划关闭、原图按钮、视频播放；图片支持双指缩放与单指拖动查看
+ * 缩略图：WaterFlow + LazyForEach 懒加载；鉴权下载与 LRU 见 GalleryAlbumCommon。
+ * 大图预览：独立页面 pages/GalleryPreview（Swiper 跟手、规范转场）。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { image } from '@kit.ImageKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import {
   GalleryGetListData,
   GalleryListItem,
-  GalleryThumbnailBlock,
-  GalleryTimelineDayCell
+  MagicSearchItem
 } from '../model/FnApiTypes';
+import {
+  GalleryNetworkThumb,
+  GalleryThumbSkeleton,
+  isGifItem,
+  isVideoItem,
+  nasUrl,
+  pickThumb
+} from './GalleryAlbumCommon';
+import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
+import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryTab';
@@ -30,21 +38,10 @@ const TAG = 'GalleryTab';
 const DATE_FEED_BATCH = 50;
 /** 有新增条数时泵的间隔（ms）；远小于旧版 80ms，多日多批时累计延迟明显降低 */
 const PUMP_UI_GAP_MS = 16;
-const THUMB_CACHE_MAX = 250;
-/** 预览图缩放范围（相对 1） */
-const PREVIEW_SCALE_MIN = 0.5;
-const PREVIEW_SCALE_MAX = 4;
-/** 与 1 的偏差超过此值视为「已缩放」，单指拖动平移；否则横向滑动切图 */
-const PREVIEW_ZOOM_EPS = 0.02;
-/** 手势结束后缩放落在此区间内则吸附回 1 倍并清零平移 */
-const PREVIEW_SNAP_EPS = 0.08;
 /** 每天内最大批次循环次数安全上限（兜底，防极端无限循环） */
 const DAY_MAX_ROUNDS = 300;
 /** 仅在 timeline 未给出 itemCount（0）时：连续空页达到该阈值才切日 */
 const EMPTY_PAGE_ADVANCE_THRESHOLD = 2;
-
-// ─── PixelMap 缓存 ─────────────────────────────────────────────────────────
-const thumbPixCache = new Map<string, PixelMap | null>();
 
 // ─── 数据模型 ──────────────────────────────────────────────────────────────
 
@@ -87,20 +84,25 @@ function dayKey(y: number, m: number, d: number): string {
   return `${y}-${m}-${d}`;
 }
 
-function parseTimelineDayCells(raw: GalleryTimelineDayCell[]): TimelineDayModel[] {
+function parseTimelineDayCells(raw: Array<Record<string, number | undefined>>): TimelineDayModel[] {
   const out: TimelineDayModel[] = [];
   for (let i = 0; i < raw.length; i++) {
     const x = raw[i];
-    if (x.year === undefined || x.month === undefined || x.day === undefined) {
+    const year = x['year'];
+    const month = x['month'];
+    const day = x['day'];
+    if (year === undefined || month === undefined || day === undefined) {
       continue;
     }
-    const yi = Number(x.year);
-    const mi = Number(x.month);
-    const di = Number(x.day);
+    const yi = Number(year);
+    const mi = Number(month);
+    const di = Number(day);
     if (!Number.isFinite(yi) || !Number.isFinite(mi) || !Number.isFinite(di)) {
       continue;
     }
-    const ic = x.itemCount !== undefined ? x.itemCount : x.item_count;
+    const itemCount = x['itemCount'];
+    const itemCountSnake = x['item_count'];
+    const ic = itemCount !== undefined ? itemCount : itemCountSnake;
     const cnt = ic !== undefined && Number.isFinite(Number(ic)) ? Math.max(0, Math.floor(Number(ic))) : 0;
     out.push({ year: Math.floor(yi), month: Math.floor(mi), day: Math.floor(di), itemCount: cnt });
   }
@@ -119,109 +121,6 @@ function sortDaysDesc(cells: TimelineDayModel[]): TimelineDayModel[] {
   });
 }
 
-function itemFileExt(it: GalleryListItem): string {
-  const name = it.filename ?? it.name ?? it.title ?? '';
-  const dot = name.lastIndexOf('.');
-  return dot >= 0 ? name.substring(dot + 1).toLowerCase() : (it.fileType ?? '').toLowerCase();
-}
-
-function isVideoItem(it: GalleryListItem): boolean {
-  if (it.category === 'video') {
-    return true;
-  }
-  const ext = itemFileExt(it);
-  return ext === 'mp4' || ext === 'mov' || ext === 'avi' || ext === 'mkv' || ext === 'webm' || ext === 'm4v';
-}
-
-function isGifItem(it: GalleryListItem): boolean {
-  return itemFileExt(it) === 'gif';
-}
-
-function pickThumb(it: GalleryListItem): string {
-  const th = it.additional?.thumbnail;
-  if (th !== undefined) {
-    for (const u of [th.mUrl, th.sUrl, th.xsUrl, th.xxsUrl]) {
-      if (u !== undefined && u.trim().length > 0) {
-        return u.trim();
-      }
-    }
-  }
-  const topTh = it.thumbnail;
-  if (topTh !== undefined && typeof topTh === 'object') {
-    const tb = topTh as GalleryThumbnailBlock;
-    for (const u of [tb.mUrl, tb.sUrl, tb.xsUrl, tb.xxsUrl]) {
-      if (u !== undefined && u.trim().length > 0) {
-        return u.trim();
-      }
-    }
-  }
-  for (const u of [it.thumb, it.small_thumb, it.thumb_url, it.cover, it.poster]) {
-    if (u !== undefined && u.trim().length > 0) {
-      return u.trim();
-    }
-  }
-  if (typeof topTh === 'string' && topTh.trim().length > 0) {
-    return topTh.trim();
-  }
-  for (const u of [it.url, it.src, it.path]) {
-    if (u !== undefined && u.trim().length > 0) {
-      return u.trim();
-    }
-  }
-  return '';
-}
-
-function pickOriginal(it: GalleryListItem): string {
-  if (it.originalUrl !== undefined && it.originalUrl.trim().length > 0) {
-    return it.originalUrl.trim();
-  }
-  const th = it.additional?.thumbnail;
-  if (th?.originalUrl !== undefined && th.originalUrl.trim().length > 0) {
-    return th.originalUrl.trim();
-  }
-  if (typeof it.thumbnail === 'object') {
-    const orig = (it.thumbnail as GalleryThumbnailBlock).originalUrl;
-    if (orig !== undefined && orig.trim().length > 0) {
-      return orig.trim();
-    }
-  }
-  return '';
-}
-
-function pickVideo(it: GalleryListItem): string {
-  const th = it.additional?.thumbnail;
-  if (th?.videoUrl !== undefined && th.videoUrl.trim().length > 0) {
-    return th.videoUrl.trim();
-  }
-  if (typeof it.thumbnail === 'object') {
-    const vUrl = (it.thumbnail as GalleryThumbnailBlock).videoUrl;
-    if (vUrl !== undefined && vUrl.trim().length > 0) {
-      return vUrl.trim();
-    }
-  }
-  for (const u of [it.url, it.src, it.path]) {
-    if (u !== undefined && u.trim().length > 0) {
-      return u.trim();
-    }
-  }
-  return '';
-}
-
-function nasUrl(base: string, ref: string): string {
-  const t = ref.trim();
-  if (t.length === 0) {
-    return '';
-  }
-  if (t.startsWith('http://') || t.startsWith('https://') || t.startsWith('data:')) {
-    return t;
-  }
-  let b = base.trim();
-  while (b.length > 1 && b.endsWith('/')) {
-    b = b.substring(0, b.length - 1);
-  }
-  return t.startsWith('/') ? `${b}${t}` : `${b}/${t}`;
-}
-
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   if (data === undefined || data === null) {
     return [];
@@ -234,564 +133,26 @@ function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   return raw as GalleryListItem[];
 }
 
-function rowIndexes(n: number): number[] {
-  const c = n <= 0 ? 0 : Math.floor((n + 2) / 3);
-  const a: number[] = [];
-  for (let i = 0; i < c; i++) {
-    a.push(i);
-  }
-  return a;
-}
-
-// ─── 图片加载 ──────────────────────────────────────────────────────────────
-
-async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefined> {
-  if (fullUrl.length === 0) {
-    return undefined;
-  }
-  const cached = thumbPixCache.get(fullUrl);
-  if (cached !== undefined) {
-    return cached ?? undefined;
-  }
-  const client = AppSession.getClient();
-  if (client === null) {
-    return undefined;
-  }
-  const buf = await client.fetchGalleryImageBuffer(fullUrl, 8000);
-  if (buf === undefined || buf.byteLength === 0) {
-    thumbPixCache.set(fullUrl, null);
-    return undefined;
-  }
-  try {
-    const src = image.createImageSource(buf);
-    // NAS 缩略图（sUrl/xsUrl）本身已是小尺寸，直接解码保持原始宽高比
-    // 不指定 desiredSize，避免强制拉伸变形；渲染由 ImageFit.Cover 裁切填满
-    const pix = await src.createPixelMap();
-    src.release();
-    if (thumbPixCache.size >= THUMB_CACHE_MAX) {
-      const keys = Array.from(thumbPixCache.keys());
-      if (keys.length > 0) {
-        thumbPixCache.delete(keys[0]);
-      }
-    }
-    thumbPixCache.set(fullUrl, pix);
-    return pix;
-  } catch (_e) {
-    thumbPixCache.set(fullUrl, null);
-    return undefined;
-  }
-}
-
-async function loadFullPix(fullUrl: string): Promise<PixelMap | undefined> {
-  if (fullUrl.length === 0) {
-    return undefined;
-  }
-  const client = AppSession.getClient();
-  if (client === null) {
-    return undefined;
-  }
-  const buf = await client.fetchGalleryImageBuffer(fullUrl, 20000);
-  if (buf === undefined || buf.byteLength === 0) {
-    return undefined;
-  }
-  try {
-    const src = image.createImageSource(buf);
-    const pix = await src.createPixelMap();
-    src.release();
-    return pix;
-  } catch (_e) {
-    return undefined;
-  }
-}
-
-// ─── 骨架屏 ────────────────────────────────────────────────────────────────
-
-@Component
-struct ThumbSkeleton {
-  @State private alpha: number = 0.45;
-
-  aboutToAppear(): void {
-    animateTo(
-      { duration: 900, iterations: -1, playMode: PlayMode.Alternate, curve: Curve.EaseInOut },
-      (): void => {
-        this.alpha = 1.0;
-      }
-    );
-  }
-
-  build() {
-    Column()
-      .width('100%')
-      .aspectRatio(1)
-      .backgroundColor('#E0E0E0')
-      .borderRadius(6)
-      .opacity(this.alpha)
-  }
-}
-
-// ─── 缩略图组件 ────────────────────────────────────────────────────────────
-
-@Component
-struct GalleryNetworkThumb {
-  @Prop @Watch('onUriChange') uri: string = '';
-  @Prop isVideo: boolean = false;
-  @Prop isGif: boolean = false;
-  @State private pix: PixelMap | undefined = undefined;
-  @State private loading: boolean = false;
-  @State private pixAlpha: number = 0;
-
-  onUriChange(): void {
-    this.pix = undefined;
-    this.pixAlpha = 0;
-    this.loading = false;
-    void this.loadPix();
-  }
-
-  aboutToAppear(): void {
-    void this.loadPix();
-  }
-
-  private async loadPix(): Promise<void> {
-    if (this.uri.length === 0 || this.loading) {
-      return;
-    }
-    const cached = thumbPixCache.get(this.uri);
-    if (cached !== undefined) {
-      this.pix = cached ?? undefined;
-      this.pixAlpha = 1;
-      return;
-    }
-    this.loading = true;
-    const pix = await loadThumbPix(this.uri);
-    this.loading = false;
-    if (pix !== undefined) {
-      this.pix = pix;
-      animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
-        this.pixAlpha = 1;
-      });
-    }
-  }
-
-  build() {
-    Stack({ alignContent: Alignment.Center }) {
-      if (this.loading || this.pix === undefined) {
-        ThumbSkeleton()
-      }
-      if (this.pix !== undefined) {
-        Image(this.pix)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
-          .borderRadius(6)
-          .opacity(this.pixAlpha)
-      }
-      if (this.isVideo) {
-        Column() {
-          Text('▶').fontSize(20).fontColor(Color.White)
-        }
-        .width(36).height(36).borderRadius(18)
-        .backgroundColor('#80000000')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-      }
-      if (this.isGif) {
-        Text('GIF').fontSize(10).fontColor(Color.White)
-          .backgroundColor('#80000000')
-          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
-          .borderRadius(3)
-          .position({ x: 4, y: 4 })
-      }
-    }
-    .width('100%')
-    .aspectRatio(1)
-  }
-}
-
-// ─── 全屏预览（支持左右滑动切换） ──────────────────────────────────────────
-
-@Component
-struct GalleryPreviewOverlay {
-  @Prop baseUrl: string = '';
-  @Prop @Watch('onItemChange') item: GalleryListItem | undefined = undefined;
-  onSwitch: (delta: number) => void = (_: number) => {};
-  onClose: () => void = () => {};
-
-  @State private thumbPix: PixelMap | undefined = undefined;
-  @State private fullPix: PixelMap | undefined = undefined;
-  @State private showingOriginal: boolean = false;
-  @State private fullLoading: boolean = false;
-  @State private videoSrc: string = '';
-  @State private contentOffsetX: number = 0;
-  /** 图片预览：捏合缩放（1 为原始） */
-  @State private previewScale: number = 1;
-  /** 缩放后的平移（屏幕坐标） */
-  @State private previewPanX: number = 0;
-  @State private previewPanY: number = 0;
-  /** 捏合开始时已有缩放倍数（event.scale 相对捏合起点） */
-  private pinchBaseScale: number = 1;
-  /** 单指拖动开始时已有平移 */
-  private panBaseX: number = 0;
-  private panBaseY: number = 0;
-
-  private isVideo(): boolean {
-    return this.item !== undefined && isVideoItem(this.item);
-  }
-
-  private thumbUrl(): string {
-    return this.item !== undefined ? nasUrl(this.baseUrl, pickThumb(this.item)) : '';
-  }
-
-  private originalUrl(): string {
-    return this.item !== undefined ? nasUrl(this.baseUrl, pickOriginal(this.item)) : '';
-  }
-
-  /** @Prop item 变化时重置所有内部状态并重新加载（左右滑动切换时触发） */
-  onItemChange(): void {
-    this.thumbPix = undefined;
-    this.fullPix = undefined;
-    this.showingOriginal = false;
-    this.fullLoading = false;
-    this.videoSrc = '';
-    this.contentOffsetX = 0;
-    this.previewScale = 1;
-    this.previewPanX = 0;
-    this.previewPanY = 0;
-    this.prepareContent();
-  }
-
-  aboutToAppear(): void {
-    this.prepareContent();
-  }
-
-  private prepareContent(): void {
-    if (this.item === undefined) {
-      return;
-    }
-    if (this.isVideo()) {
-      this.videoSrc = nasUrl(this.baseUrl, pickVideo(this.item as GalleryListItem));
-      return;
-    }
-    const tUrl = this.thumbUrl();
-    const cached = tUrl.length > 0 ? thumbPixCache.get(tUrl) : undefined;
-    if (cached !== undefined && cached !== null) {
-      this.thumbPix = cached;
-    } else if (tUrl.length > 0) {
-      void loadThumbPix(tUrl).then((p: PixelMap | undefined) => {
-        this.thumbPix = p;
-      });
-    }
-  }
-
-  private loadOriginal(): void {
-    const oUrl = this.originalUrl();
-    if (oUrl.length === 0 || this.fullLoading || this.fullPix !== undefined) {
-      if (this.fullPix !== undefined) {
-        this.showingOriginal = true;
-      }
-      return;
-    }
-    this.fullLoading = true;
-    void loadFullPix(oUrl).then((p: PixelMap | undefined) => {
-      this.fullLoading = false;
-      this.fullPix = p;
-      this.showingOriginal = p !== undefined;
-    });
-  }
-
-  private hasOriginal(): boolean {
-    return this.item !== undefined && this.originalUrl().length > 0 && !this.isVideo();
-  }
-
-  /** 当前为图片且相对 1 倍有缩放（可单指拖动，含缩小后查看） */
-  private isImageZoomed(): boolean {
-    return !this.isVideo() && Math.abs(this.previewScale - 1) > PREVIEW_ZOOM_EPS;
-  }
-
-  /** 限制平移，避免拖得过远 */
-  private clampPreviewPan(): void {
-    if (this.isVideo() || Math.abs(this.previewScale - 1) <= PREVIEW_ZOOM_EPS) {
-      return;
-    }
-    const lim = 320 * Math.abs(this.previewScale - 1) + 80;
-    this.previewPanX = Math.min(lim, Math.max(-lim, this.previewPanX));
-    this.previewPanY = Math.min(lim, Math.max(-lim, this.previewPanY));
-  }
-
-  /** 手势结束：接近 1 倍时吸附回初始状态 */
-  private snapPreviewIfNeeded(): void {
-    if (this.isVideo()) {
-      return;
-    }
-    if (Math.abs(this.previewScale - 1) <= PREVIEW_SNAP_EPS) {
-      animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
-        this.previewScale = 1;
-        this.previewPanX = 0;
-        this.previewPanY = 0;
-      });
-    } else {
-      this.clampPreviewPan();
-    }
-  }
-
-  build() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(Color.Black)
-
-      // 内容区（跟随横向拖拽偏移）
-      Column() {
-        if (this.isVideo() && this.videoSrc.length > 0) {
-          Video({ src: this.videoSrc })
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Contain)
-            .autoPlay(true)
-            .controls(true)
-        } else if (this.showingOriginal && this.fullPix !== undefined) {
-          Image(this.fullPix)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Contain)
-        } else if (this.thumbPix !== undefined) {
-          Image(this.thumbPix)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Contain)
-        } else {
-          LoadingProgress().width(48).height(48).color(Color.White)
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .scale({
-        x: this.isVideo() ? 1 : this.previewScale,
-        y: this.isVideo() ? 1 : this.previewScale,
-        centerX: '50%',
-        centerY: '50%'
-      })
-      .translate({
-        x: this.isVideo()
-          ? this.contentOffsetX
-          : (this.isImageZoomed() ? this.previewPanX : this.contentOffsetX),
-        y: this.isVideo() ? 0 : (this.isImageZoomed() ? this.previewPanY : 0)
-      })
-
-      // 关闭按钮
-      Row() {
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          Text('✕').fontSize(16).fontColor(Color.White)
-        }
-        .width(40).height(40)
-        .backgroundColor('#60000000')
-        .onClick((): void => { this.onClose(); })
-        Blank()
-      }
-      .width('100%')
-      .padding({ left: 12, top: 12, right: 12 })
-
-      // 查看原图
-      if (!this.isVideo()) {
-        Column() {
-          if (this.hasOriginal()) {
-            if (this.fullLoading) {
-              Row({ space: 8 }) {
-                LoadingProgress().width(20).height(20).color(Color.White)
-                Text('加载原图中…').fontSize(14).fontColor(Color.White)
-              }.padding({ bottom: 24 })
-            } else if (this.showingOriginal) {
-              Text('已显示原图').fontSize(13).fontColor('#AAAAAA').padding({ bottom: 24 })
-            } else {
-              Button('查看原图', { type: ButtonType.Capsule, stateEffect: true })
-                .fontSize(14).fontColor(Color.White).backgroundColor('#60000000')
-                .margin({ bottom: 24 })
-                .onClick((): void => { this.loadOriginal(); })
-            }
-          }
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Center)
-        .position({ x: 0, y: '100%' })
-        .translate({ y: '-100%' })
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .gesture(
-      GestureGroup(GestureMode.Parallel,
-        PinchGesture({ fingers: 2 })
-          .onActionStart((): void => {
-            if (this.isVideo()) {
-              return;
-            }
-            this.pinchBaseScale = this.previewScale;
-          })
-          .onActionUpdate((event: GestureEvent): void => {
-            if (this.isVideo()) {
-              return;
-            }
-            let s = this.pinchBaseScale * event.scale;
-            if (s < PREVIEW_SCALE_MIN) {
-              s = PREVIEW_SCALE_MIN;
-            }
-            if (s > PREVIEW_SCALE_MAX) {
-              s = PREVIEW_SCALE_MAX;
-            }
-            this.previewScale = s;
-            this.clampPreviewPan();
-          })
-          .onActionEnd((): void => {
-            if (this.isVideo()) {
-              return;
-            }
-            this.snapPreviewIfNeeded();
-          })
-          .onActionCancel((): void => {
-            if (this.isVideo()) {
-              return;
-            }
-            this.snapPreviewIfNeeded();
-          }),
-        PanGesture({ direction: PanDirection.All })
-          .onActionStart((): void => {
-            this.panBaseX = this.previewPanX;
-            this.panBaseY = this.previewPanY;
-          })
-          .onActionUpdate((event: GestureEvent): void => {
-            if (this.isImageZoomed()) {
-              this.previewPanX = this.panBaseX + event.offsetX;
-              this.previewPanY = this.panBaseY + event.offsetY;
-              this.clampPreviewPan();
-              return;
-            }
-            if (this.isVideo()) {
-              if (Math.abs(event.offsetX) > Math.abs(event.offsetY)) {
-                this.contentOffsetX = event.offsetX;
-              }
-              return;
-            }
-            // 未缩放图片：横向跟手；纵向以下滑关闭为主，不在此跟手避免与缩放后拖动混淆
-            if (Math.abs(event.offsetX) >= Math.abs(event.offsetY)) {
-              this.contentOffsetX = event.offsetX;
-            }
-          })
-          .onActionEnd((event: GestureEvent): void => {
-            if (this.isImageZoomed()) {
-              this.clampPreviewPan();
-              return;
-            }
-            const absX = Math.abs(event.offsetX);
-            const absY = Math.abs(event.offsetY);
-            if (absX > absY && absX >= 80) {
-              animateTo({ duration: 150, curve: Curve.EaseOut }, (): void => {
-                this.contentOffsetX = event.offsetX > 0 ? 400 : -400;
-              });
-              const delta = event.offsetX < 0 ? 1 : -1;
-              setTimeout((): void => {
-                this.contentOffsetX = 0;
-                this.onSwitch(delta);
-              }, 160);
-            } else if (absY > absX && event.offsetY >= 100) {
-              this.onClose();
-            } else {
-              animateTo({ duration: 150, curve: Curve.EaseOut }, (): void => {
-                this.contentOffsetX = 0;
-              });
-            }
-          })
-      )
-    )
-  }
-}
-
-/**
- * 单日时间轴区块：通过 @ObjectLink 订阅 @Observed 的 DaySectionModel，
- * 同日多批追加 items 时仅刷新本块，无需把 items.length 塞进 ForEach key 导致整段重挂载。
- */
-@Component
-struct GalleryDaySection {
-  @ObjectLink sec: DaySectionModel;
-  @Prop baseUrl: string = '';
-  @Prop showMonthTitle: boolean = false;
-  onThumbClick: (sec: DaySectionModel, rowIdx: number, col: number) => void = () => {};
-
-  private itemAt(rowIdx: number, col: number): GalleryListItem | undefined {
-    const idx = rowIdx * 3 + col;
-    return idx >= 0 && idx < this.sec.items.length ? this.sec.items[idx] : undefined;
-  }
-
-  @Builder
-  private thumbCell(rowIdx: number, col: number) {
-    if (this.itemAt(rowIdx, col) === undefined) {
-      Blank()
-    } else {
-      GalleryNetworkThumb({
-        uri: nasUrl(this.baseUrl, pickThumb(this.itemAt(rowIdx, col) as GalleryListItem)),
-        isVideo: isVideoItem(this.itemAt(rowIdx, col) as GalleryListItem),
-        isGif: isGifItem(this.itemAt(rowIdx, col) as GalleryListItem)
-      })
-        .onClick((): void => {
-          this.onThumbClick(this.sec, rowIdx, col);
-        })
-    }
-  }
-
-  build() {
-    Column({ space: 6 }) {
-      if (this.showMonthTitle) {
-        Text(`${this.sec.year}年${this.sec.month}月`)
-          .fontSize(17)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .width('100%')
-          .padding({ left: 8, top: 10, bottom: 4 })
-      }
-      Text(`${this.sec.month}月${this.sec.day}日`)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-        .padding({ left: 8, bottom: 2 })
-
-      Column({ space: 6 }) {
-        ForEach(rowIndexes(this.sec.items.length), (rowIdx: number) => {
-          Row({ space: 6 }) {
-            ForEach([0, 1, 2], (col: number) => {
-              Column() {
-                this.thumbCell(rowIdx, col);
-              }
-              .layoutWeight(1)
-            }, (col: number) => `c_${this.sec.year}_${this.sec.month}_${this.sec.day}_${rowIdx}_${col}`)
-          }
-          .width('100%')
-        }, (rowIdx: number) => `r_${this.sec.year}_${this.sec.month}_${this.sec.day}_${rowIdx}`)
-      }
-      .width('100%')
-      .padding({ left: 8, right: 8, bottom: 10 })
-    }
-    .width('100%')
-  }
-}
-
 // ─── 主 Tab 组件 ───────────────────────────────────────────────────────────
 
 @Component
 export struct GalleryAlbumTab {
   @Prop baseUrl: string = '';
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
-  @Consume galleryHasPreview: boolean;
-  @Consume @Watch('handleCloseReq') closeGalleryPreview: number;
 
   @State private bootLoading: boolean = false;
   @State private loadError: string = '';
   @State private footText: string = '';
   @State private sections: DaySectionModel[] = [];
-  /** 当前全屏预览的扁平索引（-1 = 无预览） */
-  @State private previewFlatIndex: number = -1;
-  @State private previewOpacity: number = 0;
-  @State private previewScale: number = 0.96;
+
+  // ── 搜索状态 ────────────────────────────────────────────────────────────────
+  @State private searchQuery: string = '';
+  @State private inSearchMode: boolean = false;
+  @State private searchResults: GalleryListItem[] = [];
+  @State private searchLoading: boolean = false;
+  @State private searchError: string = '';
+  /** WaterFlow + LazyForEach 数据源（与 sections 同步） */
+  private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
   private loadGen: number = 0;
   private orderedDays: TimelineDayModel[] = [];
@@ -805,7 +166,7 @@ export struct GalleryAlbumTab {
   private dayEmptyRounds: Map<string, number> = new Map<string, number>();
   private scrollerRef: Scroller = new Scroller();
 
-  // ── 扁平索引辅助（用于左右滑动切换预览） ───────────────────────────────
+  // ── 扁平列表（供跳转独立预览页） ─────────────────────────────────────────
 
   private flatItems(): GalleryListItem[] {
     const out: GalleryListItem[] = [];
@@ -818,45 +179,120 @@ export struct GalleryAlbumTab {
     return out;
   }
 
-  private flatItem(index: number): GalleryListItem | undefined {
-    let cur = 0;
+  /** 由 sections 重建 List 节点（月/日标题 + 按行分组的缩略图行）并通知 LazyForEach */
+  private rebuildFlow(): void {
+    const nodes: GalleryFlowNode[] = [];
+    let flat = 0;
     for (let i = 0; i < this.sections.length; i++) {
-      const items = this.sections[i].items;
-      if (index < cur + items.length) {
-        return items[index - cur];
+      const sec = this.sections[i];
+      const prev = i > 0 ? this.sections[i - 1] : undefined;
+      const showMonth = prev === undefined || ymKey(sec.year, sec.month) !== ymKey(prev.year, prev.month);
+      if (showMonth) {
+        const mn = new GalleryFlowNode();
+        mn.kind = 'month';
+        mn.key = `m_${sec.year}_${sec.month}_i${i}`;
+        mn.year = sec.year;
+        mn.month = sec.month;
+        nodes.push(mn);
       }
-      cur += items.length;
-    }
-    return undefined;
-  }
-
-  private flatTotal(): number {
-    let n = 0;
-    for (let i = 0; i < this.sections.length; i++) {
-      n += this.sections[i].items.length;
-    }
-    return n;
-  }
-
-  private flatIndexOf(sec: DaySectionModel, rowIdx: number, col: number): number {
-    const localIdx = rowIdx * 3 + col;
-    let base = 0;
-    for (let i = 0; i < this.sections.length; i++) {
-      const s = this.sections[i];
-      if (s.year === sec.year && s.month === sec.month && s.day === sec.day) {
-        return base + localIdx;
+      const dn = new GalleryFlowNode();
+      dn.kind = 'day';
+      dn.key = `d_${sec.year}_${sec.month}_${sec.day}`;
+      dn.year = sec.year;
+      dn.month = sec.month;
+      dn.day = sec.day;
+      nodes.push(dn);
+      // 按 3 项分行
+      let ri = 0;
+      while (ri < sec.items.length) {
+        const rn = new GalleryFlowNode();
+        rn.kind = 'row';
+        rn.key = `r_${flat}`;
+        const cnt = Math.min(3, sec.items.length - ri);
+        for (let k = 0; k < cnt; k++) {
+          rn.rowItems.push(sec.items[ri + k]);
+          rn.rowFlatIndices.push(flat + k);
+        }
+        nodes.push(rn);
+        flat += cnt;
+        ri += cnt;
       }
-      base += s.items.length;
     }
-    return -1;
+    this.flowDataSource.reloadAll(nodes);
   }
 
-  // ── back 协调 ──────────────────────────────────────────────────────────
-
-  handleCloseReq(): void {
-    if (this.previewFlatIndex >= 0) {
-      this.closePreview();
+  private openPreview(flatIndex: number): void {
+    if (flatIndex < 0) {
+      return;
     }
+    GalleryPreviewNavStore.openPreview(this.baseUrl, this.flatItems(), flatIndex, this.getUIContext());
+  }
+
+  // ── 搜索 ──────────────────────────────────────────────────────────────────
+
+  /** 执行 AI 语义搜索并展示结果 */
+  private async runSearch(keyword: string): Promise<void> {
+    const kw = keyword.trim();
+    if (kw.length === 0) {
+      return;
+    }
+    this.inSearchMode = true;
+    this.searchLoading = true;
+    this.searchError = '';
+    this.searchResults = [];
+
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.searchError = '未登录';
+      this.searchLoading = false;
+      return;
+    }
+    try {
+      const res = await client.doMagicSearch(kw);
+      if (!res.success || res.data === undefined) {
+        this.searchError = res.message ?? '搜索失败';
+        this.searchLoading = false;
+        return;
+      }
+      const rawList = res.data.list ?? [];
+      this.searchResults = rawList.map((item: MagicSearchItem): GalleryListItem => {
+        // 优先使用服务端返回的完整媒体条目（可正确识别视频/图片）
+        const hasRichMedia =
+          item.additional !== undefined ||
+          item.thumbnail !== undefined ||
+          item.category !== undefined ||
+          item.fileType !== undefined;
+        if (hasRichMedia) {
+          return item as GalleryListItem;
+        }
+        // 兼容旧版 magic-search：仅有 id + session 时回退拼接缩略图 URL
+        const id = item.id !== undefined ? String(item.id) : '';
+        const session = item.session !== undefined ? item.session : '';
+        if (id.length > 0 && session.length > 0) {
+          const fallback: GalleryListItem = {
+            id: id,
+            thumb: `/p/api/v1/stream/p/t/${id}/s/${session}`
+          };
+          return fallback;
+        }
+        return item as GalleryListItem;
+      });
+      if (this.searchResults.length === 0) {
+        this.searchError = '未找到相关媒体';
+      }
+    } catch (e) {
+      this.searchError = String(e) || '搜索异常';
+    }
+    this.searchLoading = false;
+  }
+
+  /** 清除搜索，回到图库视图 */
+  private clearSearch(): void {
+    this.inSearchMode = false;
+    this.searchQuery = '';
+    this.searchResults = [];
+    this.searchError = '';
+    this.searchLoading = false;
   }
 
   // ── 生命周期 ─────────────────────────────────────────────────────────────
@@ -892,6 +328,7 @@ export struct GalleryAlbumTab {
       }
       sec.nextOffset = newOffset;
     }
+    this.rebuildFlow();
   }
 
   // ── 数据加载 ─────────────────────────────────────────────────────────────
@@ -908,8 +345,7 @@ export struct GalleryAlbumTab {
     this.loadError = '';
     this.sections = [];
     this.footText = '';
-    this.previewFlatIndex = -1;
-    this.galleryHasPreview = false;
+    this.rebuildFlow();
 
     const client = AppSession.getClient();
     if (client === null) {
@@ -928,7 +364,7 @@ export struct GalleryAlbumTab {
           cur.fnosLongToken = tok;
           AppSession.apply(cur);
           try {
-            const ctx = getContext(this) as common.UIAbilityContext;
+            const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
             void SessionPreferences.save(ctx, cur);
           } catch (_e) { /* ignore */ }
           const refreshed = AppSession.getClient();
@@ -941,7 +377,7 @@ export struct GalleryAlbumTab {
     if (gen !== this.loadGen) { return; }
     if (tl.success !== true || tl.data === undefined) {
       const em = tl.message !== undefined && tl.message.length > 0 ? tl.message : '时间轴加载失败';
-      const prev = tl.errorBodyPreview ?? '';
+      const prev = '';
       hilog.warn(DOMAIN, TAG, 'timeline fail: %{public}s body: %{public}s', em, prev || '(none)');
       this.bootLoading = false;
       this.loadError = prev.length > 0 ? `${em}\n${prev}` : em;
@@ -949,11 +385,11 @@ export struct GalleryAlbumTab {
     }
 
     const rawList = tl.data.list ?? [];
-    const cellsIn: GalleryTimelineDayCell[] = [];
+    const cellsIn: Array<Record<string, number | undefined>> = [];
     for (let i = 0; i < rawList.length; i++) {
       const el = rawList[i];
       if (typeof el === 'object' && el !== null) {
-        cellsIn.push(el as GalleryTimelineDayCell);
+        cellsIn.push(el as Record<string, number | undefined>);
       }
     }
     const cells = sortDaysDesc(parseTimelineDayCells(cellsIn)).filter(
@@ -962,6 +398,7 @@ export struct GalleryAlbumTab {
     if (cells.length === 0) {
       this.bootLoading = false;
       this.footText = '时间轴暂无数据';
+      this.rebuildFlow();
       return;
     }
 
@@ -1135,77 +572,133 @@ export struct GalleryAlbumTab {
     }
   }
 
-  // ── 预览 ──────────────────────────────────────────────────────────────────
-
-  private openPreview(sec: DaySectionModel, rowIdx: number, col: number): void {
-    const fi = this.flatIndexOf(sec, rowIdx, col);
-    if (fi < 0) {
-      return;
-    }
-    this.previewFlatIndex = fi;
-    this.galleryHasPreview = true;
-    this.previewOpacity = 0;
-    this.previewScale = 0.96;
-    setTimeout((): void => {
-      animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
-        this.previewOpacity = 1;
-        this.previewScale = 1;
-      });
-    }, 0);
-  }
-
-  private closePreview(): void {
-    animateTo({ duration: 180, curve: Curve.EaseIn }, (): void => {
-      this.previewOpacity = 0;
-      this.previewScale = 0.96;
-    });
-    setTimeout((): void => {
-      this.previewFlatIndex = -1;
-      this.galleryHasPreview = false;
-    }, 190);
-  }
-
-  private switchPreview(delta: number): void {
-    const total = this.flatTotal();
-    const next = this.previewFlatIndex + delta;
-    if (next < 0 || next >= total) {
-      return;
-    }
-    this.previewFlatIndex = next;
-  }
-
   // ── build ──────────────────────────────────────────────────────────────────
 
   build() {
-    Stack() {
-      Column() {
-        Row() {
-          Text('图库')
-            .fontSize(20)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-          Blank()
+    Column() {
+      // ── 顶部标题栏 ──────────────────────────────────────────────────────────
+      Row() {
+        Text(this.inSearchMode ? 'AI 搜索结果' : '图库')
+          .fontSize(22)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        if (!this.inSearchMode) {
           Button($r('app.string.gallery_refresh'), { type: ButtonType.Capsule, stateEffect: true })
             .fontSize(14)
-            .height(32)
+            .height(36)
             .onClick((): void => {
               void this.bootstrap();
             })
+        } else {
+          Button('返回图库', { type: ButtonType.Capsule, stateEffect: true })
+            .fontSize(14)
+            .height(36)
+            .onClick((): void => {
+              this.clearSearch();
+            })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+
+      // ── 搜索栏 ──────────────────────────────────────────────────────────────
+      Row({ space: 8 }) {
+        TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
+          .layoutWeight(1)
+          .height(40)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_background'))
+          .fontSize(14)
+          .placeholderColor($r('app.color.text_secondary'))
+          .onChange((val: string): void => {
+            this.searchQuery = val;
+          })
+          .onSubmit((): void => {
+            void this.runSearch(this.searchQuery);
+          })
+        Button() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(18)
+            .fontColor([$r('app.color.icon_primary')])
+        }
+        .width(40)
+        .height(40)
+        .borderRadius(20)
+        .backgroundColor($r('app.color.card_background'))
+        .onClick((): void => {
+          void this.runSearch(this.searchQuery);
+        })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 8 })
+
+      // ── 搜索结果视图 ──────────────────────────────────────────────────────────
+      if (this.inSearchMode) {
+        Column() {
+          if (this.searchLoading) {
+            Row() {
+              LoadingProgress().width(28).height(28)
+              Text('AI 搜索中…').fontSize(14).fontColor($r('app.color.text_secondary')).margin({ left: 10 })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding({ top: 40 })
+          } else if (this.searchError.length > 0) {
+            Text(this.searchError)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 40, left: 24, right: 24 })
+          } else {
+            // 搜索结果 3 列网格
+            Grid() {
+              ForEach(this.searchResults, (item: GalleryListItem, idx: number) => {
+                GridItem() {
+                  GalleryNetworkThumb({
+                    uri: nasUrl(this.baseUrl, pickThumb(item)),
+                    isVideo: isVideoItem(item),
+                    isGif: isGifItem(item),
+                  })
+                  .width('100%')
+                  .aspectRatio(1)
+                  .onClick((): void => {
+                    GalleryPreviewNavStore.openPreview(
+                      this.baseUrl, this.searchResults, idx, this.getUIContext()
+                    );
+                  })
+                }
+              }, (item: GalleryListItem, idx: number) => `sr_${idx}_${pickThumb(item)}`)
+            }
+            .columnsTemplate('1fr 1fr 1fr')
+            .columnsGap(2)
+            .rowsGap(2)
+            .width('100%')
+            .layoutWeight(1)
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+
+            Blank().height(32)
+          }
         }
         .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .padding({ left: 12, right: 12, top: 10, bottom: 6 })
+        .layoutWeight(1)
+      }
 
+      // ── 图库视图 ──────────────────────────────────────────────────────────────
+      if (!this.inSearchMode) {
         if (this.bootLoading) {
-          Column({ space: 6 }) {
+          Column({ space: 8 }) {
             ForEach([0, 1, 2, 3], (row: number) => {
-              Row({ space: 6 }) {
+              Row({ space: 8 }) {
                 ForEach([0, 1, 2], (_: number) => {
-                  ThumbSkeleton().layoutWeight(1)
+                  GalleryThumbSkeleton().layoutWeight(1)
                 }, (n: number) => `sk_${row}_${n}`)
               }
               .width('100%')
-              .padding({ left: 8, right: 8, top: row === 0 ? 40 : 0 })
+              .padding({ left: 16, right: 16, top: row === 0 ? 24 : 0 })
             }, (r: number) => `skr_${r}`)
           }
           .width('100%')
@@ -1220,81 +713,97 @@ export struct GalleryAlbumTab {
         }
 
         if (!this.bootLoading) {
-          Scroll(this.scrollerRef) {
-            Column({ space: 0 }) {
-              ForEach(this.sections, (sec: DaySectionModel, secIdx: number) => {
-                GalleryDaySection({
-                  sec: sec,
-                  baseUrl: this.baseUrl,
-                  showMonthTitle: secIdx === 0 ||
-                    ymKey(sec.year, sec.month) !==
-                      ymKey(this.sections[secIdx - 1].year, this.sections[secIdx - 1].month),
-                  onThumbClick: (s: DaySectionModel, rowIdx: number, col: number): void => {
-                    this.openPreview(s, rowIdx, col);
-                  }
-                })
-              },
-              (sec: DaySectionModel) => `sec_${sec.year}_${sec.month}_${sec.day}`)
-
-              if (this.footText.length > 0) {
-                Text(this.footText)
-                  .fontSize(12)
-                  .fontColor($r('app.color.text_secondary'))
-                  .width('100%')
-                  .textAlign(TextAlign.Center)
-                  .padding(16)
-              }
-
-              if (!this.exhausted && this.sections.length > 0) {
-                Row() {
-                  LoadingProgress().width(24).height(24)
-                  Text('加载中…').fontSize(12).fontColor($r('app.color.text_secondary')).margin({ left: 8 })
+          List({ scroller: this.scrollerRef }) {
+            LazyForEach(this.flowDataSource, (node: GalleryFlowNode) => {
+              if (node.kind === 'month') {
+                ListItem() {
+                  Text(`${node.year}年${node.month}月`)
+                    .fontSize(18)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+                    .padding({ left: 16, right: 16, top: 20, bottom: 4 })
                 }
-                .width('100%')
-                .justifyContent(FlexAlign.Center)
-                .padding(12)
+              } else if (node.kind === 'day') {
+                ListItem() {
+                  Text(`${node.month}月${node.day}日`)
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_secondary'))
+                    .width('100%')
+                    .padding({ left: 16, right: 16, top: 2, bottom: 4 })
+                }
+              } else {
+                // row 节点：1~3 张缩略图水平排列
+                ListItem() {
+                  Row({ space: 2 }) {
+                    ForEach(node.rowItems, (item: GalleryListItem, k: number) => {
+                      GalleryNetworkThumb({
+                        uri: nasUrl(this.baseUrl, pickThumb(item)),
+                        isVideo: isVideoItem(item),
+                        isGif: isGifItem(item),
+                      })
+                      .layoutWeight(1)
+                      .aspectRatio(1)
+                      .onClick((): void => {
+                        this.openPreview(node.rowFlatIndices[k]);
+                      })
+                    }, (item: GalleryListItem, k: number) => `ti_${node.rowFlatIndices[k]}`)
+                    // 末行不足 3 项时用空白占位，保持列宽一致
+                    if (node.rowItems.length === 1) {
+                      Blank().layoutWeight(1)
+                      Blank().layoutWeight(1)
+                    }
+                    if (node.rowItems.length === 2) {
+                      Blank().layoutWeight(1)
+                    }
+                  }
+                  .width('100%')
+                  .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+                }
               }
+            }, (node: GalleryFlowNode) => node.key)
 
-              Blank().height(24)
+            // 底部状态行（foot / 加载中 / 底部留白）
+            ListItem() {
+              Column({ space: 4 }) {
+                if (this.footText.length > 0) {
+                  Text(this.footText)
+                    .fontSize(12)
+                    .fontColor($r('app.color.text_secondary'))
+                    .width('100%')
+                    .textAlign(TextAlign.Center)
+                    .padding(12)
+                }
+                if (!this.exhausted && this.sections.length > 0) {
+                  Row() {
+                    LoadingProgress().width(24).height(24)
+                    Text('加载中…').fontSize(12).fontColor($r('app.color.text_secondary')).margin({ left: 8 })
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.Center)
+                  .padding(12)
+                }
+                Blank().height(32)
+              }
+              .width('100%')
             }
-            .width('100%')
-            .padding({ bottom: 8 })
           }
           .width('100%')
           .layoutWeight(1)
-          .align(Alignment.Top)
-          .onDidScroll((_xOffset: number, _yOffset: number, _scrollState: ScrollState): void => {
-            // 作为备份触发器：若泵因错误暂停，用户滚动时重新启动
+          .cachedCount(4)
+          .edgeEffect(EdgeEffect.Spring)
+          .scrollBar(BarState.Auto)
+          .divider({ strokeWidth: 0 })
+          .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
             if (!this.exhausted && !this.loadingMore && !this.bootLoading) {
               this.pumpLoad();
             }
           })
         }
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor($r('app.color.page_background'))
-
-      // 全屏预览
-      if (this.previewFlatIndex >= 0) {
-        GalleryPreviewOverlay({
-          baseUrl: this.baseUrl,
-          item: this.flatItem(this.previewFlatIndex),
-          onSwitch: (delta: number): void => {
-            this.switchPreview(delta);
-          },
-          onClose: (): void => {
-            this.closePreview();
-          }
-        })
-          .width('100%')
-          .height('100%')
-          .opacity(this.previewOpacity)
-          .scale({ x: this.previewScale, y: this.previewScale })
-          .zIndex(100)
-      }
     }
     .width('100%')
     .height('100%')
+    .backgroundColor($r('app.color.page_background'))
   }
 }

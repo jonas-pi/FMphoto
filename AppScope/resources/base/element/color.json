@@ -15,6 +15,14 @@
     {
       "name": "brand_primary",
       "value": "#FF2563EB"
+    },
+    {
+      "name": "card_background",
+      "value": "#FFECEFF3"
+    },
+    {
+      "name": "icon_primary",
+      "value": "#99000000"
     }
   ]
 }

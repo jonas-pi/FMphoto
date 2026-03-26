@@ -155,6 +155,10 @@
     {
       "name": "web_reload",
       "value": "刷新网页"
+    },
+    {
+      "name": "perm_write_imagevideo_reason",
+      "value": "保存 NAS 图片/视频到本机相册时需要写入权限"
     }
   ]
 }

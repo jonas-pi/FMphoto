@@ -3,6 +3,7 @@
  * OpenAPI `/v/api/v1` 使用 AuthxSigner.genFnAuthx（另一套 UUID）；相册须用本模块，否则 invalid sign。
  */
 import { md5HexUtf8 } from './AuthxSigner';
+import { FnJsonValue } from '../model/FnApiTypes';
 
 /** 与前端 bundle galleryApi.baseQuery 一致 */
 const GALLERY_AUTHX_KEY = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
@@ -65,6 +66,24 @@ export async function genFnGalleryAuthxGet(
   const pathOnly = signPathOnly.split('?')[0];
   const raw = buildGallerySortedQuery(params);
   const inner = await galleryInnerMd5FromQuery(raw);
+  const nonce = galleryNonceLikePython();
+  const timestamp = Date.now();
+  const chain = `${GALLERY_AUTHX_KEY}_${pathOnly}_${nonce}_${timestamp}_${inner}_${GALLERY_AUTHX_UUID}`;
+  const sign = await md5HexUtf8(chain);
+  return `nonce=${nonce}&timestamp=${timestamp}&sign=${sign}`;
+}
+
+/**
+ * 生成图库 POST 的 Authx 头值。
+ * 与 GET 的差异：inner 取请求 body 的 JSON 字符串 MD5（而非 query）。
+ */
+export async function genFnGalleryAuthxPost(
+  signPathOnly: string,
+  bodyForSign: Record<string, FnJsonValue>
+): Promise<string> {
+  const pathOnly = signPathOnly.split('?')[0];
+  const dataJson = JSON.stringify(bodyForSign);
+  const inner = await md5HexUtf8(dataJson);
   const nonce = galleryNonceLikePython();
   const timestamp = Date.now();
   const chain = `${GALLERY_AUTHX_KEY}_${pathOnly}_${nonce}_${timestamp}_${inner}_${GALLERY_AUTHX_UUID}`;

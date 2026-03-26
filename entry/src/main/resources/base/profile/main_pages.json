@@ -3,6 +3,7 @@
     "pages/Index",
     "pages/Login",
     "pages/Home",
+    "pages/GalleryPreview",
     "pages/Settings"
   ]
 }

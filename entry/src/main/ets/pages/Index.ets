@@ -2,7 +2,6 @@
  * 启动页：恢复会话并校验 token，跳转登录或主页
  */
 import { common } from '@kit.AbilityKit';
-import { router } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
@@ -14,14 +13,14 @@ struct Index {
   @State private hint: string = '正在初始化…';
 
   aboutToAppear(): void {
-    const ctx = getContext(this) as common.UIAbilityContext;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     AppSession.restore(ctx).then((s) => {
       if (s === null || s.token.length === 0) {
         void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
           CertPolicy.loadAll(hosts);
         });
         this.busy = false;
-        router.replaceUrl({ url: 'pages/Login' }).catch(() => {
+        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
         });
         return;
       }
@@ -31,19 +30,19 @@ struct Index {
           CertPolicy.loadAll(hosts);
         });
         this.busy = false;
-        router.replaceUrl({ url: 'pages/Login' }).catch(() => {
+        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
         });
         return;
       }
       if (s.loginViaWebSocket === true) {
         this.busy = false;
-        router.replaceUrl({ url: 'pages/Home' }).catch(() => {
+        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
         });
         return;
       }
       client.getUserInfo(5000, 2).then((r) => {
         if (r.success) {
-          router.replaceUrl({ url: 'pages/Home' }).catch(() => {
+          this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
           });
         } else {
           SessionPreferences.clearToken(ctx).then(() => {
@@ -51,7 +50,7 @@ struct Index {
             void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
               CertPolicy.loadAll(hosts);
             });
-            router.replaceUrl({ url: 'pages/Login' }).catch(() => {
+            this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
             });
           });
         }
@@ -63,7 +62,7 @@ struct Index {
       void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
         CertPolicy.loadAll(hosts);
       });
-      router.replaceUrl({ url: 'pages/Login' }).catch(() => {
+      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
       });
     });
   }
