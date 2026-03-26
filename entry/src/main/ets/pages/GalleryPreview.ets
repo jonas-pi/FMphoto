@@ -15,7 +15,8 @@ import { fileIo, picker, fileUri as fileUriUtil } from '@kit.CoreFileKit';
 import { systemShare } from '@kit.ShareKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
-import { GalleryListItem } from '../model/FnApiTypes';
+import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
+import { GalleryListItem, GalleryPhotoDetailData } from '../model/FnApiTypes';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
 
@@ -56,6 +57,18 @@ struct GalleryPreview {
   @State private loadOriginalReq: boolean = false;
   @State private downloading: boolean = false;
   @State private sharing: boolean = false;
+  /** 右上角详情面板开关 */
+  @State private detailsVisible: boolean = false;
+  /** 详情请求加载态 */
+  @State private detailsLoading: boolean = false;
+  /** 详情错误文案 */
+  @State private detailsError: string = '';
+  /** 当前已加载详情数据 */
+  @State private detailsData: GalleryPhotoDetailData | undefined = undefined;
+  /** 详情数据对应的 photoId，用于避免重复请求 */
+  @State private detailsPhotoId: string = '';
+  /** 详情里点击路径后，正在加载同目录媒体 */
+  @State private folderOpening: boolean = false;
   /** 底部工具栏实测高度（初始值 80vp 防止第一帧进度条与按钮重叠，onAreaChange 后更新为实测值） */
   @State private bottomBarHeight: number = 80;
   /** 当前图片是否已切换到原图（用于隐藏"原图"按钮） */
@@ -180,6 +193,16 @@ struct GalleryPreview {
     return item !== null && isVideoItem(item);
   }
 
+  /** 当前条目的 photoId（用于请求 getOne 详情） */
+  private currentItemId(): string {
+    const item = this.currentItem();
+    if (item === null || item.id === undefined || item.id === null) {
+      return '';
+    }
+    const id = String(item.id).trim();
+    return id.length > 0 ? id : '';
+  }
+
   private currentHasOriginal(): boolean {
     const item = this.currentItem();
     if (item === null) { return false; }
@@ -219,6 +242,275 @@ struct GalleryPreview {
     this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, (): void => {
       this.toolbarVisible = !this.toolbarVisible;
     });
+  }
+
+  /** 打开右上角详情面板（按当前媒体请求 /gallery/getOne） */
+  private openDetailsPanel(): void {
+    const id = this.currentItemId();
+    if (id.length === 0) {
+      this.toast('当前媒体无详情 ID');
+      return;
+    }
+    this.detailsVisible = true;
+    this.detailsError = '';
+    if (this.detailsData !== undefined && this.detailsPhotoId === id) {
+      return;
+    }
+    this.detailsLoading = true;
+    this.detailsData = undefined;
+    void this.loadPhotoDetails(id).finally((): void => {
+      this.detailsLoading = false;
+    });
+  }
+
+  private async loadPhotoDetails(photoId: string): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.detailsError = '未登录';
+      return;
+    }
+    const res = await client.getGalleryPhotoDetail(photoId, 15000);
+    if (!res.success || res.data === undefined) {
+      this.detailsError = res.message ?? '详情加载失败';
+      return;
+    }
+    this.detailsData = res.data;
+    this.detailsPhotoId = photoId;
+  }
+
+  private closeDetailsPanel(): void {
+    this.detailsVisible = false;
+  }
+
+  private detailText(v: string | number | undefined): string {
+    if (v === undefined || v === null) {
+      return '';
+    }
+    const s = String(v).trim();
+    return s.length > 0 ? s : '';
+  }
+
+  /** 文件体积格式化（B/KB/MB） */
+  private formatBytes(v: string | number | undefined): string {
+    const raw = this.detailText(v);
+    if (raw.length === 0) {
+      return '';
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      return raw;
+    }
+    if (n < 1024) {
+      return `${Math.floor(n)} B`;
+    }
+    if (n < 1024 * 1024) {
+      return `${(n / 1024).toFixed(1)} KB`;
+    }
+    if (n < 1024 * 1024 * 1024) {
+      return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  /** 将输入值解析为字节数；无法解析时返回 undefined */
+  private parseBytes(v: string | number | undefined): number | undefined {
+    const raw = this.detailText(v);
+    if (raw.length === 0) {
+      return undefined;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      return undefined;
+    }
+    return Math.floor(n);
+  }
+
+  /** 当前条目原文件大小（优先 originalSize，再退回 fileSize） */
+  private currentOriginalSizeBytes(): number | undefined {
+    const item = this.currentItem();
+    if (item === null) {
+      return undefined;
+    }
+    const orig = this.parseBytes(item.originalSize);
+    if (orig !== undefined) {
+      return orig;
+    }
+    return this.parseBytes(item.fileSize);
+  }
+
+  /** 菜单展示用大小标签 */
+  private qualitySizeLabel(bytes: number | undefined): string {
+    if (bytes === undefined) {
+      return '大小未知';
+    }
+    return this.formatBytes(bytes);
+  }
+
+  /** 组装双值文本；任一为空时返回另一个，均为空返回空串 */
+  private joinPair(left: string, right: string, sep: string): string {
+    if (left.length > 0 && right.length > 0) {
+      return `${left}${sep}${right}`;
+    }
+    if (left.length > 0) {
+      return left;
+    }
+    if (right.length > 0) {
+      return right;
+    }
+    return '';
+  }
+
+  /** 从文件完整路径中提取目录路径（去掉最后一级文件名） */
+  private parentFolderPath(fullPath: string): string {
+    const p = fullPath.trim();
+    if (p.length === 0) {
+      return '';
+    }
+    const idx = p.lastIndexOf('/');
+    if (idx <= 0) {
+      return '';
+    }
+    return p.substring(0, idx);
+  }
+
+  /**
+   * 标题路径压缩：
+   * - 层级 <= 3：完整显示
+   * - 层级 > 3：显示「最父一层 / ... / 最末两层」
+   * 例：/a/b/c/d/e -> /a/.../d/e
+   */
+  private compactFolderTitle(folderPath: string): string {
+    const p = folderPath.trim();
+    if (p.length === 0) {
+      return '文件夹';
+    }
+    const partsRaw = p.split('/');
+    const parts: string[] = [];
+    for (let i = 0; i < partsRaw.length; i++) {
+      const seg = partsRaw[i].trim();
+      if (seg.length > 0) {
+        parts.push(seg);
+      }
+    }
+    if (parts.length === 0) {
+      return p;
+    }
+    if (parts.length <= 3) {
+      return `/${parts.join('/')}`;
+    }
+    const first = parts[0];
+    const last1 = parts[parts.length - 2];
+    const last2 = parts[parts.length - 1];
+    return `/${first}/.../${last1}/${last2}`;
+  }
+
+  /** 点击详情里的文件路径，打开该目录下所有媒体 */
+  private openFolderFromDetailPath(): void {
+    if (this.folderOpening) {
+      return;
+    }
+    const rawPath = this.detailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath);
+    const folderPath = this.parentFolderPath(rawPath);
+    if (folderPath.length === 0) {
+      this.toast('文件路径不可用');
+      return;
+    }
+    this.folderOpening = true;
+    void this.fetchAndOpenFolderMedia(folderPath).finally((): void => {
+      this.folderOpening = false;
+    });
+  }
+
+  private async fetchAndOpenFolderMedia(folderPath: string): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.toast('未登录');
+      return;
+    }
+    // 直接分页拉取：避免 limit=-1 在部分 NAS 上等待过久导致“看起来加载不出来”
+    const all: GalleryListItem[] = [];
+    const pageSize = 100;
+    let offset = 0;
+    let rounds = 0;
+    while (rounds < 200) {
+      const res = await client.getFolderViewFileList(folderPath, pageSize, offset, false, 2, 20000);
+      if (!res.success || res.data === undefined) {
+        this.toast(res.message ?? '文件夹媒体加载失败');
+        return;
+      }
+      const list = res.data;
+      if (list.length === 0) {
+        break;
+      }
+      for (let i = 0; i < list.length; i++) {
+        all.push(list[i]);
+      }
+      offset += list.length;
+      rounds++;
+      if (list.length < pageSize) {
+        break;
+      }
+    }
+    if (all.length === 0) {
+      this.toast('该文件夹暂无可预览媒体');
+      return;
+    }
+
+    this.detailsVisible = false;
+    CategoryGalleryNavStore.open(
+      this.baseUrl,
+      this.compactFolderTitle(folderPath),
+      all,
+      this.getUIContext()
+    );
+  }
+
+  @Builder
+  private detailRow(label: string, value: string) {
+    if (value.length > 0) {
+      Row({ space: 10 }) {
+        Text(label)
+          .fontSize(13)
+          .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
+          .width(92)
+        Text(value)
+          .fontSize(13)
+          .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .padding({ top: 6, bottom: 6 })
+    }
+  }
+
+  @Builder
+  private detailPathRow(label: string, fullPath: string) {
+    if (fullPath.length > 0) {
+      Row({ space: 10 }) {
+        Text(label)
+          .fontSize(13)
+          .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
+          .width(92)
+        Column({ space: 4 }) {
+          Text(fullPath)
+            .fontSize(13)
+            .fontColor(this.isDark() ? '#FF78A6FF' : '#FF0A63D8')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.folderOpening ? '正在打开同目录媒体...' : '点击打开同目录媒体')
+            .fontSize(11)
+            .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .padding({ top: 6, bottom: 6 })
+      .onClick((): void => {
+        this.openFolderFromDetailPath();
+      })
+    }
   }
 
   /** 获取当前图片 buffer，useOriginal=true 优先原图，false 只取缩略图 */
@@ -268,13 +560,34 @@ struct GalleryPreview {
     // ① 图片：若有原图可选，弹出质量选择菜单（本地 UI，立即响应）
     //    视频：不弹质量选择，直接下载原视频文件。
     let useOriginal = false;
+    // 为了在菜单中展示更准确大小，预取缩略图大小；并复用已取的 buffer，避免重复网络请求。
+    let prefetchedOriginal: ArrayBuffer | undefined = undefined;
+    let prefetchedThumb: ArrayBuffer | undefined = undefined;
     if (!isVideo && this.currentHasOriginal()) {
+      let originalBytes = this.currentOriginalSizeBytes();
+      let thumbBytes: number | undefined = undefined;
+      // 缩略图体积通常较小，先取一次用于菜单文案与后续下载复用
+      prefetchedThumb = await this.fetchCurrentImageBuffer(false);
+      if (prefetchedThumb !== undefined && prefetchedThumb.byteLength > 0) {
+        thumbBytes = prefetchedThumb.byteLength;
+      } else {
+        prefetchedThumb = undefined;
+      }
+      // 若列表未下发原图体积，则补一次原图大小估算
+      if (originalBytes === undefined) {
+        prefetchedOriginal = await this.fetchCurrentImageBuffer(true);
+        if (prefetchedOriginal !== undefined && prefetchedOriginal.byteLength > 0) {
+          originalBytes = prefetchedOriginal.byteLength;
+        } else {
+          prefetchedOriginal = undefined;
+        }
+      }
       try {
         const choice = await this.getUIContext().getPromptAction().showActionMenu({
           title: '选择下载质量',
           buttons: [
-            { text: '原图（高清）', color: '#007AFF' },
-            { text: '缩略图（较小）', color: '#007AFF' }
+            { text: `原图（${this.qualitySizeLabel(originalBytes)}）`, color: '#007AFF' },
+            { text: `缩略图（${this.qualitySizeLabel(thumbBytes)}）`, color: '#007AFF' }
           ]
         });
         useOriginal = choice.index === 0;
@@ -302,9 +615,14 @@ struct GalleryPreview {
     }
 
     // ③ 用户已选择目标位置，按媒体类型下载并写入
-    const buf = isVideo
-      ? await this.fetchCurrentVideoBuffer()
-      : await this.fetchCurrentImageBuffer(useOriginal);
+    let buf: ArrayBuffer | undefined;
+    if (isVideo) {
+      buf = await this.fetchCurrentVideoBuffer();
+    } else if (useOriginal) {
+      buf = prefetchedOriginal !== undefined ? prefetchedOriginal : await this.fetchCurrentImageBuffer(true);
+    } else {
+      buf = prefetchedThumb !== undefined ? prefetchedThumb : await this.fetchCurrentImageBuffer(false);
+    }
     if (buf === undefined || buf.byteLength === 0) {
       this.toast(isVideo ? '视频加载失败，请重试' : '图片加载失败，请重试');
       return;
@@ -472,7 +790,8 @@ struct GalleryPreview {
           Row({ space: 8 }) {
             if (this.currentHasOriginal() && !this.originalShowing) {
               Button({ type: ButtonType.Circle, stateEffect: true }) {
-                SymbolGlyph($r('sys.symbol.arrow_down_circle')).fontSize(20).fontColor([this.fgColor()])
+                // “查看原图”使用图片语义图标，避免与“下载”动作混淆
+                SymbolGlyph($r('sys.symbol.picture')).fontSize(20).fontColor([this.fgColor()])
               }
               .width(40).height(40).backgroundColor(this.btnBg())
               .onClick((): void => { this.loadOriginalReq = true; })
@@ -481,6 +800,7 @@ struct GalleryPreview {
               SymbolGlyph($r('sys.symbol.more')).fontSize(20).fontColor([this.fgColor()])
             }
             .width(40).height(40).backgroundColor(this.btnBg())
+            .onClick((): void => { this.openDetailsPanel(); })
           }
           .width(88).justifyContent(FlexAlign.End)
         }
@@ -515,6 +835,100 @@ struct GalleryPreview {
       .hitTestBehavior(HitTestMode.Transparent)
       .opacity(this.toolbarVisible ? this.toolbarAlpha() : 0)
       .animation({ duration: 220, curve: Curve.EaseInOut })
+
+      // 详情底部弹层：由右上角「更多」按钮触发
+      if (this.detailsVisible) {
+        Column() {
+          Blank()
+            .layoutWeight(1)
+            .onClick((): void => { this.closeDetailsPanel(); })
+
+          Column() {
+            Row() {
+              Text('照片详情')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
+              Blank()
+              Button('关闭', { type: ButtonType.Normal, stateEffect: true })
+                .fontSize(13)
+                .height(30)
+                .padding({ left: 10, right: 10 })
+                .backgroundColor(this.isDark() ? '#33FFFFFF' : '#12000000')
+                .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
+                .onClick((): void => { this.closeDetailsPanel(); })
+            }
+            .width('100%')
+            .margin({ bottom: 8 })
+
+            if (this.detailsLoading) {
+              Row({ space: 10 }) {
+                LoadingProgress().width(22).height(22).color(this.fgColor())
+                Text('详情加载中…')
+                  .fontSize(13)
+                  .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
+              }
+              .width('100%')
+              .padding({ top: 18, bottom: 20 })
+            } else if (this.detailsError.length > 0) {
+              Text(this.detailsError)
+                .fontSize(13)
+                .fontColor('#FFE0483E')
+                .width('100%')
+                .padding({ top: 12, bottom: 16 })
+            } else {
+              Scroll() {
+                Column() {
+                  this.detailRow('文件名', this.detailText(this.detailsData?.fileName))
+                  this.detailRow('拍摄时间', this.detailText(this.detailsData?.photoDateTime ?? this.detailsData?.dateTime))
+                  this.detailRow('文件类型', this.detailText(this.detailsData?.fileType))
+                  this.detailRow('文件大小', this.formatBytes(this.detailsData?.fileSize))
+                  this.detailRow(
+                    '分辨率',
+                    this.joinPair(
+                      this.detailText(this.detailsData?.width),
+                      this.detailText(this.detailsData?.height),
+                      ' x '
+                    )
+                  )
+                  this.detailRow('设备厂商', this.detailText(this.detailsData?.make))
+                  this.detailRow('设备型号', this.detailText(this.detailsData?.model))
+                  this.detailRow('光圈', this.detailText(this.detailsData?.fumber))
+                  this.detailRow('快门', this.detailText(this.detailsData?.exposureTime))
+                  this.detailRow('ISO', this.detailText(this.detailsData?.isoSpeedRatings))
+                  this.detailRow('焦距', this.detailText(this.detailsData?.focalLength))
+                  this.detailRow('像素', this.detailText(this.detailsData?.mp))
+                  this.detailRow('曝光程序', this.detailText(this.detailsData?.exposureProgram))
+                  this.detailRow('测光模式', this.detailText(this.detailsData?.meteringMode))
+                  this.detailRow('地理位置', this.detailText(this.detailsData?.geo))
+                  this.detailRow(
+                    '经纬度',
+                    this.joinPair(
+                      this.detailText(this.detailsData?.latitude),
+                      this.detailText(this.detailsData?.longitude),
+                      ', '
+                    )
+                  )
+                  this.detailPathRow('文件路径', this.detailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath))
+                }
+                .width('100%')
+                .padding({ bottom: 10 })
+                .alignItems(HorizontalAlign.Start)
+              }
+              .width('100%')
+              .scrollBar(BarState.Auto)
+            }
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: '70%' })
+          .padding({ left: 14, right: 14, top: 14, bottom: 18 })
+          .backgroundColor(this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF')
+          .borderRadius({ topLeft: 16, topRight: 16 })
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#66000000')
+      }
 
     }
     .width('100%').height('100%')

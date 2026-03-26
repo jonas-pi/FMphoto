@@ -116,6 +116,11 @@ struct CategoryGallery {
   /** 每组在 flatItems 中的起始偏移 */
   private groupOffsets: number[] = [];
 
+  onBackPress(): boolean {
+    router.back();
+    return true;
+  }
+
   private isDark(): boolean { return this.isDarkTheme; }
 
   /** 设置系统状态栏/导航栏颜色与页面背景保持一致，消除黑白配 */

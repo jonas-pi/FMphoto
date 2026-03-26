@@ -96,6 +96,53 @@ export interface GalleryListItem {
   id?: string;
   guid?: string;
   filename?: string;
+  /** 文件大小（字节），部分列表接口会下发 */
+  fileSize?: string | number;
+  /** 原文件大小（字节），部分接口会下发 */
+  originalSize?: string | number;
+}
+
+/** `GET /p/api/v1/gallery/getOne?id=xxx` 的 additional 字段 */
+export interface GalleryPhotoDetailAdditional {
+  thumbnail?: GalleryThumbnailBlock;
+  tags?: Object[];
+}
+
+/** `GET /p/api/v1/gallery/getOne` 返回 data（详情页使用） */
+export interface GalleryPhotoDetailData extends GalleryListItem {
+  ownerId?: string | number;
+  ownerName?: string;
+  photoDateTime?: string;
+  fileName?: string;
+  fileSize?: string | number;
+  originalSize?: string | number;
+  description?: string;
+  isCollect?: number;
+  model?: string;
+  fumber?: string;
+  exposureTime?: string;
+  isoSpeedRatings?: string;
+  focalLength?: string;
+  mp?: string;
+  filePath?: string;
+  showFilePath?: string;
+  height?: string | number;
+  width?: string | number;
+  make?: string;
+  exposureProgram?: string;
+  meteringMode?: string;
+  flash?: string | number;
+  geo?: string;
+  isLive?: number;
+  rotation?: number;
+  isCanPreview?: number;
+  countryCode?: string;
+  latitude?: string;
+  longitude?: string;
+  geoLatitude?: string;
+  geoLongitude?: string;
+  photoUUID?: string;
+  additional?: GalleryPhotoDetailAdditional;
 }
 
 /** `GET /p/api/v1/gallery/timeline` 的 list 元素（与 Py fnos_gallery_mobile 解析一致） */
@@ -174,14 +221,14 @@ export interface SmartCategoryPoster {
 export interface SmartCategoryItem {
   id?: string | number;
   name?: string;
-  count?: number;
-  total?: number;
-  itemCount?: number;
-  item_count?: number;
-  photoCount?: number;
-  photo_count?: number;
-  num?: number;
-  size?: number;
+  count?: number | string;
+  total?: number | string;
+  itemCount?: number | string;
+  item_count?: number | string;
+  photoCount?: number | string;
+  photo_count?: number | string;
+  num?: number | string;
+  size?: number | string;
   poster?: SmartCategoryPoster;
 }
 
@@ -189,6 +236,41 @@ export interface SmartCategoryItem {
 export interface SmartCategoryData {
   list?: SmartCategoryItem[];
   items?: SmartCategoryItem[];
+}
+
+/** 人物分类单项（/p/api/v1/ai-person/list） */
+export interface AiPersonItem {
+  id?: string | number;
+  name?: string;
+  nickName?: string;
+  itemCount?: number | string;
+  count?: number | string;
+  total?: number | string;
+  photoCount?: number | string;
+  videoCount?: number | string;
+  avatarId?: string | number;
+  faceId?: string | number;
+  posterId?: string | number;
+  coverId?: string | number;
+  faceUrl?: string;
+}
+
+/** GET /p/api/v1/ai-person/list 返回 data */
+export interface AiPersonData {
+  list?: AiPersonItem[];
+  items?: AiPersonItem[];
+  records?: AiPersonItem[];
+}
+
+/** GET /p/api/v1/ai-person/detail 返回 data */
+export interface AiPersonDetailData {
+  id?: string | number;
+  name?: string;
+  faceId?: string | number;
+  itemCount?: number | string;
+  photoCount?: number | string;
+  videoCount?: number | string;
+  isHide?: boolean;
 }
 
 /** /p/api/v1/search/results 返回 data 的常见结构 */

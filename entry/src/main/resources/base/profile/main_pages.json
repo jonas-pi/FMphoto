@@ -5,6 +5,9 @@
     "pages/Home",
     "pages/GalleryPreview",
     "pages/CategoryGallery",
+    "pages/MediaCategoryPage",
+    "pages/SmartCategoryPage",
+    "pages/PersonPage",
     "pages/Settings"
   ]
 }

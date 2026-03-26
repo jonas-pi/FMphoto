@@ -17,6 +17,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import {
+  AiPersonItem,
   GalleryGetListData,
   GalleryListItem,
   MagicSearchItem,
@@ -164,10 +165,18 @@ export struct GalleryAlbumTab {
   @State private smartCategoryError: string = '';
   @State private smartSceneItems: SmartCategoryItem[] = [];
   @State private smartInfoItems: SmartCategoryItem[] = [];
+  @State private inPersonMode: boolean = false;
+  @State private personLoading: boolean = false;
+  @State private personOpening: boolean = false;
+  @State private personError: string = '';
+  @State private personItems: AiPersonItem[] = [];
+  @State private personStatVersion: number = 0;
   /** WaterFlow + LazyForEach 数据源（与 sections 同步） */
   private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
   private loadGen: number = 0;
+  private personStatGen: number = 0;
+  private personStatOverrides: Map<string, string> = new Map<string, string>();
   private orderedDays: TimelineDayModel[] = [];
   private dayIndex: number = 0;
   private loadingMore: boolean = false;
@@ -252,6 +261,7 @@ export struct GalleryAlbumTab {
     this.inSearchMode = true;
     this.inCategoryMode = false;
     this.inSmartCategoryMode = false;
+    this.inPersonMode = false;
     this.searchLoading = true;
     this.searchError = '';
     this.searchResults = [];
@@ -325,6 +335,13 @@ export struct GalleryAlbumTab {
     this.smartInfoItems = [];
   }
 
+  private clearPerson(): void {
+    this.inPersonMode = false;
+    this.personLoading = false;
+    this.personError = '';
+    this.personItems = [];
+  }
+
   private parseCategoryMedia(item: MediaCategoryItem): GalleryListItem[] {
     const raw = item.list ?? item.items;
     if (!Array.isArray(raw)) {
@@ -377,6 +394,7 @@ export struct GalleryAlbumTab {
     this.inSearchMode = false;
     this.inCategoryMode = true;
     this.inSmartCategoryMode = false;
+    this.inPersonMode = false;
     this.categoryLoading = true;
     this.categoryError = '';
     this.categoryItems = [];
@@ -417,7 +435,7 @@ export struct GalleryAlbumTab {
   }
 
   private smartCategoryCount(item: SmartCategoryItem): number {
-    const directVals: Array<number | undefined> = [
+    const directVals: Array<number | string | undefined> = [
       item.count,
       item.total,
       item.itemCount,
@@ -429,15 +447,6 @@ export struct GalleryAlbumTab {
     ];
     for (let i = 0; i < directVals.length; i++) {
       const v = directVals[i];
-      if (v !== undefined && Number.isFinite(Number(v))) {
-        return Math.max(0, Math.floor(Number(v)));
-      }
-    }
-    // 兼容服务端字段变更：从原始对象中按常见计数字段名兜底提取
-    const raw = item as unknown as Record<string, string | number | Object | undefined>;
-    const keys: string[] = ['count', 'total', 'itemCount', 'item_count', 'photoCount', 'photo_count', 'num', 'size'];
-    for (let i = 0; i < keys.length; i++) {
-      const v = raw[keys[i]];
       if (typeof v === 'number' && Number.isFinite(v)) {
         return Math.max(0, Math.floor(v));
       }
@@ -468,6 +477,7 @@ export struct GalleryAlbumTab {
     this.inSearchMode = false;
     this.inCategoryMode = false;
     this.inSmartCategoryMode = true;
+    this.inPersonMode = false;
     this.smartCategoryLoading = true;
     this.smartCategoryError = '';
     this.smartSceneItems = [];
@@ -506,6 +516,283 @@ export struct GalleryAlbumTab {
       this.smartCategoryError = String(e) || '智能分类加载异常';
     }
     this.smartCategoryLoading = false;
+  }
+
+  private personName(item: AiPersonItem): string {
+    const n = item.name ?? item.nickName;
+    return n !== undefined && n.length > 0 ? n : '未命名人物';
+  }
+
+  private personFace(item: AiPersonItem): string {
+    if (item.faceUrl !== undefined && item.faceUrl.length > 0) {
+      return item.faceUrl;
+    }
+    const id = item.faceId ?? item.avatarId ?? item.posterId ?? item.coverId ?? item.id;
+    if (id === undefined || id === null) {
+      return '';
+    }
+    const idStr = String(id);
+    return idStr.length > 0 ? `/p/api/v1/stream/face/${idStr}` : '';
+  }
+
+  private personId(item: AiPersonItem): string {
+    const id = item.id;
+    if (id === undefined || id === null) {
+      return '';
+    }
+    return String(id);
+  }
+
+  private personStatText(item: AiPersonItem): string {
+    const pid = this.personId(item);
+    if (pid.length > 0) {
+      const txt = this.personStatOverrides.get(pid);
+      if (txt !== undefined && txt.length > 0) {
+        return txt;
+      }
+    }
+    const photoRaw = item.photoCount;
+    const videoRaw = item.videoCount;
+    const photo = photoRaw !== undefined && Number.isFinite(Number(photoRaw))
+      ? Math.max(0, Math.floor(Number(photoRaw)))
+      : -1;
+    const video = videoRaw !== undefined && Number.isFinite(Number(videoRaw))
+      ? Math.max(0, Math.floor(Number(videoRaw)))
+      : -1;
+    if (photo >= 0 || video >= 0) {
+      const p = photo >= 0 ? photo : 0;
+      const v = video >= 0 ? video : 0;
+      return `${p} 张照片 · ${v} 个视频`;
+    }
+    const totalRaw = item.itemCount ?? item.count ?? item.total;
+    const total = totalRaw !== undefined && Number.isFinite(Number(totalRaw))
+      ? Math.max(0, Math.floor(Number(totalRaw)))
+      : 0;
+    return `共 ${total} 项`;
+  }
+
+  private async enrichPersonStats(items: AiPersonItem[], gen: number): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      return;
+    }
+    for (let i = 0; i < items.length; i++) {
+      if (gen !== this.personStatGen) {
+        return;
+      }
+      const pid = this.personId(items[i]);
+      if (pid.length === 0) {
+        continue;
+      }
+      if (this.personStatOverrides.has(pid)) {
+        continue;
+      }
+      const one = await client.getAiPersonDetail(pid, 12000);
+      if (gen !== this.personStatGen) {
+        return;
+      }
+      if (!one.success || one.data === undefined) {
+        continue;
+      }
+      const pRaw = one.data.photoCount;
+      const vRaw = one.data.videoCount;
+      if (!Number.isFinite(Number(pRaw)) && !Number.isFinite(Number(vRaw))) {
+        continue;
+      }
+      const p = Number.isFinite(Number(pRaw)) ? Math.max(0, Math.floor(Number(pRaw))) : 0;
+      const v = Number.isFinite(Number(vRaw)) ? Math.max(0, Math.floor(Number(vRaw))) : 0;
+      this.personStatOverrides.set(pid, `${p} 张照片 · ${v} 个视频`);
+      this.personStatVersion++;
+    }
+  }
+
+  private parsePersonTimeline(
+    rawList: Array<Record<string, string | number | undefined>>
+  ): TimelineDayModel[] {
+    const out: TimelineDayModel[] = [];
+    for (let i = 0; i < rawList.length; i++) {
+      const x = rawList[i];
+      let y = 0;
+      let m = 0;
+      let d = 0;
+      const yy = x['year'];
+      const mm = x['month'];
+      const dd = x['day'];
+      if (typeof yy === 'number' && typeof mm === 'number' && typeof dd === 'number') {
+        y = Math.floor(yy);
+        m = Math.floor(mm);
+        d = Math.floor(dd);
+      } else {
+        const stRaw = x['start_time'] ?? x['startTime'];
+        const st = stRaw !== undefined ? String(stRaw) : '';
+        if (st.length < 10) {
+          continue;
+        }
+        const space = st.indexOf(' ');
+        const date = space > 0 ? st.substring(0, space) : st;
+        const seg = date.split(':');
+        if (seg.length < 3) {
+          continue;
+        }
+        y = Number(seg[0]);
+        m = Number(seg[1]);
+        d = Number(seg[2]);
+      }
+      if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+        continue;
+      }
+      const cRaw =
+        x['itemCount'] ?? x['item_count'] ?? x['count'] ?? x['total'] ?? x['size'] ?? x['num'];
+      const c = cRaw !== undefined && Number.isFinite(Number(cRaw)) ? Math.max(0, Math.floor(Number(cRaw))) : 0;
+      out.push({ year: Math.floor(y), month: Math.floor(m), day: Math.floor(d), itemCount: c });
+    }
+    return sortDaysDesc(out);
+  }
+
+  private async loadPersons(): Promise<void> {
+    // 进入人物列表时先清理“打开人物媒体”遮罩状态，避免从主页进入误显示
+    this.personOpening = false;
+    this.inSearchMode = false;
+    this.inCategoryMode = false;
+    this.inSmartCategoryMode = false;
+    this.inPersonMode = true;
+    this.personLoading = true;
+    this.personError = '';
+    this.personItems = [];
+    this.personStatOverrides.clear();
+    this.personStatVersion++;
+    this.personStatGen++;
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.personError = '未登录';
+      this.personLoading = false;
+      return;
+    }
+    try {
+      const res = await client.getAiPersonList(true, -1, 0);
+      if (!res.success || res.data === undefined) {
+        this.personError = res.message ?? '人物列表加载失败';
+        this.personLoading = false;
+        return;
+      }
+      const raw = res.data.list ?? res.data.items ?? res.data.records ?? [];
+      const out: AiPersonItem[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        const el = raw[i];
+        if (typeof el === 'object' && el !== null) {
+          out.push(el as AiPersonItem);
+        }
+      }
+      this.personItems = out;
+      const gen = this.personStatGen;
+      void this.enrichPersonStats(out, gen);
+      if (out.length === 0) {
+        this.personError = '暂无人物（请先在系统设置中开启智能识别）';
+      }
+    } catch (e) {
+      this.personError = String(e) || '人物列表加载异常';
+    }
+    this.personLoading = false;
+  }
+
+  private async openPerson(item: AiPersonItem): Promise<void> {
+    if (this.personOpening) {
+      return;
+    }
+    const pid = this.personId(item);
+    if (pid.length === 0) {
+      this.toast('人物 ID 无效');
+      return;
+    }
+    this.personOpening = true;
+    let title = this.personName(item);
+    // 跳转成功后短延时关闭 loading；失败路径立即关闭
+    let keepOpening = false;
+    try {
+      const client = AppSession.getClient();
+      if (client === null) {
+        this.toast('未登录');
+        return;
+      }
+      // 对齐官方链路：先请求 detail（用于后端侧缓存/统计链路）
+      const detail = await client.getAiPersonDetail(pid);
+      let detailItemCount = 0;
+      if (detail.success && detail.data !== undefined) {
+        if (detail.data.name !== undefined && detail.data.name.length > 0) {
+          title = detail.data.name;
+        }
+        const cntRaw = detail.data.itemCount;
+        if (cntRaw !== undefined && Number.isFinite(Number(cntRaw))) {
+          detailItemCount = Math.max(0, Math.floor(Number(cntRaw)));
+        }
+      }
+
+      const tl = await client.getAiPersonPhotoTimeline(pid);
+      if (!tl.success || tl.data === undefined) {
+        this.toast(tl.message ?? '人物时间线加载失败');
+        return;
+      }
+      const raw = tl.data.list ?? [];
+      const rawIn: Array<Record<string, string | number | undefined>> = [];
+      for (let i = 0; i < raw.length; i++) {
+        const el = raw[i];
+        if (typeof el === 'object' && el !== null) {
+          rawIn.push(el as Record<string, string | number | undefined>);
+        }
+      }
+      const days = this.parsePersonTimeline(rawIn);
+      const merged: GalleryListItem[] = [];
+      for (let di = 0; di < days.length; di++) {
+        const day = days[di];
+        const st = fmtDayStart(day.year, day.month, day.day);
+        const et = fmtDayEnd(day.year, day.month, day.day);
+        let off = 0;
+        let rounds = 0;
+        while (rounds < DAY_MAX_ROUNDS) {
+          const one = await client.getAiPersonPhotoList(pid, st, et, DATE_FEED_BATCH, off, 20000);
+          if (!one.success || one.data === undefined) {
+            break;
+          }
+          const list = listFromData(one.data);
+          if (list.length === 0) {
+            break;
+          }
+          for (let i = 0; i < list.length; i++) {
+            merged.push(list[i]);
+          }
+          off += list.length;
+          rounds++;
+          if (detailItemCount > 0 && merged.length >= detailItemCount) {
+            break;
+          }
+          if (list.length < DATE_FEED_BATCH) {
+            break;
+          }
+          if (day.itemCount > 0 && off >= day.itemCount) {
+            break;
+          }
+        }
+      }
+      if (merged.length === 0) {
+        this.toast('该人物暂无可预览媒体');
+        return;
+      }
+      keepOpening = true;
+      const opened = await CategoryGalleryNavStore.open(this.baseUrl, title, merged, this.getUIContext());
+      if (!opened) {
+        keepOpening = false;
+        this.toast('打开人物媒体失败');
+        return;
+      }
+      // 给路由切换一点缓冲，避免加载动画收起与转场间出现空档
+      setTimeout((): void => {
+        this.personOpening = false;
+      }, 280);
+    } finally {
+      if (!keepOpening) {
+        this.personOpening = false;
+      }
+    }
   }
 
   private toast(msg: string): void {
@@ -553,6 +840,9 @@ export struct GalleryAlbumTab {
   }
 
   aboutToAppear(): void {
+    // 页面重新出现时重置打开态，避免手势返回后被旧遮罩状态卡住
+    this.personOpening = false;
+    this.categoryOpening = false;
     setTimeout((): void => { void this.bootstrap(); }, 0);
   }
 
@@ -829,12 +1119,42 @@ export struct GalleryAlbumTab {
     Column() {
       // ── 顶部标题栏 ──────────────────────────────────────────────────────────
       Row() {
-        Text(this.inSearchMode ? 'AI 搜索结果' : (this.inCategoryMode ? '媒体分类' : (this.inSmartCategoryMode ? '智能分类' : '图库')))
-          .fontSize(22)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode) {
+        if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
+          Text('图库')
+            .fontSize(22)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+
+          Row({ space: 8 }) {
+            TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
+              .layoutWeight(1)
+              .height(36)
+              .borderRadius(18)
+              .backgroundColor($r('app.color.card_background'))
+              .fontSize(14)
+              .placeholderColor($r('app.color.text_secondary'))
+              .onChange((val: string): void => {
+                this.searchQuery = val;
+              })
+              .onSubmit((): void => {
+                void this.runSearch(this.searchQuery);
+              })
+            Button() {
+              SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                .fontSize(17)
+                .fontColor([$r('app.color.icon_primary')])
+            }
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .backgroundColor($r('app.color.card_background'))
+            .onClick((): void => {
+              void this.runSearch(this.searchQuery);
+            })
+          }
+          .layoutWeight(1)
+          .margin({ left: 14, right: 14 })
+
           Button($r('app.string.gallery_refresh'), { type: ButtonType.Capsule, stateEffect: true })
             .fontSize(14)
             .height(36)
@@ -842,6 +1162,11 @@ export struct GalleryAlbumTab {
               void this.bootstrap();
             })
         } else {
+          Text(this.inSearchMode ? 'AI 搜索结果' : (this.inCategoryMode ? '媒体分类' : (this.inSmartCategoryMode ? '智能分类' : '人物')))
+            .fontSize(22)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
           Button('返回图库', { type: ButtonType.Capsule, stateEffect: true })
             .fontSize(14)
             .height(36)
@@ -849,6 +1174,7 @@ export struct GalleryAlbumTab {
               this.clearSearch();
               this.clearCategory();
               this.clearSmartCategory();
+              this.clearPerson();
             })
         }
       }
@@ -856,36 +1182,11 @@ export struct GalleryAlbumTab {
       .alignItems(VerticalAlign.Center)
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
-      // ── 搜索栏（仅在“图库”主页面显示）─────────────────────────────────────────
-      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode) {
+      // ── 主页面分类入口（原搜索栏位置）────────────────────────────────────────
+      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         Row({ space: 8 }) {
-          TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
-            .layoutWeight(1)
-            .height(40)
-            .borderRadius(20)
-            .backgroundColor($r('app.color.card_background'))
-            .fontSize(14)
-            .placeholderColor($r('app.color.text_secondary'))
-            .onChange((val: string): void => {
-              this.searchQuery = val;
-            })
-            .onSubmit((): void => {
-              void this.runSearch(this.searchQuery);
-            })
           Button() {
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
-              .fontSize(18)
-              .fontColor([$r('app.color.icon_primary')])
-          }
-          .width(40)
-          .height(40)
-          .borderRadius(20)
-          .backgroundColor($r('app.color.card_background'))
-          .onClick((): void => {
-            void this.runSearch(this.searchQuery);
-          })
-          Button() {
-            Text('分类')
+            Text('媒体分类')
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
           }
@@ -894,10 +1195,15 @@ export struct GalleryAlbumTab {
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
           .onClick((): void => {
-            void this.loadMediaCategories();
+            this.getUIContext().getRouter().pushUrl({
+              url: 'pages/MediaCategoryPage',
+              params: { baseUrl: this.baseUrl }
+            }).catch((_e: Error): void => {
+              this.toast('打开媒体分类失败');
+            });
           })
           Button() {
-            Text('智能')
+            Text('AI智能分类')
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
           }
@@ -906,7 +1212,29 @@ export struct GalleryAlbumTab {
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
           .onClick((): void => {
-            void this.loadSmartCategories();
+            this.getUIContext().getRouter().pushUrl({
+              url: 'pages/SmartCategoryPage',
+              params: { baseUrl: this.baseUrl }
+            }).catch((_e: Error): void => {
+              this.toast('打开AI智能分类失败');
+            });
+          })
+          Button() {
+            Text('人物')
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .height(40)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_background'))
+          .onClick((): void => {
+            this.getUIContext().getRouter().pushUrl({
+              url: 'pages/PersonPage',
+              params: { baseUrl: this.baseUrl }
+            }).catch((_e: Error): void => {
+              this.toast('打开人物页失败');
+            });
           })
         }
         .width('100%')
@@ -1175,8 +1503,83 @@ export struct GalleryAlbumTab {
         .layoutWeight(1)
       }
 
+      if (this.inPersonMode) {
+        Column() {
+          if (this.personLoading) {
+            Row() {
+              LoadingProgress().width(28).height(28)
+              Text('人物加载中…').fontSize(14).fontColor($r('app.color.text_secondary')).margin({ left: 10 })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding({ top: 40 })
+          } else if (this.personError.length > 0) {
+            Text(this.personError)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 40, left: 24, right: 24 })
+          } else {
+            Grid() {
+              ForEach(this.personItems, (item: AiPersonItem, idx: number) => {
+                GridItem() {
+                  Column({ space: 8 }) {
+                    GalleryNetworkThumb({
+                      uri: nasUrl(this.baseUrl, this.personFace(item))
+                    })
+                      .width('100%')
+                      .aspectRatio(1)
+                      .borderRadius(12)
+                    Text(this.personName(item))
+                      .fontSize(13)
+                      .fontColor($r('app.color.text_primary'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width('100%')
+                    Text(this.personStatText(item))
+                      .fontSize(11)
+                      .fontColor($r('app.color.text_secondary'))
+                      .width('100%')
+                  }
+                  .width('100%')
+                  .padding({ left: 2, right: 2, bottom: 8 })
+                  .onClick((): void => {
+                    void this.openPerson(item);
+                  })
+                }
+              }, (_item: AiPersonItem, i: number) => `person_${i}`)
+            }
+            .columnsTemplate('1fr 1fr 1fr')
+            .columnsGap(8)
+            .rowsGap(8)
+            .width('100%')
+            .layoutWeight(1)
+            .padding({ left: 12, right: 12, top: 8, bottom: 10 })
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+            if (this.personOpening) {
+              Column({ space: 12 }) {
+                LoadingProgress().width(48).height(48).color(Color.White)
+                Text('加载人物媒体中…')
+                  .fontSize(14)
+                  .fontColor(Color.White)
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+              .backgroundColor('#80000000')
+              .hitTestBehavior(HitTestMode.Block)
+            }
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }
+
       // ── 图库视图 ──────────────────────────────────────────────────────────────
-      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode) {
+      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         if (this.bootLoading) {
           Column({ space: 8 }) {
             ForEach([0, 1, 2, 3], (row: number) => {
