@@ -25,6 +25,10 @@
       "value": "在后台短时保持与 NAS 的数据同步与传输能力（系统管控配额，符合 Background Tasks Kit）"
     },
     {
+      "name": "perm_vibrate_reason",
+      "value": "长按进入多选时提供短时触摸振动反馈"
+    },
+    {
       "name": "login_title",
       "value": "登录飞牛？马！ NAS"
     },
@@ -139,6 +143,26 @@
     {
       "name": "gallery_refresh",
       "value": "刷新"
+    },
+    {
+      "name": "gallery_multiselect",
+      "value": "多选"
+    },
+    {
+      "name": "gallery_batch_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "gallery_batch_delete",
+      "value": "删除"
+    },
+    {
+      "name": "gallery_batch_no_id",
+      "value": "该媒体无 ID，无法多选"
+    },
+    {
+      "name": "gallery_batch_delete_confirm",
+      "value": "将所选照片/视频移入回收站？"
     },
     {
       "name": "gallery_loading",

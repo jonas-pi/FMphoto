@@ -109,8 +109,12 @@ export class SessionPreferences {
     await p.put(K_USE_HTTPS, s.useHttps ? '1' : '0');
     await p.put(K_ALBUM_PARENT, s.albumParentGuid);
     await p.put(K_TRUSTED, JSON.stringify(s.trustedHosts));
+    // 仅在实际变更时写入密码，降低系统凭据服务对「重复提交同一密码」的感知
     if (loginPassword !== undefined) {
-      await p.put(K_LAST_PASSWORD, loginPassword);
+      const prevPw = await p.get(K_LAST_PASSWORD, '') as string;
+      if (prevPw !== loginPassword) {
+        await p.put(K_LAST_PASSWORD, loginPassword);
+      }
     }
     await p.put(K_FNOS_LONG_TOKEN, s.fnosLongToken);
     await p.put(K_LOGIN_VIA_WS, s.loginViaWebSocket ? '1' : '0');

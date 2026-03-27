@@ -17,10 +17,11 @@ import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryDeleteSyncStore } from '../album/GalleryDeleteSyncStore';
+import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { GalleryListItem, GalleryPhotoDetailData } from '../model/FnApiTypes';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
-import { FnInlineLoading, FnSecondaryButton, FnStateText } from '../common/FnUiCommon';
+import { FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PREVIEW_PAGE_ENTER_CURVE,
   FN_PREVIEW_PAGE_ENTER_DURATION,
@@ -237,6 +238,7 @@ struct GalleryPreview {
     // 同步给背后页面（主图库/分类图库）做增量删除，避免返回后整页刷新导致位置丢失。
     if (deletedId.length > 0) {
       GalleryDeleteSyncStore.markDeleted(deletedId);
+      GalleryTimelineRefreshStore.bump();
     }
     if (left <= 0) {
       this.itemSource.reloadAll([]);
@@ -272,13 +274,14 @@ struct GalleryPreview {
       return;
     }
     try {
+      // showActionMenu 会在操作项下方自动附加系统「取消」行，勿在 buttons 里再写「取消」，否则会出现两个取消。
       const choice = await this.getUIContext().getPromptAction().showActionMenu({
         title: '确认删除当前媒体？',
         buttons: [
-          { text: '删除（移入回收站）', color: '#E5484D' },
-          { text: '取消', color: '#007AFF' }
+          { text: '删除（移入回收站）', color: '#E5484D' }
         ]
       });
+      // 点系统取消或返回：index 非 0；与倍速菜单等逻辑一致
       if (choice.index !== 0) {
         return;
       }
@@ -613,6 +616,70 @@ struct GalleryPreview {
     }
   }
 
+  /**
+   * 照片详情内容区：由 bindSheet 半模态承载（系统拖拽条、遮罩与转场），替代自绘全屏遮罩 + 圆角面板，与系统相册等信息页风格一致。
+   */
+  @Builder
+  private detailsSheetBuilder() {
+    Column() {
+      // 标题由 bindSheet 的 title + showClose 提供，与系统关闭键同一栏对齐；此处不再重复「照片详情」文案
+
+      if (this.detailsLoading) {
+        FnInlineLoading({ text: '详情加载中…' })
+          .padding({ top: 18, bottom: 20 })
+      } else if (this.detailsError.length > 0) {
+        FnStateText({ text: this.detailsError, isError: true })
+          .layoutWeight(0)
+          .padding({ left: 0, right: 0, top: 12, bottom: 16 })
+      } else {
+        Scroll() {
+          Column() {
+            this.detailRow('文件名', this.detailText(this.detailsData?.fileName))
+            this.detailRow('拍摄时间', this.detailText(this.detailsData?.photoDateTime ?? this.detailsData?.dateTime))
+            this.detailRow('文件类型', this.detailText(this.detailsData?.fileType))
+            this.detailRow('文件大小', this.formatBytes(this.detailsData?.fileSize))
+            this.detailRow(
+              '分辨率',
+              this.joinPair(
+                this.detailText(this.detailsData?.width),
+                this.detailText(this.detailsData?.height),
+                ' x '
+              )
+            )
+            this.detailRow('设备厂商', this.detailText(this.detailsData?.make))
+            this.detailRow('设备型号', this.detailText(this.detailsData?.model))
+            this.detailRow('光圈', this.detailText(this.detailsData?.fumber))
+            this.detailRow('快门', this.detailText(this.detailsData?.exposureTime))
+            this.detailRow('ISO', this.detailText(this.detailsData?.isoSpeedRatings))
+            this.detailRow('焦距', this.detailText(this.detailsData?.focalLength))
+            this.detailRow('像素', this.detailText(this.detailsData?.mp))
+            this.detailRow('曝光程序', this.detailText(this.detailsData?.exposureProgram))
+            this.detailRow('测光模式', this.detailText(this.detailsData?.meteringMode))
+            this.detailRow('地理位置', this.detailText(this.detailsData?.geo))
+            this.detailRow(
+              '经纬度',
+              this.joinPair(
+                this.detailText(this.detailsData?.latitude),
+                this.detailText(this.detailsData?.longitude),
+                ', '
+              )
+            )
+            this.detailPathRow('文件路径', this.detailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath))
+          }
+          .width('100%')
+          .padding({ bottom: 10 })
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 4, bottom: 24 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
   /** 获取当前图片 buffer，useOriginal=true 优先原图，false 只取缩略图 */
   private async fetchCurrentImageBuffer(useOriginal: boolean = true): Promise<ArrayBuffer | undefined> {
     const item = this.currentItem();
@@ -756,9 +823,26 @@ struct GalleryPreview {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const isVideo = this.currentItemIsVideo();
 
+    // 网络拉取原文件前若超过约 400ms 仍无系统分享面板，先提示「准备中」，减轻「点了没反应」的体感（短时完成则不会弹出该 Toast）
+    let slowHintTimer: number = 0;
+    try {
+      slowHintTimer = setTimeout((): void => {
+        this.toast('正在准备分享…');
+      }, 400);
+    } catch (_e) {
+      slowHintTimer = 0;
+    }
+
     const buf = isVideo
       ? await this.fetchCurrentVideoBuffer()
       : await this.fetchCurrentImageBuffer();
+    if (slowHintTimer !== 0) {
+      try {
+        clearTimeout(slowHintTimer);
+      } catch (_e) {
+      }
+      slowHintTimer = 0;
+    }
     if (buf === undefined || buf.byteLength === 0) {
       this.toast(isVideo ? '视频加载失败，请重试' : '图片加载失败，请重试');
       return;
@@ -768,10 +852,11 @@ struct GalleryPreview {
     const ext = isVideo ? this.currentVideoExt() : this.currentImageExt();
     const tempPath = `${ctx.cacheDir}/share_preview.${ext}`;
     try {
-      const tmpFile = fileIo.openSync(tempPath,
+      // 使用异步 IO，避免大文件 writeSync 长时间卡住 UI 线程、放大「点击后卡顿」感受
+      const tmpFile = await fileIo.open(tempPath,
         fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(tmpFile.fd, buf);
-      fileIo.closeSync(tmpFile.fd);
+      await fileIo.write(tmpFile.fd, buf);
+      await fileIo.close(tmpFile.fd);
     } catch (_e) {
       this.toast('临时文件写入失败');
       return;
@@ -857,6 +942,8 @@ struct GalleryPreview {
         .onClick((): void => { this.toggleToolbar(); })
         .onChange((idx: number): void => {
           this.swiperIndex = idx;
+          // 缩放锁仅由当前页通过 onZoomLockChange 上报；切走后非当前页不会回调 false，若不重置会导致 Swiper 长期 disableSwipe，左右滑偶发失效。
+          this.swiperLocked = false;
           this.dismissDragProgress = 0;
           this.originalShowing = false;
           if (!this.toolbarVisible) {
@@ -936,93 +1023,21 @@ struct GalleryPreview {
       .opacity(this.toolbarVisible ? this.toolbarAlpha() : 0)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
-      // 详情底部弹层：由右上角「更多」按钮触发
-      if (this.detailsVisible) {
-        Column() {
-          Blank()
-            .layoutWeight(1)
-            .onClick((): void => { this.closeDetailsPanel(); })
-
-          Column() {
-            Row() {
-              Text('照片详情')
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
-              Blank()
-              FnSecondaryButton({ text: '关闭' })
-                .height(30)
-                .padding({ left: 10, right: 10 })
-                .onClick((): void => { this.closeDetailsPanel(); })
-            }
-            .width('100%')
-            .margin({ bottom: 8 })
-
-            if (this.detailsLoading) {
-              FnInlineLoading({ text: '详情加载中…' })
-                .padding({ top: 18, bottom: 20 })
-            } else if (this.detailsError.length > 0) {
-              FnStateText({ text: this.detailsError, isError: true })
-                .layoutWeight(0)
-                .padding({ left: 0, right: 0, top: 12, bottom: 16 })
-            } else {
-              Scroll() {
-                Column() {
-                  this.detailRow('文件名', this.detailText(this.detailsData?.fileName))
-                  this.detailRow('拍摄时间', this.detailText(this.detailsData?.photoDateTime ?? this.detailsData?.dateTime))
-                  this.detailRow('文件类型', this.detailText(this.detailsData?.fileType))
-                  this.detailRow('文件大小', this.formatBytes(this.detailsData?.fileSize))
-                  this.detailRow(
-                    '分辨率',
-                    this.joinPair(
-                      this.detailText(this.detailsData?.width),
-                      this.detailText(this.detailsData?.height),
-                      ' x '
-                    )
-                  )
-                  this.detailRow('设备厂商', this.detailText(this.detailsData?.make))
-                  this.detailRow('设备型号', this.detailText(this.detailsData?.model))
-                  this.detailRow('光圈', this.detailText(this.detailsData?.fumber))
-                  this.detailRow('快门', this.detailText(this.detailsData?.exposureTime))
-                  this.detailRow('ISO', this.detailText(this.detailsData?.isoSpeedRatings))
-                  this.detailRow('焦距', this.detailText(this.detailsData?.focalLength))
-                  this.detailRow('像素', this.detailText(this.detailsData?.mp))
-                  this.detailRow('曝光程序', this.detailText(this.detailsData?.exposureProgram))
-                  this.detailRow('测光模式', this.detailText(this.detailsData?.meteringMode))
-                  this.detailRow('地理位置', this.detailText(this.detailsData?.geo))
-                  this.detailRow(
-                    '经纬度',
-                    this.joinPair(
-                      this.detailText(this.detailsData?.latitude),
-                      this.detailText(this.detailsData?.longitude),
-                      ', '
-                    )
-                  )
-                  this.detailPathRow('文件路径', this.detailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath))
-                }
-                .width('100%')
-                .padding({ bottom: 10 })
-                .alignItems(HorizontalAlign.Start)
-              }
-              .width('100%')
-              .scrollBar(BarState.Auto)
-            }
-          }
-          .width('100%')
-          .constraintSize({ maxHeight: '70%' })
-          .padding({ left: 14, right: 14, top: 14, bottom: 18 })
-          .backgroundColor(this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF')
-          .borderRadius({ topLeft: 16, topRight: 16 })
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.overlay_mask'))
-      }
-
     }
     .width('100%').height('100%')
     .backgroundColor(this.pageBg())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    // 半模态高度约半屏：保留上方图片可见；避免默认 LARGE 几乎铺满遮挡预览主体
+    .bindSheet(this.detailsVisible, this.detailsSheetBuilder, {
+      height: '50%',
+      dragBar: true,
+      showClose: true,
+      title: { title: '照片详情' },
+      backgroundColor: this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF',
+      onDisappear: (): void => {
+        this.closeDetailsPanel();
+      }
+    })
   }
 
   pageTransition(): void {
