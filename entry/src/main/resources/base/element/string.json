@@ -10,7 +10,7 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "飞牛相册"
+      "value": "飞马相册"
     },
     {
       "name": "perm_internet_reason",
@@ -26,7 +26,7 @@
     },
     {
       "name": "login_title",
-      "value": "登录飞牛 NAS"
+      "value": "登录飞牛？马！ NAS"
     },
     {
       "name": "hint_server",
@@ -70,7 +70,7 @@
     },
     {
       "name": "fnid_hint",
-      "value": "FN ID 远程登录需 Web OAuth，当前版本请使用局域网 IP/域名。"
+      "value": " "
     },
     {
       "name": "tab_home",

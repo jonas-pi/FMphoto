@@ -9,13 +9,12 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
 import { CertPolicy } from './CertPolicy';
-import { genFnAuthx, generateRandomDigits } from './AuthxSigner';
+import { genFnAuthx, generateRandomDigits, sha256DigestSafe } from './AuthxSigner';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPost, genFnGalleryAuthxPostRaw } from './FnGalleryAuthx';
-import { FN_PHOTO_API_PREFIX, fnPhotoLongTokenProbePaths } from './FnPhotoRoutes';
-import { fnWebDefaultUserAgent, mergeGalleryWebCookieIntoNativeHeader } from './FnWebCookies';
+import { FN_PHOTO_API_PREFIX, FN_PHOTO_H5_ALBUM_PAGE, fnPhotoLongTokenProbePaths } from './FnPhotoRoutes';
+import { fnWebDefaultUserAgent, injectFnWebCookies, mergeGalleryWebCookieIntoNativeHeader } from './FnWebCookies';
 import { fnWebViewBaseUrl } from './ServerUrl';
 import {
   FnClientResult,
@@ -44,6 +43,12 @@ const TAG = 'FnHttp';
 
 /** 图库 GET 空 query 参数（避免未类型化的 `{}` 字面量） */
 const GALLERY_QUERY_EMPTY: Record<string, string | number | boolean> = {};
+
+/** 上传前一次性读出文件内容与本地修改时间（秒），对齐 Python `os.path.getmtime` + Trim-Mtim */
+interface UploadFileReadResult {
+  buffer: ArrayBuffer;
+  mtimeSec: number;
+}
 
 const DEFAULT_TIMEOUT = 10000;
 const MAX_REDIRECTS = 8;
@@ -80,6 +85,32 @@ function buildUploadCookieHeader(token: string, longToken: string = ''): string 
     s += `; fnos-token=${token}`;
   }
   return s;
+}
+
+/**
+ * 先合并 WebView 同源 Cookie（可能含仅 H5 下发的键），再剔除上传禁止项。
+ * 全精简 Cookie 时部分 NAS 返回 HTTP 403；带 mode=relay / Trim-MC-token 又易 HTTP 400。
+ */
+function stripUploadForbiddenCookieKeys(cookie: string): string {
+  if (cookie.length === 0) {
+    return '';
+  }
+  const parts = cookie.split(';');
+  const kept: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i].trim();
+    if (seg.length === 0) {
+      continue;
+    }
+    const eq = seg.indexOf('=');
+    const nameRaw = eq > 0 ? seg.substring(0, eq).trim() : seg;
+    const nameLow = nameRaw.toLowerCase();
+    if (nameLow === 'mode' || nameLow === 'trim-mc-token') {
+      continue;
+    }
+    kept.push(seg);
+  }
+  return kept.join('; ');
 }
 
 
@@ -244,6 +275,16 @@ function trimJoinPath(dirPath: string, fileName: string): string {
   return `${d}/${f}`;
 }
 
+/** 取 Unix 风格路径最后一段（用于 notice 的 file_name 与 trim-path 末段对齐） */
+function lastUnixPathSegment(fullPath: string): string {
+  const t = fullPath.trim().replace(/\/+$/, '');
+  if (t.length === 0) {
+    return '';
+  }
+  const i = t.lastIndexOf('/');
+  return i >= 0 ? t.substring(i + 1) : t;
+}
+
 /**
  * trim-path 头的编码：保留 "/"，仅编码路径段字符（与浏览器抓包形态一致）。
  */
@@ -340,11 +381,9 @@ function base64ToUint8Local(b64: string): Uint8Array {
   return helper.decodeSync(b64);
 }
 
+/** 与 AuthxSigner：鸿蒙 HCF 对 SHA256.update 偶发抛「update failed」，统一走安全摘要 */
 async function sha256DigestLocal(data: Uint8Array): Promise<Uint8Array> {
-  const md = cryptoFramework.createMd('SHA256');
-  await md.update({ data: data });
-  const out = await md.digest();
-  return out.data;
+  return sha256DigestSafe(data);
 }
 
 function concatUint8Local(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -373,48 +412,37 @@ async function hmacSha256DigestLocal(key: Uint8Array, message: Uint8Array): Prom
   return sha256DigestLocal(concatUint8Local(opad, inner));
 }
 
+/**
+ * 飞牛 /upload：Trim-Sign = base64( HMAC-SHA256( secret, Trim-Path ) )
+ * 仅对请求头 `Trim-Path` 的完整值（UTF-8）做 HMAC；其它头字段不参与。
+ *
+ * @param trimPathHeaderValue 必须与最终设置的 `Trim-Path` 头完全一致（一般为 encodeTrimPath 输出）
+ */
 async function buildTrimSignCandidates(
-  trimPath: string,
-  trimMtim: string,
+  trimPathHeaderValue: string,
   token: string,
   wsSignKeyB64: string
 ): Promise<string[]> {
   const out: string[] = [];
-  const push = (s: string): void => {
-    const v = s.trim();
-    if (v.length > 0 && out.indexOf(v) < 0) {
-      out.push(v);
+  const pushDistinct = (s: string): void => {
+    if (s.length > 0 && out.indexOf(s) < 0) {
+      out.push(s);
     }
   };
-  // 签名消息候选：优先用最常见的拼接格式
-  const msgs: string[] = [
-    `${trimPath}\n${trimMtim}`,
-    trimPath,
-    `${trimPath}\n${trimMtim}\n1\n1`
-  ];
-  // 优先级 1：secret（wsSignKeyB64）做 HMAC—— 官方 upload.worker 使用此方式
+  const msgBytes = utf8EncodeLocal(trimPathHeaderValue);
   if (wsSignKeyB64.length > 0) {
     try {
       const secKey = base64ToUint8Local(wsSignKeyB64);
-      for (let i = 0; i < msgs.length; i++) {
-        const mac = await hmacSha256DigestLocal(secKey, utf8EncodeLocal(msgs[i]));
-        push(uint8ArrayToBase64Local(mac));
-      }
+      const mac = await hmacSha256DigestLocal(secKey, msgBytes);
+      pushDistinct(uint8ArrayToBase64Local(mac));
     } catch (_e) {}
   }
-  // 优先级 2：token 做 HMAC
   if (token.length > 0) {
-    const key = utf8EncodeLocal(token);
-    for (let i = 0; i < msgs.length; i++) {
-      const mac = await hmacSha256DigestLocal(key, utf8EncodeLocal(msgs[i]));
-      push(uint8ArrayToBase64Local(mac));
-    }
-  }
-  // 优先级 3：纯 SHA256（无 HMAC key）
-  for (let i = 0; i < msgs.length; i++) {
-    const m = utf8EncodeLocal(msgs[i]);
-    const plain = await sha256DigestLocal(m);
-    push(uint8ArrayToBase64Local(plain));
+    try {
+      const key = utf8EncodeLocal(token);
+      const mac = await hmacSha256DigestLocal(key, msgBytes);
+      pushDistinct(uint8ArrayToBase64Local(mac));
+    } catch (_e) {}
   }
   return out;
 }
@@ -434,8 +462,7 @@ function mimeFromExt(ext: string): string {
 }
 
 /**
- * 组装 multipart/form-data，仅含一个 file 字段，
- * 与官方 Web upload.worker 的 FormData.append('file', blob, filename) 行为对齐。
+ * 组装 multipart/form-data，字段名 trim-upload-file（与浏览器 Network 抓包一致；旧版曾用 name="file"）。
  */
 function buildMultipartUploadBody(fileName: string, payload: ArrayBuffer): MultipartBodyData {
   const boundary = `----WebKitFormBoundary${Date.now()}${Math.floor(Math.random() * 1000000)}`;
@@ -444,7 +471,7 @@ function buildMultipartUploadBody(fileName: string, payload: ArrayBuffer): Multi
   const mime = mimeFromExt(ext);
   const head =
     `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+    `Content-Disposition: form-data; name="trim-upload-file"; filename="${safeName}"\r\n` +
     `Content-Type: ${mime}\r\n\r\n`;
   const tail = `\r\n--${boundary}--\r\n`;
   const a = utf8EncodeLocal(head);
@@ -461,6 +488,52 @@ function buildMultipartUploadBody(fileName: string, payload: ArrayBuffer): Multi
   bodyView.set(out);
   ret.body = bodyBuf;
   return ret;
+}
+
+/**
+ * 上传排障：HiLog 中对照浏览器 Network 里的 Request Headers（Cookie 值脱敏，避免泄露会话）。
+ * 日志统一用与本文件相同的 TAG（FnHttp）+ 前缀 [upload]，避免单独标签在部分机型/日志级别下不可见。
+ */
+function redactCookieHeaderForLog(cookie: string): string {
+  if (cookie.length === 0) {
+    return '(empty)';
+  }
+  const parts = cookie.split(';');
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i].trim();
+    if (seg.length === 0) {
+      continue;
+    }
+    const eq = seg.indexOf('=');
+    const nameRaw = eq > 0 ? seg.substring(0, eq).trim() : seg;
+    const nameLow = nameRaw.toLowerCase();
+    if (nameLow === 'fnos-token' || nameLow === 'fnos-long-token' || nameLow === 'trim-mc-token') {
+      out.push(`${nameRaw}=<redacted>`);
+    } else {
+      out.push(seg);
+    }
+  }
+  return out.join('; ');
+}
+
+/** 列出 Cookie 键名，便于与浏览器 Request Headers 逐项核对 */
+function cookieKeysSummary(cookie: string): string {
+  if (cookie.length === 0) {
+    return '(none)';
+  }
+  const keys: string[] = [];
+  const parts = cookie.split(';');
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i].trim();
+    const eq = seg.indexOf('=');
+    const name = eq > 0 ? seg.substring(0, eq).trim() : seg;
+    if (name.length > 0 && keys.indexOf(name) < 0) {
+      keys.push(name);
+    }
+  }
+  keys.sort();
+  return keys.join(',');
 }
 
 function isRedirectCode(code: number): boolean {
@@ -587,6 +660,25 @@ export class FnHttpClient {
    */
   private galleryPhotoReferer(): string {
     return `${fnWebViewBaseUrl(this.baseUrl)}/p/`;
+  }
+
+  /**
+   * 原生 POST https:5667/upload 前，把会话写入 WebCookieManager 的 **5667 与登录 base**。
+   * 否则 merge 时 fetchCookieSync(5667/p/) 常为「空」：Cookie 只写在 http:5666 登录 origin 上，与图库 HTTPS 不同源。
+   */
+  private primeWebCookiesForPStack(webHttpsBaseNoSlash: string): void {
+    const lt = this.longToken.length > 0 ? this.longToken : undefined;
+    try {
+      injectFnWebCookies(webHttpsBaseNoSlash, this.token, true, lt);
+    } catch (_e) {
+    }
+    const raw = this.baseUrl.trim();
+    try {
+      if (raw.length > 0 && raw !== webHttpsBaseNoSlash) {
+        injectFnWebCookies(raw, this.token, raw.startsWith('https://'), lt);
+      }
+    } catch (_e2) {
+    }
   }
 
   /** 服务端错误文案：根级 + 部分版本嵌套在 data 内 */
@@ -2147,12 +2239,56 @@ export class FnHttpClient {
     return out.length > 0 ? out : `upload_${Date.now()}.jpg`;
   }
 
-  private static readAllBytesFromUri(uri: string): ArrayBuffer | undefined {
+  /**
+   * 飞牛相册 upload/notice 抓包中的 file_create_time：对齐 Python `strftime("%Y:%m:%d %H:%M:%S")`（如 2026:03:27 14:53:36）
+   */
+  private static formatNoticeFileCreateTime(mtimSec: string): string {
+    const sec = Number(mtimSec.trim());
+    const ms = Number.isFinite(sec) && sec > 0 ? sec * 1000 : Date.now();
+    const d = new Date(ms);
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth() + 1);
+    const day = pad2(d.getDate());
+    const h = pad2(d.getHours());
+    const mi = pad2(d.getMinutes());
+    const s = pad2(d.getSeconds());
+    return `${y}:${m}:${day} ${h}:${mi}:${s}`;
+  }
+
+  /**
+   * 将 @kit.CoreFileKit stat 的 mtime 规范为 Unix 秒（对齐 `getmtime` / Trim-Mtim）。
+   * 文档常见为纳秒时间戳；部分环境可能为毫秒或秒。
+   */
+  private static statMtimeToUnixSec(st: object): number {
+    const o = st as Record<string, number | bigint | string | undefined>;
+    const rawVal = o['mtime'];
+    if (rawVal === undefined || rawVal === null) {
+      return Math.floor(Date.now() / 1000);
+    }
+    const raw =
+      typeof rawVal === 'bigint' ? Number(rawVal) : Number(String(rawVal));
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return Math.floor(Date.now() / 1000);
+    }
+    if (raw > 1e15) {
+      return Math.floor(raw / 1e9);
+    }
+    if (raw > 1e12) {
+      return Math.floor(raw / 1e3);
+    }
+    return Math.floor(raw);
+  }
+
+  /**
+   * 一次 open 读出全文 + 修改时间，供 /upload 的 Trim-Mtim、Trim-Sign 与 notice 使用。
+   */
+  private static readUploadFileAndMtime(uri: string): UploadFileReadResult | undefined {
     let fdNum = -1;
     try {
       const f = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
       fdNum = f.fd;
       const st = fileIo.statSync(fdNum);
+      const mtimeSec = FnHttpClient.statMtimeToUnixSec(st);
       const size = Number(st.size);
       if (!Number.isFinite(size) || size <= 0) {
         return undefined;
@@ -2162,10 +2298,8 @@ export class FnHttpClient {
       if (!Number.isFinite(readLen) || readLen <= 0) {
         return undefined;
       }
-      if (readLen < whole.byteLength) {
-        return whole.slice(0, readLen);
-      }
-      return whole;
+      const buffer = readLen < whole.byteLength ? whole.slice(0, readLen) : whole;
+      return { buffer: buffer, mtimeSec: mtimeSec };
     } catch (_e) {
       return undefined;
     } finally {
@@ -2280,45 +2414,51 @@ export class FnHttpClient {
 
   /**
    * 对齐 Web 侧上传前预请求：
-   * GET /p/api/v2/photo/upload/path（不同版本参数可能不同，按候选尝试）。
+   * GET /p/api/v2 或 v1 /photo/upload/path（不同 NAS 版本只实现其一）。
    * 返回可用的路径提示（若服务端未返回则为空串，不阻断上传）。
    */
   private async requestUploadPathHint(fileName: string, timeoutMs: number): Promise<string> {
     const activeBase = fnWebViewBaseUrl(this.baseUrl);
-    const path = '/p/api/v2/photo/upload/path';
     const cookie = mergeGalleryWebCookieIntoNativeHeader(
       buildFnApiCookieHeader(this.token, this.longToken),
       activeBase
     );
+    const pathBases: string[] = [
+      '/p/api/v2/photo/upload/path',
+      `${FN_PHOTO_API_PREFIX}/photo/upload/path`
+    ];
     const paramsCandidates: Array<Record<string, string | number | boolean>> = [
       GALLERY_QUERY_EMPTY,
       { 'name': fileName },
       { 'fileName': fileName },
       { 'filename': fileName }
     ];
-    for (let i = 0; i < paramsCandidates.length; i++) {
-      try {
-        const oneParams = paramsCandidates[i];
-        const qs = buildGallerySortedQuery(oneParams);
-        const urlPath = qs.length > 0 ? `${path}?${qs}` : path;
-        const authx = await genFnGalleryAuthxGet(path, oneParams);
-        const headers = this.buildGalleryFetchHeaders(authx, cookie);
-        const raw = await this.rawRequest(
-          `${activeBase}${urlPath}`,
-          http.RequestMethod.GET,
-          headers,
-          undefined,
-          timeoutMs,
-          CertPolicy.isTrusted(activeBase)
-        );
-        if (raw.code < 200 || raw.code >= 300) {
-          continue;
-        }
-        const p = FnHttpClient.firstUploadPathFromResponse(raw.body);
-        if (p.length > 0) {
-          return p;
-        }
-      } catch (_e) {}
+    for (let pi = 0; pi < pathBases.length; pi++) {
+      const path = pathBases[pi];
+      for (let i = 0; i < paramsCandidates.length; i++) {
+        try {
+          const oneParams = paramsCandidates[i];
+          const qs = buildGallerySortedQuery(oneParams);
+          const urlPath = qs.length > 0 ? `${path}?${qs}` : path;
+          const authx = await genFnGalleryAuthxGet(path, oneParams);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          const raw = await this.rawRequest(
+            `${activeBase}${urlPath}`,
+            http.RequestMethod.GET,
+            headers,
+            undefined,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            continue;
+          }
+          const p = FnHttpClient.firstUploadPathFromResponse(raw.body);
+          if (p.length > 0) {
+            return p;
+          }
+        } catch (_e) {}
+      }
     }
     return '';
   }
@@ -2388,7 +2528,9 @@ export class FnHttpClient {
     fileName: string,
     sourceUri: string,
     timeoutMs: number,
-    pathHints: string[] = []
+    pathHints: string[] = [],
+    uploadMtimSec: string = '',
+    hintedFullPathPlain: string = ''
   ): Promise<UploadNoticeResult> {
     const activeBase = fnWebViewBaseUrl(this.baseUrl);
     const path = `${FN_PHOTO_API_PREFIX}/photo/upload/notice`;
@@ -2404,6 +2546,13 @@ export class FnHttpClient {
         bodyCandidates.push(v);
       }
     };
+    // 与 Web 一致：files 数组 + file_create_time / original_name / file_name（优先尝试）
+    const mtimForNotice = uploadMtimSec.trim().length > 0 ? uploadMtimSec.trim() : String(Math.floor(Date.now() / 1000));
+    const fc = FnHttpClient.formatNoticeFileCreateTime(mtimForNotice);
+    const seg = lastUnixPathSegment(hintedFullPathPlain);
+    const escFileOnDisk = seg.length > 0 ? escapeJsonString(seg) : escName;
+    pushCandidate(`{"files":[{"file_create_time":"${fc}","original_name":"${escName}","file_name":"${escFileOnDisk}"}]}`);
+    pushCandidate(`{"files":[{"file_create_time":"${fc}","original_name":"${escName}","file_name":"${escName}"}]}`);
     pushCandidate(`{"name":"${escName}"}`);
     pushCandidate(`{"fileName":"${escName}"}`);
     pushCandidate(`{"filename":"${escName}"}`);
@@ -2584,44 +2733,67 @@ export class FnHttpClient {
    * - 上传前尝试请求 /p/api/v2/photo/upload/path，拿到路径提示用于 notice；
    * - /upload 若返回 JSON 外壳 code!=0，则按失败处理（不再仅看 HTTP 200）；
    * - notice / restore 都失败时，明确返回失败，避免“假成功”。
+   *
+   * @param albumUploadDirHint 设置里「相册父目录」fv_xxx 等：当 upload/path 接口无返回时用作 trim-path 目录回退
    */
-  async uploadPhotoByUri(uri: string, timeoutMs: number = 120000): Promise<FnClientResult<Object>> {
+  async uploadPhotoByUri(
+    uri: string,
+    timeoutMs: number = 120000,
+    albumUploadDirHint?: string
+  ): Promise<FnClientResult<Object>> {
     const oneUri = uri.trim();
     if (oneUri.length === 0) {
+      hilog.warn(DOMAIN, TAG, '[upload] abort empty uri');
       return { success: false, message: '文件 URI 为空' };
     }
-    const payload = FnHttpClient.readAllBytesFromUri(oneUri);
-    if (payload === undefined || payload.byteLength <= 0) {
+    hilog.warn(DOMAIN, TAG, '[upload] enter uriLen=%{public}d timeoutMs=%{public}d', oneUri.length, timeoutMs);
+    const filePack = FnHttpClient.readUploadFileAndMtime(oneUri);
+    if (filePack === undefined || filePack.buffer.byteLength <= 0) {
+      hilog.warn(DOMAIN, TAG, '[upload] abort read file failed uriLen=%{public}d', oneUri.length);
       return { success: false, message: '读取待上传文件失败' };
     }
+    const payload = filePack.buffer;
     const fileName = FnHttpClient.fileNameFromUri(oneUri);
-    const pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+    let pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+    if (pathHintBeforeUpload.length === 0 && albumUploadDirHint !== undefined) {
+      const d = albumUploadDirHint.trim();
+      if (d.length > 0) {
+        pathHintBeforeUpload = d;
+      }
+    }
     const hintedFullPath = pathHintBeforeUpload.length > 0 ? trimJoinPath(pathHintBeforeUpload, fileName) : '';
     const uploadPath = '/upload';
-    const uploadUrl = `${fnWebViewBaseUrl(this.baseUrl)}${uploadPath}`;
+    const webHttpsBase = fnWebViewBaseUrl(this.baseUrl);
+    let sessionNorm = this.baseUrl.trim();
+    if (sessionNorm.length > 1 && sessionNorm.endsWith('/')) {
+      sessionNorm = sessionNorm.substring(0, sessionNorm.length - 1);
+    }
+    /** 部分 NAS 上 /upload 只接受 http:5666 或只接受 https:5667；Origin/Cookie 合并须与 POST 的 origin 一致 */
+    const uploadOrigins: string[] = [webHttpsBase];
+    if (sessionNorm.length > 0 && sessionNorm !== webHttpsBase) {
+      uploadOrigins.push(sessionNorm);
+    }
     const req = http.createHttp();
     this.registerPendingRequest(req);
     let uploadRespText = '';
+    /** 与 Trim-Mtim 头一致，并传给 notice；使用文件 mtime（秒），对齐 Python os.path.getmtime */
+    let trimMtim = String(filePack.mtimeSec);
     try {
+      this.primeWebCookiesForPStack(webHttpsBase);
       const multipart = buildMultipartUploadBody(fileName, payload);
-      const trimMtim = String(Math.floor(Date.now() / 1000));
       const encodedTrimPath = hintedFullPath.length > 0 ? encodeTrimPath(hintedFullPath) : '';
 
-      // 只生成最可能的签名候选（secret HMAC > token HMAC > 无签名），
-      // 避免用 15+ 种候选重复上传完整文件。
-      const signCandidates = await buildTrimSignCandidates(
-        encodedTrimPath,
-        trimMtim,
-        this.token,
-        this.wsSignKeyB64
-      );
-      // 最多尝试 3 个候选签名（避免整文件重传太多次）
-      const maxSignTries = 3;
+      // Trim-Sign = base64(HMAC-SHA256(secret, Trim-Path))；优先正确签名，空签名仅作兜底
+      const signCandidates = await buildTrimSignCandidates(encodedTrimPath, this.token, this.wsSignKeyB64);
+      const maxSignTries = 5;
       const allSigns: string[] = [];
       for (let i = 0; i < signCandidates.length && allSigns.length < maxSignTries; i++) {
-        allSigns.push(signCandidates[i]);
+        const c = signCandidates[i];
+        if (c.length > 0 && allSigns.indexOf(c) < 0) {
+          allSigns.push(c);
+        }
       }
-      if (allSigns.length === 0) {
+      if (allSigns.length < maxSignTries && allSigns.indexOf('') < 0) {
         allSigns.push('');
       }
 
@@ -2629,78 +2801,129 @@ export class FnHttpClient {
       let lastHttpCode = 0;
       let lastDetail = '';
       let softUploadAccepted = false;
-      // 上传专用 Cookie：不含 mode=relay / Trim-MC-token，对齐官方 Web 行为
-      const uploadCookie = buildUploadCookieHeader(this.token, this.longToken);
-      for (let si = 0; si < allSigns.length; si++) {
-        const oneSign = allSigns[si];
-        const headers: Record<string, string> = {
-          'Cookie': uploadCookie,
-          'Content-Type': multipart.contentType,
-          'Accept': 'application/json, text/plain, */*',
-          'trim-flags': '1',
-          'trim-overwrite': '1',
-          'trim-mtim': trimMtim
-        };
-        if (encodedTrimPath.length > 0) {
-          headers['trim-path'] = encodedTrimPath;
-        }
-        if (this.token.length > 0) {
-          headers['trim-token'] = this.token;
-        }
-        if (oneSign.length > 0) {
-          headers['trim-sign'] = oneSign;
-        }
-        const opt: http.HttpRequestOptions = {
-          method: http.RequestMethod.POST,
-          header: headers,
-          expectDataType: http.HttpDataType.STRING,
-          connectTimeout: timeoutMs,
-          readTimeout: timeoutMs,
-          extraData: multipart.body
-        };
-        if (CertPolicy.isTrusted(this.baseUrl)) {
-          opt.remoteValidation = 'skip';
-        }
-        const rawResp = await req.request(uploadUrl, opt);
-        const code = Number(rawResp.responseCode);
-        lastHttpCode = code;
-        uploadRespText = typeof rawResp.result === 'string' ? rawResp.result : JSON.stringify(rawResp.result);
-        if (!(code >= 200 && code < 300)) {
+      let lastCookieForLog = '';
+      let lastUploadUrl = '';
+      outerUpload:
+      for (let bi = 0; bi < uploadOrigins.length; bi++) {
+        const originBase = uploadOrigins[bi];
+        const uploadUrl = `${originBase}${uploadPath}`;
+        const uploadCookie = stripUploadForbiddenCookieKeys(
+          mergeGalleryWebCookieIntoNativeHeader(
+            buildUploadCookieHeader(this.token, this.longToken),
+            originBase
+          )
+        );
+        const uploadReferer = `${originBase}${FN_PHOTO_H5_ALBUM_PAGE}`;
+        lastCookieForLog = uploadCookie;
+        lastUploadUrl = uploadUrl;
+        hilog.warn(
+          DOMAIN,
+          TAG,
+          '[upload] start origin=%{public}s url=%{public}s file=%{public}s bytes=%{public}d pathHint=%{public}s cookieKeys=%{public}s referer=%{public}s',
+          originBase,
+          uploadUrl,
+          fileName,
+          payload.byteLength,
+          pathHintBeforeUpload.length > 0 ? pathHintBeforeUpload : '(none)',
+          cookieKeysSummary(uploadCookie),
+          uploadReferer
+        );
+        for (let si = 0; si < allSigns.length; si++) {
+          const oneSign = allSigns[si];
+          const headers: Record<string, string> = {
+            'Cookie': uploadCookie,
+            'User-Agent': fnWebDefaultUserAgent(),
+            'Origin': originBase,
+            'Referer': uploadReferer,
+            'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'identity',
+            'Content-Type': multipart.contentType,
+            'Accept': 'application/json, text/plain, */*',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            // 与浏览器 DevTools 展示一致：Title-Case（虽 HTTP 规范不区分大小写，部分网关实现较严）
+            'Trim-Flags': '1',
+            'Trim-Overwrite': '1',
+            'Trim-Mtim': trimMtim
+          };
+          if (this.token.length > 0) {
+            headers['AccessToken'] = this.token;
+          }
+          if (encodedTrimPath.length > 0) {
+            headers['Trim-Path'] = encodedTrimPath;
+          }
+          if (this.token.length > 0) {
+            headers['Trim-Token'] = this.token;
+          }
+          if (oneSign.length > 0) {
+            headers['Trim-Sign'] = oneSign;
+          }
+          const opt: http.HttpRequestOptions = {
+            method: http.RequestMethod.POST,
+            header: headers,
+            expectDataType: http.HttpDataType.STRING,
+            connectTimeout: timeoutMs,
+            readTimeout: timeoutMs,
+            extraData: multipart.body
+          };
+          if (CertPolicy.isTrusted(this.baseUrl) || CertPolicy.isTrusted(originBase)) {
+            opt.remoteValidation = 'skip';
+          }
+          const rawResp = await req.request(uploadUrl, opt);
+          const code = Number(rawResp.responseCode);
+          lastHttpCode = code;
+          uploadRespText = typeof rawResp.result === 'string' ? rawResp.result : JSON.stringify(rawResp.result);
+          if (!(code >= 200 && code < 300)) {
+            if (uploadRespText.length > 0) {
+              try {
+                const parsed = JSON.parse(uploadRespText) as Record<string, string | number | Object | undefined>;
+                const em = FnHttpClient.envelopeErrorLine(parsed);
+                lastDetail = em.length > 0 ? em : '';
+              } catch (_e) {
+                lastDetail = uploadRespText.length > 120 ? `${uploadRespText.substring(0, 120)}...` : uploadRespText;
+              }
+            }
+            continue;
+          }
           if (uploadRespText.length > 0) {
             try {
               const parsed = JSON.parse(uploadRespText) as Record<string, string | number | Object | undefined>;
-              const em = FnHttpClient.envelopeErrorLine(parsed);
-              lastDetail = em.length > 0 ? em : '';
-            } catch (_e) {
-              lastDetail = uploadRespText.length > 120 ? `${uploadRespText.substring(0, 120)}...` : uploadRespText;
-            }
-          }
-          continue;
-        }
-        // HTTP 2xx：检查 body 是否有业务错误
-        if (uploadRespText.length > 0) {
-          try {
-            const parsed = JSON.parse(uploadRespText) as Record<string, string | number | Object | undefined>;
-            if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
-              const em = FnHttpClient.envelopeErrorLine(parsed);
-              lastDetail = em.length > 0 ? em : '上传失败';
-              const low = lastDetail.toLowerCase();
-              if (low.indexOf('update failed') >= 0) {
-                softUploadAccepted = true;
+              if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+                const em = FnHttpClient.envelopeErrorLine(parsed);
+                lastDetail = em.length > 0 ? em : '上传失败';
+                const low = lastDetail.toLowerCase();
+                if (low.indexOf('update failed') >= 0) {
+                  softUploadAccepted = true;
+                }
+                continue;
               }
-              continue;
+            } catch (_e) {
             }
-          } catch (_e) {
-            // 无 body 或非 JSON 均视为成功（官方 Web /upload 返回空 body + content-length:0）
           }
+          uploadOk = true;
+          break outerUpload;
         }
-        uploadOk = true;
-        break;
       }
       if (!uploadOk) {
         if (softUploadAccepted && lastHttpCode >= 200 && lastHttpCode < 300) {
           // 走后续 notice/verify 流程，由入库侧再确认最终结果。
         } else {
+          const bodyPrev =
+            uploadRespText.length > 256 ? `${uploadRespText.substring(0, 256)}…` : uploadRespText;
+          hilog.warn(
+            DOMAIN,
+            TAG,
+            '[upload] POST /upload failed url=%{public}s http=%{public}d detail=%{public}s trimPathLen=%{public}d sign×origins=%{public}d×%{public}d cookie(redacted)=%{public}s body=%{public}s',
+            lastUploadUrl.length > 0 ? lastUploadUrl : '(none)',
+            lastHttpCode,
+            lastDetail.length > 0 ? lastDetail : '(none)',
+            encodedTrimPath.length,
+            allSigns.length,
+            uploadOrigins.length,
+            redactCookieHeaderForLog(lastCookieForLog),
+            bodyPrev.length > 0 ? bodyPrev : '(empty)'
+          );
           return {
             success: false,
             message: lastDetail.length > 0 ? `上传失败 HTTP ${lastHttpCode}：${lastDetail}` : `上传失败 HTTP ${lastHttpCode}`
@@ -2708,7 +2931,9 @@ export class FnHttpClient {
         }
       }
     } catch (e) {
-      return { success: false, message: String(e) || '上传请求异常' };
+      const em = String(e);
+      hilog.warn(DOMAIN, TAG, '[upload] exception %{public}s', em.length > 0 ? em : 'unknown');
+      return { success: false, message: em.length > 0 ? em : '上传请求异常' };
     } finally {
       this.unregisterPendingRequest(req);
       try {
@@ -2727,7 +2952,14 @@ export class FnHttpClient {
     if (pathHintFromUpload.length > 0 && noticePathHints.indexOf(pathHintFromUpload) < 0) {
       noticePathHints.push(pathHintFromUpload);
     }
-    const noticeRes = await this.notifyPhotoUploaded(fileName, oneUri, noticeTimeout, noticePathHints);
+    const noticeRes = await this.notifyPhotoUploaded(
+      fileName,
+      oneUri,
+      noticeTimeout,
+      noticePathHints,
+      trimMtim,
+      hintedFullPath
+    );
     let noticed = noticeRes.ok;
     let failReason = noticeRes.message;
     if (!noticed) {
@@ -2748,6 +2980,16 @@ export class FnHttpClient {
         return { success: true, message: '上传成功（已入库）' };
       }
       const em = failReason.length > 0 ? `上传完成但入库通知失败：${failReason}` : '上传完成但入库通知失败';
+      const hintsStr =
+        noticePathHints.length > 0 ? noticePathHints.join(' | ') : '(none)';
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        '[upload] notice/verify failed reason=%{public}s pathHints=%{public}s uploadBodyPreview=%{public}s',
+        failReason.length > 0 ? failReason : '(empty)',
+        hintsStr,
+        uploadRespText.length > 200 ? `${uploadRespText.substring(0, 200)}…` : uploadRespText
+      );
       return { success: false, message: em };
     }
     return { success: true };

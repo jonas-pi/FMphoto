@@ -8,6 +8,7 @@ import { FnJsonValue } from '../model/FnApiTypes';
 const API_KEY = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
 const API_SECRET = '16CCEB3D-AB42-077D-36A1-F355324E4237';
 const MD5_TAG = 'AuthxMD5';
+const SHA256_TAG = 'AuthxSHA256';
 
 export function generateRandomDigits(start: number = 100000, end: number = 1000000): string {
   return Math.floor(Math.random() * (end - start) + start).toString();
@@ -156,6 +157,123 @@ function md5Le32Hex(v: number): string {
 /** 纯 JS MD5：输入 UTF-8 字符串，输出 32 字符 hex */
 function md5Js(text: string): string {
   return md5Core(utf8Encode(text));
+}
+
+// ─── 纯 JS SHA-256（当 HCF createMd('SHA256').update 抛 Error: update failed 时回退，与上传 trim-sign / WS HMAC 一致） ───
+
+function rotr32(n: number, x: number): number {
+  return ((x >>> n) | (x << (32 - n))) >>> 0;
+}
+
+const SHA256_K: Uint32Array = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+]);
+
+/** RFC 6234 风格 SHA-256，输入任意字节长度（图库签名/HMAC 消息远小于 2^32 位，长度编码用 64 位高位补 0） */
+function sha256Js(data: Uint8Array): Uint8Array {
+  const len = data.length;
+  const totalBits = len * 8;
+  const bitHi = Math.floor(totalBits / 4294967296);
+  const bitLo = (totalBits - bitHi * 4294967296) >>> 0;
+  const padLen = ((len + 9 + 63) >> 6) << 6;
+  const buf = new Uint8Array(padLen);
+  buf.set(data);
+  buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(padLen - 8, bitHi, false);
+  dv.setUint32(padLen - 4, bitLo, false);
+
+  const H = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ]);
+  const w = new Uint32Array(64);
+
+  for (let off = 0; off < padLen; off += 64) {
+    for (let i = 0; i < 16; i++) {
+      w[i] = dv.getUint32(off + i * 4, false);
+    }
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr32(7, w[t - 15]) ^ rotr32(18, w[t - 15]) ^ (w[t - 15] >>> 3);
+      const s1 = rotr32(17, w[t - 2]) ^ rotr32(19, w[t - 2]) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+    }
+    let a = H[0];
+    let b = H[1];
+    let c = H[2];
+    let d = H[3];
+    let e = H[4];
+    let f = H[5];
+    let g = H[6];
+    let h = H[7];
+    for (let t = 0; t < 64; t++) {
+      const S1 = rotr32(6, e) ^ rotr32(11, e) ^ rotr32(25, e);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + SHA256_K[t] + w[t]) >>> 0;
+      const S0 = rotr32(2, a) ^ rotr32(13, a) ^ rotr32(22, a);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + t1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (t1 + t2) >>> 0;
+    }
+    H[0] = (H[0] + a) >>> 0;
+    H[1] = (H[1] + b) >>> 0;
+    H[2] = (H[2] + c) >>> 0;
+    H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0;
+    H[5] = (H[5] + f) >>> 0;
+    H[6] = (H[6] + g) >>> 0;
+    H[7] = (H[7] + h) >>> 0;
+  }
+
+  const out = new Uint8Array(32);
+  const odv = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) {
+    odv.setUint32(i * 4, H[i], false);
+  }
+  return out;
+}
+
+/** SHA256 与 MD5 独立探测：部分鸿蒙设备上 MD5 正常而 SHA256.update 抛「update failed」 */
+let sha256CryptoChecked = false;
+let sha256CryptoAvailable = true;
+
+/**
+ * SHA-256 摘要（字节进、32 字节出）：优先 cryptoFramework，失败则纯 JS（与上传 trim-sign、WS HMAC 一致）。
+ */
+export async function sha256DigestSafe(data: Uint8Array): Promise<Uint8Array> {
+  if (sha256CryptoChecked && !sha256CryptoAvailable) {
+    return sha256Js(data);
+  }
+  try {
+    const md = cryptoFramework.createMd('SHA256');
+    await md.update({ data: data });
+    const out = await md.digest();
+    if (!sha256CryptoChecked) {
+      sha256CryptoChecked = true;
+      sha256CryptoAvailable = true;
+    }
+    return out.data;
+  } catch (e) {
+    if (!sha256CryptoChecked || sha256CryptoAvailable) {
+      sha256CryptoChecked = true;
+      sha256CryptoAvailable = false;
+      hilog.warn(0xFF00, SHA256_TAG, 'cryptoFramework SHA256 failed, JS fallback: %{public}s', String(e));
+    }
+    return sha256Js(data);
+  }
 }
 
 /** 是否已检测过 cryptoFramework 可用 */
