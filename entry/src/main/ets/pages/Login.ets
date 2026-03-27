@@ -125,6 +125,8 @@ struct Login {
       return;
     }
     AppSession.apply(stored);
+    // 跳转前清空密码框，降低系统根据「提交后仍带密文的输入框」关联保险箱更新提示的概率
+    this.password = '';
     this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
     });
   }
@@ -227,9 +229,15 @@ struct Login {
         }
         .width('100%')
 
+        /**
+         * 用户名与密码须同时关闭自动填充，否则系统仍把二者识别为「可接入密码保险箱」的登录表单，
+         * 在 replaceUrl 跳转后易误判为凭据变更而弹「更新密码保险箱」（见官方说明：
+         * https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/passwordvault-save-acc-password ）。
+         * 本应用凭据由 SessionPreferences 自行持久化，不依赖系统保险箱填充。
+         */
         TextInput({ placeholder: $r('app.string.hint_username'), text: this.username })
           .type(InputType.USER_NAME)
-          .enableAutoFill(true)
+          .enableAutoFill(false)
           .onChange((v: string) => {
             this.username = v;
           })
@@ -241,7 +249,7 @@ struct Login {
 
         TextInput({ placeholder: $r('app.string.hint_password'), text: this.password })
           .type(InputType.Password)
-          .enableAutoFill(true)
+          .enableAutoFill(false)
           .onChange((v: string) => {
             this.password = v;
           })

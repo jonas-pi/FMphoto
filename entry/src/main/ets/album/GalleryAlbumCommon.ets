@@ -446,11 +446,13 @@ export struct GalleryNetworkThumb {
         GalleryThumbSkeleton()
       }
       if (this.pix !== undefined) {
+        // 官方：Image 默认 draggable=true，长按易拖入系统「中转站」；相册缩略图关闭拖拽
         Image(this.pix)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
           .opacity(this.pixAlpha)
+          .draggable(false)
       }
       if (this.isVideo) {
         // 使用鸿蒙官方 Symbol 图标
@@ -480,5 +482,9 @@ export struct GalleryNetworkThumb {
     .borderRadius(6)
     .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
+    // 防止子节点未覆盖区域仍响应系统拖拽
+    .draggable(false)
+    // Image/骨架会参与命中并吞掉长按与 Pan，父级 Stack 上的多选手势永远收不到；整卡不参与命中，事件落到外层图库格
+    .hitTestBehavior(HitTestMode.None)
   }
 }

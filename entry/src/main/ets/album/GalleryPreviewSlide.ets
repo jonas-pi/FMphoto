@@ -427,6 +427,16 @@ export struct GalleryPreviewSlide {
                   });
                 }
               })
+              // 与 Swiper/系统手势竞争时 Pan 可能被 Cancel 而不走 onActionEnd，残留 previewPanY 或 dismiss 进度会导致后续上下滑「失灵」
+              .onActionCancel((): void => {
+                if (this.isImageZoomed()) {
+                  this.springBackIfNeeded();
+                  this.onVerticalDragProgress(0);
+                  return;
+                }
+                this.previewPanY = 0;
+                this.onVerticalDragProgress(0);
+              })
           )
         )
       }

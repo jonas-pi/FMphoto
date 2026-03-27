@@ -38,6 +38,18 @@ import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSo
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
+import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
+import {
+  GalleryHomeDayPlain,
+  GalleryHomeSectionPlain,
+  GalleryHomeStringNumMapArrays,
+  GalleryHomeTimelineCache,
+  GalleryHomeTimelineSnapshot
+} from './GalleryHomeTimelineCache';
+import {
+  playGalleryEnterSelectionHaptic,
+  playGalleryPullRefreshThresholdHaptic
+} from './GallerySelectionHaptic';
 import { FnFullLoadingMask } from '../common/FnUiCommon';
 import {
   FN_TAB_SWITCH_CURVE,
@@ -55,6 +67,43 @@ const PUMP_UI_GAP_MS = 16;
 const DAY_MAX_ROUNDS = 300;
 /** 仅在 timeline 未给出 itemCount（0）时：连续空页达到该阈值才切日 */
 const EMPTY_PAGE_ADVANCE_THRESHOLD = 2;
+/** 手动点「刷新」防抖（ms）：合并连点，减轻 loadGen 与异步泵交错导致的短暂空白（界面动态操作宜节流合并） */
+const GALLERY_BOOTSTRAP_DEBOUNCE_MS = 900;
+/** 时间线 Refresh 触发阈值（vp）：略大减少误触；与 onOffsetChange 内震动判断共用同一数值 */
+const GALLERY_TIMELINE_REFRESH_OFFSET_VP = 112;
+/** 上传成功后二次拉时间轴间隔（ms）：NAS 入库略延迟时提高新图出现概率 */
+const GALLERY_UPLOAD_RECHECK_MS = 1600;
+
+/** 主时间线缩略图滑动连选：用于指尖坐标与缩略图区域相交判断（窗口坐标系，与 getRectangleById 一致） */
+interface GalleryThumbHitRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** 指尖在窗口中的坐标（px），供 readGestureFingerWindow 返回；禁止内联对象类型以满足 arkts-no-obj-literals-as-types */
+interface GalleryFingerWindowPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * 不同 API 版本 FingerInfo 字段名可能不同，用可选字段做兼容读取（不做 unknown 断言，满足 arkts-no-any-unknown）。
+ */
+interface GalleryFingerCoordCompat {
+  windowX?: number;
+  windowY?: number;
+  globalX?: number;
+  globalY?: number;
+  screenX?: number;
+  screenY?: number;
+  displayX?: number;
+  displayY?: number;
+  /** 部分版本仅提供相对触点坐标 */
+  x?: number;
+  y?: number;
+}
 
 // ─── 数据模型 ──────────────────────────────────────────────────────────────
 
@@ -185,6 +234,15 @@ export struct GalleryAlbumTab {
   /** 上传状态 */
   @State private uploading: boolean = false;
   @State private uploadText: string = '';
+  /** 主图库长按多选（与系统拖拽/中转站解耦：缩略图已 draggable(false)） */
+  @State private gallerySelectionMode: boolean = false;
+  @State private gallerySelectedIds: string[] = [];
+  @State private galleryBatchDeleting: boolean = false;
+  /**
+   * 主时间线 List 是否响应手指滚动。
+   * 划选时临时关闭，避免 List 抢走 Pan；LazyForEach 行 key 勿随多选切换，否则子树重建会中断当前指下手势。
+   */
+  @State private galleryMainListScrollEnabled: boolean = true;
   /** 模式切换时内容层动效（淡入 + 轻微位移） */
   @State private modeSwitchOpacity: number = 1;
   @State private modeSwitchOffsetY: number = 0;
@@ -206,6 +264,47 @@ export struct GalleryAlbumTab {
   private scrollerRef: Scroller = new Scroller();
   /** 上次已处理的删除同步版本号 */
   private handledDeleteSyncVersion: number = 0;
+  /** 长按后在此时间戳之前忽略单击，避免误进预览 */
+  private galleryLongPressIgnoreClickUntil: number = 0;
+  /**
+   * 「长按 + 滑动」连选进行中：为 true 时 onDidScroll 不清空命中缓存 Map。
+   * 与 galleryMainListScrollEnabled 配合：划选时禁 List 滚动，避免父级抢走 Pan。
+   */
+  private gallerySlideGestureActive: boolean = false;
+  /** 各缩略图最近一次布局在窗口中的矩形（仅当前可见/曾布局项有值；列表滚动时会清空以防脏矩形） */
+  private galleryThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
+  /** 滑动连选：fingerList 不可用时，用长按参考点 + Pan offset 估算指尖位置 */
+  private gallerySlideRefX: number = 0;
+  private gallerySlideRefY: number = 0;
+  private gallerySlideHasRef: boolean = false;
+  /**
+   * 划选锚点：长按起始缩略图在扁平列表中的下标（与 flow row 的 rowFlatIndices 一致，行优先 3 列一行）。
+   */
+  private gallerySlideAnchorFlat: number = -1;
+  /**
+   * 进入本次划选前已选中的 id（不含后续滑动临时扩选时可再收缩的部分通过「区间并集」计算）。
+   * 在 begin 时取 snapshot，保证缩回手指时只去掉「当前 flat 区间」内、且不在此集合中的项。
+   */
+  private gallerySlideUnionBase: string[] = [];
+  /**
+   * 当前划选区间终点 flat；指尖短暂离开缩略图时沿用上一次命中，避免选中闪烁。
+   */
+  private gallerySlideLastEndFlat: number = -1;
+  /** 划选时仅当终点 flat 变化时才提交 @State，减轻列表整表刷新卡顿 */
+  private gallerySlideLastAppliedEndFlat: number = -99999;
+  /** 防抖定时器 id（<0 表示未挂起） */
+  private bootstrapDebounceTimer: number = -1;
+  /** 与 GalleryTimelineRefreshStore.version 对齐：成功 bootstrap 时间轴后更新，避免重复全量刷 */
+  private lastBootstrapSatisfiedRefreshVersion: number = 0;
+  /** 时间线 List 下拉刷新：系统 Refresh 动效绑定 */
+  @State private galleryTimelineRefreshing: boolean = false;
+  /**
+   * 时间线是否在列表顶端（Scroller 垂直偏移≈0）。非 @State，避免滚动时整页重绘；
+   * 在 onDidScroll / 下拉回调前同步，仅用于判断是否允许触发刷新。
+   */
+  private galleryTimelineAtTopForPull: boolean = true;
+  /** 下拉未回到顶部附近前不重复触发「已达阈值」震动，避免来回拖动连续振 */
+  private galleryPullRefreshThresholdHapticDone: boolean = false;
 
   // ── 扁平列表（供跳转独立预览页） ─────────────────────────────────────────
 
@@ -276,9 +375,447 @@ export struct GalleryAlbumTab {
     return String(it.id).trim();
   }
 
+  private exitGallerySelection(): void {
+    this.gallerySelectionMode = false;
+    this.galleryTimelineRefreshing = false;
+    this.setGallerySelectedIdsState([]);
+    this.gallerySlideGestureActive = false;
+    this.gallerySlideHasRef = false;
+    this.gallerySlideAnchorFlat = -1;
+    this.gallerySlideUnionBase = [];
+    this.gallerySlideLastEndFlat = -1;
+    this.gallerySlideLastAppliedEndFlat = -99999;
+    this.galleryThumbHitBounds.clear();
+    this.galleryMainListScrollEnabled = true;
+  }
+
   /**
-   * 处理预览页删除同步：只做列表增量删除，不触发 bootstrap，
-   * 以尽量保留主列表当前滚动位置与用户上下文。
+   * 判断两组 id 是否作为集合相同（顺序无关），避免划选合并时仅顺序变化也触发整表刷新。
+   */
+  private sameGalleryIdBagUnordered(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+    const sa = a.slice();
+    const sb = b.slice();
+    sa.sort();
+    sb.sort();
+    for (let i = 0; i < sa.length; i++) {
+      if (sa[i] !== sb[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * 统一写入选中 id 列表并维护 Set；集合与当前相同时跳过赋值，减少无效 @State 刷新。
+   */
+  private setGallerySelectedIdsState(next: string[]): void {
+    if (this.sameGalleryIdBagUnordered(this.gallerySelectedIds, next)) {
+      return;
+    }
+    this.gallerySelectedIds = next;
+  }
+
+  /** 列表滚动后清空命中矩形，避免离屏项残留旧坐标导致误选 */
+  private clearGalleryThumbHitBounds(): void {
+    this.galleryThumbHitBounds.clear();
+  }
+
+  /**
+   * 生成 getRectangleById / id() 可用的 DOM 标识（仅字母数字与下划线，避免非法 id）。
+   */
+  private galleryThumbDomId(photoId: string): string {
+    let s = '';
+    for (let i = 0; i < photoId.length; i++) {
+      const c = photoId.charCodeAt(i);
+      if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95) {
+        s += String.fromCharCode(c);
+      } else {
+        s += '_';
+      }
+    }
+    return `gt_${s.length > 0 ? s : 'noid'}`;
+  }
+
+  /**
+   * 在布局变化后刷新该缩略图在窗口中的矩形，供「长按后滑动」连选做相交判断。
+   * 优先使用官方 componentUtils.getRectangleById（与指尖 window 坐标一致）。
+   */
+  private recordGalleryThumbRectFromDom(photoId: string, domId: string): void {
+    if (photoId.length === 0) {
+      return;
+    }
+    try {
+      const info = this.getUIContext().getComponentUtils().getRectangleById(domId);
+      const x = info.windowOffset.x as number;
+      const y = info.windowOffset.y as number;
+      const w = info.size.width as number;
+      const h = info.size.height as number;
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
+        this.galleryThumbHitBounds.delete(photoId);
+        return;
+      }
+      const rect: GalleryThumbHitRect = {
+        left: x,
+        top: y,
+        right: x + w,
+        bottom: y + h
+      };
+      this.galleryThumbHitBounds.set(photoId, rect);
+    } catch (_e) {
+      // 预览器或未挂载完成时可能抛错，连选降级为仅依赖长按起点
+    }
+  }
+
+  /**
+   * 从手势事件读取指尖位置（不同版本字段名不同）。
+   * 数值单位多为 vp（逻辑像素），需与 getRectangleById 返回的 px 在 resolveSlidePointerWindowPx 中统一。
+   */
+  private readGestureFingerWindow(ev: GestureEvent): GalleryFingerWindowPoint | null {
+    const fl = ev.fingerList;
+    if (fl === undefined || fl.length < 1) {
+      return null;
+    }
+    const f0 = fl[0] as GalleryFingerCoordCompat;
+    const x = f0.windowX ?? f0.globalX ?? f0.screenX ?? f0.displayX ?? f0.x;
+    const y = f0.windowY ?? f0.globalY ?? f0.screenY ?? f0.displayY ?? f0.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    const out: GalleryFingerWindowPoint = { x: x, y: y };
+    return out;
+  }
+
+  /**
+   * PanGesture.offsetX/Y 为 vp；getRectangleById 为 px。将位移从 vp 换算到 px，与命中矩形一致。
+   */
+  private panOffsetVpToPx(deltaVp: number): number {
+    const probePx = 100;
+    const probeVp = px2vp(probePx);
+    if (probeVp < 0.0001) {
+      return deltaVp;
+    }
+    return deltaVp * (probePx / probeVp);
+  }
+
+  /**
+   * 长按判定成功后：进入划选段，关闭 List 滚动，记录锚点 flat 与已有选中集，供「行优先连续区间」实时并集。
+   */
+  private beginGallerySlideSelectGesture(ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void {
+    this.gallerySlideGestureActive = true;
+    this.galleryMainListScrollEnabled = false;
+    this.gallerySlideAnchorFlat = anchorFlat >= 0 ? anchorFlat : -1;
+    this.gallerySlideUnionBase = this.gallerySelectedIds.slice();
+    this.gallerySlideLastEndFlat = this.gallerySlideAnchorFlat;
+    this.gallerySlideLastAppliedEndFlat = -99999;
+    const win = this.readGestureFingerWindow(ev);
+    if (win !== null) {
+      // FingerInfo 通常为 vp，与 componentUtils 矩形（px）对齐
+      this.gallerySlideRefX = vp2px(win.x);
+      this.gallerySlideRefY = vp2px(win.y);
+      this.gallerySlideHasRef = true;
+    } else {
+      const id = this.itemIdOf(item);
+      const r = this.galleryThumbHitBounds.get(id);
+      if (r !== undefined) {
+        this.gallerySlideRefX = (r.left + r.right) * 0.5;
+        this.gallerySlideRefY = (r.top + r.bottom) * 0.5;
+        this.gallerySlideHasRef = true;
+      } else {
+        this.gallerySlideHasRef = false;
+      }
+    }
+    // 长按当下即按「锚点～锚点」区间刷新一次，与后续 Pan 实时更新规则一致
+    this.applyGallerySlideRowRangeSelection(this.gallerySlideLastEndFlat);
+  }
+
+  /** 划选段结束：恢复 List 滚动、清空划选临时状态，允许 onDidScroll 再次清空命中缓存 */
+  private endGallerySlideSelectGesture(): void {
+    // 已处于干净状态时直接返回，避免对 @State 的冗余写入引发不必要的重渲染
+    if (!this.gallerySlideGestureActive && this.galleryMainListScrollEnabled) {
+      return;
+    }
+    this.gallerySlideGestureActive = false;
+    this.gallerySlideHasRef = false;
+    this.gallerySlideAnchorFlat = -1;
+    this.gallerySlideUnionBase = [];
+    this.gallerySlideLastEndFlat = -1;
+    this.gallerySlideLastAppliedEndFlat = -99999;
+    this.galleryMainListScrollEnabled = true;
+  }
+
+  /**
+   * 将当前划选指针统一到窗口像素坐标，与 getRectangleById 一致。
+   */
+  private resolveSlidePointerWindowPx(ev: GestureEvent): GalleryFingerWindowPoint | null {
+    const win = this.readGestureFingerWindow(ev);
+    if (win !== null) {
+      const px: GalleryFingerWindowPoint = { x: vp2px(win.x), y: vp2px(win.y) };
+      return px;
+    }
+    if (!this.gallerySlideHasRef) {
+      return null;
+    }
+    const out: GalleryFingerWindowPoint = {
+      x: this.gallerySlideRefX + this.panOffsetVpToPx(ev.offsetX),
+      y: this.gallerySlideRefY + this.panOffsetVpToPx(ev.offsetY)
+    };
+    return out;
+  }
+
+  /**
+   * 用实时的 getRectangleById 判断指尖是否落在该缩略图内（避免 onAreaChange 缓存与滚动后 stale）。
+   */
+  private hitGalleryThumbDomPx(photoId: string, xPx: number, yPx: number): boolean {
+    if (photoId.length === 0) {
+      return false;
+    }
+    try {
+      const domId = this.galleryThumbDomId(photoId);
+      const info = this.getUIContext().getComponentUtils().getRectangleById(domId);
+      const left = info.windowOffset.x as number;
+      const top = info.windowOffset.y as number;
+      const w = info.size.width as number;
+      const h = info.size.height as number;
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
+        return false;
+      }
+      return xPx >= left && xPx <= left + w && yPx >= top && yPx <= top + h;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  /**
+   * 根据指尖窗口坐标命中唯一缩略图，返回其在扁平列表中的下标；未命中返回 -1。
+   * 按 flow 顺序扫描，先命中的即为准（与列表视觉顺序一致）。
+   */
+  private pickGalleryThumbFlatUnderPoint(xPx: number, yPx: number): number {
+    const n = this.flowDataSource.totalCount();
+    for (let i = 0; i < n; i++) {
+      const node = this.flowDataSource.getData(i);
+      if (node.kind !== 'row') {
+        continue;
+      }
+      for (let k = 0; k < node.rowItems.length; k++) {
+        const id = this.itemIdOf(node.rowItems[k]);
+        if (id.length === 0) {
+          continue;
+        }
+        const cached = this.galleryThumbHitBounds.get(id);
+        if (cached !== undefined) {
+          const inCached =
+            xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom;
+          if (inCached) {
+            return node.rowFlatIndices[k];
+          }
+        }
+        if (this.hitGalleryThumbDomPx(id, xPx, yPx)) {
+          return node.rowFlatIndices[k];
+        }
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * 收集扁平下标闭区间 [lo, hi]（行优先：同一行左→右，再下一行）内所有缩略图 id。
+   * 等价于「从锚点到指尖所跨越的整行、整格」——中间行整行三格都会落入区间内。
+   */
+  private collectGalleryIdsInFlatRange(lo: number, hi: number): string[] {
+    let a = lo;
+    let b = hi;
+    if (a > b) {
+      const t = a;
+      a = b;
+      b = t;
+    }
+    const out: string[] = [];
+    const n = this.flowDataSource.totalCount();
+    for (let i = 0; i < n; i++) {
+      const node = this.flowDataSource.getData(i);
+      if (node.kind !== 'row') {
+        continue;
+      }
+      for (let k = 0; k < node.rowItems.length; k++) {
+        const fi = node.rowFlatIndices[k];
+        if (fi >= a && fi <= b) {
+          const id = this.itemIdOf(node.rowItems[k]);
+          if (id.length > 0) {
+            out.push(id);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 以行为基数的划选：选中集 = 进入划选前已有选中 ∪ 锚点 flat～终点 flat 的连续区间（含中间整行）。
+   * 终点由指尖下那张缩略图决定；指尖离开格子时沿用 gallerySlideLastEndFlat，避免闪烁。
+   */
+  private applyGallerySlideRowRangeSelection(endFlat: number): void {
+    if (this.gallerySlideAnchorFlat < 0) {
+      return;
+    }
+    const ef = endFlat >= 0 ? endFlat : this.gallerySlideAnchorFlat;
+    // 划选拖拽过程中：终点 flat 未变则不必重算、不写 @State，显著降低卡顿
+    if (this.gallerySlideGestureActive && ef === this.gallerySlideLastAppliedEndFlat) {
+      return;
+    }
+    let lo = this.gallerySlideAnchorFlat;
+    let hi = ef;
+    if (lo > hi) {
+      const t = lo;
+      lo = hi;
+      hi = t;
+    }
+    const rangeIds = this.collectGalleryIdsInFlatRange(lo, hi);
+    const next: string[] = this.gallerySlideUnionBase.slice();
+    for (let i = 0; i < rangeIds.length; i++) {
+      const id = rangeIds[i];
+      if (id.length > 0 && next.indexOf(id) < 0) {
+        next.push(id);
+      }
+    }
+    this.gallerySlideLastAppliedEndFlat = ef;
+    this.setGallerySelectedIdsState(next);
+  }
+
+  /**
+   * Parallel 下 Pan 可能在长按触发前就收到 update，必须等 begin 后再处理。
+   * 实时写入 gallerySelectedIds，按「行优先 flat 连续区间」扩选。
+   */
+  private onGallerySlidePanUpdate(ev: GestureEvent): void {
+    if (!this.gallerySlideGestureActive) {
+      return;
+    }
+    const pt = this.resolveSlidePointerWindowPx(ev);
+    if (pt === null) {
+      return;
+    }
+    const hitFlat = this.pickGalleryThumbFlatUnderPoint(pt.x, pt.y);
+    if (hitFlat >= 0) {
+      this.gallerySlideLastEndFlat = hitFlat;
+    }
+    this.applyGallerySlideRowRangeSelection(this.gallerySlideLastEndFlat);
+  }
+
+  /**
+   * 是否已选（供 UI 绑定）。
+   * 必须直接读 @State gallerySelectedIds，不可仅用普通字段 Set 判断，否则 ArkUI 无法建立依赖，
+   * 会出现顶栏「已选择 x 张」变化而缩略图勾/遮罩不重绘的问题。
+   */
+  private isGalleryIdSelected(id: string): boolean {
+    return id.length > 0 && this.gallerySelectedIds.indexOf(id) >= 0;
+  }
+
+  private toggleGallerySelectedId(id: string): void {
+    if (id.length === 0) {
+      return;
+    }
+    const idx = this.gallerySelectedIds.indexOf(id);
+    if (idx >= 0) {
+      const next: string[] = [];
+      for (let i = 0; i < this.gallerySelectedIds.length; i++) {
+        if (i !== idx) {
+          next.push(this.gallerySelectedIds[i]);
+        }
+      }
+      this.setGallerySelectedIdsState(next);
+    } else {
+      const next: string[] = this.gallerySelectedIds.slice();
+      next.push(id);
+      this.setGallerySelectedIdsState(next);
+    }
+    // 已选可为 0：仍保持多选模式，由顶栏「取消」显式退出（与系统相册一致）
+  }
+
+  /** 长按进入多选/在多选下切换当前项；划选进行中忽略，避免与 Pan 抢逻辑 */
+  private onGalleryThumbLongPress(item: GalleryListItem): void {
+    const id = this.itemIdOf(item);
+    if (id.length === 0) {
+      this.toast('该媒体无 ID，无法多选');
+      return;
+    }
+    if (this.gallerySlideGestureActive) {
+      return;
+    }
+    this.galleryLongPressIgnoreClickUntil = Date.now() + 500;
+    if (!this.gallerySelectionMode) {
+      playGalleryEnterSelectionHaptic();
+      this.gallerySelectionMode = true;
+      this.galleryTimelineRefreshing = false;
+      this.setGallerySelectedIdsState([id]);
+    } else {
+      this.toggleGallerySelectedId(id);
+    }
+  }
+
+  private onGalleryThumbTap(item: GalleryListItem, flatIndex: number): void {
+    if (Date.now() < this.galleryLongPressIgnoreClickUntil) {
+      return;
+    }
+    if (this.gallerySelectionMode) {
+      const id = this.itemIdOf(item);
+      if (id.length > 0) {
+        this.toggleGallerySelectedId(id);
+      }
+      return;
+    }
+    this.openPreview(flatIndex);
+  }
+
+  /** 批量移入回收站：逐条调用现有 API，成功后 bump 时间轴并防抖刷新 */
+  private async confirmAndBatchDeleteGallery(): Promise<void> {
+    if (this.gallerySelectedIds.length === 0 || this.galleryBatchDeleting) {
+      return;
+    }
+    try {
+      const dlg = await this.getUIContext().getPromptAction().showDialog({
+        title: '批量删除',
+        message: '将所选照片/视频移入回收站？',
+        buttons: [
+          { text: '取消', color: '#99000000' },
+          { text: '删除', color: '#E5484D' }
+        ]
+      });
+      if (dlg.index !== 1) {
+        return;
+      }
+    } catch (_e) {
+      return;
+    }
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.toast('未登录');
+      return;
+    }
+    this.galleryBatchDeleting = true;
+    const ids = this.gallerySelectedIds.slice();
+    let ok = 0;
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const res = await client.addPhotoToRecycleBin(ids[i], 22000);
+        if (res.success) {
+          ok++;
+          GalleryDeleteSyncStore.markDeleted(ids[i]);
+        }
+      }
+    } finally {
+      this.galleryBatchDeleting = false;
+    }
+    GalleryTimelineRefreshStore.bump();
+    this.exitGallerySelection();
+    this.toast(`已移入回收站 ${ok}/${ids.length}`);
+    this.requestBootstrap(true);
+  }
+
+  /**
+   * 处理预览页删除同步：增量删行；若同时存在 GalleryTimelineRefreshStore bump，
+   * 由 onAlbumTabVisibleAgain 再触发防抖后的全量 bootstrap，与时间轴对齐。
    */
   private applyDeleteSyncIfNeeded(): void {
     if (this.handledDeleteSyncVersion === GalleryDeleteSyncStore.version) {
@@ -342,6 +879,7 @@ export struct GalleryAlbumTab {
     if (kw.length === 0) {
       return;
     }
+    this.exitGallerySelection();
     this.playModeSwitchMotion();
     this.inSearchMode = true;
     this.inCategoryMode = false;
@@ -428,6 +966,7 @@ export struct GalleryAlbumTab {
   }
 
   private backToGallery(): void {
+    this.exitGallerySelection();
     this.playModeSwitchMotion();
     this.clearSearch();
     this.clearCategory();
@@ -459,6 +998,7 @@ export struct GalleryAlbumTab {
     if (this.uploading) {
       return;
     }
+    this.exitGallerySelection();
     void this.pickAndUpload();
   }
 
@@ -503,7 +1043,11 @@ export struct GalleryAlbumTab {
     this.uploadText = '';
     if (ok > 0) {
       this.toast(`上传完成 ${ok}/${uris.length}`);
-      void this.bootstrap();
+      GalleryTimelineRefreshStore.bump();
+      this.requestBootstrap(false);
+      setTimeout((): void => {
+        void this.bootstrap(false);
+      }, GALLERY_UPLOAD_RECHECK_MS);
     } else {
       this.toast(firstFailMsg.length > 0 ? firstFailMsg : '上传失败，请稍后重试');
     }
@@ -558,6 +1102,7 @@ export struct GalleryAlbumTab {
   }
 
   private async loadMediaCategories(): Promise<void> {
+    this.exitGallerySelection();
     this.playModeSwitchMotion();
     this.inSearchMode = false;
     this.inCategoryMode = true;
@@ -642,6 +1187,7 @@ export struct GalleryAlbumTab {
   }
 
   private async loadSmartCategories(): Promise<void> {
+    this.exitGallerySelection();
     this.playModeSwitchMotion();
     this.inSearchMode = false;
     this.inCategoryMode = false;
@@ -823,6 +1369,7 @@ export struct GalleryAlbumTab {
   }
 
   private async loadPersons(): Promise<void> {
+    this.exitGallerySelection();
     this.playModeSwitchMotion();
     // 进入人物列表时先清理“打开人物媒体”遮罩状态，避免从主页进入误显示
     this.personOpening = false;
@@ -1010,25 +1557,169 @@ export struct GalleryAlbumTab {
   // ── 生命周期 ─────────────────────────────────────────────────────────────
 
   private onEpochChange(): void {
-    setTimeout((): void => { void this.bootstrap(); }, 0);
+    setTimeout((): void => {
+      this.requestBootstrap(false);
+    }, 0);
   }
 
   private onPageShowSignal(): void {
-    this.applyDeleteSyncIfNeeded();
+    this.onAlbumTabVisibleAgain();
   }
 
   aboutToAppear(): void {
     // 页面重新出现时重置打开态，避免手势返回后被旧遮罩状态卡住
     this.personOpening = false;
     this.categoryOpening = false;
-    setTimeout((): void => { void this.bootstrap(); }, 0);
+    setTimeout((): void => {
+      // 主时间线：若离开 Tab 时存过快照且期间未 bump/未强刷，直接恢复，避免每次切回都重拉时间轴与已加载块
+      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
+        const snap = GalleryHomeTimelineCache.tryTakeRestore(this.baseUrl, GalleryTimelineRefreshStore.version);
+        if (snap !== null) {
+          this.applyMainTimelineCacheSnapshot(snap);
+          this.loadGen++;
+          this.rebuildFlow();
+          setTimeout((): void => {
+            this.pumpLoad();
+          }, 0);
+          return;
+        }
+      }
+      this.requestBootstrap(false);
+    }, 0);
+  }
+
+  /** 切到其他底部 Tab 时卸载：把主时间线快照写入内存，供下次 aboutToAppear 恢复 */
+  aboutToDisappear(): void {
+    const snap = this.buildMainTimelineCacheSnapshot();
+    if (snap !== null) {
+      GalleryHomeTimelineCache.save(this.baseUrl, snap);
+    }
   }
 
   onPageShow(): void {
-    this.applyDeleteSyncIfNeeded();
+    this.onAlbumTabVisibleAgain();
+  }
+
+  /** Map<string,number> → 平行数组，便于快照脱离引用（须用命名接口，满足 arkts-no-obj-literals-as-types） */
+  private mapStringNumToArrays(m: Map<string, number>): GalleryHomeStringNumMapArrays {
+    const keys: string[] = [];
+    const vals: number[] = [];
+    m.forEach((v: number, k: string): void => {
+      keys.push(k);
+      vals.push(v);
+    });
+    const out: GalleryHomeStringNumMapArrays = { keys: keys, vals: vals };
+    return out;
+  }
+
+  private fillMapFromArrays(m: Map<string, number>, keys: string[], vals: number[]): void {
+    m.clear();
+    for (let i = 0; i < keys.length; i++) {
+      if (i < vals.length) {
+        m.set(keys[i], vals[i]);
+      }
+    }
+  }
+
+  /**
+   * 构造可缓存的主时间线快照（仅主视图；不含搜索/分类/人物等子模式）。
+   * 「时间轴暂无数据」也缓存，避免空结论反复打接口。
+   */
+  private buildMainTimelineCacheSnapshot(): GalleryHomeTimelineSnapshot | null {
+    if (this.inSearchMode || this.inCategoryMode || this.inSmartCategoryMode || this.inPersonMode) {
+      return null;
+    }
+    if (this.bootLoading) {
+      return null;
+    }
+    if (this.loadError.length > 0 && this.sections.length === 0) {
+      return null;
+    }
+    const emptyNoFoot =
+      this.orderedDays.length === 0 && this.sections.length === 0 && this.footText !== '时间轴暂无数据';
+    if (emptyNoFoot) {
+      return null;
+    }
+    const sectionsPlain: GalleryHomeSectionPlain[] = [];
+    for (let i = 0; i < this.sections.length; i++) {
+      const s = this.sections[i];
+      sectionsPlain.push({
+        year: s.year,
+        month: s.month,
+        day: s.day,
+        itemCount: s.itemCount,
+        nextOffset: s.nextOffset,
+        items: s.items.slice()
+      });
+    }
+    const orderedPlain: GalleryHomeDayPlain[] = [];
+    for (let i = 0; i < this.orderedDays.length; i++) {
+      const d = this.orderedDays[i];
+      orderedPlain.push({ year: d.year, month: d.month, day: d.day, itemCount: d.itemCount });
+    }
+    const off = this.mapStringNumToArrays(this.dayOffsets);
+    const rnd = this.mapStringNumToArrays(this.dayRounds);
+    const emp = this.mapStringNumToArrays(this.dayEmptyRounds);
+    const snapshot: GalleryHomeTimelineSnapshot = {
+      orderedDays: orderedPlain,
+      sections: sectionsPlain,
+      dayOffsetsKeys: off.keys,
+      dayOffsetsVals: off.vals,
+      dayRoundsKeys: rnd.keys,
+      dayRoundsVals: rnd.vals,
+      dayEmptyKeys: emp.keys,
+      dayEmptyVals: emp.vals,
+      dayIndex: this.dayIndex,
+      exhausted: this.exhausted,
+      footText: this.footText,
+      refreshVersionAtSave: GalleryTimelineRefreshStore.version
+    };
+    return snapshot;
+  }
+
+  /** 从内存快照恢复主时间线与泵状态（须已由 tryTakeRestore 校验版本与账号） */
+  private applyMainTimelineCacheSnapshot(snap: GalleryHomeTimelineSnapshot): void {
+    const od: TimelineDayModel[] = [];
+    for (let i = 0; i < snap.orderedDays.length; i++) {
+      const d = snap.orderedDays[i];
+      od.push({ year: d.year, month: d.month, day: d.day, itemCount: d.itemCount });
+    }
+    this.orderedDays = od;
+    const secs: DaySectionModel[] = [];
+    for (let i = 0; i < snap.sections.length; i++) {
+      const p = snap.sections[i];
+      const sec = new DaySectionModel();
+      sec.year = p.year;
+      sec.month = p.month;
+      sec.day = p.day;
+      sec.itemCount = p.itemCount;
+      sec.nextOffset = p.nextOffset;
+      sec.items = p.items.slice();
+      secs.push(sec);
+    }
+    this.sections = secs;
+    this.fillMapFromArrays(this.dayOffsets, snap.dayOffsetsKeys, snap.dayOffsetsVals);
+    this.fillMapFromArrays(this.dayRounds, snap.dayRoundsKeys, snap.dayRoundsVals);
+    this.fillMapFromArrays(this.dayEmptyRounds, snap.dayEmptyKeys, snap.dayEmptyVals);
+    this.dayIndex = snap.dayIndex;
+    this.exhausted = snap.exhausted;
+    this.footText = snap.footText;
+    this.loadError = '';
+    this.bootLoading = false;
+    this.loadingMore = false;
+    this.lastBootstrapSatisfiedRefreshVersion = snap.refreshVersionAtSave;
   }
 
   // ── sections 更新 ────────────────────────────────────────────────────────
+
+  /** 已写入 sections 的媒体总数，用于区分「真·全部加载完」与「竞态/接口异常导致零条」 */
+  private countGalleryListedItems(): number {
+    let n = 0;
+    for (let i = 0; i < this.sections.length; i++) {
+      n += this.sections[i].items.length;
+    }
+    return n;
+  }
 
   private upsertSection(day: TimelineDayModel, newItems: GalleryListItem[], newOffset: number): void {
     const idx = this.sections.findIndex(
@@ -1054,9 +1745,95 @@ export struct GalleryAlbumTab {
     this.rebuildFlow();
   }
 
-  // ── 数据加载 ─────────────────────────────────────────────────────────────
+  private clearBootstrapDebounceTimer(): void {
+    if (this.bootstrapDebounceTimer >= 0) {
+      try {
+        clearTimeout(this.bootstrapDebounceTimer);
+      } catch (_e) {}
+      this.bootstrapDebounceTimer = -1;
+    }
+  }
 
-  private async bootstrap(): Promise<void> {
+  /**
+   * 请求重新拉时间轴并重建列表。
+   * @param debounced true：用户连点「刷新」时合并为一次；false：首屏、父级 epoch、上传后立即执行。
+   */
+  private requestBootstrap(debounced: boolean): void {
+    this.clearBootstrapDebounceTimer();
+    if (debounced) {
+      this.bootstrapDebounceTimer = setTimeout((): void => {
+        this.bootstrapDebounceTimer = -1;
+        void this.bootstrap();
+      }, GALLERY_BOOTSTRAP_DEBOUNCE_MS);
+    } else {
+      void this.bootstrap();
+    }
+  }
+
+  /** Home 前台信号或 Tab 再次显示：先增量删，再视 bump 防抖全量刷 */
+  private onAlbumTabVisibleAgain(): void {
+    this.applyDeleteSyncIfNeeded();
+    if (GalleryTimelineRefreshStore.version > this.lastBootstrapSatisfiedRefreshVersion) {
+      this.requestBootstrap(true);
+    }
+  }
+
+  private markTimelineRefreshCaughtUp(): void {
+    this.lastBootstrapSatisfiedRefreshVersion = GalleryTimelineRefreshStore.version;
+  }
+
+  /**
+   * 根据 Scroller 垂直偏移判断是否处于列表顶端，用于下拉刷新门禁（仅顶端才允许真正拉取时间轴）。
+   */
+  private syncGalleryTimelineAtTopForPull(): void {
+    try {
+      const off = this.scrollerRef.currentOffset();
+      const yRaw = off.yOffset;
+      const y = typeof yRaw === 'number' ? yRaw : 0;
+      this.galleryTimelineAtTopForPull = !Number.isFinite(y) || y <= 0.5;
+    } catch (_e) {
+      this.galleryTimelineAtTopForPull = true;
+    }
+  }
+
+  /** 顶栏多选按钮：进入多选（从 0 项开始，与长按首张进入一致的可扩展行为） */
+  private enterGallerySelectionModeFromToolbar(): void {
+    if (this.gallerySelectionMode) {
+      return;
+    }
+    playGalleryEnterSelectionHaptic();
+    this.gallerySelectionMode = true;
+    this.galleryTimelineRefreshing = false;
+    this.setGallerySelectedIdsState([]);
+  }
+
+  /**
+   * 时间线区域下拉刷新：使用系统 Refresh 动效；非列表顶端、多选或子模式时不发起网络请求。
+   */
+  private async onGalleryTimelinePullRefresh(): Promise<void> {
+    this.syncGalleryTimelineAtTopForPull();
+    if (!this.galleryTimelineAtTopForPull || this.gallerySelectionMode) {
+      this.galleryTimelineRefreshing = false;
+      return;
+    }
+    this.galleryTimelineRefreshing = true;
+    try {
+      this.clearBootstrapDebounceTimer();
+      await this.bootstrap(false);
+    } finally {
+      this.galleryTimelineRefreshing = false;
+      this.galleryPullRefreshThresholdHapticDone = false;
+    }
+  }
+
+  // ── 数据加载 ─────────────────────────────────────────────────────────────
+  /**
+   * 全量重建时间线与列表。
+   * @param showFullBleedSkeleton true：首屏/强刷时铺满骨架；false：下拉刷新等场景保留列表区域，仅用 Refresh 官方动效。
+   */
+  private async bootstrap(showFullBleedSkeleton: boolean = true): Promise<void> {
+    // 任意全量拉取（含下拉刷新、顶栏刷新）均丢弃内存快照，避免与网络结果不一致
+    GalleryHomeTimelineCache.invalidate();
     const gen = ++this.loadGen;
     this.exhausted = false;
     this.dayIndex = 0;
@@ -1064,7 +1841,11 @@ export struct GalleryAlbumTab {
     this.dayOffsets.clear();
     this.dayRounds.clear();
     this.dayEmptyRounds.clear();
-    this.bootLoading = true;
+    if (showFullBleedSkeleton) {
+      this.bootLoading = true;
+    } else {
+      this.bootLoading = false;
+    }
     this.loadError = '';
     this.sections = [];
     this.footText = '';
@@ -1138,11 +1919,13 @@ export struct GalleryAlbumTab {
       this.bootLoading = false;
       this.footText = '时间轴暂无数据';
       this.rebuildFlow();
+      this.markTimelineRefreshCaughtUp();
       return;
     }
 
     this.orderedDays = cells;
     this.bootLoading = false;
+    this.markTimelineRefreshCaughtUp();
     // 启动自驱动加载泵
     this.pumpLoad();
   }
@@ -1156,6 +1939,14 @@ export struct GalleryAlbumTab {
    */
   private pumpLoad(): void {
     if (this.loadingMore || this.exhausted) {
+      return;
+    }
+    /**
+     * bootstrap 在 await getGalleryTimeline 之前会同步清空 orderedDays。
+     * 此窗口内若 onDidScroll / 上次泵的 setTimeout 触发 pumpLoad，loadOneBatch 会看到 dayIndex>=length 且 length===0，
+     * 误判为「已扫完所有日」并 exhausted=true，随后新时间轴回填后 pumpLoad 被直接 return，表现为空列表 +「已加载全部照片」。
+     */
+    if (this.orderedDays.length === 0) {
       return;
     }
     this.loadingMore = true;
@@ -1207,8 +1998,16 @@ export struct GalleryAlbumTab {
       return -1;
     }
     if (this.dayIndex >= this.orderedDays.length) {
+      // length===0：时间轴尚未回填或已被新一轮 bootstrap 清空，绝非「已全部加载」
+      if (this.orderedDays.length === 0) {
+        return -1;
+      }
       this.exhausted = true;
-      this.footText = '已加载全部照片';
+      if (this.countGalleryListedItems() > 0) {
+        this.footText = '已加载全部照片';
+      } else {
+        this.footText = '未获取到照片，请下拉刷新重试';
+      }
       return -1;
     }
 
@@ -1328,6 +2127,71 @@ export struct GalleryAlbumTab {
     }
   }
 
+  /**
+   * 纯视觉层：不绑定任何手势，手势统一由外层 Row 容器处理。
+   * GalleryNetworkThumb 自身已设 HitTestMode.None，外层 Stack 默认 Default，
+   * 触摸事件会透传至父级 Row，由 Row 的 gesture/parallelGesture 统一响应。
+   */
+  @Builder
+  private buildGalleryTimelineThumbCell(item: GalleryListItem, flatIndex: number) {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      GalleryNetworkThumb({
+        uri: nasUrl(this.baseUrl, pickThumb(item)),
+        isVideo: isVideoItem(item),
+        isGif: isGifItem(item),
+      })
+      .width('100%')
+      .aspectRatio(1)
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#55000000')
+        .opacity(this.gallerySelectionMode && this.isGalleryIdSelected(this.itemIdOf(item)) ? 1 : 0)
+        .hitTestBehavior(HitTestMode.None)
+        .animation({ duration: 0, curve: Curve.Linear })
+      Row() {
+        Blank().layoutWeight(1)
+        Column() {
+          if (this.isGalleryIdSelected(this.itemIdOf(item))) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(24)
+              .fontColor([$r('app.color.brand_primary')])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+          } else {
+            Stack({ alignContent: Alignment.Center }) {
+              Circle()
+                .width(22)
+                .height(22)
+                .fill(Color.Transparent)
+                .stroke(Color.White)
+                .strokeWidth(2)
+            }
+            .width(24)
+            .height(24)
+          }
+        }
+        .padding({ top: 6, right: 6 })
+      }
+      .width('100%')
+      .hitTestBehavior(HitTestMode.None)
+      .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+    }
+    .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)
+    .onAreaChange((): void => {
+      const pid = this.itemIdOf(item);
+      if (pid.length > 0) {
+        this.recordGalleryThumbRectFromDom(pid, this.galleryThumbDomId(pid));
+      }
+    })
+    .layoutWeight(1)
+    .aspectRatio(1)
+    .backgroundColor(Color.Transparent)
+    .draggable(false)
+    .onClick((): void => {
+      this.onGalleryThumbTap(item, flatIndex);
+    })
+  }
+
   // ── build ──────────────────────────────────────────────────────────────────
 
   build() {
@@ -1336,47 +2200,107 @@ export struct GalleryAlbumTab {
       // ── 顶部标题栏 ──────────────────────────────────────────────────────────
       Row() {
         if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
-          Text('图库')
-            .fontSize(22)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+          // 多选与常态：同一 Row 内用 Stack 叠放、子项 Visibility.Hidden 占位，避免 if/else 换子树导致重排与列表跳动
+          Stack({ alignContent: Alignment.Center }) {
+            Text('图库')
+              .fontSize(22)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+            Button($r('app.string.gallery_batch_cancel'), { type: ButtonType.Capsule, stateEffect: true })
+              .fontSize(14)
+              .height(36)
+              .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+              .onClick((): void => {
+                this.exitGallerySelection();
+              })
+          }
+          .width(72)
+          .height(36)
 
           Row({ space: 8 }) {
-            TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
-              .layoutWeight(1)
+            Stack({ alignContent: Alignment.Center }) {
+              TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
+                .width('100%')
+                .height(36)
+                .borderRadius(18)
+                .backgroundColor($r('app.color.card_background'))
+                .fontSize(14)
+                .placeholderColor($r('app.color.text_secondary'))
+                .enabled(!this.gallerySelectionMode)
+                .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+                .onChange((val: string): void => {
+                  this.searchQuery = val;
+                })
+                .onSubmit((): void => {
+                  void this.runSearch(this.searchQuery);
+                })
+              Text(`已选择 ${this.gallerySelectedIds.length} 张`)
+                .width('100%')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .height(36)
+                .textAlign(TextAlign.Center)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+            }
+            .layoutWeight(1)
+            .height(36)
+
+            Stack({ alignContent: Alignment.Center }) {
+              Button() {
+                SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                  .fontSize(17)
+                  .fontColor([$r('app.color.icon_primary')])
+              }
+              .width(36)
               .height(36)
               .borderRadius(18)
               .backgroundColor($r('app.color.card_background'))
-              .fontSize(14)
-              .placeholderColor($r('app.color.text_secondary'))
-              .onChange((val: string): void => {
-                this.searchQuery = val;
-              })
-              .onSubmit((): void => {
+              .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+              .onClick((): void => {
                 void this.runSearch(this.searchQuery);
               })
-            Button() {
-              SymbolGlyph($r('sys.symbol.magnifyingglass'))
-                .fontSize(17)
-                .fontColor([$r('app.color.icon_primary')])
+              // Stack 内不可用 Blank（仅允许 Row/Column/Flex 子级），用空 Column 占位对齐搜索键尺寸
+              Column()
+                .width(36)
+                .height(36)
+                .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
             }
             .width(36)
             .height(36)
-            .borderRadius(18)
-            .backgroundColor($r('app.color.card_background'))
-            .onClick((): void => {
-              void this.runSearch(this.searchQuery);
-            })
           }
           .layoutWeight(1)
+          .height(36)
           .margin({ left: 14, right: 14 })
 
-          Button($r('app.string.gallery_refresh'), { type: ButtonType.Capsule, stateEffect: true })
+          // 与「删除」同为 Capsule：多选入口仅文字，无左侧图标
+          Stack({ alignContent: Alignment.Center }) {
+            Button($r('app.string.gallery_multiselect'), { type: ButtonType.Capsule, stateEffect: true })
             .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
             .height(36)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor($r('app.color.card_background'))
+            .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+            .accessibilityText($r('app.string.gallery_multiselect'))
             .onClick((): void => {
-              void this.bootstrap();
+              this.enterGallerySelectionModeFromToolbar();
             })
+            Button($r('app.string.gallery_batch_delete'), { type: ButtonType.Capsule, stateEffect: true })
+              .fontSize(14)
+              .height(36)
+              .fontColor(Color.White)
+              .backgroundColor('#E11D48')
+              .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+              .enabled(this.gallerySelectedIds.length > 0 && !this.galleryBatchDeleting)
+              .onClick((): void => {
+                void this.confirmAndBatchDeleteGallery();
+              })
+          }
+          .height(36)
         } else {
           Text(this.inSearchMode ? 'AI 搜索结果' : (this.inCategoryMode ? '媒体分类' : (this.inSmartCategoryMode ? '智能分类' : '人物')))
             .fontSize(22)
@@ -1395,7 +2319,7 @@ export struct GalleryAlbumTab {
       .alignItems(VerticalAlign.Center)
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
-      // ── 主页面分类入口（原搜索栏位置）────────────────────────────────────────
+      // ── 主页面分类入口：多选时隐藏但占位不变（Visibility.Hidden），避免时间线列表整体上移
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         Row({ space: 8 }) {
           Button() {
@@ -1407,7 +2331,10 @@ export struct GalleryAlbumTab {
           .padding({ left: 12, right: 12 })
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
+          .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+          .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
+            this.exitGallerySelection();
             this.playModeSwitchMotion();
             this.getUIContext().getRouter().pushUrl({
               url: 'pages/MediaCategoryPage',
@@ -1425,7 +2352,10 @@ export struct GalleryAlbumTab {
           .padding({ left: 12, right: 12 })
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
+          .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+          .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
+            this.exitGallerySelection();
             this.playModeSwitchMotion();
             this.getUIContext().getRouter().pushUrl({
               url: 'pages/SmartCategoryPage',
@@ -1443,7 +2373,10 @@ export struct GalleryAlbumTab {
           .padding({ left: 12, right: 12 })
           .borderRadius(20)
           .backgroundColor($r('app.color.card_background'))
+          .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+          .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
+            this.exitGallerySelection();
             this.playModeSwitchMotion();
             this.getUIContext().getRouter().pushUrl({
               url: 'pages/PersonPage',
@@ -1815,7 +2748,9 @@ export struct GalleryAlbumTab {
         }
 
         if (!this.bootLoading) {
-          List({ scroller: this.scrollerRef }) {
+          // 官方 Refresh：offset 为触发刷新所需下拉距离（vp），略大减少误触；friction 略增使下拉更「实在」
+          Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 72 }) {
+            List({ scroller: this.scrollerRef }) {
             LazyForEach(this.flowDataSource, (node: GalleryFlowNode) => {
               if (node.kind === 'month') {
                 ListItem() {
@@ -1835,22 +2770,17 @@ export struct GalleryAlbumTab {
                     .padding({ left: 16, right: 16, top: 2, bottom: 4 })
                 }
               } else {
-                // row 节点：1~3 张缩略图水平排列
+                // row 节点 —— 手势方案遵循鸿蒙官方文档最佳实践：
+                //   ① 点击：每个缩略图 Stack 上用 .onClick()（事件回调，不参与手势竞争，与 List 滚动零冲突）
+                //   ② 长按：Row 上 parallelGesture(LongPressGesture) — 长按需静止，与滚动天然不冲突
+                //   ③ 划选 Pan：Row 上 parallelGesture 内与 LongPress 并行；
+                //      通过 onGestureJudgeBegin 在非多选态时 REJECT，
+                //      使 PanGesture 识别器完全不参与手势竞争，List 滚动畅通无阻
                 ListItem() {
                   Row({ space: 2 }) {
                     ForEach(node.rowItems, (item: GalleryListItem, k: number) => {
-                      GalleryNetworkThumb({
-                        uri: nasUrl(this.baseUrl, pickThumb(item)),
-                        isVideo: isVideoItem(item),
-                        isGif: isGifItem(item),
-                      })
-                      .layoutWeight(1)
-                      .aspectRatio(1)
-                      .onClick((): void => {
-                        this.openPreview(node.rowFlatIndices[k]);
-                      })
+                      this.buildGalleryTimelineThumbCell(item, node.rowFlatIndices[k])
                     }, (item: GalleryListItem, k: number) => `ti_${node.rowFlatIndices[k]}`)
-                    // 末行不足 3 项时用空白占位，保持列宽一致
                     if (node.rowItems.length === 1) {
                       Blank().layoutWeight(1)
                       Blank().layoutWeight(1)
@@ -1861,9 +2791,79 @@ export struct GalleryAlbumTab {
                   }
                   .width('100%')
                   .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+                  .parallelGesture(GestureGroup(GestureMode.Parallel,
+                    LongPressGesture({ repeat: false, duration: 420 })
+                      .onAction((ev: GestureEvent): void => {
+                        const pt = this.readGestureFingerWindow(ev);
+                        if (pt === null) {
+                          return;
+                        }
+                        const fi = this.pickGalleryThumbFlatUnderPoint(vp2px(pt.x), vp2px(pt.y));
+                        if (fi < 0) {
+                          return;
+                        }
+                        const all = this.flatItems();
+                        if (fi >= all.length) {
+                          return;
+                        }
+                        const longPressItem = all[fi];
+                        this.onGalleryThumbLongPress(longPressItem);
+                        if (!this.gallerySelectionMode) {
+                          return;
+                        }
+                        if (this.gallerySlideGestureActive) {
+                          return;
+                        }
+                        this.beginGallerySlideSelectGesture(ev, longPressItem, fi);
+                      })
+                      .onActionEnd((): void => {
+                        this.endGallerySlideSelectGesture();
+                      })
+                      .onActionCancel((): void => {
+                        this.endGallerySlideSelectGesture();
+                      }),
+                    PanGesture({ fingers: 1, direction: PanDirection.All, distance: 5 })
+                      .onActionStart((ev: GestureEvent): void => {
+                        if (!this.gallerySelectionMode || this.gallerySlideGestureActive) {
+                          return;
+                        }
+                        const pt = this.readGestureFingerWindow(ev);
+                        if (pt === null) {
+                          return;
+                        }
+                        const fi = this.pickGalleryThumbFlatUnderPoint(vp2px(pt.x), vp2px(pt.y));
+                        if (fi < 0) {
+                          return;
+                        }
+                        const all = this.flatItems();
+                        if (fi >= all.length) {
+                          return;
+                        }
+                        this.beginGallerySlideSelectGesture(ev, all[fi], fi);
+                      })
+                      .onActionUpdate((ev: GestureEvent): void => {
+                        this.onGallerySlidePanUpdate(ev);
+                      })
+                      .onActionEnd((): void => {
+                        this.endGallerySlideSelectGesture();
+                      })
+                      .onActionCancel((): void => {
+                        this.endGallerySlideSelectGesture();
+                      })
+                  ))
+                  .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+                    // 官方推荐：非多选态时拒绝 PanGesture，使其识别器完全退出竞争，不干扰 List 滚动
+                    if (gestureInfo.type === GestureControl.GestureType.PAN_GESTURE && !this.gallerySelectionMode) {
+                      return GestureJudgeResult.REJECT;
+                    }
+                    return GestureJudgeResult.CONTINUE;
+                  })
                 }
+                .draggable(false)
               }
-            }, (node: GalleryFlowNode) => node.key)
+            }, (node: GalleryFlowNode) =>
+              // 键不得包含 gallerySelectionMode：长按进入多选时若变 key 会重建子树，手势中断，滑动连选失效。多选态下 gesture 仍随 @State 重算。
+              node.key)
 
             // 底部状态行（foot / 加载中 / 底部留白）
             ListItem() {
@@ -1890,16 +2890,48 @@ export struct GalleryAlbumTab {
               .width('100%')
             }
           }
+            .width('100%')
+            .height('100%')
+            .cachedCount(4)
+            .edgeEffect(EdgeEffect.Spring)
+            .scrollBar(BarState.Auto)
+            .divider({ strokeWidth: 0 })
+            .enableScrollInteraction(this.galleryMainListScrollEnabled)
+            .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
+              this.syncGalleryTimelineAtTopForPull();
+              // 划选异常未收到 End/Cancel 时 scrollEnabled 可能一直为 false；能滚动时在此恢复
+              if (!this.gallerySlideGestureActive && !this.galleryMainListScrollEnabled) {
+                this.galleryMainListScrollEnabled = true;
+              }
+              if (!this.gallerySlideGestureActive) {
+                this.clearGalleryThumbHitBounds();
+              }
+              if (!this.exhausted && !this.loadingMore && !this.bootLoading) {
+                this.pumpLoad();
+              }
+            })
+          }
           .width('100%')
           .layoutWeight(1)
-          .cachedCount(4)
-          .edgeEffect(EdgeEffect.Spring)
-          .scrollBar(BarState.Auto)
-          .divider({ strokeWidth: 0 })
-          .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
-            if (!this.exhausted && !this.loadingMore && !this.bootLoading) {
-              this.pumpLoad();
+          // 下拉位移：达到与 offset 相同的阈值时给一次震动（多选下不监听，避免无关回调）
+          .onOffsetChange((offset: number): void => {
+            if (this.gallerySelectionMode) {
+              return;
             }
+            const th = GALLERY_TIMELINE_REFRESH_OFFSET_VP;
+            if (offset >= th) {
+              if (!this.galleryPullRefreshThresholdHapticDone) {
+                this.galleryPullRefreshThresholdHapticDone = true;
+                playGalleryPullRefreshThresholdHaptic();
+              }
+            } else if (offset < th * 0.2) {
+              this.galleryPullRefreshThresholdHapticDone = false;
+            }
+          })
+          // 多选时关闭下拉触发刷新，避免 Refresh 与划选/长按争抢纵向手势
+          .pullToRefresh(!this.gallerySelectionMode)
+          .onRefreshing((): void => {
+            void this.onGalleryTimelinePullRefresh();
           })
         }
       }
@@ -1913,6 +2945,10 @@ export struct GalleryAlbumTab {
         if (this.uploading) {
           FnFullLoadingMask({ text: this.uploadText.length > 0 ? this.uploadText : '上传中…' })
         }
+        if (this.galleryBatchDeleting) {
+          FnFullLoadingMask({ text: '删除中…' })
+        }
+        if (!this.gallerySelectionMode) {
         Button({ type: ButtonType.Circle, stateEffect: true }) {
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(24)
@@ -1927,6 +2963,7 @@ export struct GalleryAlbumTab {
         .onClick((): void => {
           this.startUpload();
         })
+        }
       }
     }
     .width('100%')
