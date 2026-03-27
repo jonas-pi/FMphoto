@@ -6,6 +6,7 @@
  */
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { sha256DigestSafe } from './AuthxSigner';
 
 /** UTF-8 编码 */
 function utf8Encode(str: string): Uint8Array {
@@ -165,10 +166,7 @@ export function fnWsStringifyEncryptedFrame(enc: FnWsEncryptedFrame): string {
 }
 
 async function sha256Digest(data: Uint8Array): Promise<Uint8Array> {
-  const md = cryptoFramework.createMd('SHA256');
-  await md.update({ data: data });
-  const out = await md.digest();
-  return out.data;
+  return sha256DigestSafe(data);
 }
 
 function concatUint8(a: Uint8Array, b: Uint8Array): Uint8Array {

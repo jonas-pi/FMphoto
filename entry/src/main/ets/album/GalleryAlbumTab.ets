@@ -16,6 +16,7 @@ import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
+import { isHttpUnauthorizedMessage, tryRecoverSessionAfterAuthFailure } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import {
   AiPersonItem,
@@ -484,9 +485,13 @@ export struct GalleryAlbumTab {
     this.uploadText = `上传中 0/${uris.length}…`;
     let ok = 0;
     let firstFailMsg = '';
+    // 设置中的相册父目录：upload/path 无返回时作为 trim-path 目录，避免空路径被网关 400 拒绝
+    const sUp = AppSession.getStored();
+    const albumDirHint =
+      sUp !== null && sUp.albumParentGuid.trim().length > 0 ? sUp.albumParentGuid.trim() : undefined;
     for (let i = 0; i < uris.length; i++) {
       this.uploadText = `上传中 ${i + 1}/${uris.length}…`;
-      const res = await client.uploadPhotoByUri(uris[i], 150000);
+      const res = await client.uploadPhotoByUri(uris[i], 150000, albumDirHint);
       if (res.success) {
         ok++;
       } else if (firstFailMsg.length === 0) {
@@ -1091,7 +1096,23 @@ export struct GalleryAlbumTab {
       }
     }
 
-    const tl = await workClient.getGalleryTimeline();
+    let tl = await workClient.getGalleryTimeline();
+    if (gen !== this.loadGen) { return; }
+    // 长时间未用后服务端会话过期 → HTTP 401：静默 WS 重登（依赖本地保存的密码）后重试时间轴
+    if (tl.success !== true || tl.data === undefined) {
+      const em0 = tl.message !== undefined && tl.message.length > 0 ? tl.message : '';
+      if (isHttpUnauthorizedMessage(em0)) {
+        const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        const ok = await tryRecoverSessionAfterAuthFailure(ctx);
+        if (ok) {
+          const c2 = AppSession.getClient();
+          if (c2 !== null) {
+            workClient = c2;
+            tl = await workClient.getGalleryTimeline();
+          }
+        }
+      }
+    }
     if (gen !== this.loadGen) { return; }
     if (tl.success !== true || tl.data === undefined) {
       const em = tl.message !== undefined && tl.message.length > 0 ? tl.message : '时间轴加载失败';
@@ -1219,7 +1240,24 @@ export struct GalleryAlbumTab {
     try {
       const st = fmtDayStart(day.year, day.month, day.day);
       const et = fmtDayEnd(day.year, day.month, day.day);
-      const res = await client.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
+      let res = await client.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
+      if (gen !== this.loadGen) {
+        return -1;
+      }
+
+      if (res.success !== true) {
+        const em0 = res.message !== undefined && res.message.length > 0 ? res.message : '';
+        if (isHttpUnauthorizedMessage(em0)) {
+          const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          const recovered = await tryRecoverSessionAfterAuthFailure(ctx);
+          if (recovered) {
+            const c2 = AppSession.getClient();
+            if (c2 !== null) {
+              res = await c2.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
+            }
+          }
+        }
+      }
       if (gen !== this.loadGen) {
         return -1;
       }

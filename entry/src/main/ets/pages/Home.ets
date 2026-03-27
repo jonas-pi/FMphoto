@@ -8,6 +8,7 @@ import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
 import { AppSession } from '../auth/AppSession';
+import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
@@ -236,6 +237,16 @@ struct Home {
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBarTheme();
     this.pageShowSignal++;
+    // 节流探测 long-token，降低长时间挂起后进相册 HTTP 401 的概率（非永久保活，仅前台轻量刷新）
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void proactiveRefreshLongTokenOnForeground(ctx).then((changed: boolean): void => {
+      if (changed) {
+        const s = AppSession.getStored();
+        if (s !== null) {
+          this.snapLongToken = s.fnosLongToken.length > 0 ? s.fnosLongToken : '';
+        }
+      }
+    });
   }
 
   onColorModeChanged(): void {
@@ -264,6 +275,19 @@ struct Home {
 
   // ─────────────────────────────────────────────────────────────────────────
 
+  /**
+   * 相册 Tab 内可能已静默刷新 token；切回首页 Web 前同步快照，避免 Web 仍带过期 Cookie。
+   */
+  private syncWebSessionSnapshotFromAppSession(): void {
+    const s = AppSession.getStored();
+    if (s === null || !this.sessionOk) {
+      return;
+    }
+    this.snapToken = s.token;
+    this.snapLongToken = s.fnosLongToken.length > 0 ? s.fnosLongToken : '';
+    this.snapWsSignKeyB64 = s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '';
+  }
+
   private switchTab(target: number): void {
     if (target === this.bottomNavIndex) {
       return;
@@ -274,6 +298,9 @@ struct Home {
     });
     setTimeout((): void => {
       this.bottomNavIndex = target;
+      if (target === 0) {
+        this.syncWebSessionSnapshotFromAppSession();
+      }
       this.getUIContext().animateTo({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE }, (): void => {
         this.contentOpacity = 1;
         this.contentScale = 1;
