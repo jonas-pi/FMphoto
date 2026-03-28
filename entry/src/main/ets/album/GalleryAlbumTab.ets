@@ -46,6 +46,7 @@ import {
   GalleryHomeTimelineCache,
   GalleryHomeTimelineSnapshot
 } from './GalleryHomeTimelineCache';
+import { gallerySetAlbumBackHandler } from './GalleryAlbumHardwareBack';
 import {
   playGalleryEnterSelectionHaptic,
   playGalleryPullRefreshThresholdHaptic
@@ -69,8 +70,11 @@ const DAY_MAX_ROUNDS = 300;
 const EMPTY_PAGE_ADVANCE_THRESHOLD = 2;
 /** 手动点「刷新」防抖（ms）：合并连点，减轻 loadGen 与异步泵交错导致的短暂空白（界面动态操作宜节流合并） */
 const GALLERY_BOOTSTRAP_DEBOUNCE_MS = 900;
-/** 时间线 Refresh 触发阈值（vp）：略大减少误触；与 onOffsetChange 内震动判断共用同一数值 */
-const GALLERY_TIMELINE_REFRESH_OFFSET_VP = 112;
+/**
+ * 时间线 Refresh 触发阈值（vp）：与系统 Refresh 一致。
+ * 官方将 offset 限制在约 64vp 内，超出无效；此前用大数值会导致「图标/刷新已触发」而震动仍按大阈值，二者错位。
+ */
+const GALLERY_TIMELINE_REFRESH_OFFSET_VP = 64;
 /** 上传成功后二次拉时间轴间隔（ms）：NAS 入库略延迟时提高新图出现概率 */
 const GALLERY_UPLOAD_RECHECK_MS = 1600;
 
@@ -267,10 +271,10 @@ export struct GalleryAlbumTab {
   /** 长按后在此时间戳之前忽略单击，避免误进预览 */
   private galleryLongPressIgnoreClickUntil: number = 0;
   /**
-   * 「长按 + 滑动」连选进行中：为 true 时 onDidScroll 不清空命中缓存 Map。
-   * 与 galleryMainListScrollEnabled 配合：划选时禁 List 滚动，避免父级抢走 Pan。
+   * 「划选段」进行中：为 true 时 onDidScroll 不清空命中缓存；且 Row 上 Pan 切为全向以跨行划选。
+   * 为 @State 以便多选态下在「仅横向 Pan / 全向 Pan」间切换（对齐系统相册：纵滑列表、横滑划选）。
    */
-  private gallerySlideGestureActive: boolean = false;
+  @State private gallerySlideGestureActive: boolean = false;
   /** 各缩略图最近一次布局在窗口中的矩形（仅当前可见/曾布局项有值；列表滚动时会清空以防脏矩形） */
   private galleryThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
   /** 滑动连选：fingerList 不可用时，用长按参考点 + Pan offset 估算指尖位置 */
@@ -391,21 +395,35 @@ export struct GalleryAlbumTab {
 
   /**
    * 判断两组 id 是否作为集合相同（顺序无关），避免划选合并时仅顺序变化也触发整表刷新。
+   * 使用 Set 计数，避免大图选区下 O(n log n) 排序。
    */
   private sameGalleryIdBagUnordered(a: string[], b: string[]): boolean {
     if (a.length !== b.length) {
       return false;
     }
-    const sa = a.slice();
-    const sb = b.slice();
-    sa.sort();
-    sb.sort();
-    for (let i = 0; i < sa.length; i++) {
-      if (sa[i] !== sb[i]) {
+    if (a.length === 0) {
+      return true;
+    }
+    const cnt = new Map<string, number>();
+    for (let i = 0; i < a.length; i++) {
+      const k = a[i];
+      cnt.set(k, (cnt.get(k) ?? 0) + 1);
+    }
+    for (let i = 0; i < b.length; i++) {
+      const k = b[i];
+      const c = (cnt.get(k) ?? 0) - 1;
+      if (c < 0) {
         return false;
       }
+      cnt.set(k, c);
     }
-    return true;
+    let allZero = true;
+    cnt.forEach((v: number): void => {
+      if (v !== 0) {
+        allZero = false;
+      }
+    });
+    return allZero;
   }
 
   /**
@@ -510,15 +528,18 @@ export struct GalleryAlbumTab {
     this.gallerySlideUnionBase = this.gallerySelectedIds.slice();
     this.gallerySlideLastEndFlat = this.gallerySlideAnchorFlat;
     this.gallerySlideLastAppliedEndFlat = -99999;
+    const anchorId = this.itemIdOf(item);
+    if (anchorId.length > 0) {
+      this.recordGalleryThumbRectFromDom(anchorId, this.galleryThumbDomId(anchorId));
+    }
     const win = this.readGestureFingerWindow(ev);
     if (win !== null) {
       // FingerInfo 通常为 vp，与 componentUtils 矩形（px）对齐
       this.gallerySlideRefX = vp2px(win.x);
       this.gallerySlideRefY = vp2px(win.y);
       this.gallerySlideHasRef = true;
-    } else {
-      const id = this.itemIdOf(item);
-      const r = this.galleryThumbHitBounds.get(id);
+    } else if (anchorId.length > 0) {
+      const r = this.galleryThumbHitBounds.get(anchorId);
       if (r !== undefined) {
         this.gallerySlideRefX = (r.left + r.right) * 0.5;
         this.gallerySlideRefY = (r.top + r.bottom) * 0.5;
@@ -526,6 +547,8 @@ export struct GalleryAlbumTab {
       } else {
         this.gallerySlideHasRef = false;
       }
+    } else {
+      this.gallerySlideHasRef = false;
     }
     // 长按当下即按「锚点～锚点」区间刷新一次，与后续 Pan 实时更新规则一致
     this.applyGallerySlideRowRangeSelection(this.gallerySlideLastEndFlat);
@@ -566,7 +589,7 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 用实时的 getRectangleById 判断指尖是否落在该缩略图内（避免 onAreaChange 缓存与滚动后 stale）。
+   * 用 getRectangleById 判断点是否落在单张缩略图内（仅限本行少量调用，禁止在全列表 Pan 每帧里扫）。
    */
   private hitGalleryThumbDomPx(photoId: string, xPx: number, yPx: number): boolean {
     if (photoId.length === 0) {
@@ -589,30 +612,30 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 根据指尖窗口坐标命中唯一缩略图，返回其在扁平列表中的下标；未命中返回 -1。
-   * 按 flow 顺序扫描，先命中的即为准（与列表视觉顺序一致）。
+   * 根据指尖窗口坐标命中缩略图 flat；仅使用 onAreaChange 写入的 galleryThumbHitBounds。
+   * Pan 滑动过程中只用本方法，禁止在此处对全列表 getRectangleById。
+   * 自后向前扫 row，与后绘制的格在上层一致。
    */
   private pickGalleryThumbFlatUnderPoint(xPx: number, yPx: number): number {
+    if (this.galleryThumbHitBounds.size === 0) {
+      return -1;
+    }
     const n = this.flowDataSource.totalCount();
-    for (let i = 0; i < n; i++) {
+    for (let i = n - 1; i >= 0; i--) {
       const node = this.flowDataSource.getData(i);
       if (node.kind !== 'row') {
         continue;
       }
-      for (let k = 0; k < node.rowItems.length; k++) {
+      for (let k = node.rowItems.length - 1; k >= 0; k--) {
         const id = this.itemIdOf(node.rowItems[k]);
         if (id.length === 0) {
           continue;
         }
         const cached = this.galleryThumbHitBounds.get(id);
-        if (cached !== undefined) {
-          const inCached =
-            xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom;
-          if (inCached) {
-            return node.rowFlatIndices[k];
-          }
+        if (cached === undefined) {
+          continue;
         }
-        if (this.hitGalleryThumbDomPx(id, xPx, yPx)) {
+        if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
           return node.rowFlatIndices[k];
         }
       }
@@ -621,8 +644,38 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 收集扁平下标闭区间 [lo, hi]（行优先：同一行左→右，再下一行）内所有缩略图 id。
-   * 等价于「从锚点到指尖所跨越的整行、整格」——中间行整行三格都会落入区间内。
+   * 长按 / Pan 起点：先走全局缓存命中，失败则只对**当前行**最多 3 格做 getRectangleById（恢复「长按启动多选 + 划选」且不把 DOM 查询放进 Pan 每帧）。
+   */
+  private pickGalleryThumbFlatForRowOrCache(node: GalleryFlowNode, xPx: number, yPx: number): number {
+    const fromCache = this.pickGalleryThumbFlatUnderPoint(xPx, yPx);
+    if (fromCache >= 0) {
+      return fromCache;
+    }
+    if (node.kind !== 'row') {
+      return -1;
+    }
+    for (let k = node.rowItems.length - 1; k >= 0; k--) {
+      const id = this.itemIdOf(node.rowItems[k]);
+      if (id.length === 0) {
+        continue;
+      }
+      const cached = this.galleryThumbHitBounds.get(id);
+      if (cached !== undefined) {
+        if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+          return node.rowFlatIndices[k];
+        }
+        continue;
+      }
+      if (this.hitGalleryThumbDomPx(id, xPx, yPx)) {
+        return node.rowFlatIndices[k];
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * 收集扁平下标闭区间 [lo, hi]（行优先）内所有缩略图 id。
+   * 直接按 sections 推进 flat，跳过整段早于 lo 的日，超过 hi 即停，避免每次扫全 flow。
    */
   private collectGalleryIdsInFlatRange(lo: number, hi: number): string[] {
     let a = lo;
@@ -633,16 +686,22 @@ export struct GalleryAlbumTab {
       b = t;
     }
     const out: string[] = [];
-    const n = this.flowDataSource.totalCount();
-    for (let i = 0; i < n; i++) {
-      const node = this.flowDataSource.getData(i);
-      if (node.kind !== 'row') {
+    let flat = 0;
+    for (let si = 0; si < this.sections.length; si++) {
+      const items = this.sections[si].items;
+      const secEnd = flat + items.length - 1;
+      if (secEnd < a) {
+        flat += items.length;
         continue;
       }
-      for (let k = 0; k < node.rowItems.length; k++) {
-        const fi = node.rowFlatIndices[k];
-        if (fi >= a && fi <= b) {
-          const id = this.itemIdOf(node.rowItems[k]);
+      for (let j = 0; j < items.length; j++) {
+        const fi = flat;
+        flat++;
+        if (fi > b) {
+          return out;
+        }
+        if (fi >= a) {
+          const id = this.itemIdOf(items[j]);
           if (id.length > 0) {
             out.push(id);
           }
@@ -673,10 +732,16 @@ export struct GalleryAlbumTab {
       hi = t;
     }
     const rangeIds = this.collectGalleryIdsInFlatRange(lo, hi);
-    const next: string[] = this.gallerySlideUnionBase.slice();
+    const seen = new Set<string>();
+    const base = this.gallerySlideUnionBase;
+    for (let i = 0; i < base.length; i++) {
+      seen.add(base[i]);
+    }
+    const next: string[] = base.slice();
     for (let i = 0; i < rangeIds.length; i++) {
       const id = rangeIds[i];
-      if (id.length > 0 && next.indexOf(id) < 0) {
+      if (id.length > 0 && !seen.has(id)) {
+        seen.add(id);
         next.push(id);
       }
     }
@@ -972,6 +1037,19 @@ export struct GalleryAlbumTab {
     this.clearCategory();
     this.clearSmartCategory();
     this.clearPerson();
+    // 子视图期间若发生过 bump（删图/上传等），回到主时间线再补一次防抖刷新；无 bump 则不碰主列表，保留内存态
+    if (GalleryTimelineRefreshStore.version > this.lastBootstrapSatisfiedRefreshVersion) {
+      this.requestBootstrap(true);
+    }
+  }
+
+  /** 系统返回键：子视图内先退回图库主界面 */
+  private tryConsumeAlbumHardwareBack(): boolean {
+    if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
+      return false;
+    }
+    this.backToGallery();
+    return true;
   }
 
   /** 统一模式切换动效，减少硬切感 */
@@ -1570,6 +1648,7 @@ export struct GalleryAlbumTab {
     // 页面重新出现时重置打开态，避免手势返回后被旧遮罩状态卡住
     this.personOpening = false;
     this.categoryOpening = false;
+    gallerySetAlbumBackHandler((): boolean => this.tryConsumeAlbumHardwareBack());
     setTimeout((): void => {
       // 主时间线：若离开 Tab 时存过快照且期间未 bump/未强刷，直接恢复，避免每次切回都重拉时间轴与已加载块
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
@@ -1590,6 +1669,7 @@ export struct GalleryAlbumTab {
 
   /** 切到其他底部 Tab 时卸载：把主时间线快照写入内存，供下次 aboutToAppear 恢复 */
   aboutToDisappear(): void {
+    gallerySetAlbumBackHandler(null);
     const snap = this.buildMainTimelineCacheSnapshot();
     if (snap !== null) {
       GalleryHomeTimelineCache.save(this.baseUrl, snap);
@@ -1773,6 +1853,10 @@ export struct GalleryAlbumTab {
   /** Home 前台信号或 Tab 再次显示：先增量删，再视 bump 防抖全量刷 */
   private onAlbumTabVisibleAgain(): void {
     this.applyDeleteSyncIfNeeded();
+    // 停留在 AI 搜索/分类/人物等子视图时勿拉主时间线，避免「退回主界面像重载」；离开子视图时再消费 bump（见 backToGallery）
+    if (this.inSearchMode || this.inCategoryMode || this.inSmartCategoryMode || this.inPersonMode) {
+      return;
+    }
     if (GalleryTimelineRefreshStore.version > this.lastBootstrapSatisfiedRefreshVersion) {
       this.requestBootstrap(true);
     }
@@ -2006,7 +2090,7 @@ export struct GalleryAlbumTab {
       if (this.countGalleryListedItems() > 0) {
         this.footText = '已加载全部照片';
       } else {
-        this.footText = '未获取到照片，请下拉刷新重试';
+        this.footText = '未获取到照片';
       }
       return -1;
     }
@@ -2748,8 +2832,8 @@ export struct GalleryAlbumTab {
         }
 
         if (!this.bootLoading) {
-          // 官方 Refresh：offset 为触发刷新所需下拉距离（vp），略大减少误触；friction 略增使下拉更「实在」
-          Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 72 }) {
+          // 官方 Refresh：offset 为触发刷新所需下拉距离（vp）；friction 略增使下拉更「实在」
+          Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 78 }) {
             List({ scroller: this.scrollerRef }) {
             LazyForEach(this.flowDataSource, (node: GalleryFlowNode) => {
               if (node.kind === 'month') {
@@ -2773,9 +2857,8 @@ export struct GalleryAlbumTab {
                 // row 节点 —— 手势方案遵循鸿蒙官方文档最佳实践：
                 //   ① 点击：每个缩略图 Stack 上用 .onClick()（事件回调，不参与手势竞争，与 List 滚动零冲突）
                 //   ② 长按：Row 上 parallelGesture(LongPressGesture) — 长按需静止，与滚动天然不冲突
-                //   ③ 划选 Pan：Row 上 parallelGesture 内与 LongPress 并行；
-                //      通过 onGestureJudgeBegin 在非多选态时 REJECT，
-                //      使 PanGesture 识别器完全不参与手势竞争，List 滚动畅通无阻
+                //   ③ 划选 Pan：多选且未在划选段时仅 Horizontal，纵向交给 List；进入划选后改为 All 以跨行。
+                //      非多选态 onGestureJudgeBegin 对 Pan REJECT，List 滚动畅通。
                 ListItem() {
                   Row({ space: 2 }) {
                     ForEach(node.rowItems, (item: GalleryListItem, k: number) => {
@@ -2798,7 +2881,9 @@ export struct GalleryAlbumTab {
                         if (pt === null) {
                           return;
                         }
-                        const fi = this.pickGalleryThumbFlatUnderPoint(vp2px(pt.x), vp2px(pt.y));
+                        const xPx = vp2px(pt.x);
+                        const yPx = vp2px(pt.y);
+                        const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
                         if (fi < 0) {
                           return;
                         }
@@ -2822,8 +2907,13 @@ export struct GalleryAlbumTab {
                       .onActionCancel((): void => {
                         this.endGallerySlideSelectGesture();
                       }),
-                    PanGesture({ fingers: 1, direction: PanDirection.All, distance: 5 })
+                    PanGesture({
+                      fingers: 1,
+                      direction: this.gallerySlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
+                      distance: this.gallerySlideGestureActive ? 5 : 12
+                    })
                       .onActionStart((ev: GestureEvent): void => {
+                        // 二次划选：多选下先横向拖动即进入划选（纵向由 Horizontal Pan 不接管，列表可滚）
                         if (!this.gallerySelectionMode || this.gallerySlideGestureActive) {
                           return;
                         }
@@ -2831,7 +2921,9 @@ export struct GalleryAlbumTab {
                         if (pt === null) {
                           return;
                         }
-                        const fi = this.pickGalleryThumbFlatUnderPoint(vp2px(pt.x), vp2px(pt.y));
+                        const xPx = vp2px(pt.x);
+                        const yPx = vp2px(pt.y);
+                        const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
                         if (fi < 0) {
                           return;
                         }
@@ -2852,10 +2944,14 @@ export struct GalleryAlbumTab {
                       })
                   ))
                   .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-                    // 官方推荐：非多选态时拒绝 PanGesture，使其识别器完全退出竞争，不干扰 List 滚动
-                    if (gestureInfo.type === GestureControl.GestureType.PAN_GESTURE && !this.gallerySelectionMode) {
+                    if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
+                      return GestureJudgeResult.CONTINUE;
+                    }
+                    // 非多选：Row 的 Pan 不参与，List 独占纵向滑动
+                    if (!this.gallerySelectionMode) {
                       return GestureJudgeResult.REJECT;
                     }
+                    // 多选：未划选时为横向 Pan（不抢纵向）；划选中为全向 Pan，由 enableScrollInteraction(false) 避免与 List 抢
                     return GestureJudgeResult.CONTINUE;
                   })
                 }
@@ -2865,7 +2961,7 @@ export struct GalleryAlbumTab {
               // 键不得包含 gallerySelectionMode：长按进入多选时若变 key 会重建子树，手势中断，滑动连选失效。多选态下 gesture 仍随 @State 重算。
               node.key)
 
-            // 底部状态行（foot / 加载中 / 底部留白）
+            // 底部：仅状态文案 + 留白；分页由 pumpLoad 自驱动，不展示「加载中…」行
             ListItem() {
               Column({ space: 4 }) {
                 if (this.footText.length > 0) {
@@ -2875,15 +2971,6 @@ export struct GalleryAlbumTab {
                     .width('100%')
                     .textAlign(TextAlign.Center)
                     .padding(12)
-                }
-                if (!this.exhausted && this.sections.length > 0) {
-                  Row() {
-                    LoadingProgress().width(24).height(24)
-                    Text('加载中…').fontSize(12).fontColor($r('app.color.text_secondary')).margin({ left: 8 })
-                  }
-                  .width('100%')
-                  .justifyContent(FlexAlign.Center)
-                  .padding(12)
                 }
                 Blank().height(32)
               }

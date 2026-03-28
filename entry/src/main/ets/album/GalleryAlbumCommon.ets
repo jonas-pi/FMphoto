@@ -12,7 +12,8 @@ export const GALLERY_PREVIEW_SCALE_MAX = 4;
 export const GALLERY_PREVIEW_ZOOM_EPS = 0.02;
 export const GALLERY_PREVIEW_SNAP_EPS = 0.12;
 
-export const THUMB_CACHE_MAX = 250;
+/** 缩略图全局缓存上限；HDR 缩略图单张占用大，过高易 OOM；配合 SDR 解码与 release 淘汰 */
+export const THUMB_CACHE_MAX = 96;
 const thumbPixCache = new Map<string, PixelMap>();
 const thumbLoadFailAt = new Map<string, number>();
 const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
@@ -57,6 +58,14 @@ function acquireThumbSlot(): Promise<void> {
   return new Promise<void>((resolve) => {
     thumbLoadWaiters.push(resolve);
   });
+}
+
+/** 缓存淘汰或显式丢弃时释放原生像素缓冲，降低长列表滑动后的内存峰值 */
+function releaseThumbPix(p: PixelMap): void {
+  try {
+    p.release();
+  } catch (_e) {
+  }
 }
 
 function releaseThumbSlot(): void {
@@ -285,9 +294,8 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
       return undefined;
     }
     const src = image.createImageSource(buf);
-    // 按服务端缩略图原始尺寸解码；启用 HDR 解码以保留 HDR Vivid 增益图；解码后再裁黑边
-    // HDR PixelMap 格式为 RGBA_F16(7)，autoCropBlackBorders 会自动跳过
-    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.HDR });
+    // 网格缩略图用 SDR 解码，显著低于 HDR/F16 的内存占用，降低大图库滑动崩溃风险；预览大图仍走 loadFullPix(HDR)
+    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.SDR });
     src.release();
     // 裁掉服务端已预烘焙的 letterbox/pillarbox 黑边
     await autoCropBlackBorders(pix);
@@ -297,7 +305,13 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
         firstKey = k;
         break;
       }
-      if (firstKey !== undefined) { thumbPixCache.delete(firstKey); }
+      if (firstKey !== undefined) {
+        const old = thumbPixCache.get(firstKey);
+        thumbPixCache.delete(firstKey);
+        if (old !== undefined) {
+          releaseThumbPix(old);
+        }
+      }
     }
     thumbPixCache.set(fullUrl, pix);
     thumbLoadFailAt.delete(fullUrl);
@@ -366,7 +380,7 @@ export struct GalleryThumbSkeleton {
       .width('100%')
       .aspectRatio(1)
       .backgroundColor(this.colorMode === 1 ? '#2C2C2E' : '#E8EAED')
-      .borderRadius(8)
+      .borderRadius(0)
       .opacity(this.alpha)
   }
 }
@@ -479,7 +493,7 @@ export struct GalleryNetworkThumb {
     }
     .width('100%')
     .aspectRatio(1)
-    .borderRadius(6)
+    .borderRadius(0)
     .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
     // 防止子节点未覆盖区域仍响应系统拖拽

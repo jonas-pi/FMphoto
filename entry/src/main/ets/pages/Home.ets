@@ -7,6 +7,7 @@ import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
+import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
 import { AppSession } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
@@ -232,6 +233,13 @@ struct Home {
   @State private isDarkTheme: boolean = false;
 
   // ── 系统栏颜色 ────────────────────────────────────────────────────────────
+
+  onBackPress(): boolean {
+    if (this.bottomNavIndex === 1 && galleryTryConsumeAlbumBack()) {
+      return true;
+    }
+    return false;
+  }
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
