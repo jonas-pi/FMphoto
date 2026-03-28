@@ -16,11 +16,11 @@ export function playGalleryEnterSelectionHaptic(): void {
   }
 }
 
-/** 时间线下拉达到 Refresh 触发阈值时的轻提示（与进入多选同 usage，时长略短） */
+/** 时间线下拉达到 Refresh 触发阈值时的轻提示（与 Refresh.offset 对齐，官方约 64vp 上限） */
 export function playGalleryPullRefreshThresholdHaptic(): void {
   try {
     vibrator.startVibration(
-      { type: 'time', duration: 30 },
+      { type: 'time', duration: 42 },
       { id: 0, usage: 'touch' }
     );
   } catch (_e) {
