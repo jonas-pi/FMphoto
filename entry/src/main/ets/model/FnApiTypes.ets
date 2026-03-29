@@ -167,6 +167,34 @@ export interface GalleryGetListData {
   total?: number;
 }
 
+/** `GET /p/api/v1/recycle-bin/list` 单条（与 Web 抓包字段对齐） */
+export interface RecycleBinListItem {
+  id?: number;
+  ownerId?: number;
+  ownerName?: string;
+  dateTime?: string;
+  createdAt?: string;
+  fileType?: string;
+  category?: string;
+  fileName?: string;
+  fileSize?: number;
+  isCollect?: number;
+  photoUUID?: string;
+  filePath?: string;
+  height?: number;
+  width?: number;
+  rotation?: number;
+  isCanPreview?: number;
+  deleteAt?: number;
+}
+
+/** `GET /p/api/v1/recycle-bin/list` 的 data */
+export interface RecycleBinListData {
+  list?: RecycleBinListItem[];
+  /** 服务端当前时间戳（秒），可选 */
+  now?: number;
+}
+
 /** POST /p/api/v1/magic-search/do 请求体 */
 export interface MagicSearchDoBody {
   keyword: string;

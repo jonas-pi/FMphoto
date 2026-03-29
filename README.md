@@ -1,6 +1,6 @@
 # FNOS for HarmonyOS
 
-非官方 HarmonyOS 客户端，用于在手机上连接飞牛 NAS，使用相册、网页入口及常见图库能力。
+非官方 HarmonyOS 客户端，用于在手机上连接飞牛 NAS，使用相册、网页入口及常见图库能力。日常开发以分支 **`originalmain`** 为准（与预编译包发布同源）。
 
 ## 功能清单
 
@@ -17,7 +17,7 @@
 
 - [ ] **时间轴**：能力复杂，实现方案仍在梳理
 - [ ] **收藏**
-- [ ] **回收站查看**
+- [x] **回收站查看**：列表、多选恢复与批量下载等（依赖 NAS 回收站接口）
 - [ ] **文件夹分类**
 - [ ] **图库按年 / 月 / 日级别切换浏览**
 - [ ] **更「鸿蒙」的动画与转场**（任务量较大，持续学习实现中）
@@ -69,9 +69,11 @@
 
 ## 预编译包
 
-本仓库 **FMphoto** 分支在部分提交中会附带当前构建产物，便于直接安装体验：
+未签名调试包 **不放在本仓库**（避免二进制污染源码历史）。请至预编译包专用仓库下载根目录下的 `entry-default-unsigned.hap`：
 
-- 路径：`entry/build/default/outputs/default/entry-default-unsigned.hap`（未签名调试包，安装方式以本地鸿蒙开发环境说明为准）
+- **FMphoto**：<https://github.com/jonas-pi/FMphoto>（说明与风险提示见该仓库 README）
+
+源码开发与自构建：克隆本仓库后在本地执行工程构建，产物路径一般为 `entry/build/default/outputs/default/entry-default-unsigned.hap`。
 
 ## 使用注意与风险
 

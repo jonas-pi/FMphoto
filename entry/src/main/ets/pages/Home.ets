@@ -24,10 +24,23 @@ import {
   FN_PAGE_ENTER_DURATION,
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION,
+  FN_TAB_ALBUM_ME_CURVE,
+  FN_TAB_ALBUM_ME_IN_MS,
+  FN_TAB_ALBUM_ME_OUT_MS,
+  FN_TAB_HOME_CONTENT_CURVE,
+  FN_TAB_HOME_CONTENT_IN_MS,
+  FN_TAB_HOME_CONTENT_OUT_MS,
   FN_TAB_SWITCH_CURVE,
-  FN_TAB_SWITCH_IN_DURATION,
-  FN_TAB_SWITCH_OUT_DURATION
+  FN_TAB_SWITCH_IN_DURATION
 } from '../common/FnMotion';
+import {
+  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
+  GALLERY_TOP_BAR_PAD_LEFT_VP,
+  GALLERY_TOP_BAR_PAD_RIGHT_VP,
+  GALLERY_TOP_BAR_PAD_TOP_VP,
+  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
+  GALLERY_TOP_BAR_TITLE_FONT_VP
+} from '../common/GalleryTopBarLayout';
 
 const DOMAIN = 0xFF00;
 const TAG = 'Home';
@@ -168,39 +181,55 @@ struct NasWebPanel {
 @Component
 struct MePanel {
   build() {
-    Column({ space: 16 }) {
-      Text($r('app.string.tab_me'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .width('100%')
-        .margin({ top: 24 })
+    Column() {
+      Row() {
+        Row()
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+        Text($r('app.string.tab_me'))
+          .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(2)
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Row()
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({
+        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
+        right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
+        top: GALLERY_TOP_BAR_PAD_TOP_VP,
+        bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
+      })
 
-      FnSecondaryButton({ text: $r('app.string.settings') })
-        .width('100%')
-        .onClick((): void => {
-          this.getUIContext().getRouter().pushUrl({ url: 'pages/Settings' }).catch(() => {
-          });
-        })
-
-      Button($r('app.string.logout'))
-        .width('100%')
-        .height($r('app.float.button_height'))
-        .backgroundColor('#E11D48')
-        .fontColor(Color.White)
-        .borderRadius($r('app.float.radius_medium'))
-        .onClick((): void => {
-          const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-          void SessionPreferences.clearSession(ctx).then(() => {
-            AppSession.clear();
-            this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
+      Column({ space: 16 }) {
+        Button($r('app.string.logout'))
+          .width('100%')
+          .height($r('app.float.button_height'))
+          .backgroundColor('#E11D48')
+          .fontColor(Color.White)
+          .borderRadius($r('app.float.radius_medium'))
+          .onClick((): void => {
+            const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+            void SessionPreferences.clearSession(ctx).then(() => {
+              AppSession.clear();
+              this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
+              });
             });
-          });
-        })
+          })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding({ left: 24, right: 24, top: 8, bottom: 24 })
+      .alignItems(HorizontalAlign.Start)
     }
-    .padding(24)
     .width('100%')
     .height('100%')
-    .alignItems(HorizontalAlign.Start)
   }
 }
 
@@ -218,9 +247,8 @@ struct Home {
   @State private albumReloadEpoch: number = 0;
   /** 页面可见时递增 → 通知 GalleryAlbumTab 做删除同步 */
   @State private pageShowSignal: number = 0;
-  /** 内容区淡入缩放过渡 */
-  @State private contentOpacity: number = 1;
-  @State private contentScale: number = 1;
+  /** Tab 切换时内容区水平位移（保持不透明，避免底层 Web 透出） */
+  @State private contentTranslateX: number = 0;
   /**
    * 系统深浅色模式（框架自动写入 AppStorage 'colorMode'）：
    * ColorMode.LIGHT = 0，ColorMode.DARK = 1
@@ -300,20 +328,56 @@ struct Home {
     if (target === this.bottomNavIndex) {
       return;
     }
-    this.getUIContext().animateTo({ duration: FN_TAB_SWITCH_OUT_DURATION, curve: FN_TAB_SWITCH_CURVE }, (): void => {
-      this.contentOpacity = 0.92;
-      this.contentScale = 0.996;
-    });
-    setTimeout((): void => {
-      this.bottomNavIndex = target;
-      if (target === 0) {
-        this.syncWebSessionSnapshotFromAppSession();
-      }
-      this.getUIContext().animateTo({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE }, (): void => {
-        this.contentOpacity = 1;
-        this.contentScale = 1;
-      });
-    }, 100);
+    const involvesHome = target === 0 || this.bottomNavIndex === 0;
+    const albumMeSwitch =
+      (target === 1 && this.bottomNavIndex === 2) || (target === 2 && this.bottomNavIndex === 1);
+
+    if (albumMeSwitch) {
+      const towardMe = target === 2;
+      const outPx = towardMe ? -22 : 22;
+      this.getUIContext().animateTo(
+        { duration: FN_TAB_ALBUM_ME_OUT_MS, curve: FN_TAB_ALBUM_ME_CURVE },
+        (): void => {
+          this.contentTranslateX = outPx;
+        }
+      );
+      setTimeout((): void => {
+        this.bottomNavIndex = target;
+        this.getUIContext().animateTo(
+          { duration: FN_TAB_ALBUM_ME_IN_MS, curve: FN_TAB_ALBUM_ME_CURVE },
+          (): void => {
+            this.contentTranslateX = 0;
+          }
+        );
+      }, Math.floor(FN_TAB_ALBUM_ME_OUT_MS * 0.55));
+      return;
+    }
+
+    if (involvesHome) {
+      const towardHome = target === 0;
+      const outPx = towardHome ? 14 : -12;
+      this.getUIContext().animateTo(
+        { duration: FN_TAB_HOME_CONTENT_OUT_MS, curve: FN_TAB_HOME_CONTENT_CURVE },
+        (): void => {
+          this.contentTranslateX = outPx;
+        }
+      );
+      setTimeout((): void => {
+        this.bottomNavIndex = target;
+        if (target === 0) {
+          this.syncWebSessionSnapshotFromAppSession();
+        }
+        this.getUIContext().animateTo(
+          { duration: FN_TAB_HOME_CONTENT_IN_MS, curve: FN_TAB_HOME_CONTENT_CURVE },
+          (): void => {
+            this.contentTranslateX = 0;
+          }
+        );
+      }, Math.floor(FN_TAB_HOME_CONTENT_OUT_MS * 0.65));
+      return;
+    }
+
+    this.bottomNavIndex = target;
   }
 
   aboutToAppear(): void {
@@ -427,6 +491,8 @@ struct Home {
             })
               .width('100%')
               .height('100%')
+              .visibility(this.bottomNavIndex === 0 ? Visibility.Visible : Visibility.Hidden)
+              .hitTestBehavior(this.bottomNavIndex === 0 ? HitTestMode.Default : HitTestMode.None)
             if (this.bottomNavIndex === 1) {
               GalleryAlbumTab({
                 baseUrl: this.snapWebBase,
@@ -445,8 +511,7 @@ struct Home {
           }
           .width('100%')
           .layoutWeight(1)
-          .opacity(this.contentOpacity)
-          .scale({ x: this.contentScale, y: this.contentScale })
+          .translate({ x: this.contentTranslateX, y: 0 })
 
           // ── 标准鸿蒙底部 Tabs 栏 ────────────────────────────────────
           Row() {

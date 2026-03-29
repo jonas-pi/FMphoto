@@ -1,47 +1,72 @@
 /**
  * 通用 UI 组件：
- * - FnTopBar: 统一子页面顶栏（返回 + 标题）
+ * - FnTopBar: 统一子页面顶栏（与图库首页 1-2-1、按钮 36vp 对齐）
  * - FnPrimaryButton/FnSecondaryButton: 统一主次按钮样式
  * - FnFullLoadingMask: 统一全屏阻断式加载遮罩
  */
+
+import {
+  GALLERY_TOP_BAR_BUTTON_FONT_VP,
+  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
+  GALLERY_TOP_BAR_PAD_LEFT_VP,
+  GALLERY_TOP_BAR_PAD_RIGHT_VP,
+  GALLERY_TOP_BAR_PAD_TOP_VP,
+  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
+  GALLERY_TOP_BAR_TITLE_FONT_VP
+} from './GalleryTopBarLayout';
 
 @Component
 export struct FnTopBar {
   @Prop title: string = '';
   @Prop backText: string = '返回';
-  @Prop backWidth: number = 56;
   @Prop rightText: string = '';
 
   build() {
     Row() {
-      Button(this.backText)
-        .height(34)
-        .backgroundColor($r('app.color.button_secondary_bg'))
-        .fontColor($r('app.color.button_secondary_fg'))
-        .borderRadius($r('app.float.radius_medium'))
-        .onClick((): void => {
-          this.getUIContext().getRouter().back();
-        })
+      Row() {
+        Button(this.backText, { type: ButtonType.Capsule, stateEffect: true })
+          .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .backgroundColor($r('app.color.button_secondary_bg'))
+          .fontColor($r('app.color.button_secondary_fg'))
+          .onClick((): void => {
+            this.getUIContext().getRouter().back();
+          })
+      }
+      .layoutWeight(1)
+      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+      .justifyContent(FlexAlign.Start)
 
       Text(this.title)
-        .layoutWeight(1)
-        .fontSize(20)
+        .layoutWeight(2)
+        .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
         .fontWeight(FontWeight.Medium)
         .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .fontColor($r('app.color.text_primary'))
 
-      if (this.rightText.length > 0) {
-        Text(this.rightText)
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-          .width(this.backWidth)
-          .textAlign(TextAlign.End)
-      } else {
-        Blank().width(this.backWidth)
+      Row() {
+        if (this.rightText.length > 0) {
+          Text(this.rightText)
+            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
       }
+      .layoutWeight(1)
+      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+      .justifyContent(FlexAlign.End)
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 8 })
+    .alignItems(VerticalAlign.Center)
+    .padding({
+      left: GALLERY_TOP_BAR_PAD_LEFT_VP,
+      right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
+      top: GALLERY_TOP_BAR_PAD_TOP_VP,
+      bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
+    })
   }
 }
 

@@ -35,6 +35,14 @@ import {
   pickThumb
 } from './GalleryAlbumCommon';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
+import {
+  GALLERY_SLIDE_DOM_BUDGET_PER_FRAME,
+  GALLERY_SLIDE_FLOW_ROW_RADIUS,
+  GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
+  GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
+  GALLERY_SLIDE_TAIL_FLOW_ROWS,
+  pickIndexedFlatForSlidePointer
+} from './GallerySlidePick';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
@@ -48,6 +56,10 @@ import {
 } from './GalleryHomeTimelineCache';
 import { gallerySetAlbumBackHandler } from './GalleryAlbumHardwareBack';
 import {
+  galleryItemsMatchingSelectedIds,
+  runBatchDownloadGalleryItems
+} from './GalleryBatchDownload';
+import {
   playGalleryEnterSelectionHaptic,
   playGalleryPullRefreshThresholdHaptic
 } from './GallerySelectionHaptic';
@@ -57,6 +69,35 @@ import {
   FN_TAB_SWITCH_IN_DURATION,
   FN_TAB_SWITCH_OUT_DURATION
 } from '../common/FnMotion';
+import {
+  GALLERY_TOP_BAR_BUTTON_FONT_VP,
+  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
+  GALLERY_TOP_BAR_PAD_LEFT_VP,
+  GALLERY_TOP_BAR_PAD_RIGHT_VP,
+  GALLERY_TOP_BAR_PAD_TOP_VP,
+  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
+  GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
+  GALLERY_TOP_BAR_TITLE_FONT_VP
+} from '../common/GalleryTopBarLayout';
+import {
+  GALLERY_BATCH_ACTION_HEIGHT_VP,
+  GALLERY_BATCH_BAR_PAD_BOTTOM_VP,
+  GALLERY_BATCH_BAR_PAD_LEFT_VP,
+  GALLERY_BATCH_BAR_PAD_RIGHT_VP,
+  GALLERY_BATCH_BAR_PAD_TOP_VP,
+  GALLERY_BATCH_BAR_SPACE_VP,
+  GALLERY_BATCH_DESTRUCTIVE_BG,
+  GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_BOTTOM_VP,
+  GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_LEFT_VP,
+  GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_RIGHT_VP,
+  GALLERY_HOME_NAV_CHIP_FONT_VP,
+  GALLERY_HOME_NAV_CHIP_HEIGHT_VP,
+  GALLERY_HOME_NAV_CHIP_PAD_H_VP,
+  GALLERY_HOME_NAV_CHIP_RADIUS_VP,
+  GALLERY_HOME_UPLOAD_FAB_MARGIN_BOTTOM_VP,
+  GALLERY_HOME_UPLOAD_FAB_MARGIN_RIGHT_VP,
+  GALLERY_HOME_UPLOAD_FAB_SIZE_VP
+} from '../common/GalleryButtonStyles';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryTab';
@@ -242,6 +283,7 @@ export struct GalleryAlbumTab {
   @State private gallerySelectionMode: boolean = false;
   @State private gallerySelectedIds: string[] = [];
   @State private galleryBatchDeleting: boolean = false;
+  @State private galleryBatchDownloading: boolean = false;
   /**
    * 主时间线 List 是否响应手指滚动。
    * 划选时临时关闭，避免 List 抢走 Pan；LazyForEach 行 key 勿随多选切换，否则子树重建会中断当前指下手势。
@@ -277,6 +319,8 @@ export struct GalleryAlbumTab {
   @State private gallerySlideGestureActive: boolean = false;
   /** 各缩略图最近一次布局在窗口中的矩形（仅当前可见/曾布局项有值；列表滚动时会清空以防脏矩形） */
   private galleryThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
+  /** AI 搜索结果列表划选命中矩形（键为扁平下标字符串，与 `sg_${flat}` 对应） */
+  private searchThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
   /** 滑动连选：fingerList 不可用时，用长按参考点 + Pan offset 估算指尖位置 */
   private gallerySlideRefX: number = 0;
   private gallerySlideRefY: number = 0;
@@ -390,6 +434,7 @@ export struct GalleryAlbumTab {
     this.gallerySlideLastEndFlat = -1;
     this.gallerySlideLastAppliedEndFlat = -99999;
     this.galleryThumbHitBounds.clear();
+    this.searchThumbHitBounds.clear();
     this.galleryMainListScrollEnabled = true;
   }
 
@@ -529,7 +574,9 @@ export struct GalleryAlbumTab {
     this.gallerySlideLastEndFlat = this.gallerySlideAnchorFlat;
     this.gallerySlideLastAppliedEndFlat = -99999;
     const anchorId = this.itemIdOf(item);
-    if (anchorId.length > 0) {
+    if (this.inSearchMode) {
+      this.recordSearchThumbRect(anchorFlat);
+    } else if (anchorId.length > 0) {
       this.recordGalleryThumbRectFromDom(anchorId, this.galleryThumbDomId(anchorId));
     }
     const win = this.readGestureFingerWindow(ev);
@@ -538,6 +585,15 @@ export struct GalleryAlbumTab {
       this.gallerySlideRefX = vp2px(win.x);
       this.gallerySlideRefY = vp2px(win.y);
       this.gallerySlideHasRef = true;
+    } else if (this.inSearchMode) {
+      const rs = this.searchThumbHitBounds.get(`${anchorFlat}`);
+      if (rs !== undefined) {
+        this.gallerySlideRefX = (rs.left + rs.right) * 0.5;
+        this.gallerySlideRefY = (rs.top + rs.bottom) * 0.5;
+        this.gallerySlideHasRef = true;
+      } else {
+        this.gallerySlideHasRef = false;
+      }
     } else if (anchorId.length > 0) {
       const r = this.galleryThumbHitBounds.get(anchorId);
       if (r !== undefined) {
@@ -613,10 +669,13 @@ export struct GalleryAlbumTab {
 
   /**
    * 根据指尖窗口坐标命中缩略图 flat；仅使用 onAreaChange 写入的 galleryThumbHitBounds。
-   * Pan 滑动过程中只用本方法，禁止在此处对全列表 getRectangleById。
+   * 划选 Pan 的连续更新请用 pickGalleryThumbFlatUnderPointForSlide（缓存被清空后仍会 DOM 回退）。
    * 自后向前扫 row，与后绘制的格在上层一致。
    */
   private pickGalleryThumbFlatUnderPoint(xPx: number, yPx: number): number {
+    if (this.inSearchMode) {
+      return this.pickSearchThumbFlatUnderPoint(xPx, yPx);
+    }
     if (this.galleryThumbHitBounds.size === 0) {
       return -1;
     }
@@ -641,6 +700,104 @@ export struct GalleryAlbumTab {
       }
     }
     return -1;
+  }
+
+  /**
+   * 划选 Pan 命中：先缓存；缺失时在锚点/终点附近的少量行内做 DOM（每帧预算），避免全表 getRectangleById 卡死主线程。
+   */
+  private pickGalleryThumbFlatUnderPointForSlide(xPx: number, yPx: number): number {
+    const fromCache = this.pickGalleryThumbFlatUnderPoint(xPx, yPx);
+    if (fromCache >= 0) {
+      return fromCache;
+    }
+    const seed = this.gallerySlideLastEndFlat >= 0 ? this.gallerySlideLastEndFlat : this.gallerySlideAnchorFlat;
+    const nFlow = this.flowDataSource.totalCount();
+    let domBudget = GALLERY_SLIDE_DOM_BUDGET_PER_FRAME;
+
+    const tryRowNode = (node: GalleryFlowNode): number => {
+      if (node.kind !== 'row') {
+        return -1;
+      }
+      for (let k = node.rowItems.length - 1; k >= 0; k--) {
+        const id = this.itemIdOf(node.rowItems[k]);
+        if (id.length === 0) {
+          continue;
+        }
+        const flat = node.rowFlatIndices[k];
+        const cached = this.galleryThumbHitBounds.get(id);
+        if (cached !== undefined &&
+          xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+          return flat;
+        }
+        if (domBudget <= 0) {
+          continue;
+        }
+        domBudget--;
+        if (this.hitGalleryThumbDomPx(id, xPx, yPx)) {
+          this.recordGalleryThumbRectFromDom(id, this.galleryThumbDomId(id));
+          return flat;
+        }
+      }
+      return -1;
+    };
+
+    if (seed >= 0) {
+      let centerRi = -1;
+      for (let i = 0; i < nFlow; i++) {
+        const node = this.flowDataSource.getData(i);
+        if (node.kind !== 'row') {
+          continue;
+        }
+        for (let k = 0; k < node.rowItems.length; k++) {
+          if (node.rowFlatIndices[k] === seed) {
+            centerRi = i;
+            break;
+          }
+        }
+        if (centerRi >= 0) {
+          break;
+        }
+      }
+      const loR = centerRi >= 0 ? Math.max(0, centerRi - GALLERY_SLIDE_FLOW_ROW_RADIUS) : 0;
+      const hiR = centerRi >= 0 ? Math.min(nFlow - 1, centerRi + GALLERY_SLIDE_FLOW_ROW_RADIUS) : nFlow - 1;
+      for (let ri = hiR; ri >= loR; ri--) {
+        const hit = tryRowNode(this.flowDataSource.getData(ri));
+        if (hit >= 0) {
+          return hit;
+        }
+      }
+    }
+
+    domBudget = GALLERY_SLIDE_DOM_BUDGET_PER_FRAME;
+    let tailRows = 0;
+    for (let ri = nFlow - 1; ri >= 0 && tailRows < GALLERY_SLIDE_TAIL_FLOW_ROWS; ri--) {
+      const node = this.flowDataSource.getData(ri);
+      if (node.kind !== 'row') {
+        continue;
+      }
+      tailRows++;
+      const hit = tryRowNode(node);
+      if (hit >= 0) {
+        return hit;
+      }
+    }
+    return -1;
+  }
+
+  private pickSearchThumbFlatUnderPointForSlide(xPx: number, yPx: number): number {
+    return pickIndexedFlatForSlidePointer(
+      xPx,
+      yPx,
+      this.searchResults.length,
+      this.gallerySlideLastEndFlat,
+      this.gallerySlideAnchorFlat,
+      (ax: number, ay: number): number => this.pickSearchThumbFlatUnderPoint(ax, ay),
+      (fi: number) => this.searchThumbHitBounds.get(`${fi}`),
+      (fi: number, ax: number, ay: number): boolean => this.hitSearchThumbDomPx(fi, ax, ay),
+      (fi: number): void => {
+        this.recordSearchThumbRect(fi);
+      }
+    );
   }
 
   /**
@@ -711,6 +868,129 @@ export struct GalleryAlbumTab {
     return out;
   }
 
+  private searchThumbDomId(flatIdx: number): string {
+    return `sg_${flatIdx}`;
+  }
+
+  private recordSearchThumbRect(flatIdx: number): void {
+    if (flatIdx < 0 || flatIdx >= this.searchResults.length) {
+      return;
+    }
+    try {
+      const info = this.getUIContext().getComponentUtils().getRectangleById(this.searchThumbDomId(flatIdx));
+      const x = info.windowOffset.x as number;
+      const y = info.windowOffset.y as number;
+      const w = info.size.width as number;
+      const h = info.size.height as number;
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
+        this.searchThumbHitBounds.delete(`${flatIdx}`);
+        return;
+      }
+      const rect: GalleryThumbHitRect = {
+        left: x,
+        top: y,
+        right: x + w,
+        bottom: y + h
+      };
+      this.searchThumbHitBounds.set(`${flatIdx}`, rect);
+    } catch (_e) {
+    }
+  }
+
+  private hitSearchThumbDomPx(flatIdx: number, xPx: number, yPx: number): boolean {
+    if (flatIdx < 0 || flatIdx >= this.searchResults.length) {
+      return false;
+    }
+    try {
+      const info = this.getUIContext().getComponentUtils().getRectangleById(this.searchThumbDomId(flatIdx));
+      const left = info.windowOffset.x as number;
+      const top = info.windowOffset.y as number;
+      const w = info.size.width as number;
+      const h = info.size.height as number;
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
+        return false;
+      }
+      return xPx >= left && xPx <= left + w && yPx >= top && yPx <= top + h;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  private pickSearchThumbFlatUnderPoint(xPx: number, yPx: number): number {
+    const n = this.searchResults.length;
+    if (this.searchThumbHitBounds.size === 0 || n <= 0) {
+      return -1;
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      const cached = this.searchThumbHitBounds.get(`${i}`);
+      if (cached === undefined) {
+        continue;
+      }
+      if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private pickSearchThumbFlatForRow(rowStart: number, xPx: number, yPx: number): number {
+    const n = this.searchResults.length;
+    const fromCache = this.pickSearchThumbFlatUnderPoint(xPx, yPx);
+    if (fromCache >= rowStart && fromCache < rowStart + 3 && fromCache < n) {
+      return fromCache;
+    }
+    for (let k = 2; k >= 0; k--) {
+      const fi = rowStart + k;
+      if (fi >= n) {
+        continue;
+      }
+      const cached = this.searchThumbHitBounds.get(`${fi}`);
+      if (cached !== undefined) {
+        if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+          return fi;
+        }
+        continue;
+      }
+      if (this.hitSearchThumbDomPx(fi, xPx, yPx)) {
+        return fi;
+      }
+    }
+    return -1;
+  }
+
+  private collectSearchIdsInFlatRange(lo: number, hi: number): string[] {
+    let a = lo;
+    let b = hi;
+    if (a > b) {
+      const t = a;
+      a = b;
+      b = t;
+    }
+    const out: string[] = [];
+    const n = this.searchResults.length;
+    for (let fi = a; fi <= b && fi < n; fi++) {
+      const id = this.itemIdOf(this.searchResults[fi]);
+      if (id.length > 0) {
+        out.push(id);
+      }
+    }
+    return out;
+  }
+
+  private searchRowCount(): number {
+    const n = this.searchResults.length;
+    return n <= 0 ? 0 : Math.floor((n + 2) / 3);
+  }
+
+  private searchRowIndexArray(): number[] {
+    const c = this.searchRowCount();
+    const out: number[] = [];
+    for (let i = 0; i < c; i++) {
+      out.push(i);
+    }
+    return out;
+  }
+
   /**
    * 以行为基数的划选：选中集 = 进入划选前已有选中 ∪ 锚点 flat～终点 flat 的连续区间（含中间整行）。
    * 终点由指尖下那张缩略图决定；指尖离开格子时沿用 gallerySlideLastEndFlat，避免闪烁。
@@ -731,7 +1011,9 @@ export struct GalleryAlbumTab {
       lo = hi;
       hi = t;
     }
-    const rangeIds = this.collectGalleryIdsInFlatRange(lo, hi);
+    const rangeIds = this.inSearchMode
+      ? this.collectSearchIdsInFlatRange(lo, hi)
+      : this.collectGalleryIdsInFlatRange(lo, hi);
     const seen = new Set<string>();
     const base = this.gallerySlideUnionBase;
     for (let i = 0; i < base.length; i++) {
@@ -761,7 +1043,9 @@ export struct GalleryAlbumTab {
     if (pt === null) {
       return;
     }
-    const hitFlat = this.pickGalleryThumbFlatUnderPoint(pt.x, pt.y);
+    const hitFlat = this.inSearchMode ?
+      this.pickSearchThumbFlatUnderPointForSlide(pt.x, pt.y) :
+      this.pickGalleryThumbFlatUnderPointForSlide(pt.x, pt.y);
     if (hitFlat >= 0) {
       this.gallerySlideLastEndFlat = hitFlat;
     }
@@ -833,6 +1117,23 @@ export struct GalleryAlbumTab {
     this.openPreview(flatIndex);
   }
 
+  private onSearchThumbTap(item: GalleryListItem, flatIndex: number): void {
+    if (Date.now() < this.galleryLongPressIgnoreClickUntil) {
+      return;
+    }
+    if (this.gallerySelectionMode) {
+      const id = this.itemIdOf(item);
+      if (id.length > 0) {
+        this.toggleGallerySelectedId(id);
+      }
+      return;
+    }
+    if (flatIndex < 0 || flatIndex >= this.searchResults.length) {
+      return;
+    }
+    GalleryPreviewNavStore.openPreview(this.baseUrl, this.searchResults, flatIndex);
+  }
+
   /** 批量移入回收站：逐条调用现有 API，成功后 bump 时间轴并防抖刷新 */
   private async confirmAndBatchDeleteGallery(): Promise<void> {
     if (this.gallerySelectedIds.length === 0 || this.galleryBatchDeleting) {
@@ -840,11 +1141,11 @@ export struct GalleryAlbumTab {
     }
     try {
       const dlg = await this.getUIContext().getPromptAction().showDialog({
-        title: '批量删除',
+        title: '批量移入回收站',
         message: '将所选照片/视频移入回收站？',
         buttons: [
           { text: '取消', color: '#99000000' },
-          { text: '删除', color: '#E5484D' }
+          { text: '移入回收站', color: '#E5484D' }
         ]
       });
       if (dlg.index !== 1) {
@@ -876,6 +1177,49 @@ export struct GalleryAlbumTab {
     this.exitGallerySelection();
     this.toast(`已移入回收站 ${ok}/${ids.length}`);
     this.requestBootstrap(true);
+  }
+
+  private async askBatchDownloadImageQuality(): Promise<'original' | 'thumb' | 'cancel'> {
+    try {
+      const choice = await this.getUIContext().getPromptAction().showActionMenu({
+        title: '批量下载图片',
+        buttons: [
+          { text: '原图（体积较大）', color: '#007AFF' },
+          { text: '缩略图（更快）', color: '#007AFF' }
+        ]
+      });
+      if (choice.index < 0) {
+        return 'cancel';
+      }
+      return choice.index === 0 ? 'original' : 'thumb';
+    } catch (_e) {
+      return 'cancel';
+    }
+  }
+
+  private async confirmAndBatchDownloadGallery(): Promise<void> {
+    if (this.gallerySelectedIds.length === 0 || this.galleryBatchDownloading) {
+      return;
+    }
+    const list = this.inSearchMode ? this.searchResults : this.flatItems();
+    const items = galleryItemsMatchingSelectedIds(list, this.gallerySelectedIds);
+    if (items.length === 0) {
+      this.toast('没有可下载的项');
+      return;
+    }
+    this.galleryBatchDownloading = true;
+    try {
+      await runBatchDownloadGalleryItems(
+        this.baseUrl,
+        items,
+        (msg: string): void => {
+          this.toast(msg);
+        },
+        (): Promise<'original' | 'thumb' | 'cancel'> => this.askBatchDownloadImageQuality()
+      );
+    } finally {
+      this.galleryBatchDownloading = false;
+    }
   }
 
   /**
@@ -2276,6 +2620,72 @@ export struct GalleryAlbumTab {
     })
   }
 
+  @Builder
+  private buildSearchGridThumbCell(item: GalleryListItem, flatIndex: number) {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      GalleryNetworkThumb({
+        uri: nasUrl(this.baseUrl, pickThumb(item)),
+        isVideo: isVideoItem(item),
+        isGif: isGifItem(item),
+      })
+        .width('100%')
+        .aspectRatio(1)
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#55000000')
+        .opacity(this.gallerySelectionMode && this.isGalleryIdSelected(this.itemIdOf(item)) ? 1 : 0)
+        .hitTestBehavior(HitTestMode.None)
+        .animation({ duration: 0, curve: Curve.Linear })
+      Row() {
+        Blank().layoutWeight(1)
+        Column() {
+          if (this.isGalleryIdSelected(this.itemIdOf(item))) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(24)
+              .fontColor([$r('app.color.brand_primary')])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+          } else {
+            Stack({ alignContent: Alignment.Center }) {
+              Circle()
+                .width(22)
+                .height(22)
+                .fill(Color.Transparent)
+                .stroke(Color.White)
+                .strokeWidth(2)
+            }
+            .width(24)
+            .height(24)
+          }
+        }
+        .padding({ top: 6, right: 6 })
+      }
+      .width('100%')
+      .hitTestBehavior(HitTestMode.None)
+      .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+    }
+    .id(this.searchThumbDomId(flatIndex))
+    .onAreaChange((): void => {
+      this.recordSearchThumbRect(flatIndex);
+    })
+    .layoutWeight(1)
+    .aspectRatio(1)
+    .backgroundColor(Color.Transparent)
+    .draggable(false)
+    .onClick((): void => {
+      this.onSearchThumbTap(item, flatIndex);
+    })
+  }
+
+  @Builder
+  private searchCellSlot(rowIdx: number, col: number) {
+    if (rowIdx * 3 + col >= this.searchResults.length) {
+      Blank().layoutWeight(1).aspectRatio(1)
+    } else {
+      this.buildSearchGridThumbCell(this.searchResults[rowIdx * 3 + col], rowIdx * 3 + col);
+    }
+  }
+
   // ── build ──────────────────────────────────────────────────────────────────
 
   build() {
@@ -2284,29 +2694,36 @@ export struct GalleryAlbumTab {
       // ── 顶部标题栏 ──────────────────────────────────────────────────────────
       Row() {
         if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
-          // 多选与常态：同一 Row 内用 Stack 叠放、子项 Visibility.Hidden 占位，避免 if/else 换子树导致重排与列表跳动
-          Stack({ alignContent: Alignment.Center }) {
-            Text('图库')
-              .fontSize(22)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
-              .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
-            Button($r('app.string.gallery_batch_cancel'), { type: ButtonType.Capsule, stateEffect: true })
-              .fontSize(14)
-              .height(36)
-              .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
-              .onClick((): void => {
-                this.exitGallerySelection();
-              })
+          // 顶栏 1-2-1：左「图库/取消」、中搜索、右「多选」；批量操作在底部栏与分类页一致
+          Row() {
+          Row() {
+            Stack({ alignContent: Alignment.Center }) {
+              Text('图库')
+                .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .lineHeight(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+              Button($r('app.string.gallery_batch_cancel'), { type: ButtonType.Capsule, stateEffect: true })
+                .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .backgroundColor($r('app.color.button_primary_bg'))
+                .fontColor($r('app.color.button_primary_fg'))
+                .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+                .onClick((): void => {
+                  this.exitGallerySelection();
+                })
+            }
           }
-          .width(72)
-          .height(36)
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.Start)
 
           Row({ space: 8 }) {
             Stack({ alignContent: Alignment.Center }) {
               TextInput({ placeholder: 'AI 搜索照片…', text: this.searchQuery })
                 .width('100%')
-                .height(36)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
                 .borderRadius(18)
                 .backgroundColor($r('app.color.card_background'))
                 .fontSize(14)
@@ -2321,17 +2738,17 @@ export struct GalleryAlbumTab {
                 })
               Text(`已选择 ${this.gallerySelectedIds.length} 张`)
                 .width('100%')
-                .fontSize(15)
+                .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
-                .height(36)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
                 .textAlign(TextAlign.Center)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
             }
             .layoutWeight(1)
-            .height(36)
+            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
 
             Stack({ alignContent: Alignment.Center }) {
               Button() {
@@ -2339,81 +2756,149 @@ export struct GalleryAlbumTab {
                   .fontSize(17)
                   .fontColor([$r('app.color.icon_primary')])
               }
-              .width(36)
-              .height(36)
+              .width(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+              .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
               .borderRadius(18)
               .backgroundColor($r('app.color.card_background'))
               .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
               .onClick((): void => {
                 void this.runSearch(this.searchQuery);
               })
-              // Stack 内不可用 Blank（仅允许 Row/Column/Flex 子级），用空 Column 占位对齐搜索键尺寸
               Column()
-                .width(36)
-                .height(36)
+                .width(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
                 .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
             }
-            .width(36)
-            .height(36)
+            .width(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          }
+          .layoutWeight(2)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .margin({ left: 4, right: 4 })
+
+          Row() {
+            Stack({ alignContent: Alignment.Center }) {
+              Button($r('app.string.gallery_multiselect'), { type: ButtonType.Capsule, stateEffect: true })
+                .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .backgroundColor($r('app.color.button_secondary_bg'))
+                .fontColor($r('app.color.button_secondary_fg'))
+                .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+                .accessibilityText($r('app.string.gallery_multiselect'))
+                .onClick((): void => {
+                  this.enterGallerySelectionModeFromToolbar();
+                })
+            }
           }
           .layoutWeight(1)
-          .height(36)
-          .margin({ left: 14, right: 14 })
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.End)
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .alignItems(VerticalAlign.Center)
+        } else if (this.inSearchMode) {
+          Row() {
+            Stack({ alignContent: Alignment.Center }) {
+              Button('返回图库', { type: ButtonType.Capsule, stateEffect: true })
+                .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .backgroundColor($r('app.color.button_secondary_bg'))
+                .fontColor($r('app.color.button_secondary_fg'))
+                .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+                .onClick((): void => {
+                  this.backToGallery();
+                })
+              Button($r('app.string.gallery_batch_cancel'), { type: ButtonType.Capsule, stateEffect: true })
+                .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .backgroundColor($r('app.color.button_primary_bg'))
+                .fontColor($r('app.color.button_primary_fg'))
+                .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+                .onClick((): void => {
+                  this.exitGallerySelection();
+                })
+            }
+          }
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.Start)
 
-          // 与「删除」同为 Capsule：多选入口仅文字，无左侧图标
-          Stack({ alignContent: Alignment.Center }) {
-            Button($r('app.string.gallery_multiselect'), { type: ButtonType.Capsule, stateEffect: true })
-            .fontSize(14)
+          Text(this.gallerySelectionMode ? `已选择 ${this.gallerySelectedIds.length} 张` : 'AI 搜索结果')
+            .layoutWeight(2)
+            .fontSize(this.gallerySelectionMode ? GALLERY_TOP_BAR_SUBTITLE_FONT_VP : GALLERY_TOP_BAR_TITLE_FONT_VP)
+            .fontWeight(FontWeight.Medium)
+            .textAlign(TextAlign.Center)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
             .fontColor($r('app.color.text_primary'))
-            .height(36)
-            .padding({ left: 14, right: 14 })
-            .backgroundColor($r('app.color.card_background'))
-            .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
-            .accessibilityText($r('app.string.gallery_multiselect'))
-            .onClick((): void => {
-              this.enterGallerySelectionModeFromToolbar();
-            })
-            Button($r('app.string.gallery_batch_delete'), { type: ButtonType.Capsule, stateEffect: true })
-              .fontSize(14)
-              .height(36)
-              .fontColor(Color.White)
-              .backgroundColor('#E11D48')
-              .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
-              .enabled(this.gallerySelectedIds.length > 0 && !this.galleryBatchDeleting)
+
+          Row() {
+            Stack({ alignContent: Alignment.Center }) {
+              Button($r('app.string.gallery_multiselect'), { type: ButtonType.Capsule, stateEffect: true })
+                .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+                .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+                .backgroundColor($r('app.color.button_secondary_bg'))
+                .fontColor($r('app.color.button_secondary_fg'))
+                .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+                .accessibilityText($r('app.string.gallery_multiselect'))
+                .onClick((): void => {
+                  this.enterGallerySelectionModeFromToolbar();
+                })
+            }
+          }
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.End)
+        } else {
+          Row()
+            .layoutWeight(1)
+            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+
+          Text(this.inCategoryMode ? '媒体分类' : (this.inSmartCategoryMode ? '智能分类' : '人物'))
+            .layoutWeight(2)
+            .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
+            .fontWeight(FontWeight.Medium)
+            .textAlign(TextAlign.Center)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .fontColor($r('app.color.text_primary'))
+
+          Row() {
+            Button('返回图库', { type: ButtonType.Capsule, stateEffect: true })
+              .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+              .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+              .backgroundColor($r('app.color.button_secondary_bg'))
+              .fontColor($r('app.color.button_secondary_fg'))
               .onClick((): void => {
-                void this.confirmAndBatchDeleteGallery();
+                this.backToGallery();
               })
           }
-          .height(36)
-        } else {
-          Text(this.inSearchMode ? 'AI 搜索结果' : (this.inCategoryMode ? '媒体分类' : (this.inSmartCategoryMode ? '智能分类' : '人物')))
-            .fontSize(22)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-          Blank()
-          Button('返回图库', { type: ButtonType.Capsule, stateEffect: true })
-            .fontSize(14)
-            .height(36)
-            .onClick((): void => {
-              this.backToGallery();
-            })
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.End)
         }
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+      .padding({
+        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
+        right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
+        top: GALLERY_TOP_BAR_PAD_TOP_VP,
+        bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
+      })
 
       // ── 主页面分类入口：多选时隐藏但占位不变（Visibility.Hidden），避免时间线列表整体上移
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         Row({ space: 8 }) {
           Button() {
             Text('媒体分类')
-              .fontSize(13)
+              .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
               .fontColor($r('app.color.text_primary'))
           }
-          .height(40)
-          .padding({ left: 12, right: 12 })
-          .borderRadius(20)
+          .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+          .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
+          .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
@@ -2429,12 +2914,12 @@ export struct GalleryAlbumTab {
           })
           Button() {
             Text('智能分类')
-              .fontSize(13)
+              .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
               .fontColor($r('app.color.text_primary'))
           }
-          .height(40)
-          .padding({ left: 12, right: 12 })
-          .borderRadius(20)
+          .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+          .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
+          .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
@@ -2450,12 +2935,12 @@ export struct GalleryAlbumTab {
           })
           Button() {
             Text('人物')
-              .fontSize(13)
+              .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
               .fontColor($r('app.color.text_primary'))
           }
-          .height(40)
-          .padding({ left: 12, right: 12 })
-          .borderRadius(20)
+          .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+          .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
+          .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
@@ -2469,9 +2954,34 @@ export struct GalleryAlbumTab {
               this.toast('打开人物页失败');
             });
           })
+          Button() {
+            Text('回收站')
+              .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+          .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
+          .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
+          .backgroundColor($r('app.color.card_background'))
+          .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+          .enabled(!this.gallerySelectionMode)
+          .onClick((): void => {
+            this.exitGallerySelection();
+            this.playModeSwitchMotion();
+            this.getUIContext().getRouter().pushUrl({
+              url: 'pages/RecycleBinPage',
+              params: { baseUrl: this.baseUrl }
+            }).catch((_e: Error): void => {
+              this.toast('打开回收站失败');
+            });
+          })
         }
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 8 })
+        .padding({
+          left: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_LEFT_VP,
+          right: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_RIGHT_VP,
+          bottom: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_BOTTOM_VP
+        })
       }
 
       // ── 搜索结果视图 ──────────────────────────────────────────────────────────
@@ -2493,35 +3003,148 @@ export struct GalleryAlbumTab {
               .textAlign(TextAlign.Center)
               .padding({ top: 40, left: 24, right: 24 })
           } else {
-            // 搜索结果 3 列网格
-            Grid() {
-              ForEach(this.searchResults, (item: GalleryListItem, idx: number) => {
-                GridItem() {
-                  GalleryNetworkThumb({
-                    uri: nasUrl(this.baseUrl, pickThumb(item)),
-                    isVideo: isVideoItem(item),
-                    isGif: isGifItem(item),
-                  })
+            Column() {
+              List() {
+                ForEach(this.searchRowIndexArray(), (rowIdx: number) => {
+                  ListItem() {
+                    Row({ space: 2 }) {
+                      this.searchCellSlot(rowIdx, 0)
+                      this.searchCellSlot(rowIdx, 1)
+                      this.searchCellSlot(rowIdx, 2)
+                    }
+                    .width('100%')
+                    .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+                    .parallelGesture(GestureGroup(GestureMode.Parallel,
+                      LongPressGesture({ repeat: false, duration: 420 })
+                        .onAction((ev: GestureEvent): void => {
+                          this.endGallerySlideSelectGesture();
+                          const pt = this.readGestureFingerWindow(ev);
+                          if (pt === null) {
+                            return;
+                          }
+                          const xPx = vp2px(pt.x);
+                          const yPx = vp2px(pt.y);
+                          const rowStart = rowIdx * 3;
+                          const fi = this.pickSearchThumbFlatForRow(rowStart, xPx, yPx);
+                          if (fi < 0 || fi >= this.searchResults.length) {
+                            return;
+                          }
+                          const longPressItem = this.searchResults[fi];
+                          this.onGalleryThumbLongPress(longPressItem);
+                          if (!this.gallerySelectionMode) {
+                            return;
+                          }
+                          if (this.gallerySlideGestureActive) {
+                            return;
+                          }
+                          this.beginGallerySlideSelectGesture(ev, longPressItem, fi);
+                        }),
+                      PanGesture({
+                        fingers: 1,
+                        direction: this.gallerySlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
+                        distance: this.gallerySlideGestureActive ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
+                          GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE
+                      })
+                        .onActionStart((ev: GestureEvent): void => {
+                          if (!this.gallerySelectionMode) {
+                            return;
+                          }
+                          if (this.gallerySlideGestureActive) {
+                            this.endGallerySlideSelectGesture();
+                          }
+                          const pt = this.readGestureFingerWindow(ev);
+                          if (pt === null) {
+                            return;
+                          }
+                          const xPx = vp2px(pt.x);
+                          const yPx = vp2px(pt.y);
+                          const rowStart = rowIdx * 3;
+                          const fi = this.pickSearchThumbFlatForRow(rowStart, xPx, yPx);
+                          if (fi < 0 || fi >= this.searchResults.length) {
+                            return;
+                          }
+                          this.beginGallerySlideSelectGesture(ev, this.searchResults[fi], fi);
+                        })
+                        .onActionUpdate((ev: GestureEvent): void => {
+                          this.onGallerySlidePanUpdate(ev);
+                        })
+                        .onActionEnd((): void => {
+                          this.endGallerySlideSelectGesture();
+                        })
+                        .onActionCancel((): void => {
+                          this.endGallerySlideSelectGesture();
+                        })
+                    ))
+                    .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+                      if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
+                        return GestureJudgeResult.CONTINUE;
+                      }
+                      if (!this.gallerySelectionMode) {
+                        return GestureJudgeResult.REJECT;
+                      }
+                      return GestureJudgeResult.CONTINUE;
+                    })
+                  }
+                  .draggable(false)
+                }, (rowIdx: number) => `srrow_${rowIdx}`)
+                ListItem() {
+                  Column() {
+                    Blank()
+                      .width('100%')
+                      .height(this.gallerySelectionMode && this.gallerySelectedIds.length > 0 ? 88 : 32)
+                  }
                   .width('100%')
-                  .aspectRatio(1)
-                  .onClick((): void => {
-                    GalleryPreviewNavStore.openPreview(
-                      this.baseUrl, this.searchResults, idx
-                    );
-                  })
                 }
-              }, (item: GalleryListItem, idx: number) => `sr_${idx}_${pickThumb(item)}`)
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .cachedCount(6)
+              .edgeEffect(EdgeEffect.Spring)
+              .scrollBar(BarState.Auto)
+              .divider({ strokeWidth: 0 })
+              .enableScrollInteraction(this.galleryMainListScrollEnabled)
+              .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
+                if (!this.gallerySlideGestureActive && !this.galleryMainListScrollEnabled) {
+                  this.galleryMainListScrollEnabled = true;
+                }
+                if (!this.gallerySlideGestureActive) {
+                  this.searchThumbHitBounds.clear();
+                }
+              })
+
+              if (this.gallerySelectionMode && this.gallerySelectedIds.length > 0) {
+                Row({ space: GALLERY_BATCH_BAR_SPACE_VP }) {
+                  Button($r('app.string.gallery_batch_download'), { type: ButtonType.Capsule, stateEffect: true })
+                    .layoutWeight(1)
+                    .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
+                    .fontColor($r('app.color.text_primary'))
+                    .backgroundColor($r('app.color.card_background'))
+                    .enabled(!this.galleryBatchDownloading)
+                    .onClick((): void => {
+                      void this.confirmAndBatchDownloadGallery();
+                    })
+                  Button($r('app.string.gallery_batch_delete'), { type: ButtonType.Capsule, stateEffect: true })
+                    .layoutWeight(1)
+                    .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
+                    .fontColor(Color.White)
+                    .backgroundColor(GALLERY_BATCH_DESTRUCTIVE_BG)
+                    .enabled(!this.galleryBatchDeleting)
+                    .onClick((): void => {
+                      void this.confirmAndBatchDeleteGallery();
+                    })
+                }
+                .width('100%')
+                .padding({
+                  left: GALLERY_BATCH_BAR_PAD_LEFT_VP,
+                  right: GALLERY_BATCH_BAR_PAD_RIGHT_VP,
+                  top: GALLERY_BATCH_BAR_PAD_TOP_VP,
+                  bottom: GALLERY_BATCH_BAR_PAD_BOTTOM_VP
+                })
+                .backgroundColor($r('app.color.page_background'))
+              }
             }
-            .columnsTemplate('1fr 1fr 1fr')
-            .columnsGap(2)
-            .rowsGap(2)
-            .cachedCount(6)
             .width('100%')
             .layoutWeight(1)
-            .scrollBar(BarState.Auto)
-            .edgeEffect(EdgeEffect.Spring)
-
-            Blank().height(32)
           }
         }
         .width('100%')
@@ -2832,6 +3455,7 @@ export struct GalleryAlbumTab {
         }
 
         if (!this.bootLoading) {
+          Column() {
           // 官方 Refresh：offset 为触发刷新所需下拉距离（vp）；friction 略增使下拉更「实在」
           Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 78 }) {
             List({ scroller: this.scrollerRef }) {
@@ -2877,6 +3501,8 @@ export struct GalleryAlbumTab {
                   .parallelGesture(GestureGroup(GestureMode.Parallel,
                     LongPressGesture({ repeat: false, duration: 420 })
                       .onAction((ev: GestureEvent): void => {
+                        // 上一轮若未收到 Pan End/Cancel，gallerySlideGestureActive 会残留，导致二次长按无法 begin
+                        this.endGallerySlideSelectGesture();
                         const pt = this.readGestureFingerWindow(ev);
                         if (pt === null) {
                           return;
@@ -2900,22 +3526,20 @@ export struct GalleryAlbumTab {
                           return;
                         }
                         this.beginGallerySlideSelectGesture(ev, longPressItem, fi);
-                      })
-                      .onActionEnd((): void => {
-                        this.endGallerySlideSelectGesture();
-                      })
-                      .onActionCancel((): void => {
-                        this.endGallerySlideSelectGesture();
                       }),
                     PanGesture({
                       fingers: 1,
                       direction: this.gallerySlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
-                      distance: this.gallerySlideGestureActive ? 5 : 12
+                      distance: this.gallerySlideGestureActive ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
+                        GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE
                     })
                       .onActionStart((ev: GestureEvent): void => {
                         // 二次划选：多选下先横向拖动即进入划选（纵向由 Horizontal Pan 不接管，列表可滚）
-                        if (!this.gallerySelectionMode || this.gallerySlideGestureActive) {
+                        if (!this.gallerySelectionMode) {
                           return;
+                        }
+                        if (this.gallerySlideGestureActive) {
+                          this.endGallerySlideSelectGesture();
                         }
                         const pt = this.readGestureFingerWindow(ev);
                         if (pt === null) {
@@ -2972,7 +3596,7 @@ export struct GalleryAlbumTab {
                     .textAlign(TextAlign.Center)
                     .padding(12)
                 }
-                Blank().height(32)
+                Blank().height(this.gallerySelectionMode && this.gallerySelectedIds.length > 0 ? 88 : 32)
               }
               .width('100%')
             }
@@ -3020,6 +3644,40 @@ export struct GalleryAlbumTab {
           .onRefreshing((): void => {
             void this.onGalleryTimelinePullRefresh();
           })
+
+            if (this.gallerySelectionMode && this.gallerySelectedIds.length > 0) {
+              Row({ space: GALLERY_BATCH_BAR_SPACE_VP }) {
+                Button($r('app.string.gallery_batch_download'), { type: ButtonType.Capsule, stateEffect: true })
+                  .layoutWeight(1)
+                  .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
+                  .fontColor($r('app.color.text_primary'))
+                  .backgroundColor($r('app.color.card_background'))
+                  .enabled(!this.galleryBatchDownloading)
+                  .onClick((): void => {
+                    void this.confirmAndBatchDownloadGallery();
+                  })
+                Button($r('app.string.gallery_batch_delete'), { type: ButtonType.Capsule, stateEffect: true })
+                  .layoutWeight(1)
+                  .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
+                  .fontColor(Color.White)
+                  .backgroundColor(GALLERY_BATCH_DESTRUCTIVE_BG)
+                  .enabled(!this.galleryBatchDeleting)
+                  .onClick((): void => {
+                    void this.confirmAndBatchDeleteGallery();
+                  })
+              }
+              .width('100%')
+              .padding({
+                left: GALLERY_BATCH_BAR_PAD_LEFT_VP,
+                right: GALLERY_BATCH_BAR_PAD_RIGHT_VP,
+                top: GALLERY_BATCH_BAR_PAD_TOP_VP,
+                bottom: GALLERY_BATCH_BAR_PAD_BOTTOM_VP
+              })
+              .backgroundColor($r('app.color.page_background'))
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
         }
       }
       }
@@ -3027,29 +3685,36 @@ export struct GalleryAlbumTab {
       .height('100%')
       .backgroundColor($r('app.color.page_background'))
 
+      if (this.galleryBatchDeleting) {
+        FnFullLoadingMask({ text: '移入回收站中…' })
+      }
+      if (this.galleryBatchDownloading) {
+        FnFullLoadingMask({ text: '下载中…' })
+      }
+
       // 仅在图库主视图显示上传入口，避免与子模式操作冲突
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         if (this.uploading) {
           FnFullLoadingMask({ text: this.uploadText.length > 0 ? this.uploadText : '上传中…' })
         }
-        if (this.galleryBatchDeleting) {
-          FnFullLoadingMask({ text: '删除中…' })
-        }
         if (!this.gallerySelectionMode) {
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          SymbolGlyph($r('sys.symbol.plus'))
-            .fontSize(24)
-            .fontColor([Color.White])
-            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-        }
-        .width(56)
-        .height(56)
-        .backgroundColor($r('app.color.brand_primary'))
-        .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 6 })
-        .margin({ right: 18, bottom: 88 })
-        .onClick((): void => {
-          this.startUpload();
-        })
+          Button({ type: ButtonType.Circle, stateEffect: true }) {
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(24)
+              .fontColor([Color.White])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+          }
+          .width(GALLERY_HOME_UPLOAD_FAB_SIZE_VP)
+          .height(GALLERY_HOME_UPLOAD_FAB_SIZE_VP)
+          .backgroundColor($r('app.color.brand_primary'))
+          .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 6 })
+          .margin({
+            right: GALLERY_HOME_UPLOAD_FAB_MARGIN_RIGHT_VP,
+            bottom: GALLERY_HOME_UPLOAD_FAB_MARGIN_BOTTOM_VP
+          })
+          .onClick((): void => {
+            this.startUpload();
+          })
         }
       }
     }
