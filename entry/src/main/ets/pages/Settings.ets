@@ -4,7 +4,15 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
-import { FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
+import {
+  GALLERY_TOP_BAR_BUTTON_FONT_VP,
+  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
+  GALLERY_TOP_BAR_PAD_LEFT_VP,
+  GALLERY_TOP_BAR_PAD_RIGHT_VP,
+  GALLERY_TOP_BAR_PAD_TOP_VP,
+  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
+  GALLERY_TOP_BAR_TITLE_FONT_VP
+} from '../common/GalleryTopBarLayout';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -49,30 +57,55 @@ struct Settings {
   build() {
     Column({ space: 16 }) {
       Row() {
-        FnSecondaryButton({
-          text: $r('app.string.cancel')
-        })
-          .onClick((): void => {
-            this.getUIContext().getRouter().back();
-          })
-        Blank()
-        Text($r('app.string.settings'))
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-        Blank()
-        FnPrimaryButton({
-          text: $r('app.string.save')
-        })
-          .onClick((): void => {
-            const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-            AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
-            void AppSession.persist(ctx).then(() => {
+        Row() {
+          Button($r('app.string.cancel'), { type: ButtonType.Capsule, stateEffect: true })
+            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+            .backgroundColor($r('app.color.button_secondary_bg'))
+            .fontColor($r('app.color.button_secondary_fg'))
+            .onClick((): void => {
               this.getUIContext().getRouter().back();
-            });
-          })
+            })
+        }
+        .layoutWeight(1)
+        .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+        .justifyContent(FlexAlign.Start)
+
+        Text($r('app.string.settings'))
+          .layoutWeight(2)
+          .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .fontColor($r('app.color.text_primary'))
+
+        Row() {
+          Button($r('app.string.save'), { type: ButtonType.Capsule, stateEffect: true })
+            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+            .backgroundColor($r('app.color.button_primary_bg'))
+            .fontColor($r('app.color.button_primary_fg'))
+            .onClick((): void => {
+              const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+              AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
+              void AppSession.persist(ctx).then(() => {
+                this.getUIContext().getRouter().back();
+              });
+            })
+        }
+        .layoutWeight(1)
+        .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+        .justifyContent(FlexAlign.End)
       }
       .width('100%')
-      .padding({ left: 8, right: 8, top: 8 })
+      .alignItems(VerticalAlign.Center)
+      .padding({
+        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
+        right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
+        top: GALLERY_TOP_BAR_PAD_TOP_VP,
+        bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
+      })
 
       Text($r('app.string.album_parent_label'))
         .fontSize(14)

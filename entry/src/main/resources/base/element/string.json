@@ -154,7 +154,11 @@
     },
     {
       "name": "gallery_batch_delete",
-      "value": "删除"
+      "value": "移入回收站"
+    },
+    {
+      "name": "gallery_batch_download",
+      "value": "下载"
     },
     {
       "name": "gallery_batch_no_id",

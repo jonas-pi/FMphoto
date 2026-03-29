@@ -12,6 +12,16 @@ export const FN_TAB_SWITCH_OUT_DURATION = 140;
 export const FN_TAB_SWITCH_IN_DURATION = 200;
 export const FN_TAB_SWITCH_CURVE = Curve.EaseInOut;
 
+/** 底部「相册 ↔ 我的」内容区滑入滑出（避免仅用 index 瞬切带来的割裂感） */
+export const FN_TAB_ALBUM_ME_OUT_MS = 200;
+export const FN_TAB_ALBUM_ME_IN_MS = 300;
+export const FN_TAB_ALBUM_ME_CURVE = Curve.EaseInOut;
+
+/** 首页 Web ↔ 相册：轻位移衔接，整栈保持不透明以免底层 Web 透出 */
+export const FN_TAB_HOME_CONTENT_OUT_MS = 130;
+export const FN_TAB_HOME_CONTENT_IN_MS = 220;
+export const FN_TAB_HOME_CONTENT_CURVE = Curve.EaseInOut;
+
 export const FN_UI_FADE_TOGGLE_DURATION = 200;
 export const FN_UI_FADE_TOGGLE_CURVE = Curve.EaseInOut;
 

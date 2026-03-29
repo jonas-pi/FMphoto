@@ -8,6 +8,7 @@
     "pages/MediaCategoryPage",
     "pages/SmartCategoryPage",
     "pages/PersonPage",
+    "pages/RecycleBinPage",
     "pages/Settings"
   ]
 }

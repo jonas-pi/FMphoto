@@ -31,6 +31,7 @@ import {
   MagicSearchDoBody,
   MediaCategoryItem,
   MediaCategoryData,
+  RecycleBinListData,
   SmartCategoryData,
   AiPersonData,
   AiPersonDetailData,
@@ -138,6 +139,8 @@ const GALLERY_FOLDER_FILELIST_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/folder_view/getFileList`,
   '/api/v1/folder_view/getFileList'
 ];
+/** 回收站列表：签名 path 与 gallery 系列一致为 /p/api/v1/... */
+const RECYCLE_BIN_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/recycle-bin/list`;
 
 /** 疑似证书类错误码（NetStack） */
 const CERT_CODES: number[] = [2300060, 2300058, 2300059, 2300077];
@@ -2149,6 +2152,34 @@ export class FnHttpClient {
   }
 
   /**
+   * 回收站列表：GET /p/api/v1/recycle-bin/list
+   * start_time / end_time 与相册接口一致：`YYYY:MM:DD HH:mm:ss`（空格分隔日期与时间）。
+   */
+  async getRecycleBinList(
+    offset: number,
+    limit: number,
+    startTime: string,
+    endTime: string,
+    timeoutMs: number = 25000
+  ): Promise<FnClientResult<RecycleBinListData>> {
+    const params: Record<string, string | number | boolean> = {};
+    params['offset'] = offset;
+    params['limit'] = limit;
+    params['start_time'] = startTime;
+    params['end_time'] = endTime;
+    const qs = buildGallerySortedQuery(params);
+    const pathCandidates: string[] = [
+      `${RECYCLE_BIN_LIST_SIGN_PATH}?${qs}`,
+      `/api/v1/recycle-bin/list?${qs}`
+    ];
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: RECYCLE_BIN_LIST_SIGN_PATH,
+      queryParams: params
+    };
+    return this.requestGalleryGetJson<RecycleBinListData>(pathCandidates, gallerySign, timeoutMs, 3);
+  }
+
+  /**
    * 将媒体移入回收站：POST /p/api/v1/recycle-bin/add
    * 由于不同版本 NAS 请求体字段存在差异，这里按多种候选 body 依次尝试，提升兼容性。
    */
@@ -2227,6 +2258,61 @@ export class FnHttpClient {
       return { success: false, message: lastMsg };
     } catch (e) {
       return { success: false, message: String(e) || '删除请求异常' };
+    }
+  }
+
+  /**
+   * 从回收站恢复：POST /p/api/v1/recycle-bin/restore，body `{"ids":[84291,84290,...]}`
+   */
+  async restoreRecycleBinPhotos(
+    ids: number[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<Object>> {
+    const clean: number[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const n = Math.floor(Number(ids[i]));
+      if (Number.isFinite(n) && n > 0) {
+        clean.push(n);
+      }
+    }
+    if (clean.length === 0) {
+      return { success: false, message: 'ids 无效' };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/recycle-bin/restore`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const bodyStr = `{"ids":[${clean.join(',')}]}`;
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '响应解析失败' };
+      }
+      if (FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+        return { success: true, data: parsed['data'] as Object };
+      }
+      const errLine = FnHttpClient.envelopeErrorLine(parsed);
+      return { success: false, message: errLine.length > 0 ? errLine : '恢复失败' };
+    } catch (e) {
+      return { success: false, message: String(e) || '恢复请求异常' };
     }
   }
 

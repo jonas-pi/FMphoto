@@ -32,6 +32,14 @@ import {
   FN_UI_FADE_TOGGLE_CURVE,
   FN_UI_FADE_TOGGLE_DURATION
 } from '../common/FnMotion';
+import {
+  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
+  GALLERY_TOP_BAR_PAD_LEFT_VP,
+  GALLERY_TOP_BAR_PAD_RIGHT_VP,
+  GALLERY_TOP_BAR_PAD_TOP_VP,
+  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
+  GALLERY_TOP_BAR_SUBTITLE_FONT_VP
+} from '../common/GalleryTopBarLayout';
 
 /** 与 LazyForEach 配套的轻量数据源 */
 interface PreviewDataChangeListener {
@@ -904,9 +912,11 @@ struct GalleryPreview {
   @Builder
   private topCircleAction(icon: Resource, action: () => void) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      SymbolGlyph(icon).fontSize(20).fontColor([this.fgColor()])
+      SymbolGlyph(icon).fontSize(18).fontColor([this.fgColor()])
     }
-    .width(40).height(40).backgroundColor(this.btnBg())
+    .width(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+    .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+    .backgroundColor(this.btnBg())
     .onClick(action)
   }
 
@@ -963,36 +973,46 @@ struct GalleryPreview {
       // 顶/底栏 Row 本身会吸收对其区域的点击，中间透明 Blank 则传递到 Swiper。
       Column() {
 
-        // 顶部工具栏
+        // 顶部工具栏（与图库顶栏 1-2-1、36vp 触控高度对齐）
         Row() {
-          // 左侧区域（固定 88px，与右侧等宽，确保标题真正居中）
           Row() {
             this.topCircleAction($r('sys.symbol.chevron_backward'), (): void => {
               this.getUIContext().getRouter().back();
             })
           }
-          .width(88).justifyContent(FlexAlign.Start)
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.Start)
 
-          // 居中标题
           Text(this.titleCounter())
-            .fontSize(15).fontWeight(FontWeight.Medium).fontColor(this.fgColor())
-            .layoutWeight(1).textAlign(TextAlign.Center)
+            .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.fgColor())
+            .layoutWeight(2)
+            .textAlign(TextAlign.Center)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          // 右侧区域（固定 88px）：原图（已加载后消失）+ 更多
           Row({ space: 8 }) {
             if (this.currentHasOriginal() && !this.originalShowing) {
-              // “查看原图”使用图片语义图标，避免与“下载”动作混淆
               this.topCircleAction($r('sys.symbol.picture'), (): void => {
                 this.loadOriginalToken++;
               })
             }
             this.topCircleAction($r('sys.symbol.more'), (): void => { this.openDetailsPanel(); })
           }
-          .width(88).justifyContent(FlexAlign.End)
+          .layoutWeight(1)
+          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+          .justifyContent(FlexAlign.End)
         }
-        .width('100%').height(56)
-        .padding({ left: 8, right: 8 })
+        .width('100%')
         .alignItems(VerticalAlign.Center)
+        .padding({
+          left: GALLERY_TOP_BAR_PAD_LEFT_VP,
+          right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
+          top: GALLERY_TOP_BAR_PAD_TOP_VP,
+          bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
+        })
         .backgroundColor(this.toolbarBg())
         .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
 
