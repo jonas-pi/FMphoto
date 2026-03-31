@@ -1,6 +1,14 @@
 /node_modules
 /oh_modules
 /.preview
-/build
+/build/*
+# 仅放行发布需要的未签名 HAP；其余 build 产物继续忽略
+!/build/default/
+/build/default/*
+!/build/default/outputs/
+/build/default/outputs/*
+!/build/default/outputs/default/
+/build/default/outputs/default/*
+!/build/default/outputs/default/entry-default-unsigned.hap
 /.cxx
 /.test
