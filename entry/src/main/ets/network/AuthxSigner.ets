@@ -5,10 +5,30 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { FnJsonValue } from '../model/FnApiTypes';
 
-const API_KEY = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
-const API_SECRET = '16CCEB3D-AB42-077D-36A1-F355324E4237';
 const MD5_TAG = 'AuthxMD5';
 const SHA256_TAG = 'AuthxSHA256';
+/**
+ * OpenAPI Authx 凭据（运行时注入）：
+ * - 不再在源码硬编码，避免凭据泄露风险。
+ * - 由登录流程在拿到服务端会话后调用 setOpenApiAuthxCredentials 注入。
+ */
+let runtimeApiKey: string = '';
+let runtimeApiSecret: string = '';
+
+/**
+ * 设置 OpenAPI Authx 签名凭据。
+ * 说明：调用方应在登录成功后立即注入；空值将导致后续签名失败并提示重新登录。
+ */
+export function setOpenApiAuthxCredentials(apiKey: string, apiSecret: string): void {
+  runtimeApiKey = apiKey.trim();
+  runtimeApiSecret = apiSecret.trim();
+}
+
+/** 清理 OpenAPI Authx 签名凭据（退出登录或会话失效时调用）。 */
+export function clearOpenApiAuthxCredentials(): void {
+  runtimeApiKey = '';
+  runtimeApiSecret = '';
+}
 
 export function generateRandomDigits(start: number = 100000, end: number = 1000000): string {
   return Math.floor(Math.random() * (end - start) + start).toString();
@@ -313,12 +333,15 @@ export async function md5HexUtf8(text: string): Promise<string> {
  * @param bodyForSign 已与请求体一致的 JSON 对象（含 nonce）
  */
 export async function genFnAuthx(path: string, bodyForSign: Record<string, FnJsonValue> | null): Promise<string> {
+  if (runtimeApiKey.length === 0 || runtimeApiSecret.length === 0) {
+    throw new Error('Authx 凭据缺失，请先登录以获取签名凭据');
+  }
   const nonce = generateRandomDigits();
   const timestamp = Date.now();
   const dataJson = bodyForSign !== null ? JSON.stringify(bodyForSign) : '';
   const dataJsonMd5 = await md5HexUtf8(dataJson);
   const signStr =
-    `${API_KEY}_${path}_${nonce}_${timestamp}_${dataJsonMd5}_${API_SECRET}`;
+    `${runtimeApiKey}_${path}_${nonce}_${timestamp}_${dataJsonMd5}_${runtimeApiSecret}`;
   const sign = await md5HexUtf8(signStr);
   return `nonce=${nonce}&timestamp=${timestamp}&sign=${sign}`;
 }

@@ -80,6 +80,8 @@ struct Login {
     pass: string,
     token: string,
     wsSignKeyB64: string,
+    openApiAuthxKey: string,
+    openApiAuthxSecret: string,
     longTokenFromWs?: string
   ): Promise<void> {
     /** 内置 Web 固定 https:5667，与登录 base 可能不同，一并加入信任列表（自签证书） */
@@ -104,7 +106,10 @@ struct Login {
       trustedHosts: CertPolicy.dumpAll(),
       fnosLongToken: longTok,
       loginViaWebSocket: true,
-      wsSignKeyB64: wsSignKeyB64
+      wsSignKeyB64: wsSignKeyB64,
+      // Authx 改为登录后动态注入：此处持久化用于冷启动恢复，避免源码硬编码。
+      openApiAuthxKey: openApiAuthxKey,
+      openApiAuthxSecret: openApiAuthxSecret
     };
 
     let existing: StoredSession | null = null;
@@ -143,8 +148,14 @@ struct Login {
     if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
       hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok');
       const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
+      const authxKey = wsRes.token;
+      const authxSecret = sk;
+      if (authxSecret.length === 0) {
+        this.errorText = '登录成功但未拿到签名密钥，请重试';
+        return;
+      }
       const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-      await this.persistSessionAndGoHome(ctx, server, user, pass, wsRes.token, sk, lt);
+      await this.persistSessionAndGoHome(ctx, server, user, pass, wsRes.token, sk, authxKey, authxSecret, lt);
       return;
     }
     if (wsRes.certificateError === true && !trusted) {

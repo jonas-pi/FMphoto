@@ -20,6 +20,9 @@ const K_FNOS_LONG_TOKEN = 'fnos_long_token';
 const K_LOGIN_VIA_WS = 'login_via_ws';
 /** WS HMAC：解密 secret 得到的密钥原始字节，以 Base64 存储（与 Python hmac_key 一致） */
 const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
+/** OpenAPI Authx：登录阶段动态获取并持久化，避免源码硬编码敏感常量 */
+const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
+const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 /** 首次启动免责声明同意标记：1=已同意，0/空=未同意 */
 const K_LEGAL_ACCEPTED = 'legal_notice_accepted';
 
@@ -37,6 +40,10 @@ export interface StoredSession {
   loginViaWebSocket: boolean;
   /** secret 解密密钥 K 的 Base64：与 WS HMAC、H5 localStorage「fnos-Secret」相同（见 sample） */
   wsSignKeyB64: string;
+  /** OpenAPI Authx 的动态 key（登录后注入；用于 /v/api/v1 签名） */
+  openApiAuthxKey: string;
+  /** OpenAPI Authx 的动态 secret（登录后注入；用于 /v/api/v1 签名） */
+  openApiAuthxSecret: string;
 }
 
 /** 登录页回填：不依赖 token，退出登录后仍可读 */
@@ -86,6 +93,8 @@ export class SessionPreferences {
     const fnosLongToken = await p.get(K_FNOS_LONG_TOKEN, '') as string;
     const loginViaWs = (await p.get(K_LOGIN_VIA_WS, '0') as string) === '1';
     const wsSignKeyB64 = await p.get(K_WS_SIGN_KEY_B64, '') as string;
+    const openApiAuthxKey = await p.get(K_OPENAPI_AUTHX_KEY, '') as string;
+    const openApiAuthxSecret = await p.get(K_OPENAPI_AUTHX_SECRET, '') as string;
     return {
       baseUrl: baseUrl,
       token: token,
@@ -96,7 +105,9 @@ export class SessionPreferences {
       trustedHosts: trustedHosts,
       fnosLongToken: fnosLongToken,
       loginViaWebSocket: loginViaWs,
-      wsSignKeyB64: wsSignKeyB64
+      wsSignKeyB64: wsSignKeyB64,
+      openApiAuthxKey: openApiAuthxKey,
+      openApiAuthxSecret: openApiAuthxSecret
     };
   }
 
@@ -119,6 +130,8 @@ export class SessionPreferences {
     await p.put(K_FNOS_LONG_TOKEN, s.fnosLongToken);
     await p.put(K_LOGIN_VIA_WS, s.loginViaWebSocket ? '1' : '0');
     await p.put(K_WS_SIGN_KEY_B64, s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '');
+    await p.put(K_OPENAPI_AUTHX_KEY, s.openApiAuthxKey.length > 0 ? s.openApiAuthxKey : '');
+    await p.put(K_OPENAPI_AUTHX_SECRET, s.openApiAuthxSecret.length > 0 ? s.openApiAuthxSecret : '');
     await p.flush();
   }
 
@@ -141,6 +154,8 @@ export class SessionPreferences {
     await p.put(K_FNOS_LONG_TOKEN, '');
     await p.put(K_LOGIN_VIA_WS, '0');
     await p.put(K_WS_SIGN_KEY_B64, '');
+    await p.put(K_OPENAPI_AUTHX_KEY, '');
+    await p.put(K_OPENAPI_AUTHX_SECRET, '');
     await p.flush();
   }
 
@@ -162,6 +177,8 @@ export class SessionPreferences {
     await p.put(K_FNOS_LONG_TOKEN, '');
     await p.put(K_LOGIN_VIA_WS, '0');
     await p.put(K_WS_SIGN_KEY_B64, '');
+    await p.put(K_OPENAPI_AUTHX_KEY, '');
+    await p.put(K_OPENAPI_AUTHX_SECRET, '');
     await p.flush();
   }
 

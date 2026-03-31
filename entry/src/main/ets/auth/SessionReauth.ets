@@ -56,6 +56,10 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
       const wsRes = await fnWsLogin(stored.baseUrl, user, pass, trusted);
       if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
         const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
+        if (sk.length === 0) {
+          hilog.warn(DOMAIN, TAG, 'silent WS relogin got empty sign key, skip session update');
+          return false;
+        }
         let lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : '';
         if (lt.length === 0) {
           const probeClient = new FnHttpClient(stored.baseUrl, wsRes.token, '', sk);
@@ -70,6 +74,9 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
         }
         stored.token = wsRes.token;
         stored.wsSignKeyB64 = sk;
+        // 与登录页保持一致：OpenAPI Authx 凭据改由登录结果动态更新，不再依赖源码常量。
+        stored.openApiAuthxKey = wsRes.token;
+        stored.openApiAuthxSecret = sk;
         stored.fnosLongToken = lt;
         AppSession.apply(stored);
         await SessionPreferences.save(ctx, stored);
