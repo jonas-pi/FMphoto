@@ -79,6 +79,8 @@ export interface GalleryListItem {
   fileType?: string;
   /** 拍摄/创建时间，格式 "YYYY:MM:DD HH:mm:ss" */
   dateTime?: string;
+  /** 最近添加场景常用时间（入库时间），格式通常同 dateTime */
+  createdAt?: string;
   /** 原图相对路径（`_pick_original_rel`） */
   originalUrl?: string;
   thumb?: string;

@@ -122,12 +122,18 @@ function fmtDayLabel(sortKey: string): string {
   return `${parts[0]}年${parseInt(parts[1], 10)}月${parseInt(parts[2], 10)}日`;
 }
 
-function groupByDate(items: GalleryListItem[]): DayGroup[] {
+function groupByDate(items: GalleryListItem[], useCreatedAt: boolean = false): DayGroup[] {
   const keyOrder: string[] = [];
   const mapItems: Map<string, GalleryListItem[]> = new Map();
 
   for (let i = 0; i < items.length; i++) {
-    const key = parseDateKey(items[i].dateTime);
+    /**
+     * 最近添加模式优先使用 createdAt（入库时间）做分组日期；
+     * 其它场景维持 dateTime（拍摄时间）分组。
+     * 这样可保证“最近添加”按最近入库日期靠前，同时不改变同一天内原始顺序。
+     */
+    const dt = useCreatedAt ? (items[i].createdAt ?? items[i].dateTime) : items[i].dateTime;
+    const key = parseDateKey(dt);
     if (!mapItems.has(key)) {
       mapItems.set(key, []);
       keyOrder.push(key);
@@ -232,7 +238,8 @@ struct CategoryGallery {
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
     const raw = CategoryGalleryNavStore.items;
-    this.groups = groupByDate(raw);
+    const useCreatedAt = this.title.trim() === '最近添加';
+    this.groups = groupByDate(raw, useCreatedAt);
     const ordered: GalleryListItem[] = [];
     for (let gi = 0; gi < this.groups.length; gi++) {
       const rows = this.groups[gi].rows;
@@ -704,7 +711,8 @@ struct CategoryGallery {
   }
 
   private rebuildByFlatItems(): void {
-    this.groups = groupByDate(this.flatItems);
+    const useCreatedAt = this.title.trim() === '最近添加';
+    this.groups = groupByDate(this.flatItems, useCreatedAt);
     this.groupOffsets = [];
     let offset = 0;
     for (let gi = 0; gi < this.groups.length; gi++) {

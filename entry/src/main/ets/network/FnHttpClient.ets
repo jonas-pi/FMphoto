@@ -127,6 +127,17 @@ const GALLERY_GETLIST_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/gallery/getList`,
   '/api/v1/gallery/getList'
 ];
+/** 最近添加：时间轴与列表接口（抓包：/p/api/v1/explore/recent_timeline, /p/api/v1/explore/recent_photos） */
+const RECENT_TIMELINE_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/explore/recent_timeline`;
+const RECENT_TIMELINE_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/explore/recent_timeline`,
+  '/api/v1/explore/recent_timeline'
+];
+const RECENT_PHOTOS_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/explore/recent_photos`;
+const RECENT_PHOTOS_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/explore/recent_photos`,
+  '/api/v1/explore/recent_photos'
+];
 /** getOne 详情接口：与 getList 同签名体系 */
 const GALLERY_GETONE_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/gallery/getOne`;
 const GALLERY_GETONE_PATH_CANDIDATES: string[] = [
@@ -1441,6 +1452,28 @@ export class FnHttpClient {
   }
 
   /**
+   * 最近添加时间轴：GET /p/api/v1/explore/recent_timeline
+   * 返回结构与 gallery/timeline 对齐（data.list: [{year,month,day,itemCount}...]）。
+   */
+  async getRecentTimeline(
+    extraParams?: Record<string, string | number | boolean>
+  ): Promise<FnClientResult<GalleryTimelineData>> {
+    const params: Record<string, string | number | boolean> =
+      extraParams !== undefined ? extraParams : GALLERY_QUERY_EMPTY;
+    const qs = buildGallerySortedQuery(params);
+    const pathCandidates: string[] = [];
+    for (let i = 0; i < RECENT_TIMELINE_PATH_CANDIDATES.length; i++) {
+      const rel = RECENT_TIMELINE_PATH_CANDIDATES[i];
+      pathCandidates.push(qs.length > 0 ? `${rel}?${qs}` : rel);
+    }
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: RECENT_TIMELINE_SIGN_PATH,
+      queryParams: params
+    };
+    return this.requestGalleryGetJson<GalleryTimelineData>(pathCandidates, gallerySign, DEFAULT_TIMEOUT, 3);
+  }
+
+  /**
    * 相册图片列表：GET gallery/getList（签名 path 恒为 /p/api/v1/gallery/getList，与 Py 一致）
    * 时间格式须为「年:月:日 时:分:秒」空格分隔（与前端 dayjs / Python _day_time_range_str 一致）。
    */
@@ -2049,6 +2082,54 @@ export class FnHttpClient {
     }
     const gallerySign: FnGalleryGetSignSpec = {
       signPathOnly: GALLERY_GETLIST_SIGN_PATH,
+      queryParams: params
+    };
+    const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+      pathCandidates,
+      gallerySign,
+      DEFAULT_TIMEOUT,
+      3
+    );
+    if (!res.success || res.data === undefined) {
+      return res as FnClientResult<GalleryGetListData>;
+    }
+    const payload = res.data as GalleryGetListData | GalleryListItem[];
+    if (Array.isArray(payload)) {
+      const norm: GalleryGetListData = { list: payload };
+      return {
+        success: true,
+        data: norm,
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    }
+    return res as FnClientResult<GalleryGetListData>;
+  }
+
+  /**
+   * 最近添加列表：GET /p/api/v1/explore/recent_photos
+   * 参数形态与 gallery/getList 类似，mode 需使用 "recent"。
+   */
+  async getRecentPhotos(
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number,
+    mode: string = 'recent'
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    const params: Record<string, string | number | boolean> = {};
+    params['start_time'] = startTime;
+    params['end_time'] = endTime;
+    params['mode'] = mode;
+    params['offset'] = offset;
+    params['limit'] = limit;
+    const qs = buildGallerySortedQuery(params);
+    const pathCandidates: string[] = [];
+    for (let i = 0; i < RECENT_PHOTOS_PATH_CANDIDATES.length; i++) {
+      pathCandidates.push(`${RECENT_PHOTOS_PATH_CANDIDATES[i]}?${qs}`);
+    }
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: RECENT_PHOTOS_SIGN_PATH,
       queryParams: params
     };
     const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(

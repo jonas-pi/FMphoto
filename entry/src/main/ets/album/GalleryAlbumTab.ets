@@ -118,6 +118,10 @@ const GALLERY_BOOTSTRAP_DEBOUNCE_MS = 900;
 const GALLERY_TIMELINE_REFRESH_OFFSET_VP = 64;
 /** 上传成功后二次拉时间轴间隔（ms）：NAS 入库略延迟时提高新图出现概率 */
 const GALLERY_UPLOAD_RECHECK_MS = 1600;
+/** 最近添加分页条数：与抓包量级一致，减少往返次数同时避免单次过大 */
+const GALLERY_RECENT_PAGE_LIMIT = 60;
+/** 最近添加单日分页安全上限：防止服务端异常导致死循环 */
+const GALLERY_RECENT_DAY_MAX_ROUNDS = 200;
 
 /** 主时间线缩略图滑动连选：用于指尖坐标与缩略图区域相交判断（窗口坐标系，与 getRectangleById 一致） */
 interface GalleryThumbHitRect {
@@ -273,6 +277,7 @@ export struct GalleryAlbumTab {
   @State private inPersonMode: boolean = false;
   @State private personLoading: boolean = false;
   @State private personOpening: boolean = false;
+  @State private recentOpening: boolean = false;
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
@@ -1976,6 +1981,93 @@ export struct GalleryAlbumTab {
     }
   }
 
+  /**
+   * 最近添加：按 explore/recent_timeline 分桶后逐日分页拉 recent_photos，
+   * 聚合为平铺列表并复用 CategoryGallery 预览页打开。
+   */
+  private async openRecentAdded(): Promise<void> {
+    if (this.recentOpening) {
+      return;
+    }
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.toast('未登录');
+      return;
+    }
+    this.recentOpening = true;
+    try {
+      const tl = await client.getRecentTimeline();
+      if (!tl.success || tl.data === undefined) {
+        this.toast(tl.message ?? '最近添加时间轴加载失败');
+        return;
+      }
+      const rawList = tl.data.list ?? [];
+      const cellsIn: Array<Record<string, number | undefined>> = [];
+      for (let i = 0; i < rawList.length; i++) {
+        const el = rawList[i];
+        if (typeof el === 'object' && el !== null) {
+          cellsIn.push(el as Record<string, number | undefined>);
+        }
+      }
+      const days = sortDaysDesc(parseTimelineDayCells(cellsIn)).filter(
+        (d: TimelineDayModel): boolean => d.itemCount > 0
+      );
+      if (days.length === 0) {
+        this.toast('最近添加暂无数据');
+        return;
+      }
+
+      const merged: GalleryListItem[] = [];
+      const seen = new Set<string>();
+      for (let di = 0; di < days.length; di++) {
+        const day = days[di];
+        const st = fmtDayStart(day.year, day.month, day.day);
+        const et = fmtDayEnd(day.year, day.month, day.day);
+        let off = 0;
+        let rounds = 0;
+        for (;;) {
+          const one = await client.getRecentPhotos(st, et, GALLERY_RECENT_PAGE_LIMIT, off, 'recent');
+          if (!one.success || one.data === undefined) {
+            break;
+          }
+          const list = listFromData(one.data);
+          if (list.length <= 0) {
+            break;
+          }
+          for (let i = 0; i < list.length; i++) {
+            const it = list[i];
+            const key = this.itemIdOf(it);
+            // 优先以稳定 ID 去重；无 ID 时退化为缩略图地址去重，避免跨页重复展示
+            const dedupKey = key.length > 0 ? key : (pickThumb(it).trim().length > 0 ? pickThumb(it).trim() : `${st}_${i}`);
+            if (!seen.has(dedupKey)) {
+              seen.add(dedupKey);
+              merged.push(it);
+            }
+          }
+          off += list.length;
+          rounds++;
+          if (list.length < GALLERY_RECENT_PAGE_LIMIT) {
+            break;
+          }
+          if (day.itemCount > 0 && off >= day.itemCount) {
+            break;
+          }
+          if (rounds >= GALLERY_RECENT_DAY_MAX_ROUNDS) {
+            break;
+          }
+        }
+      }
+
+      if (merged.length <= 0) {
+        this.toast('最近添加暂无可预览媒体');
+        return;
+      }
+      CategoryGalleryNavStore.open(this.baseUrl, '最近添加', merged, this.getUIContext());
+    } finally {
+      this.recentOpening = false;
+    }
+  }
+
   // ── 生命周期 ─────────────────────────────────────────────────────────────
 
   private onEpochChange(): void {
@@ -1992,6 +2084,7 @@ export struct GalleryAlbumTab {
     // 页面重新出现时重置打开态，避免手势返回后被旧遮罩状态卡住
     this.personOpening = false;
     this.categoryOpening = false;
+    this.recentOpening = false;
     gallerySetAlbumBackHandler((): boolean => this.tryConsumeAlbumHardwareBack());
     setTimeout((): void => {
       // 主时间线：若离开 Tab 时存过快照且期间未 bump/未强刷，直接恢复，避免每次切回都重拉时间轴与已加载块
@@ -2955,6 +3048,22 @@ export struct GalleryAlbumTab {
             });
           })
           Button() {
+            Text('最近添加')
+              .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+          .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
+          .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
+          .backgroundColor($r('app.color.card_background'))
+          .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+          .enabled(!this.gallerySelectionMode)
+          .onClick((): void => {
+            this.exitGallerySelection();
+            this.playModeSwitchMotion();
+            void this.openRecentAdded();
+          })
+          Button() {
             Text('回收站')
               .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
               .fontColor($r('app.color.text_primary'))
@@ -3690,6 +3799,9 @@ export struct GalleryAlbumTab {
       }
       if (this.galleryBatchDownloading) {
         FnFullLoadingMask({ text: '下载中…' })
+      }
+      if (this.recentOpening) {
+        FnFullLoadingMask({ text: '加载最近添加中…' })
       }
 
       // 仅在图库主视图显示上传入口，避免与子模式操作冲突
