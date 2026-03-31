@@ -2,14 +2,9 @@
 
 非官方 HarmonyOS 客户端，用于在手机上连接飞牛 NAS，使用相册、网页入口及常见图库能力。
 
-## 仓库策略（公开 / 私有）
+## 仓库说明
 
-| 用途 | 说明 |
-|------|------|
-| **Original（管理仓）** | 完整源码与工程仅在**私有**仓库维护（如分支 **`originalmain`** 等），**不对外公开**。第三方非官方客户端可能涉及服务条款、商标与著作权等合规风险，源码不开放可降低误用与牵连。 |
-| **[FMphoto](https://github.com/jonas-pi/FMphoto)** | **公开**仓库，仅用于更新 **`entry-default-unsigned.hap`** 等构建产物，供熟悉环境的用户自行下载、测试安装；功能说明与免责声明以该仓库 README 为准。 |
-
-**给访问者**：若你只看到本说明而找不到源码，属有意为之；安装包请前往 **FMphoto** 仓库根目录获取 `.hap` 文件。
+当前仅使用一个仓库：**[FMphoto](https://github.com/jonas-pi/FMphoto)**，用于维护源码与发布构建产物。
 
 ## 功能清单
 
@@ -78,12 +73,13 @@
 
 ## 预编译包（公开下载）
 
-未签名调试包仅在 **FMphoto** 公开仓库根目录提供：`entry-default-unsigned.hap`。
+未签名调试包路径为：`entry/build/default/outputs/default/entry-default-unsigned.hap`。
 
 - 仓库：<https://github.com/jonas-pi/FMphoto>
 - 安装方式、设备策略与风险说明见该仓库 **README**。
 
-自构建不在公开渠道提供；若在私有管理仓内开发，本地构建产物路径一般为 `entry/build/default/outputs/default/entry-default-unsigned.hap`，发布流程为将新 `.hap` 提交并推送到 **FMphoto**。
+本地构建产物路径一般为 `entry/build/default/outputs/default/entry-default-unsigned.hap`。  
+仓库已提供 GitHub Actions：当推送 `v*` 标签（如 `v1.2.3`）时，会自动将该 `.hap` 上传到对应 GitHub Release。
 
 ## 使用注意与风险
 

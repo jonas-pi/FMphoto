@@ -3,6 +3,12 @@
 /local.properties
 /.idea
 **/build
+# 仅放行发布用未签名 HAP，其余 build 产物继续忽略，避免仓库膨胀
+!entry/build/
+!entry/build/default/
+!entry/build/default/outputs/
+!entry/build/default/outputs/default/
+!entry/build/default/outputs/default/entry-default-unsigned.hap
 /.hvigor
 .cxx
 /.clangd
