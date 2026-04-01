@@ -35,6 +35,7 @@ import {
   SmartCategoryData,
   AiPersonData,
   AiPersonDetailData,
+  PersonInPhotoData,
   SearchResultsData,
   UserInfoData
 } from '../model/FnApiTypes';
@@ -152,6 +153,12 @@ const GALLERY_FOLDER_FILELIST_PATH_CANDIDATES: string[] = [
 ];
 /** 回收站列表：签名 path 与 gallery 系列一致为 /p/api/v1/... */
 const RECYCLE_BIN_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/recycle-bin/list`;
+/** 照片中人物识别：GET /p/api/v1/ai-person/personInPhoto?id=xxx */
+const PERSON_IN_PHOTO_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/ai-person/personInPhoto`;
+const PERSON_IN_PHOTO_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/ai-person/personInPhoto`,
+  '/api/v1/ai-person/personInPhoto'
+];
 
 /** 疑似证书类错误码（NetStack） */
 const CERT_CODES: number[] = [2300060, 2300058, 2300059, 2300077];
@@ -1452,6 +1459,15 @@ export class FnHttpClient {
   }
 
   /**
+   * 收藏夹时间轴：GET /p/api/v1/gallery/timeline?is_collect=1（与 Web /collect 一致）
+   */
+  async getCollectGalleryTimeline(): Promise<FnClientResult<GalleryTimelineData>> {
+    const p: Record<string, string | number | boolean> = {};
+    p['is_collect'] = 1;
+    return this.getGalleryTimeline(p);
+  }
+
+  /**
    * 最近添加时间轴：GET /p/api/v1/explore/recent_timeline
    * 返回结构与 gallery/timeline 对齐（data.list: [{year,month,day,itemCount}...]）。
    */
@@ -1680,6 +1696,36 @@ export class FnHttpClient {
       return { success: true, data: res.data };
     } catch (e) {
       return { success: false, message: String(e) || '人物详情加载异常' };
+    }
+  }
+
+  /**
+   * 单张照片中的人物：GET /p/api/v1/ai-person/personInPhoto?id=照片ID
+   * 与 Web 预览详情一致，用于展示「人物」标签与图库内该人物总张数等。
+   */
+  async getPersonInPhoto(
+    photoId: string,
+    timeoutMs: number = 12000
+  ): Promise<FnClientResult<PersonInPhotoData>> {
+    try {
+      const id = photoId.trim();
+      if (id.length === 0) {
+        return { success: false, message: 'photoId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['id'] = id;
+      const qs = buildGallerySortedQuery(params);
+      const pathCandidates: string[] = [];
+      for (let i = 0; i < PERSON_IN_PHOTO_PATH_CANDIDATES.length; i++) {
+        pathCandidates.push(`${PERSON_IN_PHOTO_PATH_CANDIDATES[i]}?${qs}`);
+      }
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: PERSON_IN_PHOTO_SIGN_PATH,
+        queryParams: params
+      };
+      return this.requestGalleryGetJson<PersonInPhotoData>(pathCandidates, gallerySign, timeoutMs, 3);
+    } catch (e) {
+      return { success: false, message: String(e) || '人物识别加载异常' };
     }
   }
 
@@ -2062,6 +2108,53 @@ export class FnHttpClient {
     return { success: true, data: list };
   }
 
+  /**
+   * 收藏夹列表：GET gallery/getList，抓包形态为 mode=collect & is_collect=1，与时间轴参数一致。
+   */
+  async getCollectGalleryList(
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    const params: Record<string, string | number | boolean> = {};
+    params['start_time'] = startTime;
+    params['end_time'] = endTime;
+    params['mode'] = 'collect';
+    params['is_collect'] = 1;
+    params['offset'] = offset;
+    params['limit'] = limit;
+    const qs = buildGallerySortedQuery(params);
+    const pathCandidates: string[] = [];
+    for (let i = 0; i < GALLERY_GETLIST_PATH_CANDIDATES.length; i++) {
+      pathCandidates.push(`${GALLERY_GETLIST_PATH_CANDIDATES[i]}?${qs}`);
+    }
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: GALLERY_GETLIST_SIGN_PATH,
+      queryParams: params
+    };
+    const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+      pathCandidates,
+      gallerySign,
+      DEFAULT_TIMEOUT,
+      3
+    );
+    if (!res.success || res.data === undefined) {
+      return res as FnClientResult<GalleryGetListData>;
+    }
+    const payload = res.data as GalleryGetListData | GalleryListItem[];
+    if (Array.isArray(payload)) {
+      const norm: GalleryGetListData = { list: payload };
+      return {
+        success: true,
+        data: norm,
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    }
+    return res as FnClientResult<GalleryGetListData>;
+  }
+
   async getGalleryList(
     startTime: string,
     endTime: string,
@@ -2339,6 +2432,161 @@ export class FnHttpClient {
       return { success: false, message: lastMsg };
     } catch (e) {
       return { success: false, message: String(e) || '删除请求异常' };
+    }
+  }
+
+  /**
+   * 将照片加入收藏：POST /p/api/v1/preview/collect
+   * 不同版本 body 字段可能为 id / ids / photoId 等，按候选依次尝试。
+   */
+  async postPreviewCollect(photoId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return { success: false, message: 'photoId 不能为空' };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/preview/collect`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const escapedId = escapeJsonString(id);
+      const parsedNum = Number(id);
+      const hasNumericId = Number.isFinite(parsedNum) && parsedNum >= 0;
+      const bodyCandidates: string[] = [];
+      if (hasNumericId) {
+        bodyCandidates.push(`{"id":${Math.floor(parsedNum)}}`);
+        bodyCandidates.push(`{"ids":[${Math.floor(parsedNum)}]}`);
+      }
+      bodyCandidates.push(
+        `{"id":"${escapedId}"}`,
+        `{"ids":["${escapedId}"]}`,
+        `{"photoId":"${escapedId}"}`,
+        `{"photoIds":["${escapedId}"]}`
+      );
+      let lastMsg = '收藏失败';
+      for (let i = 0; i < bodyCandidates.length; i++) {
+        const bodyStr = bodyCandidates[i];
+        try {
+          const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          headers['Content-Type'] = 'application/json';
+          const raw = await this.rawRequest(
+            `${activeBase}${path}`,
+            http.RequestMethod.POST,
+            headers,
+            bodyStr,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            lastMsg = `HTTP ${raw.code}`;
+            continue;
+          }
+          let parsed: Record<string, string | number | Object | undefined>;
+          try {
+            parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+          } catch (_e) {
+            lastMsg = '收藏响应解析失败';
+            continue;
+          }
+          if (FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+            return { success: true, data: parsed['data'] as Object };
+          }
+          const errLine = FnHttpClient.envelopeErrorLine(parsed);
+          if (errLine.length > 0) {
+            lastMsg = errLine;
+            const low = errLine.toLowerCase();
+            if (errLine.indexOf('已收藏') >= 0 || low.indexOf('already') >= 0 || low.indexOf('collected') >= 0) {
+              return { success: true, data: parsed['data'] as Object };
+            }
+          }
+        } catch (e) {
+          lastMsg = String(e) || '收藏请求异常';
+        }
+      }
+      return { success: false, message: lastMsg };
+    } catch (e) {
+      return { success: false, message: String(e) || '收藏请求异常' };
+    }
+  }
+
+  /**
+   * 取消收藏：POST /p/api/v1/preview/collect/cancel（与 Web 收藏页取消一致）
+   * body 形态与 preview/collect 相同，按候选依次尝试。
+   */
+  async postPreviewCollectCancel(photoId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return { success: false, message: 'photoId 不能为空' };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/preview/collect/cancel`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const escapedId = escapeJsonString(id);
+      const parsedNum = Number(id);
+      const hasNumericId = Number.isFinite(parsedNum) && parsedNum >= 0;
+      const bodyCandidates: string[] = [];
+      if (hasNumericId) {
+        bodyCandidates.push(`{"id":${Math.floor(parsedNum)}}`);
+        bodyCandidates.push(`{"ids":[${Math.floor(parsedNum)}]}`);
+      }
+      bodyCandidates.push(
+        `{"id":"${escapedId}"}`,
+        `{"ids":["${escapedId}"]}`,
+        `{"photoId":"${escapedId}"}`,
+        `{"photoIds":["${escapedId}"]}`
+      );
+      let lastMsg = '取消收藏失败';
+      for (let i = 0; i < bodyCandidates.length; i++) {
+        const bodyStr = bodyCandidates[i];
+        try {
+          const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          headers['Content-Type'] = 'application/json';
+          const raw = await this.rawRequest(
+            `${activeBase}${path}`,
+            http.RequestMethod.POST,
+            headers,
+            bodyStr,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            lastMsg = `HTTP ${raw.code}`;
+            continue;
+          }
+          let parsed: Record<string, string | number | Object | undefined>;
+          try {
+            parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+          } catch (_e) {
+            lastMsg = '取消收藏响应解析失败';
+            continue;
+          }
+          if (FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+            return { success: true, data: parsed['data'] as Object };
+          }
+          const errLine = FnHttpClient.envelopeErrorLine(parsed);
+          if (errLine.length > 0) {
+            lastMsg = errLine;
+            const low = errLine.toLowerCase();
+            if (errLine.indexOf('未收藏') >= 0 || errLine.indexOf('未在收藏') >= 0 ||
+              low.indexOf('not collect') >= 0 || low.indexOf('no favorite') >= 0) {
+              return { success: true, data: parsed['data'] as Object };
+            }
+          }
+        } catch (e) {
+          lastMsg = String(e) || '取消收藏请求异常';
+        }
+      }
+      return { success: false, message: lastMsg };
+    } catch (e) {
+      return { success: false, message: String(e) || '取消收藏请求异常' };
     }
   }
 

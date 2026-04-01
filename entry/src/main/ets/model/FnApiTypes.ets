@@ -102,6 +102,8 @@ export interface GalleryListItem {
   fileSize?: string | number;
   /** 原文件大小（字节），部分接口会下发 */
   originalSize?: string | number;
+  /** 是否已收藏：1 已收藏（与 getOne / 回收站列表等字段对齐） */
+  isCollect?: number;
 }
 
 /** `GET /p/api/v1/gallery/getOne?id=xxx` 的 additional 字段 */
@@ -119,7 +121,6 @@ export interface GalleryPhotoDetailData extends GalleryListItem {
   fileSize?: string | number;
   originalSize?: string | number;
   description?: string;
-  isCollect?: number;
   model?: string;
   fumber?: string;
   exposureTime?: string;
@@ -301,6 +302,24 @@ export interface AiPersonDetailData {
   photoCount?: number | string;
   videoCount?: number | string;
   isHide?: boolean;
+}
+
+/**
+ * GET /p/api/v1/ai-person/personInPhoto?id=照片ID
+ * 单张照片中识别到的人物（含人脸框 bbox、人物名、该人物总图库数量等）
+ */
+export interface PersonInPhotoItem {
+  name?: string;
+  personId?: number;
+  faceId?: number;
+  total?: number;
+  bbox?: number[];
+  isHide?: boolean;
+  birthday?: string;
+}
+
+export interface PersonInPhotoData {
+  list?: PersonInPhotoItem[];
 }
 
 /** /p/api/v1/search/results 返回 data 的常见结构 */
