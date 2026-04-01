@@ -45,6 +45,7 @@ import {
 } from './GallerySlidePick';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
+import { openPersonAlbumById } from './PersonAlbumOpenHelper';
 import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
 import {
@@ -278,6 +279,8 @@ export struct GalleryAlbumTab {
   @State private personLoading: boolean = false;
   @State private personOpening: boolean = false;
   @State private recentOpening: boolean = false;
+  /** 打开「收藏」聚合列表时的全屏遮罩（与最近添加一致） */
+  @State private collectOpening: boolean = false;
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
@@ -1752,49 +1755,6 @@ export struct GalleryAlbumTab {
     }
   }
 
-  private parsePersonTimeline(
-    rawList: Array<Record<string, string | number | undefined>>
-  ): TimelineDayModel[] {
-    const out: TimelineDayModel[] = [];
-    for (let i = 0; i < rawList.length; i++) {
-      const x = rawList[i];
-      let y = 0;
-      let m = 0;
-      let d = 0;
-      const yy = x['year'];
-      const mm = x['month'];
-      const dd = x['day'];
-      if (typeof yy === 'number' && typeof mm === 'number' && typeof dd === 'number') {
-        y = Math.floor(yy);
-        m = Math.floor(mm);
-        d = Math.floor(dd);
-      } else {
-        const stRaw = x['start_time'] ?? x['startTime'];
-        const st = stRaw !== undefined ? String(stRaw) : '';
-        if (st.length < 10) {
-          continue;
-        }
-        const space = st.indexOf(' ');
-        const date = space > 0 ? st.substring(0, space) : st;
-        const seg = date.split(':');
-        if (seg.length < 3) {
-          continue;
-        }
-        y = Number(seg[0]);
-        m = Number(seg[1]);
-        d = Number(seg[2]);
-      }
-      if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
-        continue;
-      }
-      const cRaw =
-        x['itemCount'] ?? x['item_count'] ?? x['count'] ?? x['total'] ?? x['size'] ?? x['num'];
-      const c = cRaw !== undefined && Number.isFinite(Number(cRaw)) ? Math.max(0, Math.floor(Number(cRaw))) : 0;
-      out.push({ year: Math.floor(y), month: Math.floor(m), day: Math.floor(d), itemCount: c });
-    }
-    return sortDaysDesc(out);
-  }
-
   private async loadPersons(): Promise<void> {
     this.exitGallerySelection();
     this.playModeSwitchMotion();
@@ -1843,6 +1803,7 @@ export struct GalleryAlbumTab {
     this.personLoading = false;
   }
 
+  /** 打开人物图库：与 PersonPage / 预览详情人物行共用 PersonAlbumOpenHelper */
   private async openPerson(item: AiPersonItem): Promise<void> {
     if (this.personOpening) {
       return;
@@ -1853,86 +1814,21 @@ export struct GalleryAlbumTab {
       return;
     }
     this.personOpening = true;
-    let title = this.personName(item);
-    // 跳转成功后短延时关闭 loading；失败路径立即关闭
     let keepOpening = false;
     try {
-      const client = AppSession.getClient();
-      if (client === null) {
-        this.toast('未登录');
-        return;
-      }
-      // 对齐官方链路：先请求 detail（用于后端侧缓存/统计链路）
-      const detail = await client.getAiPersonDetail(pid);
-      let detailItemCount = 0;
-      if (detail.success && detail.data !== undefined) {
-        if (detail.data.name !== undefined && detail.data.name.length > 0) {
-          title = detail.data.name;
+      const r = await openPersonAlbumById(
+        this.baseUrl,
+        pid,
+        this.personName(item),
+        this.getUIContext()
+      );
+      if (!r.ok) {
+        if (r.errorMessage.length > 0) {
+          this.toast(r.errorMessage);
         }
-        const cntRaw = detail.data.itemCount;
-        if (cntRaw !== undefined && Number.isFinite(Number(cntRaw))) {
-          detailItemCount = Math.max(0, Math.floor(Number(cntRaw)));
-        }
-      }
-
-      const tl = await client.getAiPersonPhotoTimeline(pid);
-      if (!tl.success || tl.data === undefined) {
-        this.toast(tl.message ?? '人物时间线加载失败');
-        return;
-      }
-      const raw = tl.data.list ?? [];
-      const rawIn: Array<Record<string, string | number | undefined>> = [];
-      for (let i = 0; i < raw.length; i++) {
-        const el = raw[i];
-        if (typeof el === 'object' && el !== null) {
-          rawIn.push(el as Record<string, string | number | undefined>);
-        }
-      }
-      const days = this.parsePersonTimeline(rawIn);
-      const merged: GalleryListItem[] = [];
-      for (let di = 0; di < days.length; di++) {
-        const day = days[di];
-        const st = fmtDayStart(day.year, day.month, day.day);
-        const et = fmtDayEnd(day.year, day.month, day.day);
-        let off = 0;
-        let rounds = 0;
-        while (rounds < DAY_MAX_ROUNDS) {
-          const one = await client.getAiPersonPhotoList(pid, st, et, DATE_FEED_BATCH, off, 20000);
-          if (!one.success || one.data === undefined) {
-            break;
-          }
-          const list = listFromData(one.data);
-          if (list.length === 0) {
-            break;
-          }
-          for (let i = 0; i < list.length; i++) {
-            merged.push(list[i]);
-          }
-          off += list.length;
-          rounds++;
-          if (detailItemCount > 0 && merged.length >= detailItemCount) {
-            break;
-          }
-          if (list.length < DATE_FEED_BATCH) {
-            break;
-          }
-          if (day.itemCount > 0 && off >= day.itemCount) {
-            break;
-          }
-        }
-      }
-      if (merged.length === 0) {
-        this.toast('该人物暂无可预览媒体');
         return;
       }
       keepOpening = true;
-      const opened = await CategoryGalleryNavStore.open(this.baseUrl, title, merged, this.getUIContext());
-      if (!opened) {
-        keepOpening = false;
-        this.toast('打开人物媒体失败');
-        return;
-      }
-      // 给路由切换一点缓冲，避免加载动画收起与转场间出现空档
       setTimeout((): void => {
         this.personOpening = false;
       }, 280);
@@ -2068,6 +1964,92 @@ export struct GalleryAlbumTab {
     }
   }
 
+  /**
+   * 收藏夹：GET gallery/timeline?is_collect=1 分日后，按日 GET getList（mode=collect & is_collect=1），
+   * 与 Web /p/collect 抓包一致。
+   */
+  private async openCollectGallery(): Promise<void> {
+    if (this.collectOpening) {
+      return;
+    }
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.toast('未登录');
+      return;
+    }
+    this.collectOpening = true;
+    try {
+      const tl = await client.getCollectGalleryTimeline();
+      if (!tl.success || tl.data === undefined) {
+        this.toast(tl.message ?? '收藏时间轴加载失败');
+        return;
+      }
+      const rawList = tl.data.list ?? [];
+      const cellsIn: Array<Record<string, number | undefined>> = [];
+      for (let i = 0; i < rawList.length; i++) {
+        const el = rawList[i];
+        if (typeof el === 'object' && el !== null) {
+          cellsIn.push(el as Record<string, number | undefined>);
+        }
+      }
+      const days = sortDaysDesc(parseTimelineDayCells(cellsIn)).filter(
+        (d: TimelineDayModel): boolean => d.itemCount > 0
+      );
+      if (days.length === 0) {
+        this.toast('暂无收藏');
+        return;
+      }
+
+      const merged: GalleryListItem[] = [];
+      const seen = new Set<string>();
+      for (let di = 0; di < days.length; di++) {
+        const day = days[di];
+        const st = fmtDayStart(day.year, day.month, day.day);
+        const et = fmtDayEnd(day.year, day.month, day.day);
+        let off = 0;
+        let rounds = 0;
+        for (;;) {
+          const one = await client.getCollectGalleryList(st, et, GALLERY_RECENT_PAGE_LIMIT, off);
+          if (!one.success || one.data === undefined) {
+            break;
+          }
+          const list = listFromData(one.data);
+          if (list.length <= 0) {
+            break;
+          }
+          for (let i = 0; i < list.length; i++) {
+            const it = list[i];
+            const key = this.itemIdOf(it);
+            const dedupKey = key.length > 0 ? key : (pickThumb(it).trim().length > 0 ? pickThumb(it).trim() : `${st}_${i}`);
+            if (!seen.has(dedupKey)) {
+              seen.add(dedupKey);
+              merged.push(it);
+            }
+          }
+          off += list.length;
+          rounds++;
+          if (list.length < GALLERY_RECENT_PAGE_LIMIT) {
+            break;
+          }
+          if (day.itemCount > 0 && off >= day.itemCount) {
+            break;
+          }
+          if (rounds >= GALLERY_RECENT_DAY_MAX_ROUNDS) {
+            break;
+          }
+        }
+      }
+
+      if (merged.length <= 0) {
+        this.toast('收藏暂无可预览媒体');
+        return;
+      }
+      CategoryGalleryNavStore.open(this.baseUrl, '收藏', merged, this.getUIContext());
+    } finally {
+      this.collectOpening = false;
+    }
+  }
+
   // ── 生命周期 ─────────────────────────────────────────────────────────────
 
   private onEpochChange(): void {
@@ -2085,6 +2067,7 @@ export struct GalleryAlbumTab {
     this.personOpening = false;
     this.categoryOpening = false;
     this.recentOpening = false;
+    this.collectOpening = false;
     gallerySetAlbumBackHandler((): boolean => this.tryConsumeAlbumHardwareBack());
     setTimeout((): void => {
       // 主时间线：若离开 Tab 时存过快照且期间未 bump/未强刷，直接恢复，避免每次切回都重拉时间轴与已加载块
@@ -2982,8 +2965,14 @@ export struct GalleryAlbumTab {
       })
 
       // ── 主页面分类入口：多选时隐藏但占位不变（Visibility.Hidden），避免时间线列表整体上移
+      // 芯片较多时单行放不下：Flex 自动换行（第二行继续从左排），避免挤压或横向手势与列表冲突
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
-        Row({ space: 8 }) {
+        Flex({
+          direction: FlexDirection.Row,
+          wrap: FlexWrap.Wrap,
+          justifyContent: FlexAlign.Start,
+          alignItems: ItemAlign.Center
+        }) {
           Button() {
             Text('媒体分类')
               .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
@@ -2993,6 +2982,7 @@ export struct GalleryAlbumTab {
           .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
           .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
+          .margin({ right: 8, bottom: 8 })
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
@@ -3014,6 +3004,7 @@ export struct GalleryAlbumTab {
           .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
           .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
+          .margin({ right: 8, bottom: 8 })
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
@@ -3035,6 +3026,7 @@ export struct GalleryAlbumTab {
           .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
           .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
+          .margin({ right: 8, bottom: 8 })
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
@@ -3056,12 +3048,30 @@ export struct GalleryAlbumTab {
           .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
           .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
           .backgroundColor($r('app.color.card_background'))
+          .margin({ right: 8, bottom: 8 })
           .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
           .enabled(!this.gallerySelectionMode)
           .onClick((): void => {
             this.exitGallerySelection();
             this.playModeSwitchMotion();
             void this.openRecentAdded();
+          })
+          Button() {
+            Text('收藏')
+              .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+          .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
+          .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
+          .backgroundColor($r('app.color.card_background'))
+          .margin({ right: 8, bottom: 8 })
+          .visibility(this.gallerySelectionMode ? Visibility.Hidden : Visibility.Visible)
+          .enabled(!this.gallerySelectionMode)
+          .onClick((): void => {
+            this.exitGallerySelection();
+            this.playModeSwitchMotion();
+            void this.openCollectGallery();
           })
           Button() {
             Text('回收站')
@@ -3084,6 +3094,7 @@ export struct GalleryAlbumTab {
               this.toast('打开回收站失败');
             });
           })
+          .margin({ right: 8, bottom: 8 })
         }
         .width('100%')
         .padding({
@@ -3802,6 +3813,9 @@ export struct GalleryAlbumTab {
       }
       if (this.recentOpening) {
         FnFullLoadingMask({ text: '加载最近添加中…' })
+      }
+      if (this.collectOpening) {
+        FnFullLoadingMask({ text: '加载收藏中…' })
       }
 
       // 仅在图库主视图显示上传入口，避免与子模式操作冲突

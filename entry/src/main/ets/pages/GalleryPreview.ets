@@ -16,12 +16,13 @@ import { systemShare } from '@kit.ShareKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
+import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryDeleteSyncStore } from '../album/GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
-import { GalleryListItem, GalleryPhotoDetailData } from '../model/FnApiTypes';
+import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
-import { FnInlineLoading, FnStateText } from '../common/FnUiCommon';
+import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PREVIEW_PAGE_ENTER_CURVE,
   FN_PREVIEW_PAGE_ENTER_DURATION,
@@ -89,8 +90,18 @@ struct GalleryPreview {
   @State private detailsData: GalleryPhotoDetailData | undefined = undefined;
   /** 详情数据对应的 photoId，用于避免重复请求 */
   @State private detailsPhotoId: string = '';
+  /** 与 getOne 并行拉取的「照片中人物」列表（personInPhoto） */
+  @State private personsInPhoto: PersonInPhotoItem[] = [];
   /** 详情里点击路径后，正在加载同目录媒体 */
   @State private folderOpening: boolean = false;
+  /** 详情里点击人物后，正在拉取人物时间线并合并列表 */
+  @State private personOpening: boolean = false;
+  /** 收藏按钮请求中 */
+  @State private favoriteToggling: boolean = false;
+  /**
+   * 当前张是否已收藏：-1 未从列表/详情同步；0 未收藏；1 已收藏（与接口 isCollect 一致）
+   */
+  @State private currentCollectState: number = -1;
   /** 底部工具栏实测高度（初始值 80vp 防止第一帧进度条与按钮重叠，onAreaChange 后更新为实测值） */
   @State private bottomBarHeight: number = 80;
   /** 当前图片是否已切换到原图（用于隐藏"原图"按钮） */
@@ -109,6 +120,8 @@ struct GalleryPreview {
   private itemSource: PreviewItemsDataSource = new PreviewItemsDataSource();
   private previewItems: GalleryListItem[] = [];
   private swiperCtrl: SwiperController = new SwiperController();
+  /** 收藏状态后台拉取代数：快速滑动时丢弃过期响应，避免星标错位 */
+  private collectSyncGen: number = 0;
 
   // ── 生命周期 ──────────────────────────────────────────────────────────────
 
@@ -141,6 +154,9 @@ struct GalleryPreview {
         this.swiperIndex = Math.floor(n);
       }
     }
+    // 列表项上的 isCollect 可能未带全；进入预览即用 getOne 拉真实收藏状态（不依赖打开详情半模态）
+    this.syncCollectStateFromCurrentItem();
+    void this.refreshCollectStateFromGetOne(this.currentItemId());
   }
 
   aboutToDisappear(): void {
@@ -226,6 +242,151 @@ struct GalleryPreview {
     }
     const id = String(item.id).trim();
     return id.length > 0 ? id : '';
+  }
+
+  /** 从列表项 isCollect 同步底部星标状态（切换媒体时调用） */
+  private syncCollectStateFromCurrentItem(): void {
+    const item = this.currentItem();
+    if (item === null) {
+      this.currentCollectState = -1;
+      return;
+    }
+    const c = item.isCollect;
+    if (c === 1) {
+      this.currentCollectState = 1;
+    } else if (c === 0) {
+      this.currentCollectState = 0;
+    } else {
+      this.currentCollectState = -1;
+    }
+  }
+
+  /**
+   * 仅依赖 getOne 的 isCollect 刷新底栏星标与当前条缓存（不打开详情半模态）。
+   * 进入预览、左右滑动后调用，避免「只有打开详情才更新收藏态」。
+   */
+  private async refreshCollectStateFromGetOne(photoId: string): Promise<void> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return;
+    }
+    const gen = ++this.collectSyncGen;
+    const client = AppSession.getClient();
+    if (client === null) {
+      return;
+    }
+    const res = await client.getGalleryPhotoDetail(id, 12000);
+    if (gen !== this.collectSyncGen) {
+      return;
+    }
+    if (id !== this.currentItemId()) {
+      return;
+    }
+    if (!res.success || res.data === undefined) {
+      return;
+    }
+    const ic = res.data.isCollect;
+    if (ic === 1) {
+      this.currentCollectState = 1;
+    } else if (ic === 0) {
+      this.currentCollectState = 0;
+    }
+    const idx = this.swiperIndex;
+    if (idx >= 0 && idx < this.previewItems.length) {
+      const cur = this.previewItems[idx];
+      const curId = cur.id !== undefined && cur.id !== null ? String(cur.id).trim() : '';
+      if (curId === id && (ic === 1 || ic === 0)) {
+        cur.isCollect = ic;
+        this.previewItems[idx] = cur;
+        GalleryPreviewNavStore.items = this.previewItems.slice();
+      }
+    }
+  }
+
+  /** 是否显示实心星标（已收藏） */
+  private starFilled(): boolean {
+    if (this.currentCollectState === 1) {
+      return true;
+    }
+    if (this.currentCollectState === 0) {
+      return false;
+    }
+    const id = this.currentItemId();
+    if (id.length > 0 && this.detailsPhotoId === id && this.detailsData !== undefined) {
+      return this.detailsData.isCollect === 1;
+    }
+    return false;
+  }
+
+  /** 已收藏时星标颜色（实心黄），与空心态工具栏前景区分 */
+  private favoriteStarTint(): ResourceColor {
+    return '#FFD60A';
+  }
+
+  /** 加入 / 取消收藏：与 Web POST preview/collect、preview/collect/cancel 一致 */
+  private async toggleFavorite(): Promise<void> {
+    if (this.favoriteToggling) {
+      return;
+    }
+    const id = this.currentItemId();
+    if (id.length === 0) {
+      this.toast('当前媒体无有效 ID');
+      return;
+    }
+    const wasFilled = this.starFilled();
+    this.favoriteToggling = true;
+    try {
+      const client = AppSession.getClient();
+      if (client === null) {
+        this.toast('未登录');
+        return;
+      }
+      if (wasFilled) {
+        const res = await client.postPreviewCollectCancel(id, 15000);
+        if (!res.success) {
+          this.toast(res.message ?? '取消收藏失败');
+          return;
+        }
+        this.currentCollectState = 0;
+        if (this.detailsData !== undefined && this.detailsPhotoId === id) {
+          const d = this.detailsData;
+          d.isCollect = 0;
+          this.detailsData = d;
+        }
+        const idx = this.swiperIndex;
+        if (idx >= 0 && idx < this.previewItems.length) {
+          const it = this.previewItems[idx];
+          it.isCollect = 0;
+          this.previewItems[idx] = it;
+          GalleryPreviewNavStore.items = this.previewItems.slice();
+        }
+        GalleryTimelineRefreshStore.bump();
+        this.toast('已取消收藏');
+        return;
+      }
+      const res = await client.postPreviewCollect(id, 15000);
+      if (!res.success) {
+        this.toast(res.message ?? '收藏失败');
+        return;
+      }
+      this.currentCollectState = 1;
+      if (this.detailsData !== undefined && this.detailsPhotoId === id) {
+        const d = this.detailsData;
+        d.isCollect = 1;
+        this.detailsData = d;
+      }
+      const idx = this.swiperIndex;
+      if (idx >= 0 && idx < this.previewItems.length) {
+        const it = this.previewItems[idx];
+        it.isCollect = 1;
+        this.previewItems[idx] = it;
+        GalleryPreviewNavStore.items = this.previewItems.slice();
+      }
+      GalleryTimelineRefreshStore.bump();
+      this.toast('已加入收藏');
+    } finally {
+      this.favoriteToggling = false;
+    }
   }
 
   /** 删除后同步本地预览列表与导航缓存，并切换到相邻图片 */
@@ -369,24 +530,58 @@ struct GalleryPreview {
     }
     this.detailsLoading = true;
     this.detailsData = undefined;
+    this.personsInPhoto = [];
     void this.loadPhotoDetails(id).finally((): void => {
       this.detailsLoading = false;
     });
   }
 
+  /**
+   * 并行发起 getOne 与 personInPhoto；人物失败不影响 EXIF 详情。
+   * 使用 Promise.all 缩短总等待时间。
+   */
   private async loadPhotoDetails(photoId: string): Promise<void> {
     const client = AppSession.getClient();
     if (client === null) {
       this.detailsError = '未登录';
       return;
     }
-    const res = await client.getGalleryPhotoDetail(photoId, 15000);
+    const detailP = client.getGalleryPhotoDetail(photoId, 15000);
+    const personP = client.getPersonInPhoto(photoId, 12000);
+    const pair = await Promise.all([detailP, personP]);
+    const res = pair[0];
+    const pres = pair[1];
     if (!res.success || res.data === undefined) {
       this.detailsError = res.message ?? '详情加载失败';
+      this.personsInPhoto = [];
       return;
     }
     this.detailsData = res.data;
     this.detailsPhotoId = photoId;
+    // 详情里的 isCollect 比列表项更准确，用于星标展示
+    if (photoId === this.currentItemId()) {
+      const ic = res.data.isCollect;
+      if (ic === 1) {
+        this.currentCollectState = 1;
+      } else if (ic === 0) {
+        this.currentCollectState = 0;
+      }
+    }
+    if (pres.success && pres.data !== undefined) {
+      const raw = pres.data.list;
+      const out: PersonInPhotoItem[] = [];
+      if (Array.isArray(raw)) {
+        for (let i = 0; i < raw.length; i++) {
+          const el = raw[i];
+          if (typeof el === 'object' && el !== null) {
+            out.push(el as PersonInPhotoItem);
+          }
+        }
+      }
+      this.personsInPhoto = out;
+    } else {
+      this.personsInPhoto = [];
+    }
   }
 
   private closeDetailsPanel(): void {
@@ -576,6 +771,50 @@ struct GalleryPreview {
     );
   }
 
+  /**
+   * 详情「人物」行点击：与人物页相同链路（detail → timeLine → 按日分页 list），打开 CategoryGallery。
+   * 成功跳转前关闭详情半模态，避免与页面转场叠在一起。
+   */
+  private async onPersonInPhotoClick(p: PersonInPhotoItem): Promise<void> {
+    if (this.personOpening) {
+      return;
+    }
+    const pidRaw = p.personId;
+    const pid = pidRaw !== undefined && pidRaw !== null ? String(pidRaw) : '';
+    if (pid.length === 0) {
+      this.toast('人物 ID 无效');
+      return;
+    }
+    const nameRaw = this.detailText(p.name);
+    const initialTitle = nameRaw.length > 0 ? nameRaw : '未命名';
+    // 先收起详情半模态，全屏遮罩盖在预览页上（避免遮罩被 Sheet 压在下方）
+    this.detailsVisible = false;
+    this.personOpening = true;
+    let keepOpening = false;
+    try {
+      const r = await openPersonAlbumById(
+        this.baseUrl,
+        pid,
+        initialTitle,
+        this.getUIContext()
+      );
+      if (!r.ok) {
+        if (r.errorMessage.length > 0) {
+          this.toast(r.errorMessage);
+        }
+        return;
+      }
+      keepOpening = true;
+      setTimeout((): void => {
+        this.personOpening = false;
+      }, 280);
+    } finally {
+      if (!keepOpening) {
+        this.personOpening = false;
+      }
+    }
+  }
+
   @Builder
   private detailRow(label: string, value: string) {
     if (value.length > 0) {
@@ -593,6 +832,64 @@ struct GalleryPreview {
       .alignItems(VerticalAlign.Top)
       .padding({ top: 6, bottom: 6 })
     }
+  }
+
+  /** 照片中人物一行展示文案（与 Web personInPhoto 字段对齐） */
+  private personInPhotoLineText(p: PersonInPhotoItem): string {
+    const nameRaw = this.detailText(p.name);
+    const showName = nameRaw.length > 0 ? nameRaw : '未命名';
+    const tot = p.total;
+    if (tot !== undefined && Number.isFinite(Number(tot))) {
+      const n = Math.max(0, Math.floor(Number(tot)));
+      let line = `${showName}（图库共 ${n} 张）`;
+      if (p.isHide === true) {
+        line += ' · 已隐藏';
+      }
+      return line;
+    }
+    if (p.isHide === true) {
+      return `${showName} · 已隐藏`;
+    }
+    return showName;
+  }
+
+  /** 详情面板「人物」区块：与 getOne 并行请求的 personInPhoto */
+  @Builder
+  private detailPersonsSection() {
+    Row({ space: 10 }) {
+      Text('人物')
+        .fontSize(13)
+        .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
+        .width(92)
+      Column({ space: 4 }) {
+        if (this.personsInPhoto.length === 0) {
+          Text('未识别到人物')
+            .fontSize(13)
+            .fontColor(this.isDark() ? '#FFF2F2F7' : '#FF1C1C1E')
+        } else {
+          ForEach(this.personsInPhoto, (p: PersonInPhotoItem, idx: number) => {
+            Text(this.personInPhotoLineText(p))
+              .fontSize(13)
+              .fontColor(this.isDark() ? '#FF78A6FF' : '#FF0A63D8')
+              .maxLines(3)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .onClick((): void => {
+                void this.onPersonInPhotoClick(p);
+              })
+          }, (p: PersonInPhotoItem, idx: number) => `pip_${idx}_${p.personId ?? 0}_${p.faceId ?? 0}`)
+          Text(this.personOpening ? '正在打开人物相册…' : '点击姓名打开该人物相册')
+            .fontSize(11)
+            .fontColor(this.isDark() ? '#FF8E8E93' : '#FF6E6E73')
+            .margin({ top: 2 })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ top: 6, bottom: 6 })
   }
 
   @Builder
@@ -672,6 +969,7 @@ struct GalleryPreview {
                 ', '
               )
             )
+            this.detailPersonsSection()
             this.detailPathRow('文件路径', this.detailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath))
           }
           .width('100%')
@@ -909,6 +1207,27 @@ struct GalleryPreview {
     .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
   }
 
+  /** 底栏「收藏」：未收藏为空心星（随主题前景色）；已收藏为黄色实心星 */
+  @Builder
+  private bottomFavoriteAction() {
+    Column({ space: 4 }) {
+      if (this.favoriteToggling) {
+        LoadingProgress().width(26).height(26).color(this.fgColor())
+      } else {
+        SymbolGlyph(this.starFilled() ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
+          .fontSize(26)
+          .fontColor([this.starFilled() ? this.favoriteStarTint() : this.fgColor()])
+      }
+      Text('收藏').fontSize(11).fontColor(this.fgColor())
+    }
+    .layoutWeight(1)
+    .padding({ top: 14, bottom: 14 })
+    .alignItems(HorizontalAlign.Center)
+    .onClick(!this.toolbarVisible ? (): void => {} : (): void => {
+      void this.toggleFavorite();
+    })
+  }
+
   @Builder
   private topCircleAction(icon: Resource, action: () => void) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
@@ -963,6 +1282,18 @@ struct GalleryPreview {
           }
           // 切换媒体类型时（图片↔视频）重新同步系统栏颜色
           this.applySystemBar();
+          // 星标：先跟列表项；再拉 getOne 校正（与进入预览时一致）
+          const nid = this.currentItemId();
+          this.syncCollectStateFromCurrentItem();
+          if (nid.length > 0 && this.detailsPhotoId === nid && this.detailsData !== undefined) {
+            const ic = this.detailsData.isCollect;
+            if (ic === 1) {
+              this.currentCollectState = 1;
+            } else if (ic === 0) {
+              this.currentCollectState = 0;
+            }
+          }
+          void this.refreshCollectStateFromGetOne(nid);
         })
       } else {
         FnStateText({ text: '暂无预览' })
@@ -1025,7 +1356,7 @@ struct GalleryPreview {
             (): void => { this.shareCurrentImage(); })
           this.bottomAction($r('sys.symbol.download'), '下载', this.downloading,
             (): void => { this.downloadCurrentImage(); })
-          this.bottomAction($r('sys.symbol.star'), '收藏', false, (): void => {}, true)
+          this.bottomFavoriteAction()
           this.bottomAction($r('sys.symbol.trash'), '删除', this.deleting,
             (): void => { void this.deleteCurrentItem(); })
         }
@@ -1042,6 +1373,10 @@ struct GalleryPreview {
       .hitTestBehavior(HitTestMode.Transparent)
       .opacity(this.toolbarVisible ? this.toolbarAlpha() : 0)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
+
+      if (this.personOpening) {
+        FnFullLoadingMask({ text: '加载人物媒体中…' })
+      }
 
     }
     .width('100%').height('100%')
