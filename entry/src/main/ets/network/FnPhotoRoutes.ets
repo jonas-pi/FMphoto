@@ -13,6 +13,9 @@ export const FN_PHOTO_WEB_ENTRY = '/p';
 /** 照片 HTTP API 前缀（与 H5 的 `/p/...` 页面不同，仍为 REST） */
 export const FN_PHOTO_API_PREFIX = '/p/api/v1';
 
+/** 飞牛新版部分接口（如语义筛选 search/results）在 v2，与 v1 并存 */
+export const FN_PHOTO_API_V2_PREFIX = '/p/api/v2';
+
 // —— 照片 H5 子路由（接在 FN_PHOTO_WEB_ENTRY 后，如 `/p` + `/album` => `/p/album`）——
 
 /** 文件夹 */

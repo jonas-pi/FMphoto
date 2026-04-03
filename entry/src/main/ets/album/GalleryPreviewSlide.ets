@@ -203,6 +203,34 @@ export struct GalleryPreviewSlide {
 
   private isVideo(): boolean { return this.item !== null && isVideoItem(this.item); }
   private isGif(): boolean { return this.item !== null && isGifItem(this.item); }
+  /**
+   * 估算当前视频原始清晰度上限（p）：
+   * - 优先使用条目里的 width/height（若服务端下发）；
+   * - 采用短边作为 p 档位上限（如 1920x1080 -> 1080p）；
+   * - 缺失时回退 1080，避免误伤现有流程。
+   */
+  private videoMaxResolutionP(): number {
+    if (this.item === null) {
+      return 1080;
+    }
+    const raw = this.item as Record<string, string | number | Object | undefined>;
+    const wRaw = raw['width'];
+    const hRaw = raw['height'];
+    const w = Number(wRaw);
+    const h = Number(hRaw);
+    const wOk = Number.isFinite(w) && w > 0;
+    const hOk = Number.isFinite(h) && h > 0;
+    if (wOk && hOk) {
+      return Math.floor(Math.min(w, h));
+    }
+    if (wOk) {
+      return Math.floor(w);
+    }
+    if (hOk) {
+      return Math.floor(h);
+    }
+    return 1080;
+  }
   private tryReadOriginalBytes(): number | undefined {
     if (this.item === null) {
       return undefined;
@@ -295,7 +323,12 @@ export struct GalleryPreviewSlide {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isVideo()) {
         // 视频：鉴权 AVPlayer + Surface；勿在外层挂缩放手势，避免抢占播放控件触摸
-        GalleryAuthVideo({ videoUrl: this.videoSrc, active: this.active, bottomPadding: this.videoBottomPadding })
+        GalleryAuthVideo({
+          videoUrl: this.videoSrc,
+          active: this.active,
+          bottomPadding: this.videoBottomPadding,
+          maxResolutionP: this.videoMaxResolutionP()
+        })
           .width('100%')
           .height('100%')
       } else {

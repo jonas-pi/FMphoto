@@ -13,7 +13,12 @@ import { util } from '@kit.ArkTS';
 import { CertPolicy } from './CertPolicy';
 import { genFnAuthx, generateRandomDigits, sha256DigestSafe } from './AuthxSigner';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPost, genFnGalleryAuthxPostRaw } from './FnGalleryAuthx';
-import { FN_PHOTO_API_PREFIX, FN_PHOTO_H5_ALBUM_PAGE, fnPhotoLongTokenProbePaths } from './FnPhotoRoutes';
+import {
+  FN_PHOTO_API_PREFIX,
+  FN_PHOTO_API_V2_PREFIX,
+  FN_PHOTO_H5_ALBUM_PAGE,
+  fnPhotoLongTokenProbePaths
+} from './FnPhotoRoutes';
 import { fnWebDefaultUserAgent, injectFnWebCookies, mergeGalleryWebCookieIntoNativeHeader } from './FnWebCookies';
 import { fnWebViewBaseUrl } from './ServerUrl';
 import {
@@ -200,6 +205,22 @@ interface AssetBufferCacheEntry {
 interface UploadNoticeResult {
   ok: boolean;
   message: string;
+}
+
+/** 视频转码播放参数（对齐 /p/api/v1/video/decode/play 抓包字段） */
+export interface VideoDecodePlayRequest {
+  id: string;
+  resolution: string;
+  bitrate: number;
+  audioIndex: number;
+  videoEncoder: string;
+  channels: number;
+}
+
+/** 视频转码播放结果（供播放器展示调试信息） */
+export interface VideoDecodePlayInfo {
+  playUrl: string;
+  hlsTimeSec: number;
 }
 
 class MultipartBodyData {
@@ -757,16 +778,20 @@ export class FnHttpClient {
   }
 
   /**
-   * 图库 XHR：与 Py 一致项 — Cookie、authx、AccessToken、Referer…/p/、Accept json、Sec-Fetch-*。
+   * 图库 XHR：与 Py / 浏览器 `/p/search` 一致项 — Cookie、authx、双写 Token 头、Origin、Referer…/p/、Accept json、Sec-Fetch-*。
    * UA/Client Hint 与 **本应用 WebView**（`fnWebDefaultUserAgent`）一致：鸿蒙上若冒充 Windows 桌面，部分 NAS 会返回模糊业务错误（如 update failed）。
    */
   private buildGalleryFetchHeaders(authxVal: string, cookieHeader: string): Record<string, string> {
+    const webBase = fnWebViewBaseUrl(this.baseUrl);
+    const originOnly = splitOrigin(webBase);
     const h: Record<string, string> = {
       'Cookie': cookieHeader,
       'User-Agent': fnWebDefaultUserAgent(),
-      'Accept': 'application/json',
+      'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
       'Accept-Encoding': 'identity',
+      /** 与 Edge 访问 `https://host/p/search` 时 POST `/p/api/v2/search/results` 一致，部分网关依赖 Origin 做会话校验 */
+      'Origin': originOnly,
       'Referer': this.galleryPhotoReferer(),
       'Sec-Fetch-Dest': 'empty',
       'Sec-Fetch-Mode': 'cors',
@@ -776,9 +801,13 @@ export class FnHttpClient {
       'Sec-Ch-Ua-Platform': '"Android"',
       'authx': authxVal
     };
-    /** 与 Py `extra_headers` 一致：仅 AccessToken，勿加 Authorization（易与 OpenAPI 头混淆被 NAS 拒） */
+    /**
+     * 浏览器常见同时带 `AccessToken`（CORS 暴露名）与全小写 `accesstoken`；服务端若只读其一，缺了会 200 但业务 data 空或非 0 code。
+     * 勿在此加 `Authorization`，易与 OpenAPI 会话冲突被 NAS 拒。
+     */
     if (this.token.length > 0) {
       h['AccessToken'] = this.token;
+      h['accesstoken'] = this.token;
     }
     return h;
   }
@@ -958,7 +987,10 @@ export class FnHttpClient {
     if (c === undefined || c === null) {
       const err = FnHttpClient.envelopeErrorLine(body);
       const data = body['data'];
-      if (err.length > 0 && (data === undefined || data === null)) {
+      const result = body['result'];
+      // v2 部分接口用 result 承载业务体；仅 message 且既无 data 也无 result 时再判失败
+      if (err.length > 0 && (data === undefined || data === null) &&
+        (result === undefined || result === null)) {
         return false;
       }
       return true;
@@ -971,6 +1003,21 @@ export class FnHttpClient {
       return !isNaN(n) && n === 0;
     }
     return false;
+  }
+
+  /**
+   * 图库/照片接口响应体：多数为 `data`，新版 v2 常见为 `result`；统一取有效对象再解析 list。
+   */
+  private static galleryEnvelopeData(body: Record<string, string | number | Object | undefined>): Object | undefined {
+    const d = body['data'];
+    if (d !== undefined && d !== null) {
+      return d as Object;
+    }
+    const r = body['result'];
+    if (r !== undefined && r !== null) {
+      return r as Object;
+    }
+    return undefined;
   }
 
   /** 与内置 Web 一致，便于首页下发 Set-Cookie */
@@ -1406,6 +1453,244 @@ export class FnHttpClient {
     return h;
   }
 
+  /**
+   * 请求视频转码播放地址（/p/api/v1/video/decode/play）。
+   * - 成功时返回可直接用于 AVPlayer 的 m3u8/流地址；
+   * - 失败时返回 success=false，不抛异常，调用方可回退到原始直链播放。
+   */
+  async requestVideoDecodePlayUrl(
+    req: VideoDecodePlayRequest,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<VideoDecodePlayInfo>> {
+    const id = req.id.trim();
+    if (id.length === 0) {
+      return { success: false, message: '视频 ID 不能为空' };
+    }
+    const res = req.resolution.trim();
+    if (res.length === 0) {
+      return { success: false, message: 'resolution 不能为空' };
+    }
+    const bitrate = Math.max(100000, Math.floor(req.bitrate));
+    const audioIndex = Math.max(0, Math.floor(req.audioIndex));
+    const channels = Math.max(1, Math.floor(req.channels));
+    const encoder = req.videoEncoder.trim().length > 0 ? req.videoEncoder.trim() : 'h264';
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const path = `${FN_PHOTO_API_PREFIX}/video/decode/play`;
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const idNum = Number(id);
+    const idJson = Number.isFinite(idNum) && idNum > 0 ? `${Math.floor(idNum)}` : `"${escapeJsonString(id)}"`;
+    const bodyStr =
+      `{"id":${idJson},"bitrate":${bitrate},"resolution":"${escapeJsonString(res)}",` +
+      `"audioIndex":${audioIndex},"videoEncoder":"${escapeJsonString(encoder)}","channels":${channels}}`;
+    try {
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '转码播放响应解析失败' };
+      }
+      if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+        const errLine = FnHttpClient.envelopeErrorLine(parsed);
+        return { success: false, message: errLine.length > 0 ? errLine : '转码播放失败' };
+      }
+      const resolved = FnHttpClient.extractDecodePlayUrl(parsed, activeBase);
+      if (resolved.length === 0) {
+        return { success: false, message: '未返回可播放地址' };
+      }
+      const hls = FnHttpClient.extractDecodeHlsTimeSec(parsed);
+      return {
+        success: true,
+        data: { playUrl: resolved, hlsTimeSec: hls }
+      };
+    } catch (e) {
+      return { success: false, message: String(e) || '转码请求异常' };
+    }
+  }
+
+  /**
+   * 终止服务器端当前视频的转码会话（对齐浏览器抓包：POST /p/api/v1/video/decode/quit）。
+   * 切换预览项或清晰度前调用，避免旧转码任务占用资源或与新区冲突。
+   * 失败不抛异常，由调用方决定是否提示。
+   */
+  async requestVideoDecodeQuit(photoId: string, timeoutMs: number = 8000): Promise<FnClientResult<Object>> {
+    const id = photoId.trim();
+    if (id.length === 0) {
+      return { success: false, message: 'photoId 为空' };
+    }
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const path = `${FN_PHOTO_API_PREFIX}/video/decode/quit`;
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const idNum = Number(id);
+    const idJson = Number.isFinite(idNum) && idNum > 0 ? `${Math.floor(idNum)}` : `"${escapeJsonString(id)}"`;
+    const bodyStr = `{"id":${idJson}}`;
+    try {
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        // quit 返回非 JSON 时按“已尽力发送成功”处理，避免阻断后续重建播放。
+        return { success: true, data: new Object() };
+      }
+      if (FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+        return { success: true, data: parsed['data'] as Object };
+      }
+      return { success: false, message: FnHttpClient.envelopeErrorLine(parsed) || 'quit 业务失败' };
+    } catch (e) {
+      return { success: false, message: String(e) || 'quit 请求异常' };
+    }
+  }
+
+  /** 兼容不同版本响应字段，提取可播放地址并补全相对路径 */
+  private static extractDecodePlayUrl(
+    body: Record<string, string | number | Object | undefined>,
+    activeBase: string
+  ): string {
+    const toAbs = (u: string): string => {
+      const t = u.trim();
+      if (t.length === 0) {
+        return '';
+      }
+      /**
+       * decode/play 常返回短链接：/media/{mediaId}/preset.m3u8
+       * 真实可播放地址需补成：
+       * /p/api/v1/video/decode/stream/media/{mediaId}/preset.m3u8
+       */
+      if (t.startsWith('/media/')) {
+        return `${activeBase}${FN_PHOTO_API_PREFIX}/video/decode/stream${t}`;
+      }
+      if (t.startsWith('http://') || t.startsWith('https://') || t.startsWith('data:')) {
+        return t;
+      }
+      return t.startsWith('/') ? `${activeBase}${t}` : `${activeBase}/${t}`;
+    };
+    const pickUrlFromObj = (o: Record<string, string | number | Object | undefined>): string => {
+      const keys: string[] = ['url', 'playUrl', 'playLink', 'm3u8', 'm3u8Url', 'streamUrl', 'playlist'];
+      for (let i = 0; i < keys.length; i++) {
+        const v = o[keys[i]];
+        if (typeof v === 'string' && v.trim().length > 0) {
+          return toAbs(v);
+        }
+      }
+      // 兜底：部分版本可能仅返回 mediaId，按抓包规则拼接 preset.m3u8
+      const mediaId = o['mediaId'] ?? o['media_id'] ?? o['taskId'] ?? o['task_id'];
+      if (mediaId !== undefined && mediaId !== null) {
+        const sid = String(mediaId).trim();
+        if (sid.length > 0) {
+          return `${activeBase}${FN_PHOTO_API_PREFIX}/video/decode/stream/media/${sid}/preset.m3u8`;
+        }
+      }
+      return '';
+    };
+    const root = pickUrlFromObj(body);
+    if (root.length > 0) {
+      return root;
+    }
+    const dataObj = body['data'];
+    if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+      const fromData = pickUrlFromObj(dataObj as Record<string, string | number | Object | undefined>);
+      if (fromData.length > 0) {
+        return fromData;
+      }
+    }
+
+    /**
+     * 深度兜底（兼容更多 NAS 返回形态）：
+     * 1) 先在完整 JSON 字符串里提取 m3u8 URL/相对路径；
+     * 2) 再提取 mediaId 并拼接标准 preset.m3u8。
+     * 说明：部分版本 decode/play 返回结构层级较深，字段名不固定，直接按键取值会漏。
+     */
+    let raw = '';
+    try {
+      raw = JSON.stringify(body);
+    } catch (_e) {
+      raw = '';
+    }
+    if (raw.length > 0) {
+      // 优先匹配完整 URL
+      let m = raw.match(/https?:\/\/[^"\\\s]+\/video\/decode\/stream\/media\/[^"\\\s]+\.m3u8/i);
+      if (m !== null && m.length > 0) {
+        return m[0];
+      }
+      // 再匹配相对路径（包含被 JSON 转义的斜杠）
+      m = raw.match(/(?:\/|\\\/)p(?:\/|\\\/)api(?:\/|\\\/)v1(?:\/|\\\/)video(?:\/|\\\/)decode(?:\/|\\\/)stream(?:\/|\\\/)media(?:\/|\\\/)[^"\\\s]+\.m3u8/i);
+      if (m !== null && m.length > 0) {
+        const rel = m[0].replace(/\\\//g, '/');
+        return toAbs(rel.startsWith('/') ? rel : `/${rel}`);
+      }
+      // 最后尝试提取 mediaId / media_id（如 ff416b...）并拼接标准 m3u8
+      m = raw.match(/"(?:mediaId|media_id|taskId|task_id)"\s*:\s*"([a-zA-Z0-9_-]{8,})"/i);
+      if (m !== null && m.length > 1) {
+        const sid = m[1].trim();
+        if (sid.length > 0) {
+          return `${activeBase}${FN_PHOTO_API_PREFIX}/video/decode/stream/media/${sid}/preset.m3u8`;
+        }
+      }
+    }
+    return '';
+  }
+
+  /** 提取 decode/play 返回的 hlsTime（秒），未知时返回 0 */
+  private static extractDecodeHlsTimeSec(
+    body: Record<string, string | number | Object | undefined>
+  ): number {
+    const pickNum = (o: Record<string, string | number | Object | undefined>): number => {
+      const v = o['hlsTime'] ?? o['hls_time'];
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+        return Math.floor(v);
+      }
+      if (typeof v === 'string') {
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) {
+          return Math.floor(n);
+        }
+      }
+      return 0;
+    };
+    const root = pickNum(body);
+    if (root > 0) {
+      return root;
+    }
+    const dataObj = body['data'];
+    if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+      return pickNum(dataObj as Record<string, string | number | Object | undefined>);
+    }
+    return 0;
+  }
+
   /** 从完整 URL 中提取签名路径与 query 参数（供 genFnGalleryAuthxGet） */
   private static parseGalleryAssetUrl(fullUrl: string): GalleryAssetSignParts {
     const qIdx = fullUrl.indexOf('?');
@@ -1543,53 +1828,72 @@ export class FnHttpClient {
   }
 
   /**
-   * 媒体分类：GET /p/api/v1/media_category/list
-   * 使用与图库一致的 Cookie + authx 认证。
+   * 媒体分类：GET media_category/list（与 Web 一致走 Cookie + authx）。
+   * 飞牛新版与 search/results 类似，优先 `/p/api/v2/...`，失败或无列表时再回退 v1。
    */
   async getMediaCategoryList(timeoutMs: number = 20000): Promise<FnClientResult<MediaCategoryData>> {
     try {
       const activeBase = fnWebViewBaseUrl(this.baseUrl);
-      const path = `${FN_PHOTO_API_PREFIX}/media_category/list`;
+      const pathCandidates: string[] = [
+        `${FN_PHOTO_API_V2_PREFIX}/media_category/list`,
+        `${FN_PHOTO_API_PREFIX}/media_category/list`,
+      ];
       const cookie = mergeGalleryWebCookieIntoNativeHeader(
         buildFnApiCookieHeader(this.token, this.longToken),
         activeBase
       );
-      const authx = await genFnGalleryAuthxGet(path, GALLERY_QUERY_EMPTY);
-      const headers = this.buildGalleryFetchHeaders(authx, cookie);
-      const raw = await this.rawRequest(
-        `${activeBase}${path}`,
-        http.RequestMethod.GET,
-        headers,
-        undefined,
-        timeoutMs,
-        CertPolicy.isTrusted(activeBase)
-      );
-      if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+      let lastHttp = -1;
+      let lastBizMsg = '';
+      /** 最近一次「HTTP+biz 均成功」的解析结果；v2 空列表但 v1 请求失败时仍返回该兜底，避免误报失败 */
+      let lastOkData: MediaCategoryData | undefined = undefined;
+      for (let pi = 0; pi < pathCandidates.length; pi++) {
+        const path = pathCandidates[pi];
+        const authx = await genFnGalleryAuthxGet(path, GALLERY_QUERY_EMPTY);
+        const headers = this.buildGalleryFetchHeaders(authx, cookie);
+        const raw = await this.rawRequest(
+          `${activeBase}${path}`,
+          http.RequestMethod.GET,
+          headers,
+          undefined,
+          timeoutMs,
+          CertPolicy.isTrusted(activeBase)
+        );
+        lastHttp = raw.code;
+        if (raw.code < 200 || raw.code >= 300) {
+          continue;
+        }
+        let parsed: Record<string, string | number | Object | undefined>;
+        try {
+          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+        } catch (_e) {
+          lastBizMsg = '媒体分类结果解析失败';
+          continue;
+        }
+        if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+          const code = FnHttpClient.envelopeCodeNum(parsed);
+          const errLine = FnHttpClient.envelopeErrorLine(parsed);
+          lastBizMsg = errLine.length > 0 ? errLine : `媒体分类请求失败 (${code})`;
+          continue;
+        }
+        hilog.info(DOMAIN, TAG, 'mediaCat path=%{public}s body(600): %{public}s', path, raw.body.substring(0, 600));
+        const payload = FnHttpClient.galleryEnvelopeData(parsed);
+        const normList = FnHttpClient.mediaCategoryItemsFromData(payload);
+        hilog.info(DOMAIN, TAG, 'mediaCat normCount=%{public}d', normList.length);
+        if (normList.length > 0) {
+          hilog.info(DOMAIN, TAG, 'mediaCat[0] name=%{public}s key=%{public}s id=%{public}s count=%{public}d cover=%{public}s',
+            normList[0].name ?? '(none)', normList[0].key ?? '(none)', normList[0].id ?? '(none)',
+            normList[0].count ?? -1, normList[0].cover ?? '(none)');
+        }
+        lastOkData = { list: normList };
+        if (normList.length > 0) {
+          return { success: true, data: lastOkData };
+        }
       }
-      let parsed: Record<string, string | number | Object | undefined>;
-      try {
-        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
-      } catch (_e) {
-        return { success: false, message: '媒体分类结果解析失败' };
+      if (lastOkData !== undefined) {
+        return { success: true, data: lastOkData };
       }
-      if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
-        const code = FnHttpClient.envelopeCodeNum(parsed);
-        const errLine = FnHttpClient.envelopeErrorLine(parsed);
-        const show = errLine.length > 0 ? `: ${errLine}` : '';
-        return { success: false, message: `媒体分类请求失败 (${code})${show}` };
-      }
-      // 诊断：打印原始响应体前 600 字符，便于排查字段名
-      hilog.info(DOMAIN, TAG, 'mediaCat body(600): %{public}s', raw.body.substring(0, 600));
-      const normList = FnHttpClient.mediaCategoryItemsFromData(parsed['data'] as Object | undefined);
-      hilog.info(DOMAIN, TAG, 'mediaCat normCount=%{public}d', normList.length);
-      if (normList.length > 0) {
-        hilog.info(DOMAIN, TAG, 'mediaCat[0] name=%{public}s id=%{public}s count=%{public}d cover=%{public}s',
-          normList[0].name ?? '(none)', normList[0].id ?? '(none)',
-          normList[0].count ?? -1, normList[0].cover ?? '(none)');
-      }
-      const norm: MediaCategoryData = { list: normList };
-      return { success: true, data: norm };
+      const hint = lastBizMsg.length > 0 ? lastBizMsg : `HTTP ${lastHttp}`;
+      return { success: false, message: `媒体分类加载失败: ${hint}` };
     } catch (e) {
       return { success: false, message: String(e) || '媒体分类请求异常' };
     }
@@ -1826,6 +2130,7 @@ export class FnHttpClient {
       const d = dataObj as Record<string, Object | undefined>;
       const found =
         d['list'] ?? d['items'] ?? d['categoryList'] ?? d['categories'] ??
+        d['mediaCategoryList'] ?? d['rows'] ??
         d['records'] ?? d['data'] ?? d['result'];
       if (!Array.isArray(found)) {
         return [];
@@ -1843,49 +2148,278 @@ export class FnHttpClient {
   }
 
   /**
+   * 已知 file_type / 分类 slug → 列表展示名（media_category/list 常不带 name 时的兜底）
+   */
+  private static mediaCategoryLabelForKey(key: string): string | undefined {
+    const k = key.trim();
+    if (k.length === 0) {
+      return undefined;
+    }
+    if (k === 'photo') {
+      return '照片';
+    }
+    if (k === 'video') {
+      return '视频';
+    }
+    if (k === 'live_photo') {
+      return '实况 / 动态照片';
+    }
+    if (k === 'gif') {
+      return '动图';
+    }
+    if (k === 'raw') {
+      return 'RAW';
+    }
+    if (k === 'screenshot') {
+      return '屏幕截图';
+    }
+    /** 与 Web `zp(t)` 一致：searchValue `"360"`、`panorama` */
+    if (k === '360') {
+      return '360° 全景';
+    }
+    if (k === 'panorama') {
+      return '全景照片';
+    }
+    return undefined;
+  }
+
+  /**
+   * 服务端偶发「未命名分类」占位文案：若当作有效名称会挡住后面的 key → 屏幕截图 等兜底。
+   */
+  private static isPlaceholderCategoryDisplayName(s: string): boolean {
+    const t = s.trim();
+    if (t.length === 0) {
+      return true;
+    }
+    const lower = t.toLowerCase();
+    return t === '未命名分类' || t === '未命名' ||
+      lower === 'unnamed' || lower === 'unknown' || lower === 'n/a' ||
+      t === '-' || t === '—' || t === '--';
+  }
+
+  /**
+   * 接口偶发把枚举包一层对象：mediaCategory: { type: 6 }、{ slug: 'screenshot' } 等，剥一层取标量。
+   */
+  private static unwrapCategoryNested(v: Object): Object | undefined {
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+      return v;
+    }
+    const o = v as Record<string, Object | undefined>;
+    // 不读嵌套里的 name：可能是「未命名分类」等占位，会被误当成 file_type 字符串
+    const inner =
+      o['category'] ?? o['type'] ?? o['slug'] ?? o['key'] ?? o['code'] ??
+      o['value'] ?? o['id'];
+    return inner !== undefined && inner !== null ? inner : v;
+  }
+
+  /**
+   * 分类行上的「类型」原始字段：不同版本字段名不同。
+   * 注意：`categoryId` 在部分 payload 里是**封面照片 id**（很大），不能当枚举；仅当值为 **1–8**（飞牛 Web 媒体类型枚举）时才采纳。
+   * `type` / `mediaType` 同理，避免把无关数字当成分类。
+   */
+  private static pickCategoryScalar(raw: Record<string, Object | undefined>): Object | undefined {
+    const preferKeys: string[] = [
+      'category', 'categoryType', 'category_type',
+      'mediaCategory', 'media_category', 'cat',
+      'categoryCode', 'category_code', 'enumValue', 'enum',
+    ];
+    const narrowKeys: string[] = [
+      'type', 'mediaType', 'media_type',
+      'categoryId', 'category_id',
+    ];
+    const tryVal = (v: Object | undefined, onlySmallEnum: boolean): Object | undefined => {
+      if (v === undefined || v === null) {
+        return undefined;
+      }
+      if (typeof v === 'string' && v.trim().length === 0) {
+        return undefined;
+      }
+      let x: Object | undefined = FnHttpClient.unwrapCategoryNested(v as Object);
+      if (x === undefined || x === null) {
+        return undefined;
+      }
+      if (typeof x === 'number' && Number.isFinite(x)) {
+        const n = Math.floor(x as number);
+        if (onlySmallEnum && (n < 1 || n > 8)) {
+          return undefined;
+        }
+        return n;
+      }
+      return x;
+    };
+    for (let i = 0; i < preferKeys.length; i++) {
+      const got = tryVal(raw[preferKeys[i]], false);
+      if (got !== undefined) {
+        return got;
+      }
+    }
+    for (let j = 0; j < narrowKeys.length; j++) {
+      const gotN = tryVal(raw[narrowKeys[j]], true);
+      if (gotN !== undefined) {
+        return gotN;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 飞牛 **Web 前端 `zp(i18n)`**（见 /p/assets 打包）：媒体类型枚举 1–8 → 展示名 + v2 search 的 filterValue（searchValue）。
+   * 旧版文档写「1–6 且 6=截图」已过时：**6=360°、7=全景、8=截图**。
+   */
+  private static applyMediaCategoryEnumByIndex(out: MediaCategoryItem, idx: number): void {
+    if (idx === 1) {
+      out.name = '照片';
+      out.key = 'photo';
+    } else if (idx === 2) {
+      out.name = '视频';
+      out.key = 'video';
+    } else if (idx === 3) {
+      out.name = '实况 / 动态照片';
+      out.key = 'live_photo';
+    } else if (idx === 4) {
+      out.name = '动图';
+      out.key = 'gif';
+    } else if (idx === 5) {
+      out.name = 'RAW';
+      out.key = 'raw';
+    } else if (idx === 6) {
+      out.name = '360° 全景';
+      out.key = '360';
+    } else if (idx === 7) {
+      out.name = '全景照片';
+      out.key = 'panorama';
+    } else if (idx === 8) {
+      out.name = '屏幕截图';
+      out.key = 'screenshot';
+    }
+  }
+
+  /**
    * 将原始 JSON 对象规范化为 MediaCategoryItem。
    *
-   * 依据 fnOS Web 前端源码（media_category.lazy-DstI0gUv.js）：
-   *   - `category`（整数 1-5）是类型标识符，**名称由前端硬编码，JSON 中无 name 字段**
+   * 依据飞牛 Web 打包（如 `Cl8WJe889GVKre8N.js` 内 `zp`）：`category` 为整数 **1–8** 或 slug；
+   * **8=截图、6=360°**（勿再按旧版把 6 当成截图）。
    *   - `count` 为该分类的媒体数量
-   *   - `id` + `uuid` 用于拼接封面缩略图 URL：/p/api/v1/stream/p/t/{id}/m/{uuid}
-   *   - 点击分类跳转 /search?file_type={searchValue}（photo/video/gif/raw/live_photo）
+   *   - 封面：`id` + `uuid` / `photoUUID`（接口字段不一致）
+   *   - 筛选：`/p/api/v2/search/results` 的 body 与 Web 一致：`filters: [{ filterName:"file_type", filterValue:"photo"|"screenshot" ... }]`
+   * 新版列表项可能带 `filterValue`、`displayName`；部分设备用 `specialType: 3` 表示截图类（与单张照片上的标记一致）。
    */
   private static normalizeCategoryItem(raw: Record<string, Object | undefined>): MediaCategoryItem {
     const out: MediaCategoryItem = {};
 
-    // ── category 类型编号 → 名称 + searchValue（key 字段） ─────────────────
-    const catRaw = raw['category'];
-    const catNum = (typeof catRaw === 'number') ? catRaw as number :
-      (typeof catRaw === 'string' ? parseInt(catRaw as string, 10) : NaN);
-    if (catNum === 1) { out.name = '照片'; out.key = 'photo'; }
-    else if (catNum === 2) { out.name = '视频'; out.key = 'video'; }
-    else if (catNum === 3) { out.name = '实况 / 动态照片'; out.key = 'live_photo'; }
-    else if (catNum === 4) { out.name = '动图'; out.key = 'gif'; }
-    else if (catNum === 5) { out.name = 'RAW'; out.key = 'raw'; }
-    out.id = Number.isFinite(catNum) ? String(catNum) : undefined;
-
-    // ── 数量（count 字段） ──────────────────────────────────────────────────
-    const countRaw = raw['count'];
-    if (countRaw !== undefined) {
-      const n = Number(countRaw);
-      if (Number.isFinite(n) && n >= 0) {
-        out.count = Math.floor(n);
+    let catNum = NaN;
+    const catRaw = FnHttpClient.pickCategoryScalar(raw);
+    if (typeof catRaw === 'number' && Number.isFinite(catRaw)) {
+      const n = Math.floor(catRaw as number);
+      // 枚举段 1–8（与 Web zp 一致）；超出则不当成分类序号
+      catNum = (n >= 1 && n <= 8) ? n : NaN;
+    } else if (typeof catRaw === 'string') {
+      const t = (catRaw as string).trim();
+      if (t.length > 0) {
+        const asInt = parseInt(t, 10);
+        if (Number.isFinite(asInt) && String(asInt) === t && asInt >= 1 && asInt <= 8) {
+          catNum = asInt;
+        } else {
+          // 非纯数字：直接作为 file_type（如 screenshot）
+          out.key = t;
+        }
       }
     }
 
-    // ── 封面：由 id（照片 ID）+ uuid（照片 UUID）拼成缩略图路径 ──────────────
-    // 格式：/p/api/v1/stream/p/t/{photo_id}/m/{photo_uuid}
+    if (Number.isFinite(catNum) && catNum >= 1 && catNum <= 8) {
+      FnHttpClient.applyMediaCategoryEnumByIndex(out, Math.floor(catNum));
+    }
+
+    const nameCand =
+      raw['name'] ?? raw['title'] ?? raw['label'] ?? raw['categoryName'] ?? raw['displayName'];
+    if (typeof nameCand === 'string' && nameCand.trim().length > 0) {
+      const nt = nameCand.trim();
+      // 占位「未命名分类」不能覆盖已由枚举推出来的「屏幕截图」等
+      if (!FnHttpClient.isPlaceholderCategoryDisplayName(nt)) {
+        out.name = nt;
+      }
+    }
+    const keyCand =
+      raw['key'] ?? raw['searchValue'] ?? raw['filterValue'] ??
+      raw['file_type'] ?? raw['fileType'] ?? raw['mimeCategory'] ?? raw['mime_category'];
+    if (typeof keyCand === 'string' && keyCand.trim().length > 0) {
+      const kt = keyCand.trim();
+      const kInt = parseInt(kt, 10);
+      // 列表下发数字枚举时与 Web zp 一致（8=截图，6=360 等）
+      if (Number.isFinite(kInt) && String(kInt) === kt && kInt >= 1 && kInt <= 8) {
+        FnHttpClient.applyMediaCategoryEnumByIndex(out, kInt);
+      } else {
+        out.key = kt;
+      }
+    }
+
+    // 分类枚举 id（与 file_type 筛选一致）；纯 slug 行不强行写 id，避免与封面照片 id 混淆
+    out.id = undefined;
+    if (Number.isFinite(catNum) && catNum >= 1 && catNum <= 8) {
+      out.id = String(Math.floor(catNum));
+    } else if (typeof keyCand === 'string' && keyCand.trim().length > 0) {
+      const kInt = parseInt(keyCand.trim(), 10);
+      if (Number.isFinite(kInt) && String(kInt) === keyCand.trim() && kInt >= 1 && kInt <= 8) {
+        out.id = String(kInt);
+      }
+    }
+
+    /** 部分版本仅通过 specialType 区分截图（常见值 3），与 v2 search 的 file_type=screenshot 对应 */
+    const stRaw = raw['specialType'] ?? raw['special_type'];
+    let stNum = NaN;
+    if (typeof stRaw === 'number' && Number.isFinite(stRaw)) {
+      stNum = Math.floor(stRaw as number);
+    } else if (typeof stRaw === 'string' && stRaw.trim().length > 0) {
+      const st = parseInt(stRaw.trim(), 10);
+      if (Number.isFinite(st)) {
+        stNum = st;
+      }
+    }
+    const keyBeforeSpecial = out.key !== undefined ? out.key : '';
+    // 照片维度 specialType：常见 3=截图（与 category 枚举 8 并列）；勿再用 6（Web 上 6 已为 360°）
+    if (keyBeforeSpecial.length === 0 && stNum === 3) {
+      out.key = 'screenshot';
+      if (out.name === undefined || out.name.length === 0 ||
+        FnHttpClient.isPlaceholderCategoryDisplayName(out.name)) {
+        out.name = '屏幕截图';
+      }
+    }
+
+    const keyForLabel = out.key !== undefined ? out.key : '';
+    const nameNow = out.name !== undefined ? out.name : '';
+    if (keyForLabel.length > 0 &&
+      (nameNow.length === 0 || FnHttpClient.isPlaceholderCategoryDisplayName(nameNow))) {
+      const lb = FnHttpClient.mediaCategoryLabelForKey(keyForLabel);
+      if (lb !== undefined) {
+        out.name = lb;
+      }
+    }
+
+    const countRaw = raw['count'] ?? raw['total'];
+    if (countRaw !== undefined) {
+      const n = Number(countRaw);
+      if (Number.isFinite(n) && n >= 0) {
+        const c = Math.floor(n);
+        out.count = c;
+        out.total = c;
+      }
+    }
+
     const photoId = raw['id'];
-    const photoUuid = raw['uuid'];
+    const photoUuid = raw['uuid'] ?? raw['photoUUID'];
     if (photoId !== undefined && photoId !== null &&
-        photoUuid !== undefined && photoUuid !== null) {
+      photoUuid !== undefined && photoUuid !== null) {
       const idStr = String(photoId);
       const uuidStr = String(photoUuid);
       if (idStr.length > 0 && uuidStr.length > 0 &&
-          idStr !== 'null' && uuidStr !== 'null') {
+        idStr !== 'null' && uuidStr !== 'null') {
         out.cover = `${FN_PHOTO_API_PREFIX}/stream/p/t/${idStr}/m/${uuidStr}`;
       }
+    }
+
+    // v2 filters 与 Web 一致为小写 slug（photo、screenshot、live_photo…）
+    if (out.key !== undefined && out.key.length > 0) {
+      out.key = out.key.trim().toLowerCase();
     }
 
     return out;
@@ -1899,10 +2433,28 @@ export class FnHttpClient {
       return dataObj as GalleryListItem[];
     }
     const d = dataObj as Record<string, Object | undefined>;
-    // 尝试所有常见键名
+    const topRaw = d['list'];
+    const topList: GalleryListItem[] | undefined = Array.isArray(topRaw) ? topRaw as GalleryListItem[] : undefined;
+    // 与抓包一致：code=0 且 data.list 为照片数组；优先非空 list，避免误用 timeline
+    if (topList !== undefined && topList.length > 0) {
+      return topList;
+    }
+    // list 缺失 / null / [] 时尝试剥内层 data（少数网关或旧版套层）
+    const inner = d['data'];
+    if (inner !== undefined && typeof inner === 'object' && !Array.isArray(inner)) {
+      const nested = FnHttpClient.searchResultItemsFromData(inner);
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+    if (topList !== undefined) {
+      return topList;
+    }
+    if (Array.isArray(d['items'])) {
+      return d['items'] as GalleryListItem[];
+    }
     const KEYS: string[] = [
-      'list', 'items', 'photos', 'records',
-      'results', 'photoList', 'photo_list',
+      'photos', 'records', 'results', 'photoList', 'photo_list',
       'data', 'mediaList', 'media_list',
       'fileList', 'file_list', 'pageList', 'page_list',
     ];
@@ -1913,6 +2465,32 @@ export class FnHttpClient {
       }
     }
     return [];
+  }
+
+  /**
+   * v2 /search/results 下单条与 gallery/getList 字段略有差异（如 fileName、relative mUrl），
+   * 补齐后分类相册页日期键、扩展名与标题与主时间线一致。
+   */
+  private static normalizeSearchResultGalleryItems(items: GalleryListItem[]): GalleryListItem[] {
+    for (let i = 0; i < items.length; i++) {
+      const rec = items[i] as Record<string, string | number | Object | undefined>;
+      const fileNameVal = rec['fileName'];
+      if (typeof fileNameVal === 'string') {
+        const baseName = fileNameVal.trim();
+        if (baseName.length > 0) {
+          const fnLo = rec['filename'];
+          if (fnLo === undefined || String(fnLo).trim().length === 0) {
+            rec['filename'] = baseName;
+          }
+          const nm = rec['name'];
+          if (nm === undefined || String(nm).trim().length === 0) {
+            rec['name'] = baseName;
+          }
+        }
+      }
+      // additional.thumbnail 常为站点相对路径；网格里 nasUrl(base, pickThumb) 会拼完整 URL，此处不重复写
+    }
+    return items;
   }
 
   /**
@@ -1950,59 +2528,66 @@ export class FnHttpClient {
   }
 
   /**
-   * 分类空列表时的兜底查询：POST /p/api/v1/search/results
-   * 按 id/key/name 多种字段顺序尝试，适配不同版本。
+   * 分类列表无内嵌 items 时：POST search/results（filters / 旧 body）。
+   * 新版 NAS 仅 v2 返回有效列表（如 /p/api/v2/search/results），v1 可能空包；故按 v2 → v1 依次尝试。
    */
   async searchResultsByCategory(item: MediaCategoryItem, timeoutMs: number = 20000): Promise<FnClientResult<GalleryListItem[]>> {
     try {
       const activeBase = fnWebViewBaseUrl(this.baseUrl);
-      const path = `${FN_PHOTO_API_PREFIX}/search/results`;
+      const searchResultPaths: string[] = [
+        `${FN_PHOTO_API_V2_PREFIX}/search/results`,
+        `${FN_PHOTO_API_PREFIX}/search/results`,
+      ];
       const cookie = mergeGalleryWebCookieIntoNativeHeader(
         buildFnApiCookieHeader(this.token, this.longToken),
         activeBase
       );
-      // keyVal 存放 fnOS 的 file_type 值（photo/video/gif/raw/live_photo）
-      // idVal  存放 category 数字（1-5）
       const keyVal = item.key !== undefined ? item.key : '';
       const idVal = item.id !== undefined ? String(item.id) : '';
       const nameVal = item.name ?? item.title ?? item.label ?? '';
-      // ── 首选：Web 端真实格式：filters 数组 + keyword="" ─────────────────────
-      // 完整格式：{"keyword":"","filters":[{"filterName":"file_type","filterValue":"photo"}],"antiFilters":[]}
       if (keyVal.length > 0) {
+        // 与 Web / 抓包一致：POST /p/api/v2/search/results；filterValue 用 JSON.stringify(keyVal) 转义，避免 ArkTS 禁止的内联未类型化对象字面量
+        const fv = JSON.stringify(keyVal);
         const filterBodyStr =
-          `{"keyword":"","filters":[{"filterName":"file_type","filterValue":"${keyVal}"}],"antiFilters":[]}`;
+          `{"keyword":"","filters":[{"filterName":"file_type","filterValue":${fv}}],"antiFilters":[]}`;
         hilog.info(DOMAIN, TAG, 'catSearch filters body: %{public}s', filterBodyStr);
-        const authxFilters = await genFnGalleryAuthxPostRaw(path, filterBodyStr);
-        const headersFilters = this.buildGalleryFetchHeaders(authxFilters, cookie);
-        headersFilters['Content-Type'] = 'application/json';
-        const rawFilters = await this.rawRequest(
-          `${activeBase}${path}`,
-          http.RequestMethod.POST,
-          headersFilters,
-          filterBodyStr,
-          timeoutMs,
-          CertPolicy.isTrusted(activeBase)
-        );
-        hilog.info(DOMAIN, TAG, 'catSearch filters httpCode=%{public}d body500: %{public}s',
-          rawFilters.code, rawFilters.body.substring(0, 500));
-        if (rawFilters.code >= 200 && rawFilters.code < 300) {
-          let parsedFilters: Record<string, string | number | Object | undefined> | undefined;
-          try {
-            parsedFilters = JSON.parse(rawFilters.body) as Record<string, string | number | Object | undefined>;
-          } catch (_e) {
-            parsedFilters = undefined;
-          }
-          if (parsedFilters !== undefined && FnHttpClient.galleryEnvelopeBizOk(parsedFilters)) {
-            const arrFilters = FnHttpClient.searchResultItemsFromData(parsedFilters['data'] as Object | undefined);
-            hilog.info(DOMAIN, TAG, 'catSearch filters arr.length=%{public}d', arrFilters.length);
-            if (arrFilters.length > 0) {
-              return { success: true, data: arrFilters };
+        for (let pi = 0; pi < searchResultPaths.length; pi++) {
+          const pathTry = searchResultPaths[pi];
+          const authxFilters = await genFnGalleryAuthxPostRaw(pathTry, filterBodyStr);
+          const headersFilters = this.buildGalleryFetchHeaders(authxFilters, cookie);
+          headersFilters['Content-Type'] = 'application/json';
+          const rawFilters = await this.rawRequest(
+            `${activeBase}${pathTry}`,
+            http.RequestMethod.POST,
+            headersFilters,
+            filterBodyStr,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          hilog.info(DOMAIN, TAG, 'catSearch path=%{public}s http=%{public}d body500: %{public}s',
+            pathTry, rawFilters.code, rawFilters.body.substring(0, 500));
+          if (rawFilters.code >= 200 && rawFilters.code < 300) {
+            let parsedFilters: Record<string, string | number | Object | undefined> | undefined;
+            try {
+              parsedFilters = JSON.parse(rawFilters.body) as Record<string, string | number | Object | undefined>;
+            } catch (_e) {
+              parsedFilters = undefined;
+            }
+            if (parsedFilters !== undefined && FnHttpClient.galleryEnvelopeBizOk(parsedFilters)) {
+              const arrFilters =
+                FnHttpClient.searchResultItemsFromData(FnHttpClient.galleryEnvelopeData(parsedFilters));
+              hilog.info(DOMAIN, TAG, 'catSearch filters arr.length=%{public}d', arrFilters.length);
+              if (arrFilters.length > 0) {
+                return {
+                  success: true,
+                  data: FnHttpClient.normalizeSearchResultGalleryItems(arrFilters),
+                };
+              }
             }
           }
         }
       }
 
-      // ── 兜底候选列表（旧格式，用于兼容其他版本） ─────────────────────────────
       const candidates: Array<Record<string, FnJsonValue>> = [];
       const pushCandidate = (k: string, v: string): void => {
         const body: Record<string, FnJsonValue> = {};
@@ -2025,32 +2610,35 @@ export class FnHttpClient {
       for (let i = 0; i < candidates.length; i++) {
         const body = candidates[i];
         const bodyStr = JSON.stringify(body);
-        const authx = await genFnGalleryAuthxPost(path, body);
-        const headers = this.buildGalleryFetchHeaders(authx, cookie);
-        headers['Content-Type'] = 'application/json';
-        const raw = await this.rawRequest(
-          `${activeBase}${path}`,
-          http.RequestMethod.POST,
-          headers,
-          bodyStr,
-          timeoutMs,
-          CertPolicy.isTrusted(activeBase)
-        );
-        if (raw.code < 200 || raw.code >= 300) {
-          continue;
-        }
-        let parsed: Record<string, string | number | Object | undefined>;
-        try {
-          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
-        } catch (_e) {
-          continue;
-        }
-        if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
-          continue;
-        }
-        const arr = FnHttpClient.searchResultItemsFromData(parsed['data'] as Object | undefined);
-        if (arr.length > 0) {
-          return { success: true, data: arr };
+        for (let pi = 0; pi < searchResultPaths.length; pi++) {
+          const pathTry = searchResultPaths[pi];
+          const authx = await genFnGalleryAuthxPost(pathTry, body);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          headers['Content-Type'] = 'application/json';
+          const raw = await this.rawRequest(
+            `${activeBase}${pathTry}`,
+            http.RequestMethod.POST,
+            headers,
+            bodyStr,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            continue;
+          }
+          let parsed: Record<string, string | number | Object | undefined>;
+          try {
+            parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+          } catch (_e) {
+            continue;
+          }
+          if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
+            continue;
+          }
+          const arr = FnHttpClient.searchResultItemsFromData(FnHttpClient.galleryEnvelopeData(parsed));
+          if (arr.length > 0) {
+            return { success: true, data: FnHttpClient.normalizeSearchResultGalleryItems(arr) };
+          }
         }
       }
       return { success: false, message: '分类结果为空' };

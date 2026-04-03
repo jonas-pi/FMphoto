@@ -45,6 +45,11 @@ function fullImageTimeoutSteps(expectedBytes?: number): number[] {
  * - 常态优先最近进入视区的任务（近似 LIFO）；
  * - 每隔若干次切换到最早排队任务，避免老任务长期饥饿导致“永远不加载”。
  */
+/**
+ * 缩略图并发上限保持为 4：
+ * - 该值在实机上更稳，能减少与视频流拉取的带宽竞争；
+ * - 并发过高会让视频流在同链路下被“抢带宽”，表现为播放速率下降。
+ */
 const MAX_THUMB_CONCURRENT = 4;
 let thumbLoadActive = 0;
 const thumbLoadWaiters: Array<() => void> = [];
@@ -91,7 +96,7 @@ export function getThumbPixCached(uri: string): PixelMap | undefined {
 }
 
 export function itemFileExt(it: GalleryListItem): string {
-  const name = it.filename ?? it.name ?? it.title ?? '';
+  const name = it.filename ?? it.fileName ?? it.name ?? it.title ?? '';
   const dot = name.lastIndexOf('.');
   return dot >= 0 ? name.substring(dot + 1).toLowerCase() : (it.fileType ?? '').toLowerCase();
 }
