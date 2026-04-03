@@ -98,6 +98,12 @@ export interface GalleryListItem {
   id?: string;
   guid?: string;
   filename?: string;
+  /** v2 search/results 等与 Web 一致常用 `fileName`（大写 N），与 filename 并存 */
+  fileName?: string;
+  /** 照片全局 UUID，与 id 组合拼 stream 地址 */
+  photoUUID?: string;
+  /** 截图等子类型：常见 3=屏幕截图（与 category:"photo" 并存） */
+  specialType?: number;
   /** 文件大小（字节），部分列表接口会下发 */
   fileSize?: string | number;
   /** 原文件大小（字节），部分接口会下发 */

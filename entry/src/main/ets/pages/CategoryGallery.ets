@@ -730,7 +730,15 @@ struct CategoryGallery {
       this.handledDeleteSyncVersion = GalleryDeleteSyncStore.version;
       return;
     }
+    /**
+     * 预览删除后 GalleryPreview 会先改掉 CategoryGalleryNavStore；若本页尚未重跑 aboutToAppear，
+     * flatItems 可能仍为空，先前直接 return 且不推进 handled 版本会导致界面永远不刷。
+     */
+    if (this.flatItems.length === 0 && CategoryGalleryNavStore.items.length > 0) {
+      this.flatItems = CategoryGalleryNavStore.items.slice();
+    }
     if (this.flatItems.length === 0) {
+      this.handledDeleteSyncVersion = GalleryDeleteSyncStore.version;
       return;
     }
     const kept: GalleryListItem[] = [];

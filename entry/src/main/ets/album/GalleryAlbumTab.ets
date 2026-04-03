@@ -2273,13 +2273,157 @@ export struct GalleryAlbumTab {
   /** Home 前台信号或 Tab 再次显示：先增量删，再视 bump 防抖全量刷 */
   private onAlbumTabVisibleAgain(): void {
     this.applyDeleteSyncIfNeeded();
-    // 停留在 AI 搜索/分类/人物等子视图时勿拉主时间线，避免「退回主界面像重载」；离开子视图时再消费 bump（见 backToGallery）
-    if (this.inSearchMode || this.inCategoryMode || this.inSmartCategoryMode || this.inPersonMode) {
+    const needTimelineCatchUp = GalleryTimelineRefreshStore.version > this.lastBootstrapSatisfiedRefreshVersion;
+    // 搜索：applyDeleteSyncIfNeeded 已从 searchResults 剪掉预览删除项，此处仅需消费 bump 版本避免反复判断
+    if (this.inSearchMode) {
+      if (needTimelineCatchUp) {
+        this.markTimelineRefreshCaughtUp();
+      }
       return;
     }
-    if (GalleryTimelineRefreshStore.version > this.lastBootstrapSatisfiedRefreshVersion) {
+    /**
+     * 子视图下不拉主时间轴；但预览里删视频会 bump，「媒体分类 / 智能分类 / 人物」入口上的数量与封面仍会陈旧，
+     * 回到 Home 时补一轮就地刷新（与主时间线的 requestBootstrap 互斥由 needTimelineCatchUp 统一表达）。
+     */
+    if (this.inCategoryMode || this.inSmartCategoryMode || this.inPersonMode) {
+      if (needTimelineCatchUp) {
+        if (this.inCategoryMode) {
+          void this.refreshMediaCategoriesInPlace();
+        } else if (this.inSmartCategoryMode) {
+          void this.refreshSmartCategoriesInPlace();
+        } else {
+          void this.refreshPersonListInPlace();
+        }
+      }
+      return;
+    }
+    if (needTimelineCatchUp) {
       this.requestBootstrap(true);
     }
+  }
+
+  /** 不改变子模式 UI，仅重拉媒体分类瓷砖（预览删除视频后更新「视频」等数量） */
+  private async refreshMediaCategoriesInPlace(): Promise<void> {
+    if (!this.inCategoryMode || this.categoryLoading) {
+      this.markTimelineRefreshCaughtUp();
+      return;
+    }
+    this.categoryLoading = true;
+    this.categoryError = '';
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.categoryLoading = false;
+      this.markTimelineRefreshCaughtUp();
+      return;
+    }
+    try {
+      const res = await client.getMediaCategoryList();
+      if (res.success && res.data !== undefined) {
+        const raw = res.data.list ?? res.data.items ?? [];
+        const out: MediaCategoryItem[] = [];
+        for (let i = 0; i < raw.length; i++) {
+          const el = raw[i];
+          if (typeof el === 'object' && el !== null) {
+            out.push(el as MediaCategoryItem);
+          }
+        }
+        this.categoryItems = out;
+      }
+    } catch (_e) {
+    }
+    this.categoryLoading = false;
+    this.markTimelineRefreshCaughtUp();
+  }
+
+  private async refreshSmartCategoriesInPlace(): Promise<void> {
+    if (!this.inSmartCategoryMode || this.smartCategoryLoading) {
+      this.markTimelineRefreshCaughtUp();
+      return;
+    }
+    this.smartCategoryLoading = true;
+    this.smartCategoryError = '';
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.smartCategoryLoading = false;
+      this.markTimelineRefreshCaughtUp();
+      return;
+    }
+    try {
+      const pair = await Promise.all([
+        client.getSmartRecCategories('scene', -1),
+        client.getSmartRecCategories('information', -1)
+      ]);
+      const sceneRes = pair[0];
+      const infoRes = pair[1];
+      const sceneRaw =
+        sceneRes.success && sceneRes.data !== undefined ? (sceneRes.data.list ?? sceneRes.data.items ?? []) : [];
+      const infoRaw =
+        infoRes.success && infoRes.data !== undefined ? (infoRes.data.list ?? infoRes.data.items ?? []) : [];
+      const sceneOut: SmartCategoryItem[] = [];
+      const infoOut: SmartCategoryItem[] = [];
+      for (let i = 0; i < sceneRaw.length; i++) {
+        const el = sceneRaw[i];
+        if (typeof el === 'object' && el !== null) {
+          sceneOut.push(el as SmartCategoryItem);
+        }
+      }
+      for (let i = 0; i < infoRaw.length; i++) {
+        const el = infoRaw[i];
+        if (typeof el === 'object' && el !== null) {
+          infoOut.push(el as SmartCategoryItem);
+        }
+      }
+      this.smartSceneItems = sceneOut;
+      this.smartInfoItems = infoOut;
+    } catch (_e) {
+    }
+    this.smartCategoryLoading = false;
+    this.markTimelineRefreshCaughtUp();
+  }
+
+  private async refreshPersonListInPlace(): Promise<void> {
+    if (!this.inPersonMode || this.personLoading) {
+      this.markTimelineRefreshCaughtUp();
+      return;
+    }
+    this.personStatOverrides.clear();
+    this.personStatVersion++;
+    this.personStatGen++;
+    const gen = this.personStatGen;
+    this.personLoading = true;
+    this.personError = '';
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.personLoading = false;
+      this.markTimelineRefreshCaughtUp();
+      return;
+    }
+    try {
+      const res = await client.getAiPersonList(true, -1, 0);
+      if (gen !== this.personStatGen) {
+        this.personLoading = false;
+        this.markTimelineRefreshCaughtUp();
+        return;
+      }
+      if (!res.success || res.data === undefined) {
+        this.personLoading = false;
+        this.markTimelineRefreshCaughtUp();
+        return;
+      }
+      const raw = res.data.list ?? res.data.items ?? res.data.records ?? [];
+      const out: AiPersonItem[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        const el = raw[i];
+        if (typeof el === 'object' && el !== null) {
+          out.push(el as AiPersonItem);
+        }
+      }
+      this.personItems = out;
+      void this.enrichPersonStats(out, gen);
+    } catch (_e) {
+    }
+    this.personLoading = false;
+    this.markTimelineRefreshCaughtUp();
   }
 
   private markTimelineRefreshCaughtUp(): void {

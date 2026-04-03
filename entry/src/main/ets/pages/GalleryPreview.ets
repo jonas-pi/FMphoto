@@ -408,6 +408,8 @@ struct GalleryPreview {
     if (deletedId.length > 0) {
       GalleryDeleteSyncStore.markDeleted(deletedId);
       GalleryTimelineRefreshStore.bump();
+      // 独立「视频/分类」网格页依赖的中转列表同步剪掉，避免仅依赖 onPageShow 时 flatItems 与 NavStore 不一致
+      this.removeIdFromCategoryGalleryNavStore(deletedId);
     }
     if (left <= 0) {
       this.itemSource.reloadAll([]);
@@ -431,6 +433,28 @@ struct GalleryPreview {
       this.swiperCtrl.changeIndex(targetIdx, false);
     }, 50);
     this.toast('已移入回收站');
+  }
+
+  /** 与 CategoryGallery 共用 NavStore：删除成功后立即对齐，返回分类页时列表与计数已更新 */
+  private removeIdFromCategoryGalleryNavStore(photoId: string): void {
+    const id = photoId.trim();
+    if (id.length === 0 || CategoryGalleryNavStore.items.length === 0) {
+      return;
+    }
+    const kept: GalleryListItem[] = [];
+    let hit = false;
+    for (let i = 0; i < CategoryGalleryNavStore.items.length; i++) {
+      const it = CategoryGalleryNavStore.items[i];
+      const nid = it.id !== undefined && it.id !== null ? String(it.id).trim() : '';
+      if (nid === id) {
+        hit = true;
+        continue;
+      }
+      kept.push(it);
+    }
+    if (hit) {
+      CategoryGalleryNavStore.items = kept;
+    }
   }
 
   private async deleteCurrentItem(): Promise<void> {
