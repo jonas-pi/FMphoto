@@ -46,11 +46,11 @@ function fullImageTimeoutSteps(expectedBytes?: number): number[] {
  * - 每隔若干次切换到最早排队任务，避免老任务长期饥饿导致“永远不加载”。
  */
 /**
- * 缩略图并发上限保持为 4：
- * - 该值在实机上更稳，能减少与视频流拉取的带宽竞争；
- * - 并发过高会让视频流在同链路下被“抢带宽”，表现为播放速率下降。
+ * 缩略图（含视频封面 JPEG）并发上限：网络 + 解码同时进行的最大任务数。
+ * - 视频格与图片格共用同一路径，封面往往更大，并发过低时队列排长、体感「带宽没用满」。
+ * - 过高会抬升瞬时内存与解码 CPU，低端机或弱网可改回 4～6。
  */
-const MAX_THUMB_CONCURRENT = 4;
+const MAX_THUMB_CONCURRENT = 8;
 let thumbLoadActive = 0;
 const thumbLoadWaiters: Array<() => void> = [];
 let thumbWakeCount = 0;
@@ -369,16 +369,6 @@ export async function loadFullPix(fullUrl: string, expectedBytes?: number): Prom
 @Component
 export struct GalleryThumbSkeleton {
   @StorageProp('colorMode') private colorMode: number = 0;
-  @State private alpha: number = 0.45;
-
-  aboutToAppear(): void {
-    this.getUIContext().animateTo(
-      { duration: 900, iterations: -1, playMode: PlayMode.Alternate, curve: Curve.EaseInOut },
-      (): void => {
-        this.alpha = 1.0;
-      }
-    );
-  }
 
   build() {
     Column()
@@ -386,7 +376,62 @@ export struct GalleryThumbSkeleton {
       .aspectRatio(1)
       .backgroundColor(this.colorMode === 1 ? '#2C2C2E' : '#E8EAED')
       .borderRadius(0)
-      .opacity(this.alpha)
+  }
+}
+
+/**
+ * 主列表滚动占位：纯本地 Column，不挂载 GalleryNetworkThumb（避免滚动期组件创建/异步解码路径）。
+ * 与 GalleryThumbSkeleton 同色，仅语义区分供时间线行在 visualPlaceholderMode 下分支使用。
+ */
+@Component
+export struct GalleryStaticThumbPlaceholder {
+  /** 为 true 时启用轻量呼吸动画（用于滚动中提示“占位加载中”） */
+  @Prop @Watch('onAnimatePulseChange') animatePulse: boolean = false;
+  @StorageProp('colorMode') private colorMode: number = 0;
+  @State private pulseOpacity: number = 0.88;
+  private pulseTimer: number = -1;
+  private pulseDim: boolean = false;
+
+  private stopPulse(): void {
+    if (this.pulseTimer >= 0) {
+      clearInterval(this.pulseTimer);
+      this.pulseTimer = -1;
+    }
+    this.pulseDim = false;
+    this.pulseOpacity = 0.88;
+  }
+
+  private startPulse(): void {
+    this.stopPulse();
+    if (!this.animatePulse) {
+      return;
+    }
+    this.pulseTimer = setInterval((): void => {
+      this.pulseDim = !this.pulseDim;
+      this.pulseOpacity = this.pulseDim ? 0.70 : 0.92;
+    }, 420);
+  }
+
+  onAnimatePulseChange(): void {
+    this.startPulse();
+  }
+
+  aboutToAppear(): void {
+    this.startPulse();
+  }
+
+  aboutToDisappear(): void {
+    this.stopPulse();
+  }
+
+  build() {
+    Column()
+      .width('100%')
+      .aspectRatio(1)
+      .backgroundColor(this.colorMode === 1 ? '#2C2C2E' : '#E8EAED')
+      .opacity(this.pulseOpacity)
+      .animation({ duration: 360, curve: Curve.EaseInOut })
+      .borderRadius(0)
   }
 }
 
@@ -395,6 +440,8 @@ export struct GalleryNetworkThumb {
   @Prop @Watch('onUriChange') uri: string = '';
   @Prop isVideo: boolean = false;
   @Prop isGif: boolean = false;
+  /** true 时仅显示骨架占位，不发起真实图加载 */
+  @Prop @Watch('onPausedChange') paused: boolean = false;
   @StorageProp('colorMode') private colorMode: number = 0;
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
@@ -413,6 +460,12 @@ export struct GalleryNetworkThumb {
     void this.loadPix();
   }
 
+  onPausedChange(): void {
+    if (!this.paused && this.pix === undefined && !this.loading) {
+      void this.loadPix();
+    }
+  }
+
   aboutToAppear(): void {
     void this.loadPix();
   }
@@ -423,7 +476,7 @@ export struct GalleryNetworkThumb {
   }
 
   private async loadPix(): Promise<void> {
-    if (this.uri.length === 0 || this.loading) {
+    if (this.uri.length === 0 || this.loading || this.paused) {
       return;
     }
     const versionAtStart = this.loadVersion;

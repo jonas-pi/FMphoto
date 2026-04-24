@@ -20,7 +20,11 @@ export interface GalleryHomeSectionPlain {
   day: number;
   itemCount: number;
   nextOffset: number;
-  items: GalleryListItem[];
+  /** 稀疏槽位：与 slotItems 等长，表示该照片在当日内的 offset */
+  slotOffsets?: number[];
+  slotItems?: GalleryListItem[];
+  /** 旧版快照：连续 items（offset 0..len-1），仅用于兼容恢复 */
+  items?: GalleryListItem[];
 }
 
 /** Map<string, number> 序列化为平行数组（快照用）；禁止内联 { keys; vals } 作类型以满足 arkts-no-obj-literals-as-types */

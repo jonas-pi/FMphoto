@@ -55,6 +55,42 @@
     {
       "name": "list_item_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "gallery_timeline_rail",
+      "value": "#73000000"
+    },
+    {
+      "name": "gallery_timeline_rail_expanded",
+      "value": "#94000000"
+    },
+    {
+      "name": "gallery_timeline_rail_drag",
+      "value": "#B3000000"
+    },
+    {
+      "name": "gallery_timeline_thumb_fill",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "gallery_timeline_thumb_border",
+      "value": "#7A000000"
+    },
+    {
+      "name": "gallery_timeline_year_badge_bg",
+      "value": "#E6000000"
+    },
+    {
+      "name": "gallery_timeline_year_badge_fg",
+      "value": "#F5FFFFFF"
+    },
+    {
+      "name": "gallery_timeline_month_pill_bg",
+      "value": "#E6313134"
+    },
+    {
+      "name": "gallery_timeline_month_pill_fg",
+      "value": "#FFFFFFFF"
     }
   ]
 }

@@ -1,5 +1,11 @@
 /**
  * 相册列表懒加载数据源。
+ *
+ * 与 List/LazyForEach 配合：reloadAll / notifyDataReload 会通知已注册的 DataChangeListener（框架挂载 LazyForEach 时注册）。
+ * flush、全量替换后可再调一次 notifyDataReload 做二次脉冲，缓解部分机型子树延迟刷新。
+ * 若仅内存替换节点字段而 LazyForEach 的 **item key 不变**，部分场景下子项仍可能不刷新，
+ * 故 GalleryAlbumTab 对 row 使用带槽位签名的 key（galleryFlowLazyKey）。
+ *
  * 节点类型：
  *   month — 年月大标题（全行）
  *   day   — 日期小标题（全行）
@@ -13,10 +19,13 @@ export class GalleryFlowNode {
   year: number = 0;
   month: number = 0;
   day: number = 0;
-  /** 'row' 节点：本行包含的 1~3 个缩略图 */
-  rowItems: GalleryListItem[] = [];
-  /** 'row' 节点：每个缩略图在全量扁平列表中的索引（用于预览跳转） */
-  rowFlatIndices: number[] = [];
+  /**
+   * 'row' 节点：每槽 1~3 个，与 rowSlotFlatIndices 等长。
+   * null 表示该槽仍为骨架（timeline 已知 itemCount 但尚未加载到该 offset）。
+   */
+  rowSlotItems: (GalleryListItem | null)[] = [];
+  /** 与 rowSlotItems 对齐：已加载槽为 flatItems 下标；骨架槽为 -1 */
+  rowSlotFlatIndices: number[] = [];
 }
 
 interface GalleryFlowDataChangeListener {
@@ -48,10 +57,15 @@ export class GalleryWaterFlowDataSource {
     }
   }
 
-  reloadAll(list: GalleryFlowNode[]): void {
-    this.nodes = list;
+  /** 与 IDataSource / LazyForEach 约定一致：显式通知全量重载（reloadAll 末尾也会调用） */
+  notifyDataReload(): void {
     this.listeners.forEach((l: GalleryFlowDataChangeListener): void => {
       l.onDataReloaded();
     });
+  }
+
+  reloadAll(list: GalleryFlowNode[]): void {
+    this.nodes = list;
+    this.notifyDataReload();
   }
 }
