@@ -14,6 +14,16 @@ export interface GalleryAlbumDaySectionState {
   nextOffset: number;
 }
 
+@Observed
+export class GalleryAlbumDaySectionModel implements GalleryAlbumDaySectionState {
+  year: number = 0;
+  month: number = 0;
+  day: number = 0;
+  itemCount: number = 0;
+  slotByOffset: Map<number, GalleryListItem> = new Map<number, GalleryListItem>();
+  nextOffset: number = 0;
+}
+
 export interface GalleryAlbumModeState {
   inSearchMode: boolean;
   inCategoryMode: boolean;

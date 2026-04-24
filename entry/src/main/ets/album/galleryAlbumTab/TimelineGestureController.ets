@@ -1,4 +1,5 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
 import {
   GALLERY_SCROLL_DEBUG_LOG,
   GALLERY_SCROLL_INTERACTIVE_LOG_WINDOW_MS,
@@ -9,13 +10,18 @@ import {
   GALLERY_TIMELINE_EXPANDED_AUTO_HIDE_MS,
   GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS
 } from './GalleryAlbumTabConstants';
+import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
 import {
   timelineScrubExpandedChrome as selectTimelineScrubExpandedChrome,
   timelineScrubScrollRailOnly as selectTimelineScrubScrollRailOnly
 } from './GalleryAlbumState';
-import { TimelineYearMonthPair } from './GalleryAlbumTabTypes';
+import { TimelineDayModel, TimelineYearMonthPair } from './GalleryAlbumTabTypes';
 
 export interface TimelineGestureControllerHost {
+  scrollerRef: Scroller;
+  flowDataSource: GalleryWaterFlowDataSource;
+  orderedDays: TimelineDayModel[];
+  sections: GalleryAlbumDaySectionState[];
   visualPlaceholderMode: boolean;
   timelineSidebarDragging: boolean;
   isDraggingOrFling: boolean;
@@ -41,8 +47,16 @@ export interface TimelineGestureControllerHost {
   timelineSeekInProgress: boolean;
   timelineHideTimer: number;
   timelineSliderRatio: number;
+  timelineScrubTrackHeightVp: number;
+  timelineSidebarHighlightIndex: number;
+  timelineIndicatorY: number;
+  timelineSeekGen: number;
+  listVisibleFirstNodeIdx: number;
+  listVisibleLastNodeIdx: number;
   ignoreListFreezeUntilMs: number;
   pumpEpoch: number;
+  refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void;
+  captureListScrollIndexAnchor(): void;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   flowHasVisibleYearMonth(year: number, month: number): boolean;
   startTimelineSeekWatchdog(year: number, month: number): void;
