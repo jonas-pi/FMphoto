@@ -21,10 +21,25 @@ Dependency rules:
 - [FnHttpClient.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/network/FnHttpClient.ets): thin outward shell and core request behavior
 - `network/fnHttpClient/`: capability split for `cookie`, shared helpers, `gallery`, and `upload`
 
+`GalleryAlbumTab` organization:
+
+- [album/GalleryAlbumTab.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/album/GalleryAlbumTab.ets): gallery tab shell, state binding, child-component assembly, and small glue code
+- `album/galleryAlbumTab/`: gallery orchestration, visible-load control, state/selectors, timeline logic, gestures, and mode-specific loaders
+
 `GalleryPreview` organization:
 
 - [pages/GalleryPreview.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/GalleryPreview.ets): page shell, state binding, Swiper assembly, and host bridging
 - `pages/galleryPreview/`: preview-only `actions`, `details logic`, `details sheet`, `chrome`, and data-source modules
+
+`CategoryGallery` organization:
+
+- [pages/CategoryGallery.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/CategoryGallery.ets): page shell, selection state binding, and grouped grid assembly
+- `pages/categoryGallery/`: grouped-list view data, selection controller, batch actions, and top chrome modules
+
+`RecycleBinPage` organization:
+
+- [pages/RecycleBinPage.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/RecycleBinPage.ets): page shell, state binding, host bridge wiring, and recycle-bin grid assembly
+- `pages/recycleBinPage/`: recycle-bin selection controller, batch actions, chrome, and batch bar modules
 
 Refactor rule for future phases:
 
