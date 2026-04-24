@@ -34,7 +34,7 @@
     },
     {
       "name": "hint_server",
-      "value": "IP/域名或完整 URL；未写端口时默认 HTTP:5666、HTTPS:5667；IPv6 建议 [fe80::1] 或 [fe80::1]:端口"
+      "value": "IP/域名或完整 URL；未写端口时域名默认 HTTP:80、HTTPS:443，内网 IP 默认 HTTP:5666、HTTPS:5667；IPv6 建议 [fe80::1] 或 [fe80::1]:端口"
     },
     {
       "name": "use_https",
@@ -126,7 +126,7 @@
     },
     {
       "name": "home_session_hint",
-      "value": "请返回重新登录。若已登录仍空白，请确认地址端口（HTTPS 常见 5667），并尝试底部「我的」页。"
+      "value": "请返回重新登录。若已登录仍空白，请确认地址端口（域名常见 443，内网 HTTPS 常见 5667），并尝试底部「我的」页。"
     },
     {
       "name": "back_to_login",

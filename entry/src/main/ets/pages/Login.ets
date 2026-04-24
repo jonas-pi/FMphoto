@@ -188,6 +188,48 @@ struct Login {
     }
   }
 
+  private describeLoginError(err: Object | Error | string | undefined | null): string {
+    if (err === undefined || err === null) {
+      return '';
+    }
+    if (typeof err === 'string') {
+      return err.trim();
+    }
+    if (err instanceof Error) {
+      const msg = err.message !== undefined ? err.message.trim() : '';
+      if (msg.length > 0) {
+        return msg;
+      }
+      const name = err.name !== undefined ? err.name.trim() : '';
+      if (name.length > 0) {
+        return name;
+      }
+    }
+    const rec = err as Record<string, Object | undefined>;
+    const fields = ['message', 'msg', 'reason', 'errMsg', 'details', 'detail'];
+    for (let i = 0; i < fields.length; i++) {
+      const raw = rec[fields[i]];
+      if (typeof raw === 'string') {
+        const text = raw.trim();
+        if (text.length > 0) {
+          return text;
+        }
+      }
+    }
+    try {
+      const json = JSON.stringify(err);
+      if (json !== undefined) {
+        const text = json.trim();
+        if (text.length > 0 && text !== '{}') {
+          return text;
+        }
+      }
+    } catch (_e) {
+    }
+    const fallback = String(err).trim();
+    return fallback !== '[object Object]' ? fallback : '';
+  }
+
   private async onLoginClick(): Promise<void> {
     this.errorText = '';
     const server = normalizeServerUrl(this.domainInput, this.useHttps);
@@ -200,7 +242,7 @@ struct Login {
     try {
       await this.attemptLoginWebSocketOnly(ctx, server, this.username.trim(), this.password);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = this.describeLoginError(e);
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'login flow: %{public}s', msg.length > 0 ? msg : 'unknown');
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {

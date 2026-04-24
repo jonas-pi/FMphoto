@@ -1,9 +1,10 @@
 /**
  * fnOS 主通道 WebSocket 登录（wss://host/websocket?type=main）
- * getRSAPub → encrypted(user.login) → user.authToken（HMAC 帧与前端/Python 一致）
+ * getRSAPub -> encrypted(user.login) -> user.authToken（HMAC 前缀 + JSON）
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
+import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
 import { buildFnMainWebSocketUrl } from './ServerUrl';
 import {
@@ -22,7 +23,10 @@ const DOMAIN = 0xFF00;
 const TAG = 'FnWsLogin';
 
 const WS_TIMEOUT_MS = 28000;
+const WS_CONNECT_PROBE_TIMEOUT_MS = 5000;
 const DEFAULT_BACK_ID = '0000000000000000';
+const WS_CONNECT_FAILED_CODE = '200';
+const WS_CERT_ERROR_CODES: number[] = [2300060, 2300058, 2300059, 2300077];
 
 export interface FnWsLoginResult {
   success: boolean;
@@ -56,13 +60,28 @@ interface WsJson {
   long_token?: string | number;
 }
 
-/** 与 Python json.dumps(..., separators=(',', ':')) 键序：req → token → si，不含 main */
+interface PendingAfterAuth {
+  token: string;
+  signKeyB64: string;
+  backId: string;
+  secretCipherB64: string;
+  longToken?: string;
+  uid?: number;
+  admin?: boolean;
+}
+
+interface WsFailureInfo {
+  message: string;
+  certificateError: boolean;
+}
+
+/** 与 Python json.dumps(..., separators=(',', ':')) 键序一致：req -> token -> si，不含 main */
 function buildAuthTokenJson(tokenVal: string, siVal: string): string {
   return `{"req":"user.authToken","token":${JSON.stringify(tokenVal)},"si":${JSON.stringify(siVal)}}`;
 }
 
 /**
- * 紧凑 JSON，键序：reqid → req → user → password → deviceType → deviceName → stay → si
+ * 紧凑 JSON，键序：reqid -> req -> user -> password -> deviceType -> deviceName -> stay -> si
  */
 function buildLoginPlainJson(reqid: string, user: string, pass: string, siVal: string): string {
   return `{"reqid":${JSON.stringify(reqid)},"req":"user.login","user":${JSON.stringify(user)},"password":${JSON.stringify(pass)},"deviceType":"Browser","deviceName":"MyClient","stay":true,"si":${JSON.stringify(siVal)}}`;
@@ -85,14 +104,194 @@ function parseJsonSafe(text: string): WsJson | null {
   }
 }
 
-interface PendingAfterAuth {
-  token: string;
-  signKeyB64: string;
-  backId: string;
-  secretCipherB64: string;
-  longToken?: string;
-  uid?: number;
-  admin?: boolean;
+function pickWsErrorStringField(err: Object, key: string): string {
+  const rec = err as Record<string, Object | undefined>;
+  const raw = rec[key];
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (text.length > 0) {
+      return text;
+    }
+  }
+  return '';
+}
+
+function pickWsErrorCodeField(err: Object, key: string): string {
+  const rec = err as Record<string, Object | undefined>;
+  const raw = rec[key];
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return `${raw}`;
+  }
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (text.length > 0) {
+      return text;
+    }
+  }
+  return '';
+}
+
+function describeWsError(err: Object | Error | string | undefined | null): string {
+  if (err === undefined || err === null) {
+    return '';
+  }
+  if (typeof err === 'string') {
+    return err.trim();
+  }
+  if (err instanceof Error) {
+    const msg = err.message !== undefined ? err.message.trim() : '';
+    if (msg.length > 0) {
+      return msg;
+    }
+    const name = err.name !== undefined ? err.name.trim() : '';
+    if (name.length > 0) {
+      return name;
+    }
+  }
+  const objectMsg = pickWsErrorStringField(err, 'message')
+    || pickWsErrorStringField(err, 'msg')
+    || pickWsErrorStringField(err, 'reason')
+    || pickWsErrorStringField(err, 'errMsg')
+    || pickWsErrorStringField(err, 'details')
+    || pickWsErrorStringField(err, 'detail');
+  if (objectMsg.length > 0) {
+    const code = pickWsErrorCodeField(err, 'code')
+      || pickWsErrorCodeField(err, 'errno')
+      || pickWsErrorCodeField(err, 'errorCode')
+      || pickWsErrorCodeField(err, 'statusCode');
+    return code.length > 0 ? `${objectMsg} (code: ${code})` : objectMsg;
+  }
+  const codeOnly = pickWsErrorCodeField(err, 'code')
+    || pickWsErrorCodeField(err, 'errno')
+    || pickWsErrorCodeField(err, 'errorCode')
+    || pickWsErrorCodeField(err, 'statusCode');
+  if (codeOnly.length > 0) {
+    return `错误码 ${codeOnly}`;
+  }
+  try {
+    const text = JSON.stringify(err);
+    if (text !== undefined) {
+      const trimmed = text.trim();
+      if (trimmed.length > 0 && trimmed !== '{}') {
+        return trimmed;
+      }
+    }
+  } catch (_e) {
+  }
+  const fallback = String(err).trim();
+  return fallback !== '[object Object]' ? fallback : '';
+}
+
+function isLikelyCertificateError(message: string): boolean {
+  const eml = message.toLowerCase();
+  return eml.indexOf('cert') >= 0
+    || eml.indexOf('ssl') >= 0
+    || eml.indexOf('handshake') >= 0
+    || eml.indexOf('x509') >= 0
+    || eml.indexOf('trust') >= 0;
+}
+
+function getNetErrorCode(err: Object | Error | string | undefined | null): string {
+  if (err === undefined || err === null || typeof err === 'string') {
+    return '';
+  }
+  return pickWsErrorCodeField(err, 'code')
+    || pickWsErrorCodeField(err, 'errno')
+    || pickWsErrorCodeField(err, 'errorCode')
+    || pickWsErrorCodeField(err, 'statusCode');
+}
+
+function isGenericWsConnectFailed(err: Object | Error | string | undefined | null, message: string): boolean {
+  const code = getNetErrorCode(err);
+  if (code === WS_CONNECT_FAILED_CODE) {
+    return true;
+  }
+  const msg = message.trim();
+  return msg === `错误码 ${WS_CONNECT_FAILED_CODE}`
+    || msg.indexOf(`code: ${WS_CONNECT_FAILED_CODE}`) >= 0
+    || msg.indexOf(`"code":${WS_CONNECT_FAILED_CODE}`) >= 0;
+}
+
+async function probeHttpsCertificateFailure(httpBaseNoSlash: string): Promise<boolean> {
+  if (!httpBaseNoSlash.startsWith('https://')) {
+    return false;
+  }
+  const req = http.createHttp();
+  try {
+    await req.request(httpBaseNoSlash, {
+      method: http.RequestMethod.GET,
+      expectDataType: http.HttpDataType.STRING,
+      connectTimeout: WS_CONNECT_PROBE_TIMEOUT_MS,
+      readTimeout: WS_CONNECT_PROBE_TIMEOUT_MS,
+      header: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      }
+    });
+    return false;
+  } catch (e) {
+    const codeText = getNetErrorCode(e as Object | Error | string | undefined | null);
+    if (codeText.length > 0) {
+      const codeNum = parseInt(codeText, 10);
+      if (!isNaN(codeNum) && WS_CERT_ERROR_CODES.indexOf(codeNum) >= 0) {
+        return true;
+      }
+    }
+    return isLikelyCertificateError(describeWsError(e as Object | Error | string | undefined | null));
+  } finally {
+    try {
+      req.destroy();
+    } catch (_e) {
+    }
+  }
+}
+
+function buildWsConnectOptions(isTrustedHost: boolean): webSocket.WebSocketRequestOptions | undefined {
+  if (!isTrustedHost) {
+    return undefined;
+  }
+  return {
+    skipServerCertVerification: true
+  };
+}
+
+async function resolveWsFailure(
+  httpBaseNoSlash: string,
+  err: Object | Error | string | undefined | null,
+  isTrustedHost: boolean,
+  fallbackMessage: string
+): Promise<WsFailureInfo> {
+  const message = describeWsError(err);
+  if (!isTrustedHost && isLikelyCertificateError(message)) {
+    return {
+      message: message.length > 0 ? message : 'WebSocket 无法校验服务器证书',
+      certificateError: true
+    };
+  }
+
+  if (!isTrustedHost && isGenericWsConnectFailed(err, message) && httpBaseNoSlash.startsWith('https://')) {
+    const certFailed = await probeHttpsCertificateFailure(httpBaseNoSlash);
+    if (certFailed) {
+      return {
+        message: 'WebSocket 无法校验服务器证书',
+        certificateError: true
+      };
+    }
+  }
+
+  if (isGenericWsConnectFailed(err, message)) {
+    const endpointHint = httpBaseNoSlash.startsWith('https://')
+      ? '请检查服务器地址、5667 端口、证书以及设备到 NAS 的连通性'
+      : '请检查服务器地址、5666 端口以及设备到 NAS 的连通性';
+    return {
+      message: `WebSocket 连接失败（${endpointHint}）`,
+      certificateError: false
+    };
+  }
+
+  return {
+    message: message.length > 0 ? message : fallbackMessage,
+    certificateError: false
+  };
 }
 
 /**
@@ -110,6 +309,7 @@ export async function fnWsLogin(
 
   return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
     let done = false;
+    let failureInFlight = false;
     const finish = (r: FnWsLoginResult): void => {
       if (done) {
         return;
@@ -136,23 +336,40 @@ export async function fnWsLogin(
     let pendingAfterAuth: PendingAfterAuth | null = null;
 
     const ws = webSocket.createWebSocket();
+    const connectOptions = buildWsConnectOptions(isTrustedHost);
+
+    const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
+      if (done || failureInFlight) {
+        return;
+      }
+      failureInFlight = true;
+      void (async (): Promise<void> => {
+        try {
+          const info = await resolveWsFailure(httpBaseNoSlash, err, isTrustedHost, fallbackMessage);
+          hilog.error(DOMAIN, TAG, 'ws error %{public}s', info.message);
+          finish({
+            success: false,
+            message: info.message,
+            certificateError: info.certificateError
+          });
+        } catch (e) {
+          const em = describeWsError(e);
+          hilog.error(DOMAIN, TAG, 'ws error resolve %{public}s', em);
+          finish({
+            success: false,
+            message: em.length > 0 ? em : fallbackMessage
+          });
+        }
+      })();
+    };
 
     ws.on('error', (err: Error) => {
-      const em = err !== undefined && err.message !== undefined ? err.message : String(err);
-      hilog.error(DOMAIN, TAG, 'ws error %{public}s', em);
-      const eml = em.toLowerCase();
-      const certHint =
-        eml.indexOf('cert') >= 0 || eml.indexOf('ssl') >= 0 || eml.indexOf('handshake') >= 0;
-      finish({
-        success: false,
-        message: em.length > 0 ? em : 'WebSocket 错误',
-        certificateError: certHint && !isTrustedHost
-      });
+      handleWsFailure(err, 'WebSocket 错误');
     });
 
     ws.on('message', (err: Error, value: string | ArrayBuffer) => {
       if (err !== undefined) {
-        hilog.warn(DOMAIN, TAG, 'message err %{public}s', String(err));
+        hilog.warn(DOMAIN, TAG, 'message err %{public}s', describeWsError(err));
         return;
       }
       const text = messageToString(value);
@@ -268,7 +485,7 @@ export async function fnWsLogin(
 
     ws.on('open', (err: Error) => {
       if (err !== undefined) {
-        finish({ success: false, message: String(err) });
+        handleWsFailure(err, 'WebSocket 打开失败');
         return;
       }
       const reqid = fnWsMakeReqId(backId);
@@ -276,17 +493,16 @@ export async function fnWsLogin(
       ws.send(first);
     });
 
-    ws.connect(wsUrl, (err: Error) => {
+    const onConnect = (err: Error): void => {
       if (err !== undefined) {
-        const em = err.message !== undefined ? err.message : String(err);
-        const eml = em.toLowerCase();
-        const certHint = eml.indexOf('cert') >= 0 || eml.indexOf('ssl') >= 0;
-        finish({
-          success: false,
-          message: em.length > 0 ? em : '无法连接 WebSocket',
-          certificateError: certHint && !isTrustedHost
-        });
+        handleWsFailure(err, '无法连接 WebSocket');
       }
-    });
+    };
+
+    if (connectOptions !== undefined) {
+      ws.connect(wsUrl, connectOptions, onConnect);
+    } else {
+      ws.connect(wsUrl, onConnect);
+    }
   });
 }
