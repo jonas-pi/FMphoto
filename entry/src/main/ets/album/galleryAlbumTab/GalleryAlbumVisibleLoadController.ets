@@ -202,6 +202,82 @@ export function galleryAlbumVisibleGlobalSlotIndexAtDayStart(
   return acc;
 }
 
+export function galleryAlbumVisibleFindSectionForDayIndex(
+  host: GalleryAlbumVisibleLoadHost,
+  dayIdx: number
+): GalleryAlbumDaySectionState | null {
+  if (dayIdx < 0 || dayIdx >= host.orderedDays.length) {
+    return null;
+  }
+  const day = host.orderedDays[dayIdx];
+  for (let i = 0; i < host.sections.length; i++) {
+    const section = host.sections[i];
+    if (section.year === day.year && section.month === day.month && section.day === day.day) {
+      return section;
+    }
+  }
+  return null;
+}
+
+export function galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(
+  host: GalleryAlbumVisibleLoadHost,
+  dayIdx: number,
+  startOffsetInclusive: number,
+  endOffsetExclusive: number
+): number {
+  if (dayIdx < 0 || dayIdx >= host.orderedDays.length) {
+    return -1;
+  }
+  const total = Math.max(0, host.orderedDays[dayIdx].itemCount);
+  if (total <= 0) {
+    return -1;
+  }
+  const start = Math.max(0, Math.min(total - 1, startOffsetInclusive));
+  const end = Math.max(start + 1, Math.min(total, endOffsetExclusive));
+  const section = galleryAlbumVisibleFindSectionForDayIndex(host, dayIdx);
+  if (section === null) {
+    return start;
+  }
+  for (let off = start; off < end; off++) {
+    if (section.slotByOffset.get(off) === undefined) {
+      return off;
+    }
+  }
+  return -1;
+}
+
+export function galleryAlbumVisibleAlignDayOffsetToLoadedGap(
+  host: GalleryAlbumVisibleLoadHost,
+  dayIdx: number,
+  neededStartOffsetInclusive: number,
+  neededEndOffsetExclusive: number
+): number {
+  if (dayIdx < 0 || dayIdx >= host.orderedDays.length) {
+    return 0;
+  }
+  const day = host.orderedDays[dayIdx];
+  const total = Math.max(0, day.itemCount);
+  if (total <= 0) {
+    return 0;
+  }
+  const start = Math.max(0, Math.min(total - 1, neededStartOffsetInclusive));
+  const end = Math.max(start + 1, Math.min(total, neededEndOffsetExclusive));
+  const key = dayKey(day.year, day.month, day.day);
+  const current = Math.max(0, Math.min(total, host.dayOffsets.get(key) ?? 0));
+  if (start > current) {
+    host.dayOffsets.set(key, start);
+    return start;
+  }
+  if (start < current) {
+    const rewind = galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, dayIdx, start, Math.min(current, end));
+    if (rewind >= 0 && rewind < current) {
+      host.dayOffsets.set(key, rewind);
+      return rewind;
+    }
+  }
+  return current;
+}
+
 export function galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
   host: GalleryAlbumVisibleLoadHost,
   firstIdx: number,
@@ -634,16 +710,27 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       host.logScrollDebug(`loadVisible jump dayIndex -> ${nextIdx} (target=${startHit.dayIdx}, start=${start}, end=${end})`);
     }
   }
-  if (aggressive && host.dayIndex >= 0 && host.dayIndex < host.orderedDays.length) {
+  if (host.dayIndex >= 0 && host.dayIndex < host.orderedDays.length) {
     const d = host.orderedDays[host.dayIndex];
     const k = dayKey(d.year, d.month, d.day);
-    const alignedStart = Math.max(0, startHit.dayOffset);
+    const dayGlobalStart = galleryAlbumVisibleGlobalSlotIndexAtDayStart(host, host.dayIndex);
+    const overlapEndExclusive = Math.max(
+      startHit.dayOffset + 1,
+      Math.min(Math.max(0, d.itemCount), Math.max(0, Math.min(end + 1, dayGlobalStart + Math.max(0, d.itemCount)) - dayGlobalStart))
+    );
     const curOff = host.dayOffsets.get(k) ?? 0;
-    if (curOff !== alignedStart) {
-      host.dayOffsets.set(k, alignedStart);
-      if (host.isInScrollInteractiveLogWindow()) {
-        host.logScrollDebug(`loadVisible align day offset -> ${alignedStart} (dayOffset=${startHit.dayOffset})`);
-      }
+    const alignedStart = galleryAlbumVisibleAlignDayOffsetToLoadedGap(
+      host,
+      host.dayIndex,
+      Math.max(0, startHit.dayOffset),
+      overlapEndExclusive
+    );
+    if (curOff !== alignedStart && host.isInScrollInteractiveLogWindow()) {
+      const action = alignedStart < curOff ? 'rewind' : 'align';
+      host.logScrollDebug(
+        `loadVisible ${action} day offset -> ${alignedStart} `
+        + `(dayOffset=${startHit.dayOffset}, overlapEnd=${overlapEndExclusive})`
+      );
     }
   }
   const endHit = host.resolveDayByGlobalIndex(end);
@@ -745,7 +832,6 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
     }
 
     const day = host.orderedDays[d];
-    const k = dayKey(day.year, day.month, day.day);
     const g0 = galleryAlbumVisibleGlobalSlotIndexAtDayStart(host, d);
     const g1 = g0 + Math.max(0, day.itemCount);
     if (endG < g0 || startG >= g1) {
@@ -753,10 +839,11 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
     }
     const overlapStart = Math.max(startG, g0);
     const localNeed = Math.min(Math.max(0, overlapStart - g0), Math.max(0, day.itemCount - 1));
-    const curOff = host.dayOffsets.get(k) ?? 0;
-    if (localNeed > curOff) {
-      host.dayOffsets.set(k, localNeed);
-    }
+    const overlapEndExclusive = Math.max(
+      localNeed + 1,
+      Math.min(Math.max(0, day.itemCount), Math.max(0, Math.min(endG + 1, g1) - g0))
+    );
+    galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, localNeed, overlapEndExclusive);
 
     host.dayIndex = d;
     host.lastVisibleLoadDayIdx = d;

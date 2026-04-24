@@ -1,5 +1,5 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
-import { normalizeServerUrl } from '../main/ets/network/ServerUrl';
+import { fnWebViewBaseUrl, normalizeServerUrl } from '../main/ets/network/ServerUrl';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -32,8 +32,10 @@ export default function localUnitTest() {
     it('normalizeServerUrl_default_ports', 0, () => {
       expect(normalizeServerUrl('192.168.1.2', true)).assertEqual('https://192.168.1.2:5667');
       expect(normalizeServerUrl('192.168.1.2', false)).assertEqual('http://192.168.1.2:5666');
-      expect(normalizeServerUrl('https://nas.local/', false)).assertEqual('https://nas.local:5667');
-      expect(normalizeServerUrl('http://nas.local', true)).assertEqual('http://nas.local:5666');
+      expect(normalizeServerUrl('nas.local', true)).assertEqual('https://nas.local:443');
+      expect(normalizeServerUrl('nas.local', false)).assertEqual('http://nas.local:80');
+      expect(normalizeServerUrl('https://nas.local/', false)).assertEqual('https://nas.local:443');
+      expect(normalizeServerUrl('http://nas.local', true)).assertEqual('http://nas.local:80');
     });
 
     it('normalizeServerUrl_ipv6', 0, () => {
@@ -41,6 +43,12 @@ export default function localUnitTest() {
       expect(normalizeServerUrl('[fe80::1]', true)).assertEqual('https://[fe80::1]:5667');
       expect(normalizeServerUrl('fe80::1:8080', false)).assertEqual('http://[fe80::1]:8080');
       expect(normalizeServerUrl('http://[::1]/', false)).assertEqual('http://[::1]:5666');
+    });
+
+    it('fnWebViewBaseUrl_preserves_domain_https_port', 0, () => {
+      expect(fnWebViewBaseUrl('https://nas.local:443')).assertEqual('https://nas.local:443');
+      expect(fnWebViewBaseUrl('https://nas.local:8443')).assertEqual('https://nas.local:8443');
+      expect(fnWebViewBaseUrl('http://192.168.1.2:5666')).assertEqual('https://192.168.1.2:5667');
     });
   });
 }

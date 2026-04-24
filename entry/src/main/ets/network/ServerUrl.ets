@@ -7,6 +7,8 @@
 /** 飞牛 Web/开放 API 常用端口 */
 export const FN_DEFAULT_PORT_HTTP = 5666;
 export const FN_DEFAULT_PORT_HTTPS = 5667;
+const WEB_DEFAULT_PORT_HTTP = 80;
+const WEB_DEFAULT_PORT_HTTPS = 443;
 
 function trimTrailingSlash(s: string): string {
   if (s.length > 1 && s.endsWith('/')) {
@@ -56,15 +58,42 @@ function isIpv4WithOptionalPort(s: string): boolean {
   return true;
 }
 
-function defaultPort(useHttps: boolean): number {
-  return useHttps ? FN_DEFAULT_PORT_HTTPS : FN_DEFAULT_PORT_HTTP;
+function isIpv4Literal(s: string): boolean {
+  const parts = s.split('.');
+  if (parts.length !== 4) {
+    return false;
+  }
+  for (let i = 0; i < 4; i++) {
+    if (!/^\d+$/.test(parts[i])) {
+      return false;
+    }
+    const n = parseInt(parts[i], 10);
+    if (isNaN(n) || n < 0 || n > 255) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function defaultPort(useHttps: boolean, directHost: boolean): number {
+  if (directHost) {
+    return useHttps ? FN_DEFAULT_PORT_HTTPS : FN_DEFAULT_PORT_HTTP;
+  }
+  return useHttps ? WEB_DEFAULT_PORT_HTTPS : WEB_DEFAULT_PORT_HTTP;
+}
+
+function isDirectHostInput(s: string): boolean {
+  if (s.startsWith('[') || isBareIpv6Shape(s)) {
+    return true;
+  }
+  return isIpv4WithOptionalPort(s);
 }
 
 /**
  * 用户未写协议时的主机部分，输出 authority（含端口；IPv6 为 [addr]:port）
  */
 function normalizeBareAuthority(input: string, useHttps: boolean): string {
-  const def = defaultPort(useHttps);
+  const def = defaultPort(useHttps, isDirectHostInput(input.trim()));
   const t = input.trim();
   if (t.startsWith('[')) {
     const close = t.indexOf(']');
@@ -165,18 +194,34 @@ function buildAuthority(p: ParsedAuthority, defaultP: number): string {
   return `${p.hostRaw}:${port}`;
 }
 
+function isDirectParsedAuthority(p: ParsedAuthority): boolean {
+  if (p.useBracket) {
+    return true;
+  }
+  return isIpv4Literal(p.hostRaw);
+}
+
 /**
  * 已为 http(s):// 的 URL：补默认端口（若未写端口）
  */
 function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https'): string {
-  const def = scheme === 'https' ? FN_DEFAULT_PORT_HTTPS : FN_DEFAULT_PORT_HTTP;
   const prefix = scheme === 'https' ? 'https://' : 'http://';
   let rest = url.substring(prefix.length);
-  let pathPart = '';
+  let cut = rest.length;
   const slash = rest.indexOf('/');
-  if (slash >= 0) {
-    pathPart = rest.substring(slash);
-    rest = rest.substring(0, slash);
+  if (slash >= 0 && slash < cut) {
+    cut = slash;
+  }
+  const query = rest.indexOf('?');
+  if (query >= 0 && query < cut) {
+    cut = query;
+  }
+  const hash = rest.indexOf('#');
+  if (hash >= 0 && hash < cut) {
+    cut = hash;
+  }
+  if (cut < rest.length) {
+    rest = rest.substring(0, cut);
   }
   let authority = rest;
   if (authority.endsWith('/')) {
@@ -186,8 +231,9 @@ function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https'): string
     return trimTrailingSlash(url);
   }
   const parsed = parseAuthority(authority);
+  const def = defaultPort(scheme === 'https', isDirectParsedAuthority(parsed));
   const newAuth = buildAuthority(parsed, def);
-  return trimTrailingSlash(`${prefix}${newAuth}${pathPart}`);
+  return trimTrailingSlash(`${prefix}${newAuth}`);
 }
 
 /**
@@ -250,7 +296,10 @@ export function fnWebViewBaseUrl(apiBaseNoSlash: string): string {
   const slash = rest.indexOf('/');
   const authority = slash >= 0 ? rest.substring(0, slash) : rest;
   const parsed = parseAuthority(authority);
-  const newAuth = buildAuthority(parsed, FN_DEFAULT_PORT_HTTPS);
+  const parsedForBuild: ParsedAuthority = isDirectParsedAuthority(parsed)
+    ? { useBracket: parsed.useBracket, hostRaw: parsed.hostRaw, port: null }
+    : parsed;
+  const newAuth = buildAuthority(parsedForBuild, defaultPort(true, isDirectParsedAuthority(parsed)));
   return trimTrailingSlash(`https://${newAuth}`);
 }
 
