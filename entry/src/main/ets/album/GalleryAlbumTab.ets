@@ -9,7 +9,8 @@
  *   不依赖滚动事件，彻底规避 "Drag gesture has been canceled" 导致的加载停滞。
  *   onDidScroll 仅作备份重启触发（泵因错误暂停时由滚动重启）。
  *
- * 缩略图：WaterFlow + LazyForEach 懒加载；鉴权下载与 LRU 见 GalleryAlbumCommon。
+ * 缩略图：List + LazyForEach；鉴权下载与 LRU 见 GalleryAlbumCommon。
+ *   row 的 LazyForEach key 须随槽位 flat 变化（见 galleryFlowLazyKey），否则骨架替换为真实项后子树可能不复用刷新。
  * 大图预览：独立页面 pages/GalleryPreview（Swiper 跟手、规范转场）。
  */
 import { common } from '@kit.AbilityKit';
@@ -28,6 +29,7 @@ import {
 } from '../model/FnApiTypes';
 import {
   GalleryNetworkThumb,
+  GalleryStaticThumbPlaceholder,
   GalleryThumbSkeleton,
   isGifItem,
   isVideoItem,
@@ -117,12 +119,78 @@ const GALLERY_BOOTSTRAP_DEBOUNCE_MS = 900;
  * 官方将 offset 限制在约 64vp 内，超出无效；此前用大数值会导致「图标/刷新已触发」而震动仍按大阈值，二者错位。
  */
 const GALLERY_TIMELINE_REFRESH_OFFSET_VP = 64;
+/** LazyForEach 全量骨架下列表项近似高度（vp）：用于 onScrollIndex 滞后时用 Scroller 纵向偏移推导真实视口锚点 */
+const GALLERY_LIST_APPROX_MONTH_NODE_VP = 52;
+const GALLERY_LIST_APPROX_DAY_NODE_VP = 36;
+const GALLERY_LIST_APPROX_ROW_NODE_VP = 124;
+/**
+ * 用 Scroller.yOffset 反推首可见节点时，沿节点前缀累加近似高度的最大步数。
+ * 旧硬编码 8000：列表很深时 y 已超过前 8000 个节点累计高度，仍返回 ~7999，loadVisible 锚到「上方死区」不再拉图。
+ */
+const GALLERY_SCROLL_Y_ESTIMATE_MAX_NODES = 120000;
+/** 大跨度 offset 补偿时单帧内逐步消费的最大迭代，超出则用行高估算剩余位移，避免主线程长时间卡死 */
+const GALLERY_SCROLL_DELTA_CONSUME_MAX_IT = 48000;
+/** lastKnown 槽位窗：新回调过窄时不覆盖已有大窗，避免与 y 反推/时间轴窗打架形成「载一段、空一段」 */
+const GALLERY_LAST_KNOWN_MIN_PREV_SLOT_SPAN = 80;
+const GALLERY_LAST_KNOWN_DEGENERATE_NEW_SLOT_SPAN = 44;
+const GALLERY_LAST_KNOWN_SHRINK_IGNORE_RATIO = 4;
+/** refine：y 累加估算与锚点推进差过大时不再采信 estFromY，避免单侧把 first 拉飞 */
+const GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES = 6000;
+/** refine：锚点首索引与 y 反推首索引长期偏离时重同步，避免长距离滚动后 adv 与 est 双漂移、整段不出图 */
+const GALLERY_REFINE_ANCHOR_RESYNC_NODE_DRIFT = 4200;
+/** refine：List 声称的 (cf,cl) 跨度过小时仍保底「视口」节点跨度，避免 loadVisible 槽位窗过窄 */
+const GALLERY_REFINE_MIN_VISIBLE_NODE_SPAN = 30;
+/** loadVisible：用 y 反推首节点扩展 buffer 骨架扫描上沿，缓解无 getVisibleRange 时 refine 与 y 打架 */
+const GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES = 32;
+/** getVisibleRange 命中时：骨架缓冲扫描在可见节点区间外再扩的节点数（同行 RecyclerView 式 prefetch margin） */
+const GALLERY_LOAD_VISIBLE_SCROLLER_RANGE_PAD_NODES = 8;
+/** loadVisible：在「当前 List 节点窗口」内按骨架槽位数扩展下方全局槽位缓冲，少依赖固定日粒度 */
+const GALLERY_LOAD_VISIBLE_BUFFER_BASE_NON_AGGRESSIVE = 22;
+const GALLERY_LOAD_VISIBLE_BUFFER_BASE_AGGRESSIVE = 10;
+const GALLERY_LOAD_VISIBLE_SKELETON_SLOT_MULTIPLIER = 4;
+const GALLERY_LOAD_VISIBLE_BUFFER_AFTER_CAP = 140;
+/** 同屏跨多日时顺序按日各拉一批的上限：再大易拖长首帧；超出部分靠后续滚动或 pumpLoad 续载 */
+const GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX = 24;
+/** 时间轴靠边区域宽度（vp），含细轨与滑块，便于点按 */
+const GALLERY_TIMELINE_HIT_WIDTH_VP = 52;
+const GALLERY_TIMELINE_RAIL_MIN_VP = 6;
+const GALLERY_TIMELINE_RAIL_EXPANDED_VP = 7;
+const GALLERY_TIMELINE_RAIL_DRAG_VP = 8;
+const GALLERY_TIMELINE_THUMB_VP = 10;
+/** 手柄/气泡在轨道上下预留（与 timelineIndicatorY 计算一致） */
+const GALLERY_TIMELINE_INDICATOR_PAD_VP = 14;
+const GALLERY_TIMELINE_INDICATOR_RESERVED_VP = GALLERY_TIMELINE_INDICATOR_PAD_VP * 2;
 /** 上传成功后二次拉时间轴间隔（ms）：NAS 入库略延迟时提高新图出现概率 */
 const GALLERY_UPLOAD_RECHECK_MS = 1600;
 /** 最近添加分页条数：与抓包量级一致，减少往返次数同时避免单次过大 */
 const GALLERY_RECENT_PAGE_LIMIT = 60;
 /** 最近添加单日分页安全上限：防止服务端异常导致死循环 */
 const GALLERY_RECENT_DAY_MAX_ROUNDS = 200;
+/** 临时排障：主时间线滚动日志开关（定位卡顿路径，稳定后可改为 false） */
+const GALLERY_SCROLL_DEBUG_LOG = false;
+/** 滚动日志最小间隔（ms），避免高频刷日志反向放大卡顿 */
+const GALLERY_SCROLL_LOG_THROTTLE_MS = 180;
+/** 仅在最近交互窗口内打印泵/批次细粒度日志，避免无操作刷屏 */
+const GALLERY_SCROLL_INTERACTIVE_LOG_WINDOW_MS = 2200;
+/** 批次级噪声日志开关（short page / batch 明细）；排障时可手动打开 */
+const GALLERY_BATCH_VERBOSE_LOG = false;
+/** 时间轴拖动 watchdog：超过该时长未收到更新/结束则自动释放拖动态，避免占位模式锁死 */
+const GALLERY_TIMELINE_DRAG_WATCHDOG_MS = 1200;
+/** 仅「滚动条式」细轨提示时的自动隐藏（替代系统滚动条） */
+const GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS = 1000;
+/** 长按/拖动展开后的自动隐藏（松手后仍可见一小段时间） */
+const GALLERY_TIMELINE_EXPANDED_AUTO_HIDE_MS = 2200;
+/** 靠边细轨上长按达到该时长后展开为完整时间轴 scrub */
+const GALLERY_TIMELINE_LONG_PRESS_EXPAND_MS = 420;
+/** 年份刻度相对命中区左缘的 x（负值向左溢出）；数值越大越靠右，贴近右侧细轨 */
+const GALLERY_TIMELINE_YEAR_BADGE_X_VP = -22;
+/** 年月 pill 右缘与年份刻度左缘的间距（vp） */
+const GALLERY_TIMELINE_PILL_TO_YEAR_GAP_VP = 6;
+/** 年月 pill 最小宽度：单行「年月日」不折行（过长时省略号） */
+const GALLERY_TIMELINE_SCRUB_PILL_MIN_WIDTH_VP = 208;
+/** 年月 pill 左上角 x：右缘贴近年份刻度左缘 */
+const GALLERY_TIMELINE_SCRUB_PILL_X_VP =
+  GALLERY_TIMELINE_YEAR_BADGE_X_VP - GALLERY_TIMELINE_PILL_TO_YEAR_GAP_VP - GALLERY_TIMELINE_SCRUB_PILL_MIN_WIDTH_VP;
 
 /** 主时间线缩略图滑动连选：用于指尖坐标与缩略图区域相交判断（窗口坐标系，与 getRectangleById 一致） */
 interface GalleryThumbHitRect {
@@ -130,6 +198,22 @@ interface GalleryThumbHitRect {
   top: number;
   right: number;
   bottom: number;
+}
+
+/** loadVisible 用：经滚动偏移补偿后的 List 节点下标区间 */
+interface GalleryVisibleNodeRange {
+  first: number;
+  last: number;
+}
+
+/** 部分 SDK 在 List 绑定的 Scroller 上提供 getVisibleRange；存在则优先于 offset 估算 */
+interface GalleryScrollerVisibleRange {
+  start: number;
+  end: number;
+}
+
+interface GalleryScrollerMaybeVisibleRange {
+  getVisibleRange?: () => GalleryScrollerVisibleRange | null;
 }
 
 /** 指尖在窗口中的坐标（px），供 readGestureFingerWindow 返回；禁止内联对象类型以满足 arkts-no-obj-literals-as-types */
@@ -164,6 +248,28 @@ interface TimelineDayModel {
   itemCount: number;
 }
 
+interface TimelineYearMonth {
+  year: number;
+  month: number;
+  index: number;
+}
+
+interface TimelineYearMonthPair {
+  year: number;
+  month: number;
+}
+
+interface YearMarker {
+  year: number;
+  y: number;
+}
+
+/** 全局照片下标反查结果：满足 arkts-no-obj-literals-as-types / arkts-no-untyped-obj-literals */
+interface DayGlobalResolveResult {
+  dayIdx: number;
+  dayOffset: number;
+}
+
 /**
  * 按日区块：使用 @Observed 以便同日多批追加 items 时子树增量刷新，
  * 避免仅靠 ForEach key 含 items.length 导致整段 Column 反复重挂载（解码/布局成本高、体感慢）。
@@ -174,7 +280,8 @@ class DaySectionModel {
   month: number = 0;
   day: number = 0;
   itemCount: number = 0;
-  items: GalleryListItem[] = [];
+  /** 当日已加载照片：key 为日内 offset（0..itemCount-1），支持乱序/分页填充，与全量骨架映射一致 */
+  slotByOffset: Map<number, GalleryListItem> = new Map<number, GalleryListItem>();
   nextOffset: number = 0;
 }
 
@@ -297,6 +404,89 @@ export struct GalleryAlbumTab {
    * 划选时临时关闭，避免 List 抢走 Pan；LazyForEach 行 key 勿随多选切换，否则子树重建会中断当前指下手势。
    */
   @State private galleryMainListScrollEnabled: boolean = true;
+  /**
+   * 统一交互状态机：
+   * - timelineSidebarDragging: 时间轴手势进行中
+   * - isDraggingOrFling: 主列表正在拖动/惯性（Scroll/Fling）
+   * - visualPlaceholderMode: 图片加载门控（时间轴拖动或主列表拖动/惯性时为 true）
+   *
+   * 约束：任何图片请求开关都只看 visualPlaceholderMode，避免多状态互相覆盖。
+   */
+  @State private timelineSidebarDragging: boolean = false;
+  @State private listKineticScrolling: boolean = false;
+  @State private isDraggingOrFling: boolean = false;
+  @State private visualPlaceholderMode: boolean = false;
+  /** 主列表 Idle 后 settled 防抖定时器 id；再次滚动时取消 */
+  private listSettledTimer: number = -1;
+  /** settled 防抖代次，避免旧定时器回写 */
+  private listSettledGen: number = 0;
+  /** 滚动排障：上次滚动日志时间戳 */
+  private lastScrollDebugLogMs: number = 0;
+  /** 滚动排障：上次滚动状态文本（仅状态变化或节流到期才打印） */
+  private lastScrollDebugState: string = 'init';
+  /** 最近一次主列表交互时间（用于限制泵日志仅在交互窗口输出） */
+  private lastMainListInteractMs: number = 0;
+  /** 时间轴拖动态 watchdog 定时器 */
+  private timelineDragWatchdogTimer: number = -1;
+  /** 时间轴拖动会话代次（用于取消旧 watchdog 回写） */
+  private timelineDragWatchdogGen: number = 0;
+  /** 滚动时触达时间轴显隐的节流时间戳，避免每帧重置 show/hide 定时器 */
+  private lastTimelineBarTouchMs: number = 0;
+  /** 主列表 -> 时间轴手柄位置同步节流时间戳（避免 onScrollIndex 高频驱动手柄重绘） */
+  private lastTimelineHandleSyncMs: number = 0;
+  /** 时间轴是否显示（滚动中/交互中显式可见，静止后自动淡出） */
+  @State private timelineBarVisible: boolean = false;
+  /** 时间轴按压态：手指在轨道上（用于显隐与触感，不等同于「展开 scrub」） */
+  @State private timelinePressing: boolean = false;
+  /** 长按细轨后进入完整展开态（年月气泡、年份刻度等）；纵向拖动也会进入展开 */
+  @State private timelineLongPressExpanded: boolean = false;
+  /** 滑块比例 [0,1]，0=最新，1=最早 */
+  @State private timelineSliderRatio: number = 0;
+  /** 当前高亮月份在时间轴年月列表中的下标 */
+  @State private timelineSidebarHighlightIndex: number = 0;
+  /** 指示标签的 Y 位置（vp） */
+  @State private timelineIndicatorY: number = 12;
+  /** 时间轴可用轨道高度（vp），由 onAreaChange 实测写入 */
+  @State private timelineScrubTrackHeightVp: number = 500;
+  /** 拖动开始时比例 */
+  private timelineDragStartRatio: number = 0;
+  /** 拖动节流（ms） */
+  private lastTimelineDragScrollMs: number = 0;
+  /** 自动隐藏定时器 */
+  private timelineHideTimer: number = -1;
+  /** seek 保护标记：松手后短窗内阻断反向同步 */
+  private timelineSeekInProgress: boolean = false;
+  /** seek 监视器代次：新拖动可取消旧任务 */
+  private timelineSeekGen: number = 0;
+  /** 当前 List 可见节点区间（由 onScrollIndex 回传） */
+  private listVisibleFirstNodeIdx: number = 0;
+  private listVisibleLastNodeIdx: number = 0;
+  /**
+   * onScrollIndex 最近一次回调时的 Scroller 纵向偏移与首索引。
+   * LazyForEach + 全量骨架下列表常「滚动了很久才更新 first/last」，用 (yNow - anchorY) 向前推进节点以贴合真实视口。
+   */
+  private listScrollIndexAnchorYVp: number = 0;
+  private listScrollIndexAnchorFirst: number = 0;
+  private listScrollIndexAnchorHave: boolean = false;
+  /**
+   * 全时间线「照片槽位」下标缓存（与 countPhotoSlotsBeforeNode 一致）：
+   * 可见区只有标题行时 onScrollIndex 会得到 visEnd<=visStart，导致 loadVisible 永远不触发；
+   * 用最近一次有效可视槽位作为松手/静止后的加载锚点。
+   */
+  private lastKnownGlobalPhotoSlotStart: number = 0;
+  private lastKnownGlobalPhotoSlotEndExclusive: number = 0;
+  /** 可视区预加载缓冲（以“照片槽位”计） */
+  private readonly visiblePhotoBufferSlots: number = 12;
+  /** 可视区驱动加载节流：避免 Idle 抖动时高频触发 loadVisibleItems */
+  private lastLoadVisibleAtMs: number = 0;
+  /** pump 代次：新滚动开始时递增，旧 pump/回调立即失效（打断并发链路） */
+  private pumpEpoch: number = 0;
+  /** 时间轴松手后短窗内忽略程序化滚动对冻结态的回写，防止“必须再滑一下才加载” */
+  private ignoreListFreezeUntilMs: number = 0;
+  /** 视觉冻结期（拖动/Fling）收到的数据变更延迟到解冻后再一次性刷新，避免滚动条不跟手 */
+  private pendingFlowRebuild: boolean = false;
+  /** 避免滚动停止后重复触发同一目标日的抢占加载 */
+  private lastVisibleLoadDayIdx: number = -1;
   /** 模式切换时内容层动效（淡入 + 轻微位移） */
   @State private modeSwitchOpacity: number = 1;
   @State private modeSwitchOffsetY: number = 0;
@@ -334,7 +524,7 @@ export struct GalleryAlbumTab {
   private gallerySlideRefY: number = 0;
   private gallerySlideHasRef: boolean = false;
   /**
-   * 划选锚点：长按起始缩略图在扁平列表中的下标（与 flow row 的 rowFlatIndices 一致，行优先 3 列一行）。
+   * 划选锚点：长按起始缩略图在扁平列表中的下标（与 flow row 的 rowSlotFlatIndices 一致，行优先 3 列一行）。
    */
   private gallerySlideAnchorFlat: number = -1;
   /**
@@ -366,55 +556,1661 @@ export struct GalleryAlbumTab {
 
   private flatItems(): GalleryListItem[] {
     const out: GalleryListItem[] = [];
+    const secByDay = new Map<string, DaySectionModel>();
     for (let i = 0; i < this.sections.length; i++) {
-      const items = this.sections[i].items;
-      for (let j = 0; j < items.length; j++) {
-        out.push(items[j]);
+      const s = this.sections[i];
+      secByDay.set(dayKey(s.year, s.month, s.day), s);
+    }
+    if (this.orderedDays.length > 0) {
+      for (let di = 0; di < this.orderedDays.length; di++) {
+        const d = this.orderedDays[di];
+        const sec = secByDay.get(dayKey(d.year, d.month, d.day));
+        if (sec === undefined) {
+          continue;
+        }
+        const cnt = Math.max(0, d.itemCount);
+        for (let off = 0; off < cnt; off++) {
+          const it = sec.slotByOffset.get(off);
+          if (it !== undefined) {
+            out.push(it);
+          }
+        }
+      }
+      return out;
+    }
+    for (let i = 0; i < this.sections.length; i++) {
+      const sec = this.sections[i];
+      const keys = Array.from(sec.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
+      for (let j = 0; j < keys.length; j++) {
+        const it = sec.slotByOffset.get(keys[j]);
+        if (it !== undefined) {
+          out.push(it);
+        }
       }
     }
     return out;
   }
 
-  /** 由 sections 重建 List 节点（月/日标题 + 按行分组的缩略图行）并通知 LazyForEach */
+  /**
+   * 由时间轴 + 已加载 section 重建 List 节点：
+   * 1) 优先按 orderedDays（完整时间轴）铺出完整日结构与骨架行，确保总高度从一开始就正确；
+   * 2) 对已加载的区段，用真实图片覆盖对应骨架槽位；
+   * 3) 未加载部分继续保留 skeleton，占位但不触发网络请求。
+   *
+   * 这样拖到底时不会出现“看起来到底但实际上只是已加载到底”的问题。
+   */
   private rebuildFlow(): void {
+    if (this.timelineSidebarDragging || this.isDraggingOrFling) {
+      this.pendingFlowRebuild = true;
+      return;
+    }
     const nodes: GalleryFlowNode[] = [];
-    let flat = 0;
+    // day -> section 索引，O(1) 命中已加载数据
+    const secMap = new Map<string, DaySectionModel>();
     for (let i = 0; i < this.sections.length; i++) {
-      const sec = this.sections[i];
-      const prev = i > 0 ? this.sections[i - 1] : undefined;
-      const showMonth = prev === undefined || ymKey(sec.year, sec.month) !== ymKey(prev.year, prev.month);
-      if (showMonth) {
-        const mn = new GalleryFlowNode();
-        mn.kind = 'month';
-        mn.key = `m_${sec.year}_${sec.month}_i${i}`;
-        mn.year = sec.year;
-        mn.month = sec.month;
-        nodes.push(mn);
-      }
-      const dn = new GalleryFlowNode();
-      dn.kind = 'day';
-      dn.key = `d_${sec.year}_${sec.month}_${sec.day}`;
-      dn.year = sec.year;
-      dn.month = sec.month;
-      dn.day = sec.day;
-      nodes.push(dn);
-      // 按 3 项分行
-      let ri = 0;
-      while (ri < sec.items.length) {
-        const rn = new GalleryFlowNode();
-        rn.kind = 'row';
-        rn.key = `r_${flat}`;
-        const cnt = Math.min(3, sec.items.length - ri);
-        for (let k = 0; k < cnt; k++) {
-          rn.rowItems.push(sec.items[ri + k]);
-          rn.rowFlatIndices.push(flat + k);
+      const s = this.sections[i];
+      secMap.set(dayKey(s.year, s.month, s.day), s);
+    }
+
+    // 扁平索引仅统计“真实已加载图片”（预览/多选仍只作用于真实图）
+    let flatLoaded = 0;
+
+    // 有完整时间轴时优先使用它构建全量骨架；否则退化为旧行为（仅 sections）
+    if (this.orderedDays.length > 0) {
+      for (let i = 0; i < this.orderedDays.length; i++) {
+        const day = this.orderedDays[i];
+        const prevDay = i > 0 ? this.orderedDays[i - 1] : undefined;
+        const showMonth = prevDay === undefined || ymKey(day.year, day.month) !== ymKey(prevDay.year, prevDay.month);
+        if (showMonth) {
+          const mn = new GalleryFlowNode();
+          mn.kind = 'month';
+          mn.key = `m_${day.year}_${day.month}_od_${i}`;
+          mn.year = day.year;
+          mn.month = day.month;
+          nodes.push(mn);
         }
-        nodes.push(rn);
-        flat += cnt;
-        ri += cnt;
+
+        const dn = new GalleryFlowNode();
+        dn.kind = 'day';
+        dn.key = `d_${day.year}_${day.month}_${day.day}_od_${i}`;
+        dn.year = day.year;
+        dn.month = day.month;
+        dn.day = day.day;
+        nodes.push(dn);
+
+        const sec = secMap.get(dayKey(day.year, day.month, day.day));
+        const totalCount = Math.max(0, day.itemCount);
+        const totalRows = Math.ceil(totalCount / 3);
+
+        for (let row = 0; row < totalRows; row++) {
+          const rn = new GalleryFlowNode();
+          rn.kind = 'row';
+          rn.key = `r_${day.year}_${day.month}_${day.day}_row_${row}`;
+
+          const rowStart = row * 3;
+          const totalInRow = Math.min(3, Math.max(0, totalCount - rowStart));
+          for (let k = 0; k < totalInRow; k++) {
+            const localOff = rowStart + k;
+            const it = sec !== undefined ? sec.slotByOffset.get(localOff) : undefined;
+            if (it !== undefined) {
+              rn.rowSlotItems.push(it);
+              rn.rowSlotFlatIndices.push(flatLoaded);
+              flatLoaded++;
+            } else {
+              rn.rowSlotItems.push(null);
+              rn.rowSlotFlatIndices.push(-1);
+            }
+          }
+          nodes.push(rn);
+        }
+      }
+    } else {
+      // 兜底：无时间轴时按已加载 section 构建（旧行为）
+      for (let i = 0; i < this.sections.length; i++) {
+        const sec = this.sections[i];
+        const prev = i > 0 ? this.sections[i - 1] : undefined;
+        const showMonth = prev === undefined || ymKey(sec.year, sec.month) !== ymKey(prev.year, prev.month);
+        if (showMonth) {
+          const mn = new GalleryFlowNode();
+          mn.kind = 'month';
+          mn.key = `m_${sec.year}_${sec.month}_i${i}`;
+          mn.year = sec.year;
+          mn.month = sec.month;
+          nodes.push(mn);
+        }
+        const dn = new GalleryFlowNode();
+        dn.kind = 'day';
+        dn.key = `d_${sec.year}_${sec.month}_${sec.day}`;
+        dn.year = sec.year;
+        dn.month = sec.month;
+        dn.day = sec.day;
+        nodes.push(dn);
+
+        const keys = Array.from(sec.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
+        if (keys.length === 0) {
+          continue;
+        }
+        const maxOff = keys[keys.length - 1];
+        const totalCount = Math.max(maxOff + 1, sec.itemCount > 0 ? sec.itemCount : keys.length);
+        const totalRows = Math.ceil(totalCount / 3);
+        for (let row = 0; row < totalRows; row++) {
+          const rn = new GalleryFlowNode();
+          rn.kind = 'row';
+          rn.key = `r_${sec.year}_${sec.month}_${sec.day}_row_${row}`;
+          const rowStart = row * 3;
+          const totalInRow = Math.min(3, Math.max(0, totalCount - rowStart));
+          for (let k = 0; k < totalInRow; k++) {
+            const localOff = rowStart + k;
+            const it = sec.slotByOffset.get(localOff);
+            if (it !== undefined) {
+              rn.rowSlotItems.push(it);
+              rn.rowSlotFlatIndices.push(flatLoaded);
+              flatLoaded++;
+            } else {
+              rn.rowSlotItems.push(null);
+              rn.rowSlotFlatIndices.push(-1);
+            }
+          }
+          nodes.push(rn);
+        }
       }
     }
+    this.listScrollIndexAnchorHave = false;
     this.flowDataSource.reloadAll(nodes);
+  }
+
+  /**
+   * rebuild / flush 后 LazyForEach 的 onScrollIndex 常仍滞后。
+   * 优先使用 Scroller.getVisibleRange（若存在）；否则**仅用 1vp 微调**触发框架回传 onScrollIndex。
+   * 不再用 y/固定 vp 反推节点下标：全量骨架下行高与「节点」非线性对应，易把 loadVisible 锚到屏外。
+   */
+  private tryApplyScrollerVisibleRangeIfAvailable(total: number): boolean {
+    try {
+      const sc = this.scrollerRef as GalleryScrollerMaybeVisibleRange;
+      if (sc.getVisibleRange === undefined) {
+        return false;
+      }
+      const range = sc.getVisibleRange();
+      if (range === null || range === undefined) {
+        return false;
+      }
+      const st = range.start;
+      const en = range.end;
+      if (typeof st !== 'number' || typeof en !== 'number' || !Number.isFinite(st) || !Number.isFinite(en)) {
+        return false;
+      }
+      const first = Math.max(0, Math.min(total - 1, Math.floor(st)));
+      const last = Math.max(first, Math.min(total - 1, Math.floor(en)));
+      this.listVisibleFirstNodeIdx = first;
+      this.listVisibleLastNodeIdx = last;
+      this.logScrollDebug(`forceRefresh visible range by API: ${first} ~ ${last}`);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  /** 无 getVisibleRange 时：轻微滚动以触发 onScrollIndex，避免用错误 offset 反推覆盖 listVisible* */
+  private nudgeListScrollForScrollIndexRefresh(): void {
+    this.logScrollDebug('forceRefresh: 1vp nudge for onScrollIndex');
+    try {
+      const off = this.scrollerRef.currentOffset();
+      const yRaw = off.yOffset;
+      const y = typeof yRaw === 'number' && Number.isFinite(yRaw) ? yRaw : 0;
+      this.scrollerRef.scrollTo({ xOffset: 0, yOffset: y + 1 });
+      setTimeout((): void => {
+        try {
+          this.scrollerRef.scrollTo({ xOffset: 0, yOffset: y });
+        } catch (_e2) {
+        }
+      }, 16);
+    } catch (_e) {
+    }
+  }
+
+  private forceRefreshVisibleRange(): void {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return;
+    }
+    if (this.tryApplyScrollerVisibleRangeIfAvailable(total)) {
+      this.refreshLastKnownGlobalSlotsFromListIndices(this.listVisibleFirstNodeIdx, this.listVisibleLastNodeIdx);
+      this.captureListScrollIndexAnchor();
+      return;
+    }
+    this.nudgeListScrollForScrollIndexRefresh();
+  }
+
+  private flushPendingFlowRebuild(): void {
+    if (!this.pendingFlowRebuild) {
+      return;
+    }
+    if (this.timelineSidebarDragging || this.isDraggingOrFling) {
+      return;
+    }
+    this.pendingFlowRebuild = false;
+    this.rebuildFlow();
+    this.flowDataSource.notifyDataReload();
+    this.forceRefreshVisibleRange();
+    setTimeout((): void => {
+      if (this.visualPlaceholderMode || this.isDraggingOrFling) {
+        return;
+      }
+      this.lastLoadVisibleAtMs = 0;
+      this.loadVisibleItemsThrottled(true, false);
+    }, 16);
+  }
+
+  /** 根据交互状态统一计算占位模式开关（唯一出口，避免多状态覆盖） */
+  private refreshVisualPlaceholderMode(): void {
+    const next = this.timelineSidebarDragging || this.isDraggingOrFling;
+    if (this.visualPlaceholderMode !== next) {
+      this.visualPlaceholderMode = next;
+    }
+  }
+
+  private touchTimelineBarOnScroll(): void {
+    const now = Date.now();
+    if (!this.timelineBarVisible || now - this.lastTimelineBarTouchMs >= 100) {
+      this.lastTimelineBarTouchMs = now;
+      this.showTimelineBar();
+    }
+  }
+
+  private syncTimelineHandleFromListThrottled(firstIdx: number): void {
+    const now = Date.now();
+    if (now - this.lastTimelineHandleSyncMs < 80) {
+      return;
+    }
+    this.lastTimelineHandleSyncMs = now;
+    this.syncTimelineSliderFromFirstIndex(firstIdx);
+  }
+
+  private scrollStateText(state: ScrollState): string {
+    if (state === ScrollState.Idle) {
+      return 'Idle';
+    }
+    if (state === ScrollState.Scroll) {
+      return 'Scroll';
+    }
+    if (state === ScrollState.Fling) {
+      return 'Fling';
+    }
+    return 'Unknown';
+  }
+
+  private logScrollDebug(msg: string): void {
+    if (!GALLERY_SCROLL_DEBUG_LOG) {
+      return;
+    }
+    hilog.info(DOMAIN, TAG, '[scroll-debug] %{public}s', msg);
+  }
+
+  private isInScrollInteractiveLogWindow(): boolean {
+    const now = Date.now();
+    return now - this.lastMainListInteractMs <= GALLERY_SCROLL_INTERACTIVE_LOG_WINDOW_MS;
+  }
+
+  private cancelTimelineDragWatchdog(): void {
+    if (this.timelineDragWatchdogTimer >= 0) {
+      clearTimeout(this.timelineDragWatchdogTimer);
+      this.timelineDragWatchdogTimer = -1;
+    }
+  }
+
+  private armTimelineDragWatchdog(): void {
+    this.cancelTimelineDragWatchdog();
+    const gen = ++this.timelineDragWatchdogGen;
+    this.timelineDragWatchdogTimer = setTimeout((): void => {
+      if (gen !== this.timelineDragWatchdogGen) {
+        return;
+      }
+      this.timelineDragWatchdogTimer = -1;
+      if (!this.timelineSidebarDragging) {
+        return;
+      }
+      this.timelineSidebarDragging = false;
+      this.timelinePressing = false;
+      this.timelineLongPressExpanded = false;
+      this.timelineSeekInProgress = false;
+      this.refreshVisualPlaceholderMode();
+      this.showTimelineBar();
+      this.logScrollDebug('timeline drag watchdog release');
+      this.runMainListScrollSettledWork();
+    }, GALLERY_TIMELINE_DRAG_WATCHDOG_MS);
+  }
+
+  private maybeLogMainScrollTick(offset: number, state: ScrollState): void {
+    if (!GALLERY_SCROLL_DEBUG_LOG) {
+      return;
+    }
+    this.lastMainListInteractMs = Date.now();
+    const now = Date.now();
+    const st = this.scrollStateText(state);
+    const changed = st !== this.lastScrollDebugState;
+    if (!changed && now - this.lastScrollDebugLogMs < GALLERY_SCROLL_LOG_THROTTLE_MS) {
+      return;
+    }
+    this.lastScrollDebugState = st;
+    this.lastScrollDebugLogMs = now;
+    this.logScrollDebug(
+      `state=${st}, offset=${offset.toFixed(1)}, placeholder=${this.visualPlaceholderMode ? 1 : 0}, `
+      + `kinetic=${this.listKineticScrolling ? 1 : 0}, dragFling=${this.isDraggingOrFling ? 1 : 0}, `
+      + `dayIndex=${this.dayIndex}, exhausted=${this.exhausted ? 1 : 0}, loadingMore=${this.loadingMore ? 1 : 0}`
+    );
+  }
+
+  private cancelListSettledTimer(invalidateGen: boolean = true): void {
+    if (this.listSettledTimer >= 0) {
+      clearTimeout(this.listSettledTimer);
+      this.listSettledTimer = -1;
+    }
+    if (invalidateGen) {
+      this.listSettledGen++;
+    }
+  }
+
+  private scheduleMainListSettledWork(): void {
+    this.cancelListSettledTimer(false);
+    const gen = ++this.listSettledGen;
+    const epoch = this.pumpEpoch;
+    // Idle 边沿已清掉 drag/placeholder，立刻按可视区拉图；原 220ms 定时器只做二次对齐 + pump，避免「停手还要等一段才出图」
+    if (!this.isDraggingOrFling && !this.visualPlaceholderMode && !this.timelineSidebarDragging) {
+      this.loadVisibleItemsThrottled(true, false);
+    }
+    this.listSettledTimer = setTimeout((): void => {
+      if (gen !== this.listSettledGen) {
+        return;
+      }
+      if (epoch !== this.pumpEpoch) {
+        return;
+      }
+      if (this.listSettledTimer < 0) {
+        return;
+      }
+      this.listSettledTimer = -1;
+      if (this.isDraggingOrFling || this.visualPlaceholderMode) {
+        return;
+      }
+      this.logScrollDebug('settled release: loadVisible + settledWork');
+      this.loadVisibleItemsThrottled();
+      this.runMainListScrollSettledWork(epoch);
+    }, 220);
+  }
+
+  /**
+   * 主列表滚动已结束且不再占位后：同步顶部时间轴、恢复滚动条、清理命中缓存、触发泵加载。
+   * 由 onDidScroll 与 Idle 防抖定时器共用，避免漏调 pump。
+   */
+  private runMainListScrollSettledWork(epochAtSchedule: number = -1): void {
+    if (epochAtSchedule >= 0 && epochAtSchedule !== this.pumpEpoch) {
+      return;
+    }
+    if (this.isDraggingOrFling || this.visualPlaceholderMode) {
+      return;
+    }
+    if (this.timelineSidebarDragging || this.timelineSeekInProgress) {
+      return;
+    }
+    this.syncGalleryTimelineAtTopForPull();
+    if (!this.gallerySlideGestureActive && !this.galleryMainListScrollEnabled) {
+      this.galleryMainListScrollEnabled = true;
+    }
+    if (!this.gallerySlideGestureActive) {
+      this.clearGalleryThumbHitBounds();
+    }
+    if (!this.exhausted && !this.loadingMore && !this.bootLoading) {
+      // settled 后仅补 1 个 batch，避免一次触发长链自驱动
+      this.pumpLoad(true);
+    }
+    this.flushPendingFlowRebuild();
+  }
+
+  /** 完整展开 scrub：拖动时间轴或长按细轨 */
+  private timelineScrubExpandedChrome(): boolean {
+    return this.timelineSidebarDragging || this.timelineLongPressExpanded;
+  }
+
+  /** 仅列表滚动触发的「细轨」提示，不占满交互样式 */
+  private timelineScrubScrollRailOnly(): boolean {
+    return this.timelineBarVisible && !this.timelineScrubExpandedChrome();
+  }
+
+  /** 显示时间轴并重置自动隐藏倒计时（手指在轨道上时不启动倒计时） */
+  private showTimelineBar(): void {
+    this.timelineBarVisible = true;
+    if (this.timelineHideTimer >= 0) {
+      clearTimeout(this.timelineHideTimer);
+      this.timelineHideTimer = -1;
+    }
+    if (this.timelineSidebarDragging || this.timelinePressing) {
+      return;
+    }
+    const hideMs = this.timelineScrubExpandedChrome()
+      ? GALLERY_TIMELINE_EXPANDED_AUTO_HIDE_MS
+      : GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS;
+    this.timelineHideTimer = setTimeout((): void => {
+      this.timelineHideTimer = -1;
+      this.timelineBarVisible = false;
+      this.timelineLongPressExpanded = false;
+    }, hideMs);
+  }
+
+  /** 获取时间轴年月列表（完整时间轴优先：orderedDays） */
+  private getTimelineYearMonths(): TimelineYearMonth[] {
+    const out: TimelineYearMonth[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < this.orderedDays.length; i++) {
+      const d = this.orderedDays[i];
+      const k = ymKey(d.year, d.month);
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push({ year: d.year, month: d.month, index: i });
+      }
+    }
+    // 兜底：若 orderedDays 尚未可用，退化为 sections
+    if (out.length === 0) {
+      for (let i = 0; i < this.sections.length; i++) {
+        const s = this.sections[i];
+        const k = ymKey(s.year, s.month);
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push({ year: s.year, month: s.month, index: i });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** 比例 -> 年月（0=最新，1=最早） */
+  private resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
+    const ymList = this.getTimelineYearMonths();
+    if (ymList.length === 0) {
+      return null;
+    }
+    const t = Math.max(0, Math.min(1, ratio));
+    const idx = Math.round(t * (ymList.length - 1));
+    const c = Math.max(0, Math.min(ymList.length - 1, idx));
+    return { year: ymList[c].year, month: ymList[c].month };
+  }
+
+  /**
+   * 不依赖 List 可见区索引：按当前时间轴滑块比例对齐 pump 起点。
+   * 解决「松手后未触发 onScrollIndex，visStart==visEnd 导致永远不 pump」的问题。
+   *
+   * 注意：同一自然月对应 **多条** orderedDays（按日降序），旧实现只取命中第一条的槽位区间，
+   * lastKnownGlobal 仅覆盖「一天」，同屏其它日会长期骨架不拉取；向上滑时常表现为固定一条「死带」。
+   */
+  private alignPumpToTimelineSliderTarget(): boolean {
+    const ym = this.resolveYearMonthByTimelineRatio(this.timelineSliderRatio);
+    if (ym === null || this.orderedDays.length === 0) {
+      return false;
+    }
+    let lo = this.orderedDays.length;
+    let hi = -1;
+    for (let i = 0; i < this.orderedDays.length; i++) {
+      const d = this.orderedDays[i];
+      if (d.year === ym.year && d.month === ym.month) {
+        if (i < lo) {
+          lo = i;
+        }
+        if (i > hi) {
+          hi = i;
+        }
+      }
+    }
+    if (lo > hi || lo < 0 || hi < 0) {
+      return false;
+    }
+    this.dayIndex = lo;
+    this.lastVisibleLoadDayIdx = lo;
+    const d0 = this.orderedDays[lo];
+    const k0 = dayKey(d0.year, d0.month, d0.day);
+    this.dayOffsets.set(k0, 0);
+    const gStart = this.globalSlotIndexAtDayStart(lo);
+    const dLast = this.orderedDays[hi];
+    const gEndExclusive = this.globalSlotIndexAtDayStart(hi) + Math.max(0, dLast.itemCount);
+    this.lastKnownGlobalPhotoSlotStart = gStart;
+    this.lastKnownGlobalPhotoSlotEndExclusive = Math.max(gStart + 1, gEndExclusive);
+    return true;
+  }
+
+  /** 当前 flow 中是否已有指定年月节点 */
+  private flowHasVisibleYearMonth(year: number, month: number): boolean {
+    const total = this.flowDataSource.totalCount();
+    for (let i = 0; i < total; i++) {
+      const node = this.flowDataSource.getData(i);
+      if ((node.kind === 'month' || node.kind === 'day') && node.year === year && node.month === month) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 指定年月已可见时执行精确跳转 */
+  private tryScrollListToYearMonthIfVisible(year: number, month: number): boolean {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return false;
+    }
+    let idx = -1;
+    for (let i = 0; i < total; i++) {
+      const node = this.flowDataSource.getData(i);
+      if ((node.kind === 'month' || node.kind === 'day') && node.year === year && node.month === month) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return false;
+    }
+    try {
+      this.scrollerRef.scrollToIndex(idx, false, ScrollAlign.START);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  /**
+   * 时间轴松手后：程序化 scrollToIndex 完成前 onScrollIndex / Scroller.yOffset 常仍停在旧状态，
+   * loadVisible 会误对准「上一屏」；按滑块目标年月在 flow 中定位首个 row（否则月/日头），强行刷新 listVisible*。
+   */
+  private syncListVisibleRoughToTimelineSliderTarget(): void {
+    const ym = this.resolveYearMonthByTimelineRatio(this.timelineSliderRatio);
+    if (ym === null) {
+      return;
+    }
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return;
+    }
+    let firstIdx = -1;
+    for (let i = 0; i < total; i++) {
+      const node = this.flowDataSource.getData(i);
+      if (node.year === ym.year && node.month === ym.month && node.kind === 'row') {
+        firstIdx = i;
+        break;
+      }
+    }
+    if (firstIdx < 0) {
+      for (let i = 0; i < total; i++) {
+        const node = this.flowDataSource.getData(i);
+        if (node.year === ym.year && node.month === ym.month && (node.kind === 'month' || node.kind === 'day')) {
+          firstIdx = i;
+          break;
+        }
+      }
+    }
+    if (firstIdx < 0) {
+      return;
+    }
+    const span = 56;
+    const lastIdx = Math.min(total - 1, Math.max(firstIdx, firstIdx + span));
+    this.listVisibleFirstNodeIdx = firstIdx;
+    this.listVisibleLastNodeIdx = lastIdx;
+    this.refreshLastKnownGlobalSlotsFromListIndices(firstIdx, lastIdx);
+    this.captureListScrollIndexAnchor();
+  }
+
+  /** 按比例估算滚动（用于拖动中跟手反馈） */
+  private scrollListByRatioEstimate(ratio: number): void {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return;
+    }
+    const clamped = Math.max(0, Math.min(1, ratio));
+    if (clamped >= 0.995) {
+      try {
+        this.scrollerRef.scrollToIndex(total - 1, false, ScrollAlign.END);
+      } catch (_e) {}
+      return;
+    }
+    const estimatedTotalVp = total * 120;
+    const y = Math.max(0, clamped * estimatedTotalVp);
+    try {
+      this.scrollerRef.scrollTo({ xOffset: 0, yOffset: y });
+    } catch (_e) {}
+  }
+
+  /** 松手后按目标比例对齐（可见则精确，不可见先估算） */
+  private seekTimelineListToDisplayRatio(ratio: number): void {
+    // 程序化跳转会瞬间改变 yOffset，与旧 onScrollIndex 锚点不可比，避免 loadVisible 用错增量
+    this.listScrollIndexAnchorHave = false;
+    const ym = this.resolveYearMonthByTimelineRatio(ratio);
+    if (ym === null) {
+      return;
+    }
+    if (this.tryScrollListToYearMonthIfVisible(ym.year, ym.month)) {
+      return;
+    }
+    this.scrollListByRatioEstimate(ratio);
+  }
+
+  /** 背景监视：目标月出现后再精确 scrollToIndex，确保拖到底能到最早日期 */
+  private startTimelineSeekWatchdog(targetYear: number, targetMonth: number): void {
+    this.timelineSeekGen++;
+    const gen = this.timelineSeekGen;
+    const started = Date.now();
+    const tick = (): void => {
+      if (gen !== this.timelineSeekGen) {
+        return;
+      }
+      if (Date.now() - started > 60_000) {
+        return;
+      }
+      if (this.flowHasVisibleYearMonth(targetYear, targetMonth)) {
+        this.tryScrollListToYearMonthIfVisible(targetYear, targetMonth);
+        return;
+      }
+      if (!this.loadingMore && !this.exhausted) {
+        this.pumpLoad();
+      }
+      if (this.exhausted) {
+        return;
+      }
+      setTimeout(tick, 250);
+    };
+    setTimeout(tick, 250);
+  }
+
+  /** 用 firstVisibleIndex 精确同步时间轴（避免高度估算误差导致标签回顶） */
+  private syncTimelineSliderFromFirstIndex(firstIdx: number): void {
+    const ymList = this.getTimelineYearMonths();
+    const total = this.flowDataSource.totalCount();
+    if (ymList.length === 0 || total <= 0 || firstIdx < 0) {
+      return;
+    }
+    const clamped = Math.min(firstIdx, total - 1);
+    let year = -1;
+    let month = -1;
+    for (let i = clamped; i >= 0; i--) {
+      const node = this.flowDataSource.getData(i);
+      if ((node.kind === 'month' || node.kind === 'day') && node.year > 0 && node.month > 0) {
+        year = node.year;
+        month = node.month;
+        break;
+      }
+    }
+    if (year < 0) {
+      return;
+    }
+    let idx = -1;
+    for (let i = 0; i < ymList.length; i++) {
+      if (ymList[i].year === year && ymList[i].month === month) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return;
+    }
+    const ratio = ymList.length > 1 ? idx / (ymList.length - 1) : 0;
+    // 微小变化不更新 @State，减少手柄层细碎重绘
+    if (Math.abs(ratio - this.timelineSliderRatio) < 0.01 && idx === this.timelineSidebarHighlightIndex) {
+      return;
+    }
+    this.timelineSliderRatio = ratio;
+    this.timelineSidebarHighlightIndex = idx;
+    const th = Math.max(80, this.timelineScrubTrackHeightVp);
+    this.timelineIndicatorY = this.timelineIndicatorYForRatio(th, ratio);
+  }
+
+  private getCurrentHighlightYear(): number {
+    const ymList = this.getTimelineYearMonths();
+    if (ymList.length === 0) {
+      return new Date().getFullYear();
+    }
+    const idx = Math.max(0, Math.min(ymList.length - 1, this.timelineSidebarHighlightIndex));
+    return ymList[idx].year;
+  }
+
+  private getCurrentHighlightMonth(): number {
+    const ymList = this.getTimelineYearMonths();
+    if (ymList.length === 0) {
+      return new Date().getMonth() + 1;
+    }
+    const idx = Math.max(0, Math.min(ymList.length - 1, this.timelineSidebarHighlightIndex));
+    return ymList[idx].month;
+  }
+
+  /** 与列表锚点对齐的「日」：从当前可见首节点向前找最近的 day/row 节点 */
+  private getCurrentHighlightDay(): number {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return new Date().getDate();
+    }
+    const anchor = Math.max(0, Math.min(this.listVisibleFirstNodeIdx, total - 1));
+    for (let i = anchor; i >= 0; i--) {
+      const n = this.flowDataSource.getData(i);
+      if (n.year > 0 && n.month > 0 && n.day > 0 && (n.kind === 'day' || n.kind === 'row')) {
+        return n.day;
+      }
+    }
+    return new Date().getDate();
+  }
+
+  /** 时间轴展开气泡：完整年月日（不设 maxWidth，避免被截成「2…」） */
+  private getTimelineScrubPillLabel(): string {
+    return `${this.getCurrentHighlightYear()}年${this.getCurrentHighlightMonth()}月${this.getCurrentHighlightDay()}日`;
+  }
+
+  private getYearMarkersForTrack(): YearMarker[] {
+    const ymList = this.getTimelineYearMonths();
+    if (ymList.length === 0 || this.timelineScrubTrackHeightVp <= 0) {
+      return [];
+    }
+    const out: YearMarker[] = [];
+    const seen = new Set<number>();
+    let lastY = -999;
+    const th = this.timelineScrubTrackHeightVp;
+    for (let i = 0; i < ymList.length; i++) {
+      const year = ymList[i].year;
+      if (seen.has(year)) {
+        continue;
+      }
+      seen.add(year);
+      const ratio = ymList.length > 1 ? i / (ymList.length - 1) : 0;
+      const y = this.timelineIndicatorYForRatio(th, ratio);
+      if (y - lastY >= 22) {
+        out.push({ year, y });
+        lastY = y;
+      }
+    }
+    return out;
+  }
+
+  /** 与 buildTimelineSidebar 内滑块/气泡纵向位置一致，随轨道高度缩放 */
+  private timelineIndicatorYForRatio(thRaw: number, ratio: number): number {
+    const th = Math.max(thRaw, GALLERY_TIMELINE_INDICATOR_RESERVED_VP + 40);
+    const span = Math.max(th - GALLERY_TIMELINE_INDICATOR_RESERVED_VP, 40);
+    return GALLERY_TIMELINE_INDICATOR_PAD_VP + ratio * span;
+  }
+
+  /** 计算某天某 offset 在“全量时间轴照片序列”中的全局下标 */
+  private calculateGlobalIndex(day: TimelineDayModel, offsetInDay: number): number {
+    let acc = 0;
+    for (let i = 0; i < this.orderedDays.length; i++) {
+      const d = this.orderedDays[i];
+      if (d.year === day.year && d.month === day.month && d.day === day.day) {
+        return acc + Math.max(0, offsetInDay);
+      }
+      acc += Math.max(0, d.itemCount);
+    }
+    return acc + Math.max(0, offsetInDay);
+  }
+
+  /** 根据全局照片下标反查所属天与天内 offset */
+  private resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null {
+    if (this.orderedDays.length === 0) {
+      return null;
+    }
+    const g = Math.max(0, globalIndex);
+    let acc = 0;
+    for (let i = 0; i < this.orderedDays.length; i++) {
+      const cnt = Math.max(0, this.orderedDays[i].itemCount);
+      if (g < acc + cnt) {
+        const hit: DayGlobalResolveResult = { dayIdx: i, dayOffset: g - acc };
+        return hit;
+      }
+      acc += cnt;
+    }
+    const last = this.orderedDays.length - 1;
+    const tail: DayGlobalResolveResult = {
+      dayIdx: last,
+      dayOffset: Math.max(0, this.orderedDays[last].itemCount - 1)
+    };
+    return tail;
+  }
+
+  /** 统计在 nodeIdx 之前共有多少“照片槽位”（真实 + skeleton） */
+  private countPhotoSlotsBeforeNode(nodeIdx: number): number {
+    const totalNodes = this.flowDataSource.totalCount();
+    const end = Math.max(0, Math.min(totalNodes, nodeIdx));
+    let acc = 0;
+    for (let i = 0; i < end; i++) {
+      const n = this.flowDataSource.getData(i);
+      if (n.kind === 'row') {
+        acc += n.rowSlotItems.length;
+      }
+    }
+    return acc;
+  }
+
+  /** orderedDays[0..dayIdx) 的全局槽位前缀和 */
+  private globalSlotIndexAtDayStart(dayIdx: number): number {
+    let acc = 0;
+    const lim = Math.max(0, Math.min(dayIdx, this.orderedDays.length));
+    for (let i = 0; i < lim; i++) {
+      acc += Math.max(0, this.orderedDays[i].itemCount);
+    }
+    return acc;
+  }
+
+  /**
+   * 根据 List 可见节点区间刷新「全局照片槽位」缓存；只要存在 row 即写入，供 loadVisible 在 vis 退化时使用。
+   */
+  private refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void {
+    const totalNodes = this.flowDataSource.totalCount();
+    if (totalNodes <= 0) {
+      return;
+    }
+    let first = Math.max(0, Math.min(totalNodes - 1, firstIdx));
+    let last = Math.max(first, Math.min(totalNodes - 1, lastIdx));
+    let visStart = this.countPhotoSlotsBeforeNode(first);
+    let visEndExclusive = this.countPhotoSlotsBeforeNode(last + 1);
+    if (visEndExclusive <= visStart) {
+      let rowIdx = -1;
+      for (let i = first; i <= last; i++) {
+        const n = this.flowDataSource.getData(i);
+        if (n.kind === 'row') {
+          rowIdx = i;
+          break;
+        }
+      }
+      if (rowIdx < 0) {
+        for (let i = first; i < totalNodes; i++) {
+          const n = this.flowDataSource.getData(i);
+          if (n.kind === 'row') {
+            rowIdx = i;
+            break;
+          }
+        }
+      }
+      if (rowIdx >= 0) {
+        visStart = this.countPhotoSlotsBeforeNode(rowIdx);
+        visEndExclusive = Math.max(visStart + 1, this.countPhotoSlotsBeforeNode(rowIdx + 1));
+      }
+    }
+    if (visEndExclusive > visStart) {
+      const newSpan = visEndExclusive - visStart;
+      const prevStart = this.lastKnownGlobalPhotoSlotStart;
+      const prevEnd = this.lastKnownGlobalPhotoSlotEndExclusive;
+      const prevSpan = prevEnd - prevStart;
+      if (prevSpan >= GALLERY_LAST_KNOWN_MIN_PREV_SLOT_SPAN &&
+        newSpan < GALLERY_LAST_KNOWN_DEGENERATE_NEW_SLOT_SPAN &&
+        newSpan * GALLERY_LAST_KNOWN_SHRINK_IGNORE_RATIO < prevSpan) {
+        return;
+      }
+      this.lastKnownGlobalPhotoSlotStart = visStart;
+      this.lastKnownGlobalPhotoSlotEndExclusive = visEndExclusive;
+    }
+  }
+
+  private captureListScrollIndexAnchor(): void {
+    try {
+      const off = this.scrollerRef.currentOffset();
+      const yRaw = off.yOffset;
+      const y = typeof yRaw === 'number' && Number.isFinite(yRaw) ? Math.max(0, yRaw) : 0;
+      this.listScrollIndexAnchorYVp = y;
+      this.listScrollIndexAnchorFirst = Math.max(0, this.listVisibleFirstNodeIdx);
+      this.listScrollIndexAnchorHave = true;
+    } catch (_e) {
+      this.listScrollIndexAnchorHave = false;
+    }
+  }
+
+  private approxGalleryFlowListNodeHeightVp(node: GalleryFlowNode): number {
+    if (node.kind === 'month') {
+      return GALLERY_LIST_APPROX_MONTH_NODE_VP;
+    }
+    if (node.kind === 'day') {
+      return GALLERY_LIST_APPROX_DAY_NODE_VP;
+    }
+    return GALLERY_LIST_APPROX_ROW_NODE_VP;
+  }
+
+  /** 自 anchorFirst 起向下「吃掉」deltaVp 内容位移后，近似的首可见节点下标 */
+  /**
+   * 由 List 顶部累计近似高度，估算 yVp 处对应的首个节点下标（与 Scroller.yOffset 同向）。
+   * 仅作 refine 下界，步数封顶避免超长列表单次 O(n)。
+   */
+  private estimateFirstVisibleNodeIndexFromScrollY(yVp: number, total: number): number {
+    if (total <= 0 || !Number.isFinite(yVp) || yVp <= 0.5) {
+      return 0;
+    }
+    const minByOffset = Math.ceil(yVp / 16) + 8000;
+    const maxWalk = Math.min(total, GALLERY_SCROLL_Y_ESTIMATE_MAX_NODES, Math.max(16000, minByOffset));
+    let cum = 0;
+    for (let i = 0; i < maxWalk; i++) {
+      const step = Math.max(1, this.approxGalleryFlowListNodeHeightVp(this.flowDataSource.getData(i)));
+      if (cum + step > yVp) {
+        return i;
+      }
+      cum += step;
+    }
+    if (cum <= yVp) {
+      if (maxWalk < total) {
+        const remain = yVp - cum;
+        const guess = Math.max(1, GALLERY_LIST_APPROX_ROW_NODE_VP);
+        const extra = Math.min(total - 1 - maxWalk, Math.max(0, Math.ceil(remain / guess)));
+        return Math.min(total - 1, maxWalk + extra);
+      }
+      return total - 1;
+    }
+    return Math.max(0, maxWalk - 1);
+  }
+
+  private consumeVerticalScrollDeltaAsNodeIndex(startIdx: number, deltaVp: number): number {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0 || deltaVp <= 0.5) {
+      return Math.max(0, Math.min(Math.max(0, total - 1), startIdx));
+    }
+    let i = Math.max(0, Math.min(total - 1, startIdx));
+    let budget = deltaVp;
+    let it = 0;
+    while (i < total - 1 && budget > 0.5) {
+      it++;
+      if (it > GALLERY_SCROLL_DELTA_CONSUME_MAX_IT) {
+        const guess = GALLERY_LIST_APPROX_ROW_NODE_VP;
+        const extra = Math.min(total - 1 - i, Math.max(0, Math.ceil(budget / guess)));
+        i += extra;
+        break;
+      }
+      const h = this.approxGalleryFlowListNodeHeightVp(this.flowDataSource.getData(i));
+      const step = Math.max(1, h);
+      if (budget <= step) {
+        break;
+      }
+      budget -= step;
+      i++;
+    }
+    return Math.min(total - 1, i);
+  }
+
+  /**
+   * 与 consumeVerticalScrollDeltaAsNodeIndex 对称：y 减小（列表内容向上滚、看较新一侧）时，
+   * 从锚点节点向上消费 deltaVp 的近似高度，得到更小的首可见节点下标。
+   */
+  private consumeVerticalScrollDeltaAsNodeIndexBackward(startIdx: number, deltaVp: number): number {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0 || deltaVp <= 0.5) {
+      return Math.max(0, Math.min(Math.max(0, total - 1), startIdx));
+    }
+    let i = Math.max(0, Math.min(total - 1, startIdx));
+    let budget = deltaVp;
+    let it = 0;
+    while (i > 0 && budget > 0.5) {
+      it++;
+      if (it > GALLERY_SCROLL_DELTA_CONSUME_MAX_IT) {
+        const guess = GALLERY_LIST_APPROX_ROW_NODE_VP;
+        const extra = Math.min(i, Math.max(0, Math.ceil(budget / guess)));
+        i -= extra;
+        break;
+      }
+      const h = this.approxGalleryFlowListNodeHeightVp(this.flowDataSource.getData(i - 1));
+      const step = Math.max(1, h);
+      if (budget <= step) {
+        break;
+      }
+      budget -= step;
+      i--;
+    }
+    return Math.max(0, i);
+  }
+
+  /**
+   * 用 Scroller 纵向偏移相对「上次 onScrollIndex 锚点」的增量，把声称的 first/last 向前推，
+   * 缓解 ArkUI List + LazyForEach 下索引回调滞后于真实视口的问题。
+   */
+  private refineVisibleNodeIndicesAgainstScrollLag(claimedFirst: number, claimedLast: number): GalleryVisibleNodeRange {
+    const totalNodes = this.flowDataSource.totalCount();
+    if (totalNodes <= 0) {
+      return { first: 0, last: 0 };
+    }
+    let cf = Math.max(0, Math.min(totalNodes - 1, claimedFirst));
+    let cl = Math.max(cf, Math.min(totalNodes - 1, claimedLast));
+
+    let yNow = 0;
+    try {
+      const off = this.scrollerRef.currentOffset();
+      const yRaw = off.yOffset;
+      yNow = typeof yRaw === 'number' && Number.isFinite(yRaw) ? Math.max(0, yRaw) : 0;
+    } catch (_e) {
+      yNow = 0;
+    }
+    const estFromY = this.estimateFirstVisibleNodeIndexFromScrollY(yNow, totalNodes);
+
+    if (this.listScrollIndexAnchorHave) {
+      const angDr = Math.abs(this.listScrollIndexAnchorFirst - estFromY);
+      if (angDr > GALLERY_REFINE_ANCHOR_RESYNC_NODE_DRIFT) {
+        this.listScrollIndexAnchorYVp = yNow;
+        this.listScrollIndexAnchorFirst = Math.max(0, Math.min(totalNodes - 1, estFromY));
+      }
+    }
+
+    if (!this.listScrollIndexAnchorHave) {
+      const drift = Math.abs(cf - estFromY);
+      const driftTh = Math.max(3500, Math.min(12000, Math.floor(totalNodes / 4)));
+      const first0 = drift > driftTh ? estFromY : Math.max(cf, estFromY);
+      const span0 = Math.max(Math.max(0, cl - cf), GALLERY_REFINE_MIN_VISIBLE_NODE_SPAN);
+      const last0 = Math.min(totalNodes - 1, Math.max(cl, first0 + span0));
+      return { first: Math.min(totalNodes - 1, first0), last: Math.max(first0, last0) };
+    }
+
+    const deltaRaw = yNow - this.listScrollIndexAnchorYVp;
+    // 阈值略放宽：过窄时长期落在微动分支。注意 loadVisible 开头 capture 后常出现 deltaRaw≈0，若仍走「deltaRaw<0 ? min : max」
+    // 会在 deltaRaw===0 时误用 max(cf,est)（偏更大首索引），上滑看较新一侧时加载窗长期偏下，屏内骨架永远不拉。
+    if (Math.abs(deltaRaw) <= 8) {
+      const span0 = Math.max(Math.max(0, cl - cf), GALLERY_REFINE_MIN_VISIBLE_NODE_SPAN);
+      let first0: number;
+      if (Math.abs(deltaRaw) <= 1.0) {
+        const driftCe = Math.abs(cf - estFromY);
+        first0 =
+          driftCe > GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES ? estFromY : cf;
+      } else if (deltaRaw < 0) {
+        first0 = Math.min(cf, estFromY);
+      } else {
+        first0 = Math.max(cf, estFromY);
+      }
+      const last0 = Math.min(totalNodes - 1, Math.max(cl, first0 + span0));
+      return { first: Math.min(totalNodes - 1, first0), last: Math.max(first0, last0) };
+    }
+    const span = Math.max(Math.max(0, cl - cf), GALLERY_REFINE_MIN_VISIBLE_NODE_SPAN);
+    let first2: number;
+    if (deltaRaw > 1) {
+      const adv = this.consumeVerticalScrollDeltaAsNodeIndex(this.listScrollIndexAnchorFirst, deltaRaw);
+      const advC = Math.min(totalNodes - 1, Math.max(0, adv));
+      const estUse =
+        Math.abs(estFromY - advC) > GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES ? advC : estFromY;
+      first2 = Math.max(cf, advC, estUse);
+    } else {
+      const adv = this.consumeVerticalScrollDeltaAsNodeIndexBackward(this.listScrollIndexAnchorFirst, -deltaRaw);
+      const advC = Math.min(totalNodes - 1, Math.max(0, adv));
+      const estUse =
+        Math.abs(estFromY - advC) > GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES ? advC : estFromY;
+      // 与下滑对称：下滑 max(cf,adv,est) 偏向更大首索引；上滑 min(cf,adv,est) 偏向更小首索引
+      first2 = Math.max(0, Math.min(cf, advC, estUse));
+    }
+    const last2 = Math.min(totalNodes - 1, Math.max(cl, first2 + span));
+    return { first: first2, last: Math.max(first2, last2) };
+  }
+
+  /** 统计 [first,last] 节点区间内 row 里仍为骨架（null）的照片槽位数，用于按屏内占位扩展拉取范围 */
+  private countSkeletonPhotoSlotsInFlowNodeRange(first: number, last: number): number {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return 0;
+    }
+    const f = Math.max(0, Math.min(total - 1, first));
+    const l = Math.max(f, Math.min(total - 1, last));
+    let c = 0;
+    for (let i = f; i <= l; i++) {
+      const n = this.flowDataSource.getData(i);
+      if (n.kind !== 'row') {
+        continue;
+      }
+      for (let k = 0; k < n.rowSlotItems.length; k++) {
+        const s = n.rowSlotItems[k];
+        if (s === null || s === undefined) {
+          c++;
+        }
+      }
+    }
+    return c;
+  }
+
+  /** 下方全局槽位缓冲：保底 + 按当前窗口内骨架槽位数放大（上限 cap） */
+  private computeLoadVisibleBufferAfterSlots(aggressive: boolean, scanFirst: number, scanLast: number): number {
+    const sk = this.countSkeletonPhotoSlotsInFlowNodeRange(scanFirst, scanLast);
+    const base = aggressive ? GALLERY_LOAD_VISIBLE_BUFFER_BASE_AGGRESSIVE : GALLERY_LOAD_VISIBLE_BUFFER_BASE_NON_AGGRESSIVE;
+    const extra = Math.min(GALLERY_LOAD_VISIBLE_BUFFER_AFTER_CAP, sk * GALLERY_LOAD_VISIBLE_SKELETON_SLOT_MULTIPLIER);
+    return Math.max(base, extra);
+  }
+
+  /**
+   * 滚动静止后按可视区触发“日级优先加载”：
+   * - 若 Scroller.getVisibleRange 可用：以返回区间为唯一可见节点窗，**跳过 refine**，再映射到全局槽位并扩展 buffer（与 RecyclerView 首末可见项驱动加载一致）；
+   * - 否则仍走 refine + y 反推兜底；
+   * - 反查目标日，若当前 dayIndex 落后则前移到目标日并启动 pumpLoad。
+   *
+   * 注意：现有 sections 结构是“前缀连续真实数据”，不能安全跳 offset（会打乱映射），
+   * 因此此处仅做“按天抢占”而不直接改 dayOffsets 到中间页。
+   */
+  private loadVisibleItemsThrottled(forceImmediate: boolean = false, aggressive: boolean = false): void {
+    const now = Date.now();
+    if (!forceImmediate && now - this.lastLoadVisibleAtMs < 300) {
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug('loadVisible throttled');
+      }
+      return;
+    }
+    this.lastLoadVisibleAtMs = now;
+    if (this.bootLoading || this.orderedDays.length === 0 || this.visualPlaceholderMode || this.isDraggingOrFling) {
+      if (GALLERY_SCROLL_DEBUG_LOG) {
+        this.logScrollDebug(
+          `loadVisible skip: boot=${this.bootLoading ? 1 : 0}, days=${this.orderedDays.length}, `
+          + `placeholder=${this.visualPlaceholderMode ? 1 : 0}, dragFling=${this.isDraggingOrFling ? 1 : 0}`
+        );
+      }
+      return;
+    }
+    const totalNodes = this.flowDataSource.totalCount();
+    if (totalNodes <= 0) {
+      return;
+    }
+    /**
+     * LazyForEach + 全量骨架下 onScrollIndex 滞后：若 Scroller 提供 getVisibleRange，则刷新 listVisible* 并重捕锚点。
+     * 命中时后续 **不再跑 refine**（与 RecyclerView findFirstVisibleItemPosition 同源，避免 y 反推/锚点消费叠在 API 上制造细缝）。
+     */
+    let loadVisibleUsedScrollerRange = false;
+    if (this.tryApplyScrollerVisibleRangeIfAvailable(totalNodes)) {
+      loadVisibleUsedScrollerRange = true;
+      this.refreshLastKnownGlobalSlotsFromListIndices(this.listVisibleFirstNodeIdx, this.listVisibleLastNodeIdx);
+      this.captureListScrollIndexAnchor();
+    }
+    let refFirst = Math.max(0, Math.min(totalNodes - 1, this.listVisibleFirstNodeIdx));
+    let refLast = Math.max(refFirst, Math.min(totalNodes - 1, this.listVisibleLastNodeIdx));
+    /**
+     * 时间轴松手（aggressive）：programmatic seek 后 onScrollIndex 常仍指向 seek 前的旧可见区，
+     * 若此处继续用 List 换算的 visStart，会把 dayIndex 拉回旧月份，表现为直松手不出图、要多滑一大段才追上。
+     * 因此激进路径一律以滑块比例对齐后的全局槽位为准。
+     */
+    let visStart = 0;
+    let visEndExclusive = 0;
+    let usedAggressiveTimelineAnchor = false;
+    if (aggressive && this.alignPumpToTimelineSliderTarget()) {
+      visStart = this.lastKnownGlobalPhotoSlotStart;
+      visEndExclusive = this.lastKnownGlobalPhotoSlotEndExclusive;
+      usedAggressiveTimelineAnchor = visEndExclusive > visStart;
+    }
+    if (!usedAggressiveTimelineAnchor) {
+      let refinedFirst: number;
+      let refinedLast: number;
+      if (loadVisibleUsedScrollerRange) {
+        refinedFirst = Math.max(0, Math.min(totalNodes - 1, this.listVisibleFirstNodeIdx));
+        refinedLast = Math.max(refinedFirst, Math.min(totalNodes - 1, this.listVisibleLastNodeIdx));
+      } else {
+        const refined = this.refineVisibleNodeIndicesAgainstScrollLag(this.listVisibleFirstNodeIdx, this.listVisibleLastNodeIdx);
+        refinedFirst = refined.first;
+        refinedLast = refined.last;
+      }
+      const firstNode = Math.max(0, Math.min(totalNodes - 1, refinedFirst));
+      const lastNode = Math.max(firstNode, Math.min(totalNodes - 1, refinedLast));
+      refFirst = firstNode;
+      refLast = lastNode;
+      visStart = this.countPhotoSlotsBeforeNode(firstNode);
+      visEndExclusive = this.countPhotoSlotsBeforeNode(lastNode + 1);
+      if (visEndExclusive <= visStart) {
+        if (this.lastKnownGlobalPhotoSlotEndExclusive > this.lastKnownGlobalPhotoSlotStart) {
+          visStart = this.lastKnownGlobalPhotoSlotStart;
+          visEndExclusive = this.lastKnownGlobalPhotoSlotEndExclusive;
+        }
+      }
+      if (visEndExclusive <= visStart) {
+        this.refreshLastKnownGlobalSlotsFromListIndices(refinedFirst, refinedLast);
+        if (this.lastKnownGlobalPhotoSlotEndExclusive > this.lastKnownGlobalPhotoSlotStart) {
+          visStart = this.lastKnownGlobalPhotoSlotStart;
+          visEndExclusive = this.lastKnownGlobalPhotoSlotEndExclusive;
+        }
+      }
+      if (visEndExclusive <= visStart) {
+        // 仍无效：时间轴松手用滑块目标对齐；否则只能等下次可见区刷新
+        if (aggressive && this.alignPumpToTimelineSliderTarget() && !this.loadingMore && !this.exhausted) {
+          const epoch = this.pumpEpoch;
+          this.pumpLoad(true);
+          setTimeout((): void => {
+            if (epoch !== this.pumpEpoch || this.isDraggingOrFling || this.visualPlaceholderMode) {
+              return;
+            }
+            this.pumpLoad(true);
+          }, 40);
+        }
+        return;
+      }
+    }
+    // 骨架缓冲扫描区间：Scroller 可见区命中时只做固定 prefetch margin（同行做法）；否则才用 y 反推扩展。
+    let bufferScanFirst = refFirst;
+    let bufferScanLast = refLast;
+    if (!usedAggressiveTimelineAnchor) {
+      if (loadVisibleUsedScrollerRange) {
+        bufferScanFirst = Math.max(0, refFirst - GALLERY_LOAD_VISIBLE_SCROLLER_RANGE_PAD_NODES);
+        bufferScanLast = Math.min(totalNodes - 1, refLast + GALLERY_LOAD_VISIBLE_SCROLLER_RANGE_PAD_NODES);
+        bufferScanLast = Math.max(bufferScanFirst, bufferScanLast);
+      } else {
+        let yVis = 0;
+        try {
+          const off2 = this.scrollerRef.currentOffset();
+          const yRaw2 = off2.yOffset;
+          yVis = typeof yRaw2 === 'number' && Number.isFinite(yRaw2) ? Math.max(0, yRaw2) : 0;
+        } catch (_e2) {
+          yVis = 0;
+        }
+        const estNode = this.estimateFirstVisibleNodeIndexFromScrollY(yVis, totalNodes);
+        if (estNode < refFirst) {
+          const visLo = this.countPhotoSlotsBeforeNode(estNode);
+          if (visLo < visStart) {
+            visStart = visLo;
+          }
+        }
+        bufferScanFirst = Math.max(0, Math.min(refFirst, estNode));
+        const winNodes = Math.max(GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES, refLast - refFirst + 1);
+        const estLastHint = Math.min(totalNodes - 1, Math.max(refLast, estNode + winNodes - 1));
+        bufferScanLast = Math.min(totalNodes - 1, Math.max(refLast, estLastHint));
+        bufferScanLast = Math.max(bufferScanFirst, bufferScanLast);
+      }
+    }
+    const bufferSlots = this.computeLoadVisibleBufferAfterSlots(aggressive, bufferScanFirst, bufferScanLast);
+    const start = Math.max(0, visStart - bufferSlots);
+    const end = Math.max(start, visEndExclusive - 1 + bufferSlots);
+    const startHit = this.resolveDayByGlobalIndex(start);
+    if (startHit === null) {
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug(
+          `loadVisible miss: start=${start}, end=${end}, listFirst=${this.listVisibleFirstNodeIdx}, `
+          + `listLast=${this.listVisibleLastNodeIdx}, timelineAnchor=${usedAggressiveTimelineAnchor ? 1 : 0}`
+        );
+      }
+      return;
+    }
+    // 日级抢占：对齐到当前可视区所在日。原先非 aggressive 每次最多 dayIndex+1，会导致长时间在「上一屏」上方按天泵数据。
+    if (startHit.dayIdx !== this.lastVisibleLoadDayIdx || startHit.dayIdx !== this.dayIndex) {
+      const nextIdx = startHit.dayIdx;
+      this.dayIndex = nextIdx;
+      this.lastVisibleLoadDayIdx = nextIdx;
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug(`loadVisible jump dayIndex -> ${nextIdx} (target=${startHit.dayIdx}, start=${start}, end=${end})`);
+      }
+    }
+    // 激进恢复：把该日请求 offset 直接对齐到可视 dayOffset，优先填充“当前页”
+    if (aggressive && this.dayIndex >= 0 && this.dayIndex < this.orderedDays.length) {
+      const d = this.orderedDays[this.dayIndex];
+      const k = dayKey(d.year, d.month, d.day);
+      const alignedStart = Math.max(0, startHit.dayOffset);
+      const curOff = this.dayOffsets.get(k) ?? 0;
+      if (curOff !== alignedStart) {
+        this.dayOffsets.set(k, alignedStart);
+        if (this.isInScrollInteractiveLogWindow()) {
+          this.logScrollDebug(`loadVisible align day offset -> ${alignedStart} (dayOffset=${startHit.dayOffset})`);
+        }
+      }
+    }
+    const endHit = this.resolveDayByGlobalIndex(end);
+    if (endHit === null) {
+      return;
+    }
+    const loD = startHit.dayIdx;
+    const hiD = endHit.dayIdx;
+    const spanDays = hiD - loD;
+
+    if (!this.loadingMore && !this.exhausted) {
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug(
+          `loadVisible trigger ${aggressive ? 'continuous' : 'single-batch'} pump: `
+          + `dayIndex=${this.dayIndex}, start=${start}, end=${end}, spanDays=${spanDays}`
+        );
+      }
+      // 视口 [start,end] 跨多日且每日仅少量槽位时：只泵首日会长期只出一张图；按日各拉一批覆盖窗口内多日。
+      if (spanDays > 0) {
+        const epochBand = this.pumpEpoch;
+        void this.pumpVisibleDayBandAllChunks(loD, hiD, start, end, epochBand);
+      } else if (aggressive) {
+        const epoch = this.pumpEpoch;
+        this.pumpLoad(true);
+        // 松手恢复补第二批：优先把当前可视区补满，避免“附近有图、页内缺图”
+        setTimeout((): void => {
+          if (epoch !== this.pumpEpoch || this.isDraggingOrFling || this.visualPlaceholderMode) {
+            return;
+          }
+          this.pumpLoad(true);
+        }, 40);
+      } else {
+        this.pumpLoad(true);
+        const skFollow = this.countSkeletonPhotoSlotsInFlowNodeRange(refFirst, refLast);
+        if (skFollow >= 6) {
+          const epochSk = this.pumpEpoch;
+          setTimeout((): void => {
+            if (epochSk !== this.pumpEpoch || this.isDraggingOrFling || this.visualPlaceholderMode) {
+              return;
+            }
+            this.pumpLoad(true);
+          }, 24);
+        }
+      }
+    }
+  }
+
+  /**
+   * 跨日窗口可能远大于 GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX；单段只泵前 N 天会在屏上形成「载一段、空一段」条纹。
+   * 按固定块顺序泵完整个 [loD, hiD]（块间仍受 epoch / 交互态 gate）。
+   */
+  private async pumpVisibleDayBandAllChunks(
+    loD: number,
+    hiD: number,
+    startG: number,
+    endG: number,
+    epoch: number
+  ): Promise<void> {
+    let curLo = Math.max(0, loD);
+    const hiCap = Math.max(curLo, Math.min(hiD, this.orderedDays.length - 1));
+    while (curLo <= hiCap) {
+      if (epoch !== this.pumpEpoch || this.exhausted || this.bootLoading) {
+        return;
+      }
+      if (this.visualPlaceholderMode || this.isDraggingOrFling) {
+        return;
+      }
+      const hiChunk = Math.min(hiCap, curLo + GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX - 1);
+      await this.pumpVisibleDayBandSequential(curLo, hiChunk, startG, endG, epoch);
+      curLo = hiChunk + 1;
+    }
+  }
+
+  /**
+   * 可见槽位区间跨多个日历日时，对窗口内涉及的每个日顺序各请求一批，并在进入该日前把 offset 对齐到与 [startG,endG] 重叠的起点。
+   */
+  private async pumpVisibleDayBandSequential(
+    loDayIdx: number,
+    hiDayIdx: number,
+    startG: number,
+    endG: number,
+    epoch: number
+  ): Promise<void> {
+    if (this.visualPlaceholderMode || this.isDraggingOrFling) {
+      return;
+    }
+    const lo = Math.max(0, loDayIdx);
+    const hi = Math.max(lo, Math.min(hiDayIdx, this.orderedDays.length - 1));
+    for (let d = lo; d <= hi; d++) {
+      if (epoch !== this.pumpEpoch || this.exhausted || this.bootLoading) {
+        return;
+      }
+      if (this.visualPlaceholderMode || this.isDraggingOrFling) {
+        return;
+      }
+      let waitGuard = 0;
+      while (this.loadingMore && waitGuard < 120) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 30));
+        waitGuard++;
+        if (epoch !== this.pumpEpoch) {
+          return;
+        }
+      }
+      if (this.loadingMore) {
+        return;
+      }
+
+      const day = this.orderedDays[d];
+      const k = dayKey(day.year, day.month, day.day);
+      const g0 = this.globalSlotIndexAtDayStart(d);
+      const g1 = g0 + Math.max(0, day.itemCount);
+      if (endG < g0 || startG >= g1) {
+        continue;
+      }
+      const overlapStart = Math.max(startG, g0);
+      const localNeed = Math.min(Math.max(0, overlapStart - g0), Math.max(0, day.itemCount - 1));
+      const curOff = this.dayOffsets.get(k) ?? 0;
+      if (localNeed > curOff) {
+        this.dayOffsets.set(k, localNeed);
+      }
+
+      this.dayIndex = d;
+      this.lastVisibleLoadDayIdx = d;
+
+      const gen = this.loadGen;
+      this.loadingMore = true;
+      let added = 0;
+      try {
+        added = await this.loadOneBatch();
+      } finally {
+        this.loadingMore = false;
+      }
+
+      if (epoch !== this.pumpEpoch || gen !== this.loadGen) {
+        return;
+      }
+      if (added === -1) {
+        return;
+      }
+      if (added === -2) {
+        const e2 = this.pumpEpoch;
+        setTimeout((): void => {
+          if (e2 !== this.pumpEpoch || this.isDraggingOrFling || this.visualPlaceholderMode) {
+            return;
+          }
+          this.pumpLoad(true);
+        }, 3000);
+        return;
+      }
+      if (added === -3) {
+        const e3 = this.pumpEpoch;
+        setTimeout((): void => {
+          if (e3 !== this.pumpEpoch || this.isDraggingOrFling || this.visualPlaceholderMode) {
+            return;
+          }
+          this.pumpLoad(true);
+        }, 500);
+        return;
+      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, added > 0 ? PUMP_UI_GAP_MS : 2));
+    }
+  }
+
+  private loadVisibleItems(): void {
+    this.loadVisibleItemsThrottled();
+  }
+
+  private loadVisibleItemsImmediate(): void {
+    this.lastLoadVisibleAtMs = 0;
+    // 时间轴松手恢复用：绕过节流 + 激进对齐 + 连续泵，确保“立即开始出图”
+    this.loadVisibleItemsThrottled(true, true);
+  }
+
+  /**
+   * 时间轴松手后的主动恢复：不依赖用户再滑动，直接拉起可视区加载。
+   * 双阶段触发用于覆盖「程序化 seek 尚未完成可见区回传」窗口。
+   */
+  private kickPostTimelineReleaseLoad(): void {
+    this.flushPendingFlowRebuild();
+    this.syncListVisibleRoughToTimelineSliderTarget();
+    this.loadVisibleItemsImmediate();
+    // 若可见区索引尚未就绪，loadVisible 可能只走了时间轴对齐分支；再兜底一次 pump
+    if (!this.loadingMore && !this.exhausted && !this.bootLoading) {
+      this.pumpLoad(true);
+    }
+    const epoch = this.pumpEpoch;
+    setTimeout((): void => {
+      if (epoch !== this.pumpEpoch || this.timelineSidebarDragging || this.isDraggingOrFling) {
+        return;
+      }
+      this.flushPendingFlowRebuild();
+      this.syncListVisibleRoughToTimelineSliderTarget();
+      this.loadVisibleItemsImmediate();
+      if (!this.loadingMore && !this.exhausted && !this.bootLoading) {
+        this.pumpLoad(true);
+      }
+    }, 120);
+  }
+
+  private endTimelineDrag(): void {
+    this.cancelTimelineDragWatchdog();
+    this.timelineDragWatchdogGen++;
+    // 程序化 seek 期间屏蔽列表滚动对冻结态的回写（短窗）
+    this.ignoreListFreezeUntilMs = Date.now() + 900;
+    // 先释放拖动态，避免 placeholder 长时间锁住导致停手后不出图
+    this.timelineSidebarDragging = false;
+    this.timelinePressing = false;
+    this.timelineLongPressExpanded = false;
+    this.refreshVisualPlaceholderMode();
+    this.timelineSeekInProgress = true;
+    this.seekTimelineListToDisplayRatio(this.timelineSliderRatio);
+    const ym = this.resolveYearMonthByTimelineRatio(this.timelineSliderRatio);
+    if (ym !== null && !this.flowHasVisibleYearMonth(ym.year, ym.month)) {
+      this.startTimelineSeekWatchdog(ym.year, ym.month);
+    }
+    setTimeout((): void => {
+      this.timelineSeekInProgress = false;
+      this.isDraggingOrFling = false;
+      this.listKineticScrolling = false;
+      this.visualPlaceholderMode = false;
+      // seek 刚结束的一小段时间继续屏蔽回写，确保主动恢复链路先跑起来
+      this.ignoreListFreezeUntilMs = Date.now() + 600;
+      this.refreshVisualPlaceholderMode();
+      // 结束拖动后主动拉起加载，不依赖用户再滑动
+      this.kickPostTimelineReleaseLoad();
+      this.runMainListScrollSettledWork();
+      this.showTimelineBar();
+    }, 120);
+  }
+
+  @Builder
+  private buildTimelineSidebar() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.timelineScrubExpandedChrome()) {
+        ForEach(this.getYearMarkersForTrack(), (marker: YearMarker) => {
+          Text(`${marker.year}`)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.gallery_timeline_year_badge_fg'))
+            .backgroundColor($r('app.color.gallery_timeline_year_badge_bg'))
+            .padding({ left: 5, right: 5, top: 3, bottom: 3 })
+            .borderRadius(4)
+            .position({ x: GALLERY_TIMELINE_YEAR_BADGE_X_VP, y: marker.y - 9 })
+        }, (m: YearMarker) => `ym_${m.year}`)
+      }
+
+      Column()
+        .width(this.timelineScrubExpandedChrome()
+          ? (this.timelineSidebarDragging ? GALLERY_TIMELINE_RAIL_DRAG_VP : GALLERY_TIMELINE_RAIL_EXPANDED_VP)
+          : GALLERY_TIMELINE_RAIL_MIN_VP)
+        .height('100%')
+        .backgroundColor(this.timelineSidebarDragging
+          ? $r('app.color.gallery_timeline_rail_drag')
+          : (this.timelineScrubExpandedChrome()
+            ? $r('app.color.gallery_timeline_rail_expanded')
+            : $r('app.color.gallery_timeline_rail')))
+        .borderRadius(3)
+        .position({
+          x: this.timelineScrubExpandedChrome()
+            ? (this.timelineSidebarDragging
+              ? GALLERY_TIMELINE_HIT_WIDTH_VP - GALLERY_TIMELINE_RAIL_DRAG_VP
+              : GALLERY_TIMELINE_HIT_WIDTH_VP - GALLERY_TIMELINE_RAIL_EXPANDED_VP)
+            : GALLERY_TIMELINE_HIT_WIDTH_VP - GALLERY_TIMELINE_RAIL_MIN_VP,
+          y: 0
+        })
+        .animation({ duration: 180, curve: Curve.EaseOut })
+
+      // 列表滚动时的「系统滚动条替身」：细轨 + 滑块位置点；长按或拖动后显示完整 scrub
+      if (this.timelineScrubScrollRailOnly()) {
+        Circle()
+          .width(GALLERY_TIMELINE_THUMB_VP)
+          .height(GALLERY_TIMELINE_THUMB_VP)
+          .fill($r('app.color.gallery_timeline_thumb_fill'))
+          .stroke($r('app.color.gallery_timeline_thumb_border'))
+          .strokeWidth(1.5)
+          .position({
+            x: GALLERY_TIMELINE_HIT_WIDTH_VP - GALLERY_TIMELINE_RAIL_MIN_VP - GALLERY_TIMELINE_THUMB_VP + 1,
+            y: Math.max(
+              GALLERY_TIMELINE_INDICATOR_PAD_VP,
+              this.timelineIndicatorY - GALLERY_TIMELINE_THUMB_VP / 2
+            )
+          })
+      }
+
+      if (this.timelineScrubExpandedChrome()) {
+        Text(this.getTimelineScrubPillLabel())
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.timelineSidebarDragging
+            ? $r('app.color.button_primary_fg')
+            : $r('app.color.gallery_timeline_month_pill_fg'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width(GALLERY_TIMELINE_SCRUB_PILL_MIN_WIDTH_VP)
+          .textAlign(TextAlign.Center)
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .backgroundColor(this.timelineSidebarDragging
+            ? $r('app.color.brand_primary')
+            : $r('app.color.gallery_timeline_month_pill_bg'))
+          .borderRadius(12)
+          .position({ x: GALLERY_TIMELINE_SCRUB_PILL_X_VP, y: Math.max(6, this.timelineIndicatorY - 20) })
+          .scale({
+            x: this.timelineSidebarDragging ? 1.15 : 1.0,
+            y: this.timelineSidebarDragging ? 1.15 : 1.0
+          })
+          .animation({ duration: 180, curve: Curve.EaseOut })
+          .gesture(
+            TapGesture().onAction((): void => {
+              this.seekTimelineListToDisplayRatio(this.timelineSliderRatio);
+            })
+          )
+      }
+    }
+    .width(GALLERY_TIMELINE_HIT_WIDTH_VP)
+    .height('100%')
+    .clip(false)
+    .onAreaChange((_: Area, area: Area): void => {
+      const h = area.height as number;
+      if (h > 1) {
+        this.timelineScrubTrackHeightVp = h;
+      }
+    })
+    .onTouch((event: TouchEvent): void => {
+      if (event.type === TouchType.Down) {
+        this.timelinePressing = true;
+        this.refreshVisualPlaceholderMode();
+        this.showTimelineBar();
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.timelinePressing = false;
+        this.timelineLongPressExpanded = false;
+        this.refreshVisualPlaceholderMode();
+        if (!this.timelineSidebarDragging) {
+          this.showTimelineBar();
+        }
+      }
+    })
+    .parallelGesture(
+      GestureGroup(GestureMode.Parallel,
+        LongPressGesture({ repeat: false, duration: GALLERY_TIMELINE_LONG_PRESS_EXPAND_MS })
+          .onAction((): void => {
+            if (!this.timelineSidebarDragging) {
+              this.timelineLongPressExpanded = true;
+              this.showTimelineBar();
+            }
+          }),
+        PanGesture({ direction: PanDirection.Vertical, distance: 2 })
+          .onActionStart((_event: GestureEvent): void => {
+            this.timelineSidebarDragging = true;
+            this.timelineLongPressExpanded = false;
+            this.timelineDragStartRatio = this.timelineSliderRatio;
+            this.lastTimelineDragScrollMs = 0;
+            this.refreshVisualPlaceholderMode();
+            this.armTimelineDragWatchdog();
+            if (this.timelineHideTimer >= 0) {
+              clearTimeout(this.timelineHideTimer);
+              this.timelineHideTimer = -1;
+            }
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            const ymList = this.getTimelineYearMonths();
+            if (ymList.length === 0) {
+              return;
+            }
+            const th = Math.max(64, this.timelineScrubTrackHeightVp);
+            let ratio = this.timelineDragStartRatio + (event.offsetY / th);
+            ratio = Math.max(0, Math.min(1, ratio));
+            if (Math.abs(ratio - this.timelineSliderRatio) < 0.001) {
+              return;
+            }
+            this.timelineSliderRatio = ratio;
+            this.timelineSidebarHighlightIndex = Math.max(0, Math.min(ymList.length - 1, Math.round(ratio * (ymList.length - 1))));
+            this.timelineIndicatorY = this.timelineIndicatorYForRatio(th, ratio);
+            // 视觉冻结策略：拖动过程中不实时滚动主列表，松手后一次性 seek 对齐并批量恢复图片。
+            this.armTimelineDragWatchdog();
+          })
+          .onActionEnd((_event: GestureEvent): void => {
+            this.endTimelineDrag();
+          })
+          .onActionCancel((_event: GestureEvent): void => {
+            this.endTimelineDrag();
+          })
+      )
+    )
+    .opacity(
+      this.timelineSidebarDragging || this.timelinePressing || this.timelineLongPressExpanded || this.timelineBarVisible ? 1 : 0
+    )
+    .animation({ duration: 280, curve: Curve.EaseInOut })
   }
 
   private openPreview(flatIndex: number): void {
@@ -424,11 +2220,51 @@ export struct GalleryAlbumTab {
     GalleryPreviewNavStore.openPreview(this.baseUrl, this.flatItems(), flatIndex);
   }
 
+  /** 以条目 id 对齐 flatItems 顺序，避免 rowSlotFlatIndices 与 flatItems 短暂不一致时「缩略图与预览不是同一张」 */
+  private resolveGalleryFlatIndexForOpenPreview(item: GalleryListItem, hintFlat: number): number {
+    const id = this.itemIdOf(item);
+    const items = this.flatItems();
+    if (id.length > 0) {
+      for (let i = 0; i < items.length; i++) {
+        if (this.itemIdOf(items[i]) === id) {
+          return i;
+        }
+      }
+    }
+    if (items.length <= 0) {
+      return hintFlat >= 0 ? hintFlat : 0;
+    }
+    if (hintFlat >= 0 && hintFlat < items.length) {
+      return hintFlat;
+    }
+    return Math.max(0, Math.min(items.length - 1, hintFlat));
+  }
+
   private itemIdOf(it: GalleryListItem): string {
     if (it.id === undefined || it.id === null) {
       return '';
     }
     return String(it.id).trim();
+  }
+
+  /**
+   * 主时间线 List + LazyForEach 的 item key。
+   * row 必须把「槽位是否已有 flat / 真实项」编进 key：仅 `rebuildFlow` 替换 `rowSlotItems` 时若 `node.key` 不变，
+   * 框架会复用子树而不重跑 item 构建，骨架格不会换成 GalleryNetworkThumb，表现为只有滑动后才「加载」。
+   */
+  private galleryFlowLazyKey(node: GalleryFlowNode): string {
+    if (node.kind !== 'row') {
+      return node.key;
+    }
+    const fi = node.rowSlotFlatIndices;
+    let slotSig = '';
+    for (let i = 0; i < fi.length; i++) {
+      if (i > 0) {
+        slotSig += 'x';
+      }
+      slotSig += `${fi[i]}`;
+    }
+    return `${node.key}_s${slotSig}`;
   }
 
   private exitGallerySelection(): void {
@@ -693,8 +2529,12 @@ export struct GalleryAlbumTab {
       if (node.kind !== 'row') {
         continue;
       }
-      for (let k = node.rowItems.length - 1; k >= 0; k--) {
-        const id = this.itemIdOf(node.rowItems[k]);
+      for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
+        const slot = node.rowSlotItems[k];
+        if (slot === null || slot === undefined) {
+          continue;
+        }
+        const id = this.itemIdOf(slot);
         if (id.length === 0) {
           continue;
         }
@@ -703,7 +2543,7 @@ export struct GalleryAlbumTab {
           continue;
         }
         if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-          return node.rowFlatIndices[k];
+          return node.rowSlotFlatIndices[k];
         }
       }
     }
@@ -726,12 +2566,16 @@ export struct GalleryAlbumTab {
       if (node.kind !== 'row') {
         return -1;
       }
-      for (let k = node.rowItems.length - 1; k >= 0; k--) {
-        const id = this.itemIdOf(node.rowItems[k]);
+      for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
+        const slot = node.rowSlotItems[k];
+        if (slot === null || slot === undefined) {
+          continue;
+        }
+        const id = this.itemIdOf(slot);
         if (id.length === 0) {
           continue;
         }
-        const flat = node.rowFlatIndices[k];
+        const flat = node.rowSlotFlatIndices[k];
         const cached = this.galleryThumbHitBounds.get(id);
         if (cached !== undefined &&
           xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
@@ -756,8 +2600,8 @@ export struct GalleryAlbumTab {
         if (node.kind !== 'row') {
           continue;
         }
-        for (let k = 0; k < node.rowItems.length; k++) {
-          if (node.rowFlatIndices[k] === seed) {
+        for (let k = 0; k < node.rowSlotItems.length; k++) {
+          if (node.rowSlotFlatIndices[k] === seed) {
             centerRi = i;
             break;
           }
@@ -819,20 +2663,24 @@ export struct GalleryAlbumTab {
     if (node.kind !== 'row') {
       return -1;
     }
-    for (let k = node.rowItems.length - 1; k >= 0; k--) {
-      const id = this.itemIdOf(node.rowItems[k]);
+    for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
+      const slot = node.rowSlotItems[k];
+      if (slot === null || slot === undefined) {
+        continue;
+      }
+      const id = this.itemIdOf(slot);
       if (id.length === 0) {
         continue;
       }
       const cached = this.galleryThumbHitBounds.get(id);
       if (cached !== undefined) {
         if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-          return node.rowFlatIndices[k];
+          return node.rowSlotFlatIndices[k];
         }
         continue;
       }
       if (this.hitGalleryThumbDomPx(id, xPx, yPx)) {
-        return node.rowFlatIndices[k];
+        return node.rowSlotFlatIndices[k];
       }
     }
     return -1;
@@ -851,26 +2699,19 @@ export struct GalleryAlbumTab {
       b = t;
     }
     const out: string[] = [];
-    let flat = 0;
-    for (let si = 0; si < this.sections.length; si++) {
-      const items = this.sections[si].items;
-      const secEnd = flat + items.length - 1;
-      if (secEnd < a) {
-        flat += items.length;
-        continue;
-      }
-      for (let j = 0; j < items.length; j++) {
-        const fi = flat;
-        flat++;
-        if (fi > b) {
-          return out;
-        }
-        if (fi >= a) {
-          const id = this.itemIdOf(items[j]);
-          if (id.length > 0) {
-            out.push(id);
-          }
-        }
+    const all = this.flatItems();
+    if (all.length === 0) {
+      return out;
+    }
+    const lo2 = Math.max(0, a);
+    const hi2 = Math.min(b, all.length - 1);
+    if (lo2 > hi2) {
+      return out;
+    }
+    for (let fi = lo2; fi <= hi2; fi++) {
+      const id = this.itemIdOf(all[fi]);
+      if (id.length > 0) {
+        out.push(id);
       }
     }
     return out;
@@ -1122,7 +2963,8 @@ export struct GalleryAlbumTab {
       }
       return;
     }
-    this.openPreview(flatIndex);
+    const idx = this.resolveGalleryFlatIndexForOpenPreview(item, flatIndex);
+    this.openPreview(idx);
   }
 
   private onSearchThumbTap(item: GalleryListItem, flatIndex: number): void {
@@ -1251,19 +3093,20 @@ export struct GalleryAlbumTab {
     // 主图库 sections：删除命中的条目，并清理空 section
     for (let si = this.sections.length - 1; si >= 0; si--) {
       const sec = this.sections[si];
-      const kept: GalleryListItem[] = [];
-      for (let i = 0; i < sec.items.length; i++) {
-        const id = this.itemIdOf(sec.items[i]);
-        if (id.length > 0 && ids.indexOf(id) >= 0) {
-          changed = true;
+      const keys = Array.from(sec.slotByOffset.keys());
+      for (let j = 0; j < keys.length; j++) {
+        const off = keys[j];
+        const it = sec.slotByOffset.get(off);
+        if (it === undefined) {
           continue;
         }
-        kept.push(sec.items[i]);
+        const id = this.itemIdOf(it);
+        if (id.length > 0 && ids.indexOf(id) >= 0) {
+          sec.slotByOffset.delete(off);
+          changed = true;
+        }
       }
-      if (kept.length !== sec.items.length) {
-        sec.items = kept;
-      }
-      if (sec.items.length === 0) {
+      if (sec.slotByOffset.size === 0) {
         this.sections.splice(si, 1);
       }
     }
@@ -2089,6 +3932,10 @@ export struct GalleryAlbumTab {
 
   /** 切到其他底部 Tab 时卸载：把主时间线快照写入内存，供下次 aboutToAppear 恢复 */
   aboutToDisappear(): void {
+    this.cancelListSettledTimer();
+    this.isDraggingOrFling = false;
+    this.pumpEpoch++;
+    this.refreshVisualPlaceholderMode();
     gallerySetAlbumBackHandler(null);
     const snap = this.buildMainTimelineCacheSnapshot();
     if (snap !== null) {
@@ -2143,13 +3990,25 @@ export struct GalleryAlbumTab {
     const sectionsPlain: GalleryHomeSectionPlain[] = [];
     for (let i = 0; i < this.sections.length; i++) {
       const s = this.sections[i];
+      const offs: number[] = [];
+      const imgs: GalleryListItem[] = [];
+      const keys = Array.from(s.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
+      for (let j = 0; j < keys.length; j++) {
+        const k = keys[j];
+        const v = s.slotByOffset.get(k);
+        if (v !== undefined) {
+          offs.push(k);
+          imgs.push(v);
+        }
+      }
       sectionsPlain.push({
         year: s.year,
         month: s.month,
         day: s.day,
         itemCount: s.itemCount,
         nextOffset: s.nextOffset,
-        items: s.items.slice()
+        slotOffsets: offs,
+        slotItems: imgs
       });
     }
     const orderedPlain: GalleryHomeDayPlain[] = [];
@@ -2194,7 +4053,16 @@ export struct GalleryAlbumTab {
       sec.day = p.day;
       sec.itemCount = p.itemCount;
       sec.nextOffset = p.nextOffset;
-      sec.items = p.items.slice();
+      sec.slotByOffset.clear();
+      if (p.slotOffsets !== undefined && p.slotItems !== undefined && p.slotOffsets.length === p.slotItems.length) {
+        for (let j = 0; j < p.slotOffsets.length; j++) {
+          sec.slotByOffset.set(p.slotOffsets[j], p.slotItems[j]);
+        }
+      } else if (p.items !== undefined) {
+        for (let j = 0; j < p.items.length; j++) {
+          sec.slotByOffset.set(j, p.items[j]);
+        }
+      }
       secs.push(sec);
     }
     this.sections = secs;
@@ -2216,7 +4084,7 @@ export struct GalleryAlbumTab {
   private countGalleryListedItems(): number {
     let n = 0;
     for (let i = 0; i < this.sections.length; i++) {
-      n += this.sections[i].items.length;
+      n += this.sections[i].slotByOffset.size;
     }
     return n;
   }
@@ -2226,19 +4094,23 @@ export struct GalleryAlbumTab {
       (s: DaySectionModel): boolean =>
         s.year === day.year && s.month === day.month && s.day === day.day
     );
+    const startOff = newOffset - newItems.length;
     if (idx < 0) {
       const sec = new DaySectionModel();
       sec.year = day.year;
       sec.month = day.month;
       sec.day = day.day;
       sec.itemCount = day.itemCount;
-      sec.items = newItems.slice();
+      for (let i = 0; i < newItems.length; i++) {
+        sec.slotByOffset.set(startOff + i, newItems[i]);
+      }
       sec.nextOffset = newOffset;
       this.sections = this.sections.concat([sec]);
     } else {
       const sec = this.sections[idx];
+      sec.itemCount = day.itemCount;
       for (let i = 0; i < newItems.length; i++) {
-        sec.items.push(newItems[i]);
+        sec.slotByOffset.set(startOff + i, newItems[i]);
       }
       sec.nextOffset = newOffset;
     }
@@ -2585,8 +4457,20 @@ export struct GalleryAlbumTab {
    * 这是解决 "Drag gesture has been canceled" 导致 onDidScroll 不触发的根本方案。
    * loadingMore 守卫防止并发调用；loadGen 保证刷新后旧泵自动停止。
    */
-  private pumpLoad(): void {
+  private pumpLoad(singleBatch: boolean = false): void {
+    // 严格门控：时间轴拖动占位期间禁止启动/续跑泵
+    if (this.visualPlaceholderMode || this.isDraggingOrFling) {
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug('pump hold: placeholder/dragging (entry)');
+      }
+      return;
+    }
     if (this.loadingMore || this.exhausted) {
+      if (GALLERY_SCROLL_DEBUG_LOG && this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug(
+          `pump skip: loadingMore=${this.loadingMore ? 1 : 0}, exhausted=${this.exhausted ? 1 : 0}, days=${this.orderedDays.length}`
+        );
+      }
       return;
     }
     /**
@@ -2595,12 +4479,26 @@ export struct GalleryAlbumTab {
      * 误判为「已扫完所有日」并 exhausted=true，随后新时间轴回填后 pumpLoad 被直接 return，表现为空列表 +「已加载全部照片」。
      */
     if (this.orderedDays.length === 0) {
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug('pump skip: orderedDays empty');
+      }
       return;
     }
     this.loadingMore = true;
     const gen = this.loadGen;
+    const epoch = this.pumpEpoch;
     void this.loadOneBatch().then((added: number): void => {
+      if (epoch !== this.pumpEpoch) {
+        this.loadingMore = false;
+        if (this.isInScrollInteractiveLogWindow()) {
+          this.logScrollDebug(`pump canceled by epoch: start=${epoch}, current=${this.pumpEpoch}`);
+        }
+        return;
+      }
       this.loadingMore = false;
+      if (this.isInScrollInteractiveLogWindow()) {
+        this.logScrollDebug(`pump result: added=${added}, dayIndex=${this.dayIndex}, gen=${gen}, curGen=${this.loadGen}`);
+      }
       if (gen !== this.loadGen || this.exhausted) {
         return;
       }
@@ -2609,21 +4507,49 @@ export struct GalleryAlbumTab {
         return;
       }
       if (added === -2) {
+        if (singleBatch) {
+          return;
+        }
         // 网络错误，3 秒后重试（避免频繁失败）
+        const retryEpoch = this.pumpEpoch;
         setTimeout((): void => {
+          if (retryEpoch !== this.pumpEpoch) {
+            return;
+          }
           this.pumpLoad();
         }, 3000);
         return;
       }
       if (added === -3) {
+        if (singleBatch) {
+          return;
+        }
         // 时间轴显示仍有剩余但本批空：同一 offset 稍后重试（避免误切日 + 减轻压力）
+        const retryEpoch = this.pumpEpoch;
         setTimeout((): void => {
+          if (retryEpoch !== this.pumpEpoch) {
+            return;
+          }
           this.pumpLoad();
         }, 500);
         return;
       }
+      if (singleBatch) {
+        return;
+      }
+      // 交互占位期暂停自驱动连续泵，避免滚动期列表高频重建导致卡顿/闪退。
+      if (this.visualPlaceholderMode || this.isDraggingOrFling) {
+        if (this.isInScrollInteractiveLogWindow()) {
+          this.logScrollDebug('pump hold: placeholder/dragging');
+        }
+        return;
+      }
       // added >= 0：有数据时等一帧供 UI；切日时立即继续
+      const nextEpoch = this.pumpEpoch;
       setTimeout((): void => {
+        if (nextEpoch !== this.pumpEpoch) {
+          return;
+        }
         this.pumpLoad();
       }, added > 0 ? PUMP_UI_GAP_MS : 0);
     });
@@ -2732,9 +4658,11 @@ export struct GalleryAlbumTab {
       // 与 Python 一致：本批条数 < limit 即视为当日已结束（最后一页），无需再请求下一 offset
       if (list.length > 0 && list.length < DATE_FEED_BATCH) {
         this.dayRounds.set(key, rounds + 1);
-        hilog.warn(DOMAIN, TAG,
-          'short page end day %{public}s off=%{public}d got=%{public}d newOff=%{public}d itemCount=%{public}d',
-          key, off, list.length, newOff, day.itemCount);
+        if (GALLERY_BATCH_VERBOSE_LOG) {
+          hilog.warn(DOMAIN, TAG,
+            'short page end day %{public}s off=%{public}d got=%{public}d newOff=%{public}d itemCount=%{public}d',
+            key, off, list.length, newOff, day.itemCount);
+        }
         this.dayIndex++;
         return list.length;
       }
@@ -2743,12 +4671,14 @@ export struct GalleryAlbumTab {
       const timelineSaysMore = day.itemCount > 0 && newOff < day.itemCount;
       const transientEmpty = list.length === 0 && timelineSaysMore;
 
-      hilog.warn(DOMAIN, TAG,
-        'batch %{public}s off=%{public}d got=%{public}d newOff=%{public}d itemCount=%{public}d total=%{public}s emptyRounds=%{public}d transient=%{public}d',
-        key, off, list.length, newOff, day.itemCount,
-        total !== undefined ? String(total) : 'n/a',
-        list.length === 0 ? (emptyRounds + 1) : 0,
-        transientEmpty ? 1 : 0);
+      if (GALLERY_BATCH_VERBOSE_LOG) {
+        hilog.warn(DOMAIN, TAG,
+          'batch %{public}s off=%{public}d got=%{public}d newOff=%{public}d itemCount=%{public}d total=%{public}s emptyRounds=%{public}d transient=%{public}d',
+          key, off, list.length, newOff, day.itemCount,
+          total !== undefined ? String(total) : 'n/a',
+          list.length === 0 ? (emptyRounds + 1) : 0,
+          transientEmpty ? 1 : 0);
+      }
 
       if (!transientEmpty) {
         this.dayRounds.set(key, rounds + 1);
@@ -2783,13 +4713,21 @@ export struct GalleryAlbumTab {
   @Builder
   private buildGalleryTimelineThumbCell(item: GalleryListItem, flatIndex: number) {
     Stack({ alignContent: Alignment.TopEnd }) {
-      GalleryNetworkThumb({
-        uri: nasUrl(this.baseUrl, pickThumb(item)),
-        isVideo: isVideoItem(item),
-        isGif: isGifItem(item),
-      })
-      .width('100%')
-      .aspectRatio(1)
+      // 仅时间轴手柄拖动时用静态占位；普通列表滑动不覆盖已加载真实图
+      if (this.timelineSidebarDragging) {
+        GalleryStaticThumbPlaceholder({ animatePulse: this.timelineSidebarDragging })
+          .width('100%')
+          .aspectRatio(1)
+      } else {
+        GalleryNetworkThumb({
+          uri: nasUrl(this.baseUrl, pickThumb(item)),
+          isVideo: isVideoItem(item),
+          isGif: isGifItem(item),
+          paused: false
+        })
+          .width('100%')
+          .aspectRatio(1)
+      }
       Column()
         .width('100%')
         .height('100%')
@@ -3720,6 +5658,8 @@ export struct GalleryAlbumTab {
 
         if (!this.bootLoading) {
           Column() {
+            // 时间轴仅叠在「可滚动图区」上，不覆盖顶栏/分类芯片，也不压多选底部操作条（该条在本 Stack 外）
+            Stack({ alignContent: Alignment.TopEnd }) {
           // 官方 Refresh：offset 为触发刷新所需下拉距离（vp）；friction 略增使下拉更「实在」
           Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 78 }) {
             List({ scroller: this.scrollerRef }) {
@@ -3749,14 +5689,34 @@ export struct GalleryAlbumTab {
                 //      非多选态 onGestureJudgeBegin 对 Pan REJECT，List 滚动畅通。
                 ListItem() {
                   Row({ space: 2 }) {
-                    ForEach(node.rowItems, (item: GalleryListItem, k: number) => {
-                      this.buildGalleryTimelineThumbCell(item, node.rowFlatIndices[k])
-                    }, (item: GalleryListItem, k: number) => `ti_${node.rowFlatIndices[k]}`)
-                    if (node.rowItems.length === 1) {
+                    ForEach(node.rowSlotItems, (slot: GalleryListItem | null, k: number) => {
+                      if (slot !== null && slot !== undefined) {
+                        this.buildGalleryTimelineThumbCell(slot, node.rowSlotFlatIndices[k])
+                      } else {
+                        if (this.timelineSidebarDragging) {
+                          GalleryStaticThumbPlaceholder({
+                            animatePulse: this.timelineSidebarDragging
+                          })
+                            .layoutWeight(1)
+                            .aspectRatio(1)
+                        } else {
+                          GalleryThumbSkeleton()
+                            .layoutWeight(1)
+                            .aspectRatio(1)
+                        }
+                      }
+                    }, (slot: GalleryListItem | null, k: number) => {
+                      const fi = node.rowSlotFlatIndices[k];
+                      if (slot !== null && slot !== undefined && fi >= 0) {
+                        return `ti_${fi}`;
+                      }
+                      return `sk_${node.key}_${k}`;
+                    })
+                    if (node.rowSlotItems.length === 1) {
                       Blank().layoutWeight(1)
                       Blank().layoutWeight(1)
                     }
-                    if (node.rowItems.length === 2) {
+                    if (node.rowSlotItems.length === 2) {
                       Blank().layoutWeight(1)
                     }
                   }
@@ -3847,7 +5807,7 @@ export struct GalleryAlbumTab {
               }
             }, (node: GalleryFlowNode) =>
               // 键不得包含 gallerySelectionMode：长按进入多选时若变 key 会重建子树，手势中断，滑动连选失效。多选态下 gesture 仍随 @State 重算。
-              node.key)
+              this.galleryFlowLazyKey(node))
 
             // 底部：仅状态文案 + 留白；分页由 pumpLoad 自驱动，不展示「加载中…」行
             ListItem() {
@@ -3867,27 +5827,74 @@ export struct GalleryAlbumTab {
           }
             .width('100%')
             .height('100%')
-            .cachedCount(4)
+            .cachedCount(this.isDraggingOrFling ? 3 : 16)
             .edgeEffect(EdgeEffect.Spring)
-            .scrollBar(BarState.Auto)
+            // 系统滚动条由右侧时间轴细轨替代；BarState.Off 在部分机型上需配合宽度/透明色才彻底不绘制
+            .scrollBar(BarState.Off)
+            .scrollBarColor(Color.Transparent)
+            .scrollBarWidth(0)
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.galleryMainListScrollEnabled)
+            .onScrollIndex((firstIdx: number, lastIdx: number, _centerIdx: number): void => {
+              this.listVisibleFirstNodeIdx = firstIdx;
+              this.listVisibleLastNodeIdx = Math.max(firstIdx, lastIdx);
+              this.refreshLastKnownGlobalSlotsFromListIndices(this.listVisibleFirstNodeIdx, this.listVisibleLastNodeIdx);
+              this.captureListScrollIndexAnchor();
+              if (this.timelineSidebarDragging || this.timelineSeekInProgress) {
+                return;
+              }
+              this.syncTimelineHandleFromListThrottled(firstIdx);
+              this.touchTimelineBarOnScroll();
+            })
             .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
-              this.syncGalleryTimelineAtTopForPull();
-              // 划选异常未收到 End/Cancel 时 scrollEnabled 可能一直为 false；能滚动时在此恢复
-              if (!this.gallerySlideGestureActive && !this.galleryMainListScrollEnabled) {
-                this.galleryMainListScrollEnabled = true;
+              this.maybeLogMainScrollTick(_offset, _scrollState);
+              const draggingOrFling = _scrollState === ScrollState.Scroll || _scrollState === ScrollState.Fling;
+              // 时间轴松手后的程序化 seek 滚动不应再次把页面打回“冻结态”，否则会出现松手不出图。
+              const shouldFreezeByListScroll =
+                draggingOrFling && !this.timelineSeekInProgress && Date.now() >= this.ignoreListFreezeUntilMs;
+              const wasDraggingOrFling = this.isDraggingOrFling;
+              let stateChanged = false;
+              if (shouldFreezeByListScroll) {
+                if (!this.isDraggingOrFling) {
+                  // 二次滚动立即打断旧 pump/settled 回调
+                  this.pumpEpoch++;
+                  this.cancelListSettledTimer();
+                  this.isDraggingOrFling = true;
+                  stateChanged = true;
+                }
+                if (!this.listKineticScrolling) {
+                  this.listKineticScrolling = true;
+                  stateChanged = true;
+                }
+              } else if (_scrollState === ScrollState.Idle) {
+                if (this.isDraggingOrFling) {
+                  this.isDraggingOrFling = false;
+                  stateChanged = true;
+                }
+                if (this.listKineticScrolling) {
+                  this.listKineticScrolling = false;
+                  stateChanged = true;
+                }
+                // 关键：Idle 时立刻释放占位，避免 loadVisible 长时间被 placeholder 阻断
+                if (this.visualPlaceholderMode) {
+                  this.visualPlaceholderMode = false;
+                  stateChanged = true;
+                }
+                // 仅在“交互态 -> Idle”边沿调度，抑制 Idle 抖动反复触发 settled
+                if (wasDraggingOrFling) {
+                  this.scheduleMainListSettledWork();
+                }
               }
-              if (!this.gallerySlideGestureActive) {
-                this.clearGalleryThumbHitBounds();
+              if (stateChanged) {
+                this.refreshVisualPlaceholderMode();
               }
-              if (!this.exhausted && !this.loadingMore && !this.bootLoading) {
-                this.pumpLoad();
+              if (draggingOrFling || this.timelineSidebarDragging) {
+                this.touchTimelineBarOnScroll();
               }
             })
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           // 下拉位移：达到与 offset 相同的阈值时给一次震动（多选下不监听，避免无关回调）
           .onOffsetChange((offset: number): void => {
             if (this.gallerySelectionMode) {
@@ -3908,6 +5915,14 @@ export struct GalleryAlbumTab {
           .onRefreshing((): void => {
             void this.onGalleryTimelinePullRefresh();
           })
+
+            if (this.sections.length > 0 || this.orderedDays.length > 0) {
+              this.buildTimelineSidebar()
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .clip(false)
 
             if (this.gallerySelectionMode && this.gallerySelectedIds.length > 0) {
               Row({ space: GALLERY_BATCH_BAR_SPACE_VP }) {
