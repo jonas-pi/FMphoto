@@ -1,7 +1,7 @@
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryListItem, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
-import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -19,6 +19,8 @@ struct SmartCategoryPage {
   @State private error: string = '';
   @State private sceneItems: SmartCategoryItem[] = [];
   @State private infoItems: SmartCategoryItem[] = [];
+  @State private thumbLoadingPaused: boolean = false;
+  private thumbResumeTimer: number = -1;
 
   onBackPress(): boolean {
     this.getUIContext().getRouter().back();
@@ -26,11 +28,52 @@ struct SmartCategoryPage {
   }
 
   aboutToAppear(): void {
+    this.thumbLoadingPaused = false;
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
     }
     void this.loadData();
+  }
+
+  aboutToDisappear(): void {
+    this.clearThumbResumeTimer();
+    this.recycleThumbCache(true);
+    const client = AppSession.getClient();
+    if (client !== null) {
+      client.cancelPendingRequests();
+    }
+  }
+
+  private totalSmartItemCount(): number {
+    return this.sceneItems.length + this.infoItems.length;
+  }
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.totalSmartItemCount(), aggressive);
+  }
+
+  private clearThumbResumeTimer(): void {
+    if (this.thumbResumeTimer >= 0) {
+      clearTimeout(this.thumbResumeTimer);
+      this.thumbResumeTimer = -1;
+    }
+  }
+
+  private onContentScrolling(): void {
+    this.clearThumbResumeTimer();
+    if (!this.thumbLoadingPaused) {
+      this.thumbLoadingPaused = true;
+    }
+    this.recycleThumbCache(false);
+  }
+
+  private onContentScrollStop(): void {
+    this.clearThumbResumeTimer();
+    this.thumbResumeTimer = setTimeout((): void => {
+      this.thumbResumeTimer = -1;
+      this.thumbLoadingPaused = false;
+    }, 96);
   }
 
   private toast(msg: string): void {
@@ -155,6 +198,7 @@ struct SmartCategoryPage {
                   uri: nasUrl(this.baseUrl, this.coverOf(item)),
                   isVideo: false,
                   isGif: false,
+                  paused: this.thumbLoadingPaused,
                 }).width('100%').aspectRatio(1)
                 // 全图遮罩 + 居中文字：突出“分类入口”语义
                 Column() {
@@ -214,7 +258,15 @@ struct SmartCategoryPage {
               this.section('资料记录', this.infoItems)
               Blank().height(10)
             }.width('100%')
-          }.layoutWeight(1).width('100%')
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .onDidScroll((_xOffset: number, _yOffset: number, _scrollState: ScrollState): void => {
+            this.onContentScrolling();
+          })
+          .onScrollStop((): void => {
+            this.onContentScrollStop();
+          })
 
           if (this.opening) {
             FnFullLoadingMask({ text: '打开中…' })

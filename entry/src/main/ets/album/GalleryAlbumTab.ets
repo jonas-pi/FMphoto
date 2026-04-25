@@ -36,7 +36,8 @@ import {
   isGifItem,
   isVideoItem,
   nasUrl,
-  pickThumb
+  pickThumb,
+  trimThumbPixCacheForList,
 } from './GalleryAlbumCommon';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
 import {
@@ -1186,6 +1187,22 @@ export struct GalleryAlbumTab {
     return (): boolean => token === this.navigationGuardEpoch;
   }
 
+  private currentThumbHeavyItemCount(): number {
+    if (this.inSearchMode) {
+      return this.searchResults.length;
+    }
+    if (this.inCategoryMode) {
+      return this.categoryItems.length;
+    }
+    if (this.inSmartCategoryMode) {
+      return this.smartSceneItems.length + this.smartInfoItems.length;
+    }
+    if (this.inPersonMode) {
+      return this.personItems.length;
+    }
+    return galleryAlbumCountGalleryListedItems(this.sections);
+  }
+
   private invalidateNavigationGuard(): void {
     this.navigationGuardEpoch++;
   }
@@ -1281,6 +1298,7 @@ export struct GalleryAlbumTab {
     if (snap !== null) {
       GalleryHomeTimelineCache.save(this.baseUrl, snap);
     }
+    trimThumbPixCacheForList(this.currentThumbHeavyItemCount(), true);
   }
 
   onPageShow(): void {
@@ -1601,6 +1619,7 @@ export struct GalleryAlbumTab {
                 this.pumpEpoch++;
                 timelineGestureCancelListSettledTimer(this.asTimelineGestureHost());
                 this.isDraggingOrFling = true;
+                trimThumbPixCacheForList(this.currentThumbHeavyItemCount(), false);
                 stateChanged = true;
               }
               if (!this.listKineticScrolling) {

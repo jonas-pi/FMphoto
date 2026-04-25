@@ -1,6 +1,6 @@
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb } from '../GalleryAlbumCommon';
+import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
@@ -154,6 +154,10 @@ export struct GalleryAlbumSearchModeView {
     }
   }
 
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.currentRenderedCount(), aggressive);
+  }
+
   private resetRenderedSearchResults(): void {
     this.clearSearchAppendTimer();
     this.clearSearchThumbResumeTimer();
@@ -188,6 +192,7 @@ export struct GalleryAlbumSearchModeView {
     this.clearSearchAppendTimer();
     this.clearSearchThumbResumeTimer();
     this.searchThumbLoadingPaused = false;
+    this.recycleThumbCache(true);
   }
 
   private ensureRenderedSearchCount(targetCount: number): void {
@@ -232,6 +237,7 @@ export struct GalleryAlbumSearchModeView {
     if (scrollState !== ScrollState.Idle) {
       this.clearSearchThumbResumeTimer();
       this.searchThumbLoadingPaused = true;
+      this.recycleThumbCache(false);
       return;
     }
     this.clearSearchThumbResumeTimer();

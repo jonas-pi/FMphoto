@@ -1,7 +1,7 @@
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryListItem, MediaCategoryItem } from '../model/FnApiTypes';
-import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -18,6 +18,8 @@ struct MediaCategoryPage {
   @State private opening: boolean = false;
   @State private error: string = '';
   @State private items: MediaCategoryItem[] = [];
+  @State private thumbLoadingPaused: boolean = false;
+  private thumbResumeTimer: number = -1;
 
   onBackPress(): boolean {
     this.getUIContext().getRouter().back();
@@ -25,11 +27,48 @@ struct MediaCategoryPage {
   }
 
   aboutToAppear(): void {
+    this.thumbLoadingPaused = false;
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
     }
     void this.loadData();
+  }
+
+  aboutToDisappear(): void {
+    this.clearThumbResumeTimer();
+    this.recycleThumbCache(true);
+    const client = AppSession.getClient();
+    if (client !== null) {
+      client.cancelPendingRequests();
+    }
+  }
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.items.length, aggressive);
+  }
+
+  private clearThumbResumeTimer(): void {
+    if (this.thumbResumeTimer >= 0) {
+      clearTimeout(this.thumbResumeTimer);
+      this.thumbResumeTimer = -1;
+    }
+  }
+
+  private onGridScrollStateChange(scrollState: ScrollState): void {
+    if (scrollState !== ScrollState.Idle) {
+      this.clearThumbResumeTimer();
+      if (!this.thumbLoadingPaused) {
+        this.thumbLoadingPaused = true;
+      }
+      this.recycleThumbCache(false);
+      return;
+    }
+    this.clearThumbResumeTimer();
+    this.thumbResumeTimer = setTimeout((): void => {
+      this.thumbResumeTimer = -1;
+      this.thumbLoadingPaused = false;
+    }, 96);
   }
 
   private toast(msg: string): void {
@@ -168,6 +207,7 @@ struct MediaCategoryPage {
                       uri: nasUrl(this.baseUrl, this.coverOf(cat)),
                       isVideo: false,
                       isGif: false,
+                      paused: this.thumbLoadingPaused,
                     })
                       .width('100%')
                       .aspectRatio(1)
@@ -208,6 +248,9 @@ struct MediaCategoryPage {
           .layoutWeight(1)
           .width('100%')
           .cachedCount(4)
+          .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+            this.onGridScrollStateChange(scrollState);
+          })
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })
 
           if (this.opening) {

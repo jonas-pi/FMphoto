@@ -1,7 +1,7 @@
 import { AiPersonItem } from '../../model/FnApiTypes';
 import { FnFullLoadingMask } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, nasUrl } from '../GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 
 @Component
 export struct GalleryAlbumPersonModeView {
@@ -12,11 +12,49 @@ export struct GalleryAlbumPersonModeView {
   @Prop items: AiPersonItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
+  @State private personThumbLoadingPaused: boolean = false;
+  private personThumbResumeTimer: number = -1;
 
   getPersonName: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   getPersonFace: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   getPersonStatText: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   onOpenPerson: (item: AiPersonItem) => void = (_: AiPersonItem) => {};
+
+  aboutToAppear(): void {
+    this.personThumbLoadingPaused = false;
+  }
+
+  aboutToDisappear(): void {
+    this.clearPersonThumbResumeTimer();
+    this.recycleThumbCache(true);
+  }
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.items.length, aggressive);
+  }
+
+  private clearPersonThumbResumeTimer(): void {
+    if (this.personThumbResumeTimer >= 0) {
+      clearTimeout(this.personThumbResumeTimer);
+      this.personThumbResumeTimer = -1;
+    }
+  }
+
+  private onGridScrollStateChange(scrollState: ScrollState): void {
+    if (scrollState !== ScrollState.Idle) {
+      this.clearPersonThumbResumeTimer();
+      if (!this.personThumbLoadingPaused) {
+        this.personThumbLoadingPaused = true;
+      }
+      this.recycleThumbCache(false);
+      return;
+    }
+    this.clearPersonThumbResumeTimer();
+    this.personThumbResumeTimer = setTimeout((): void => {
+      this.personThumbResumeTimer = -1;
+      this.personThumbLoadingPaused = false;
+    }, 96);
+  }
 
   build() {
     Column() {
@@ -41,7 +79,8 @@ export struct GalleryAlbumPersonModeView {
             GridItem() {
               Column({ space: 8 }) {
                 GalleryNetworkThumb({
-                  uri: nasUrl(this.baseUrl, this.getPersonFace(item))
+                  uri: nasUrl(this.baseUrl, this.getPersonFace(item)),
+                  paused: this.personThumbLoadingPaused
                 })
                   .width('100%')
                   .aspectRatio(1)
@@ -69,6 +108,9 @@ export struct GalleryAlbumPersonModeView {
         .columnsGap(8)
         .rowsGap(8)
         .cachedCount(6)
+        .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+          this.onGridScrollStateChange(scrollState);
+        })
         .width('100%')
         .layoutWeight(1)
         .padding({ left: 12, right: 12, top: 8, bottom: 10 })
@@ -86,4 +128,3 @@ export struct GalleryAlbumPersonModeView {
     .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
   }
 }
-

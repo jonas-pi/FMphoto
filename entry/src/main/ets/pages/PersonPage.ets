@@ -1,7 +1,7 @@
 import { AppSession } from '../auth/AppSession';
 import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
-import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -18,6 +18,8 @@ struct PersonPage {
   @State private opening: boolean = false;
   @State private error: string = '';
   @State private items: AiPersonItem[] = [];
+  @State private thumbLoadingPaused: boolean = false;
+  private thumbResumeTimer: number = -1;
 
   onBackPress(): boolean {
     this.getUIContext().getRouter().back();
@@ -27,11 +29,48 @@ struct PersonPage {
   aboutToAppear(): void {
     // 返回到该页时确保遮罩状态被清理
     this.opening = false;
+    this.thumbLoadingPaused = false;
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
     }
     void this.loadData();
+  }
+
+  aboutToDisappear(): void {
+    this.clearThumbResumeTimer();
+    this.recycleThumbCache(true);
+    const client = AppSession.getClient();
+    if (client !== null) {
+      client.cancelPendingRequests();
+    }
+  }
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.items.length, aggressive);
+  }
+
+  private clearThumbResumeTimer(): void {
+    if (this.thumbResumeTimer >= 0) {
+      clearTimeout(this.thumbResumeTimer);
+      this.thumbResumeTimer = -1;
+    }
+  }
+
+  private onGridScrollStateChange(scrollState: ScrollState): void {
+    if (scrollState !== ScrollState.Idle) {
+      this.clearThumbResumeTimer();
+      if (!this.thumbLoadingPaused) {
+        this.thumbLoadingPaused = true;
+      }
+      this.recycleThumbCache(false);
+      return;
+    }
+    this.clearThumbResumeTimer();
+    this.thumbResumeTimer = setTimeout((): void => {
+      this.thumbResumeTimer = -1;
+      this.thumbLoadingPaused = false;
+    }, 96);
   }
 
   private toast(msg: string): void {
@@ -160,9 +199,10 @@ struct PersonPage {
             ForEach(this.items, (item: AiPersonItem, idx: number) => {
               GridItem() {
                 Column({ space: 8 }) {
-                  GalleryNetworkThumb({
-                    uri: nasUrl(this.baseUrl, this.personFace(item))
-                  })
+                GalleryNetworkThumb({
+                  uri: nasUrl(this.baseUrl, this.personFace(item)),
+                  paused: this.thumbLoadingPaused
+                })
                     .width('100%')
                     .aspectRatio(1)
                     .borderRadius(12)
@@ -186,6 +226,9 @@ struct PersonPage {
           .columnsGap(8)
           .rowsGap(8)
           .cachedCount(6)
+          .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+            this.onGridScrollStateChange(scrollState);
+          })
           .layoutWeight(1)
           .width('100%')
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })

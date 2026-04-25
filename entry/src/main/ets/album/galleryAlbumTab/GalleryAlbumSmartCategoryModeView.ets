@@ -1,6 +1,6 @@
 import { SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, nasUrl } from '../GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 
 @Component
 export struct GalleryAlbumSmartCategoryModeView {
@@ -11,10 +11,52 @@ export struct GalleryAlbumSmartCategoryModeView {
   @Prop infoItems: SmartCategoryItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
+  @State private smartThumbLoadingPaused: boolean = false;
+  private smartThumbResumeTimer: number = -1;
 
   getCategoryName: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
   getCategoryCover: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
   onRunSearch: (keyword: string) => void = (_: string) => {};
+
+  aboutToAppear(): void {
+    this.smartThumbLoadingPaused = false;
+  }
+
+  aboutToDisappear(): void {
+    this.clearSmartThumbResumeTimer();
+    this.recycleThumbCache(true);
+  }
+
+  private totalSmartItemCount(): number {
+    return this.sceneItems.length + this.infoItems.length;
+  }
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.totalSmartItemCount(), aggressive);
+  }
+
+  private clearSmartThumbResumeTimer(): void {
+    if (this.smartThumbResumeTimer >= 0) {
+      clearTimeout(this.smartThumbResumeTimer);
+      this.smartThumbResumeTimer = -1;
+    }
+  }
+
+  private onListScrollStateChange(scrollState: ScrollState): void {
+    if (scrollState !== ScrollState.Idle) {
+      this.clearSmartThumbResumeTimer();
+      if (!this.smartThumbLoadingPaused) {
+        this.smartThumbLoadingPaused = true;
+      }
+      this.recycleThumbCache(false);
+      return;
+    }
+    this.clearSmartThumbResumeTimer();
+    this.smartThumbResumeTimer = setTimeout((): void => {
+      this.smartThumbResumeTimer = -1;
+      this.smartThumbLoadingPaused = false;
+    }, 96);
+  }
 
   @Builder
   private sectionGrid(items: SmartCategoryItem[], keyPrefix: string) {
@@ -26,6 +68,7 @@ export struct GalleryAlbumSmartCategoryModeView {
               uri: nasUrl(this.baseUrl, this.getCategoryCover(item)),
               isVideo: false,
               isGif: false,
+              paused: this.smartThumbLoadingPaused,
             })
               .width('100%')
               .aspectRatio(1)
@@ -112,6 +155,9 @@ export struct GalleryAlbumSmartCategoryModeView {
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         .divider({ strokeWidth: 0 })
+        .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+          this.onListScrollStateChange(scrollState);
+        })
       }
     }
     .width('100%')

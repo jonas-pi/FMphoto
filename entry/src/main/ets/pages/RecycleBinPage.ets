@@ -5,7 +5,7 @@
 import { common } from '@kit.AbilityKit';
 import { UIContext, window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
-import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { RecycleBinListItem } from '../model/FnApiTypes';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
@@ -140,6 +140,7 @@ struct RecycleBinPage {
 
   aboutToDisappear(): void {
     this.clearRbThumbResumeTimer();
+    this.recycleThumbCache(true);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -231,6 +232,10 @@ struct RecycleBinPage {
     }
   }
 
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.items.length, aggressive);
+  }
+
   private onListScrollStateChange(scrollState: ScrollState): void {
     if (!this.rbSlideGestureActive && !this.rbScrollEnabled) {
       this.rbScrollEnabled = true;
@@ -243,6 +248,7 @@ struct RecycleBinPage {
       if (!this.rbThumbLoadingPaused) {
         this.rbThumbLoadingPaused = true;
       }
+      this.recycleThumbCache(false);
       return;
     }
     this.clearRbThumbResumeTimer();
