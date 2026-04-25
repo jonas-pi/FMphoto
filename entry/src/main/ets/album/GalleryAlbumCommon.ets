@@ -118,6 +118,45 @@ export function trimThumbPixCache(maxKeep: number): void {
   }
 }
 
+export function recommendedThumbCacheKeep(itemCount: number, aggressive: boolean = false): number {
+  const total = Math.max(0, Math.floor(itemCount));
+  if (aggressive) {
+    if (total > 1200) {
+      return 12;
+    }
+    if (total > 720) {
+      return 14;
+    }
+    if (total > 360) {
+      return 16;
+    }
+    if (total > 180) {
+      return 18;
+    }
+    return 24;
+  }
+  if (total > 2400) {
+    return 24;
+  }
+  if (total > 1200) {
+    return 28;
+  }
+  if (total > 720) {
+    return 32;
+  }
+  if (total > 360) {
+    return 40;
+  }
+  if (total > 180) {
+    return 52;
+  }
+  return 64;
+}
+
+export function trimThumbPixCacheForList(itemCount: number, aggressive: boolean = false): void {
+  trimThumbPixCache(recommendedThumbCacheKeep(itemCount, aggressive));
+}
+
 export function itemFileExt(it: GalleryListItem): string {
   const name = it.filename ?? it.fileName ?? it.name ?? it.title ?? '';
   const dot = name.lastIndexOf('.');

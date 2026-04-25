@@ -1,7 +1,7 @@
 import { MediaCategoryItem } from '../../model/FnApiTypes';
 import { FnFullLoadingMask } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, nasUrl } from '../GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 
 @Component
 export struct GalleryAlbumCategoryModeView {
@@ -12,11 +12,49 @@ export struct GalleryAlbumCategoryModeView {
   @Prop items: MediaCategoryItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
+  @State private categoryThumbLoadingPaused: boolean = false;
+  private categoryThumbResumeTimer: number = -1;
 
   getCategoryTitle: (item: MediaCategoryItem) => string = (_: MediaCategoryItem) => '';
   getCategoryCount: (item: MediaCategoryItem) => number = (_: MediaCategoryItem) => 0;
   getCategoryCover: (item: MediaCategoryItem) => string = (_: MediaCategoryItem) => '';
   onOpenCategory: (item: MediaCategoryItem) => void = (_: MediaCategoryItem) => {};
+
+  aboutToAppear(): void {
+    this.categoryThumbLoadingPaused = false;
+  }
+
+  aboutToDisappear(): void {
+    this.clearCategoryThumbResumeTimer();
+    this.recycleThumbCache(true);
+  }
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    trimThumbPixCacheForList(this.items.length, aggressive);
+  }
+
+  private clearCategoryThumbResumeTimer(): void {
+    if (this.categoryThumbResumeTimer >= 0) {
+      clearTimeout(this.categoryThumbResumeTimer);
+      this.categoryThumbResumeTimer = -1;
+    }
+  }
+
+  private onGridScrollStateChange(scrollState: ScrollState): void {
+    if (scrollState !== ScrollState.Idle) {
+      this.clearCategoryThumbResumeTimer();
+      if (!this.categoryThumbLoadingPaused) {
+        this.categoryThumbLoadingPaused = true;
+      }
+      this.recycleThumbCache(false);
+      return;
+    }
+    this.clearCategoryThumbResumeTimer();
+    this.categoryThumbResumeTimer = setTimeout((): void => {
+      this.categoryThumbResumeTimer = -1;
+      this.categoryThumbLoadingPaused = false;
+    }, 96);
+  }
 
   build() {
     Column() {
@@ -45,6 +83,7 @@ export struct GalleryAlbumCategoryModeView {
                     uri: nasUrl(this.baseUrl, this.getCategoryCover(cat)),
                     isVideo: false,
                     isGif: false,
+                    paused: this.categoryThumbLoadingPaused,
                   })
                     .width('100%')
                     .aspectRatio(1)
@@ -71,6 +110,9 @@ export struct GalleryAlbumCategoryModeView {
           .columnsGap(8)
           .rowsGap(8)
           .cachedCount(4)
+          .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+            this.onGridScrollStateChange(scrollState);
+          })
           .width('100%')
           .height('100%')
           .padding({ left: 12, right: 12, top: 8 })
@@ -92,4 +134,3 @@ export struct GalleryAlbumCategoryModeView {
     .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
   }
 }
-

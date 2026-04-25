@@ -58,6 +58,14 @@ import {
   RowModel
 } from './categoryGallery/CategoryGalleryTypes';
 
+interface CategoryGalleryListBlock {
+  key: string;
+  isHeader: boolean;
+  groupIdx: number;
+  label?: string;
+  row?: RowModel;
+}
+
 @Entry
 @Component
 struct CategoryGallery {
@@ -283,6 +291,29 @@ struct CategoryGallery {
     }
   }
 
+  private buildListBlocks(): Array<CategoryGalleryListBlock> {
+    const blocks: Array<CategoryGalleryListBlock> = [];
+    for (let groupIdx = 0; groupIdx < this.groups.length; groupIdx++) {
+      const group = this.groups[groupIdx];
+      blocks.push({
+        key: `h_${group.sortKey}`,
+        isHeader: true,
+        groupIdx: groupIdx,
+        label: group.label
+      });
+      for (let rowIdx = 0; rowIdx < group.rows.length; rowIdx++) {
+        const row = group.rows[rowIdx];
+        blocks.push({
+          key: `r_${group.sortKey}_${row.startIdx}`,
+          isHeader: false,
+          groupIdx: groupIdx,
+          row: row
+        });
+      }
+    }
+    return blocks;
+  }
+
   private stopStoreObserver(): void {
     if (this.cgStorePollTimer >= 0) {
       clearInterval(this.cgStorePollTimer);
@@ -484,6 +515,107 @@ struct CategoryGallery {
     })
   }
 
+  @Builder
+  private dayHeaderListItem(label: string) {
+    ListItem() {
+      Text(label)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .padding({ left: 16, top: 14, bottom: 6 })
+    }
+  }
+
+  @Builder
+  private dayRowListItem(groupIdx: number, row: RowModel) {
+    ListItem() {
+      Row({ space: 2 }) {
+        this.thumbCellWithFlat(row.c0, this.flatPos(groupIdx, row.startIdx))
+        if (row.c1 !== undefined) {
+          this.thumbCellWithFlat(row.c1 as GalleryListItem, this.flatPos(groupIdx, row.startIdx + 1))
+        } else {
+          Blank().layoutWeight(1).aspectRatio(1)
+        }
+        if (row.c2 !== undefined) {
+          this.thumbCellWithFlat(row.c2 as GalleryListItem, this.flatPos(groupIdx, row.startIdx + 2))
+        } else {
+          Blank().layoutWeight(1).aspectRatio(1)
+        }
+      }
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+      .parallelGesture(GestureGroup(GestureMode.Parallel,
+        LongPressGesture({ repeat: false, duration: 420 })
+          .onAction((ev: GestureEvent): void => {
+            this.endCgSlideSelectGesture();
+            const rowStart = this.rowGlobalStartFlat(groupIdx, row);
+            const pt = this.readGestureFingerWindow(ev);
+            if (pt === null) {
+              return;
+            }
+            const xPx = this.vpToPx(pt.x);
+            const yPx = this.vpToPx(pt.y);
+            const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
+            if (fi < 0 || fi >= this.flatItems.length) {
+              return;
+            }
+            const longPressItem = this.flatItems[fi];
+            this.onCgThumbLongPress(longPressItem, fi);
+            if (!this.selectionMode || this.cgSlideGestureActive) {
+              return;
+            }
+            this.beginCgSlideSelectGesture(ev, fi);
+          }),
+        PanGesture({
+          fingers: 1,
+          direction: this.cgSlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
+          distance: categoryGallerySlidePanDistance(this.cgSlideGestureActive)
+        })
+          .onActionStart((ev: GestureEvent): void => {
+            if (!this.selectionMode) {
+              return;
+            }
+            if (this.cgSlideGestureActive) {
+              this.endCgSlideSelectGesture();
+            }
+            const rowStart = this.rowGlobalStartFlat(groupIdx, row);
+            const pt = this.readGestureFingerWindow(ev);
+            if (pt === null) {
+              return;
+            }
+            const xPx = this.vpToPx(pt.x);
+            const yPx = this.vpToPx(pt.y);
+            const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
+            if (fi < 0 || fi >= this.flatItems.length) {
+              return;
+            }
+            this.beginCgSlideSelectGesture(ev, fi);
+          })
+          .onActionUpdate((ev: GestureEvent): void => {
+            this.onCgSlidePanUpdate(ev);
+          })
+          .onActionEnd((): void => {
+            this.endCgSlideSelectGesture();
+          })
+          .onActionCancel((): void => {
+            this.endCgSlideSelectGesture();
+          })
+      ))
+      .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+        if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
+          return GestureJudgeResult.CONTINUE;
+        }
+        if (!this.selectionMode) {
+          return GestureJudgeResult.REJECT;
+        }
+        return GestureJudgeResult.CONTINUE;
+      })
+    }
+    .draggable(false)
+    .margin({ bottom: 2 })
+  }
+
   build() {
     Column() {
       CategoryGalleryChrome({
@@ -509,104 +641,13 @@ struct CategoryGallery {
         Stack() {
           Column() {
             List() {
-              ForEach(this.groups, (group: DayGroup, groupIdx: number) => {
-                ListItem() {
-                  Text(group.label)
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.text_secondary'))
-                    .width('100%')
-                    .padding({ left: 16, top: 14, bottom: 6 })
+              ForEach(this.buildListBlocks(), (block: CategoryGalleryListBlock) => {
+                if (block.isHeader) {
+                  this.dayHeaderListItem(block.label ?? '')
+                } else if (block.row !== undefined) {
+                  this.dayRowListItem(block.groupIdx, block.row as RowModel)
                 }
-
-                ForEach(group.rows, (row: RowModel) => {
-                  ListItem() {
-                    Row({ space: 2 }) {
-                      this.thumbCellWithFlat(row.c0, this.flatPos(groupIdx, row.startIdx))
-                      if (row.c1 !== undefined) {
-                        this.thumbCellWithFlat(row.c1 as GalleryListItem, this.flatPos(groupIdx, row.startIdx + 1))
-                      } else {
-                        Blank().layoutWeight(1).aspectRatio(1)
-                      }
-                      if (row.c2 !== undefined) {
-                        this.thumbCellWithFlat(row.c2 as GalleryListItem, this.flatPos(groupIdx, row.startIdx + 2))
-                      } else {
-                        Blank().layoutWeight(1).aspectRatio(1)
-                      }
-                    }
-                    .width('100%')
-                    .padding({ left: 2, right: 2, top: 1, bottom: 1 })
-                    .parallelGesture(GestureGroup(GestureMode.Parallel,
-                      LongPressGesture({ repeat: false, duration: 420 })
-                        .onAction((ev: GestureEvent): void => {
-                          this.endCgSlideSelectGesture();
-                          const rowStart = this.rowGlobalStartFlat(groupIdx, row);
-                          const pt = this.readGestureFingerWindow(ev);
-                          if (pt === null) {
-                            return;
-                          }
-                          const xPx = this.vpToPx(pt.x);
-                          const yPx = this.vpToPx(pt.y);
-                          const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
-                          if (fi < 0 || fi >= this.flatItems.length) {
-                            return;
-                          }
-                          const longPressItem = this.flatItems[fi];
-                          this.onCgThumbLongPress(longPressItem, fi);
-                          if (!this.selectionMode || this.cgSlideGestureActive) {
-                            return;
-                          }
-                          this.beginCgSlideSelectGesture(ev, fi);
-                        }),
-                      PanGesture({
-                        fingers: 1,
-                        direction: this.cgSlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
-                        distance: categoryGallerySlidePanDistance(this.cgSlideGestureActive)
-                      })
-                        .onActionStart((ev: GestureEvent): void => {
-                          if (!this.selectionMode) {
-                            return;
-                          }
-                          if (this.cgSlideGestureActive) {
-                            this.endCgSlideSelectGesture();
-                          }
-                          const rowStart = this.rowGlobalStartFlat(groupIdx, row);
-                          const pt = this.readGestureFingerWindow(ev);
-                          if (pt === null) {
-                            return;
-                          }
-                          const xPx = this.vpToPx(pt.x);
-                          const yPx = this.vpToPx(pt.y);
-                          const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
-                          if (fi < 0 || fi >= this.flatItems.length) {
-                            return;
-                          }
-                          this.beginCgSlideSelectGesture(ev, fi);
-                        })
-                        .onActionUpdate((ev: GestureEvent): void => {
-                          this.onCgSlidePanUpdate(ev);
-                        })
-                        .onActionEnd((): void => {
-                          this.endCgSlideSelectGesture();
-                        })
-                        .onActionCancel((): void => {
-                          this.endCgSlideSelectGesture();
-                        })
-                    ))
-                    .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-                      if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
-                        return GestureJudgeResult.CONTINUE;
-                      }
-                      if (!this.selectionMode) {
-                        return GestureJudgeResult.REJECT;
-                      }
-                      return GestureJudgeResult.CONTINUE;
-                    })
-                  }
-                  .draggable(false)
-                  .margin({ bottom: 2 })
-                }, (row: RowModel) => `r_${groupIdx}_${row.startIdx}`)
-              }, (group: DayGroup) => `g_${group.sortKey}`)
+              }, (block: CategoryGalleryListBlock) => block.key)
               ListItem() {
                 Column() {
                   Blank()
