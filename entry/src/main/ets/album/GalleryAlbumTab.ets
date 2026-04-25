@@ -228,7 +228,7 @@ import {
   galleryAlbumVisibleCountSkeletonPhotoSlotsInFlowNodeRange,
   galleryAlbumVisibleEstimateFirstVisibleNodeIndexFromScrollY,
   galleryAlbumVisibleFlushPendingFlowRebuild,
-  galleryAlbumVisibleForceRefreshVisibleRange,
+  galleryAlbumVisibleRefreshVisibleRangeIfAvailable,
   galleryAlbumVisibleGlobalSlotIndexAtDayStart,
   galleryAlbumVisibleLoadVisibleItems,
   galleryAlbumVisibleLoadVisibleItemsImmediate,
@@ -734,6 +734,9 @@ export struct GalleryAlbumTab {
       }
       captureListScrollIndexAnchor(): void {
         galleryAlbumVisibleCaptureListScrollIndexAnchor(self.asVisibleLoadHost());
+      }
+      refreshVisibleRangeIfAvailable(): boolean {
+        return galleryAlbumVisibleRefreshVisibleRangeIfAvailable(self.asVisibleLoadHost());
       }
       resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
         return galleryAlbumResolveYearMonthByTimelineRatio(this, ratio);
@@ -1681,9 +1684,6 @@ export struct GalleryAlbumTab {
     .height('100%')
   }
 }
-
-
-
 
 
 

@@ -401,6 +401,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
   }
 
   const gen = host.loadGen;
+  const epoch = host.pumpEpoch;
   const day = host.orderedDays[host.dayIndex];
   const key = dayKey(day.year, day.month, day.day);
   const off = host.dayOffsets.get(key) ?? 0;
@@ -428,7 +429,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     const st = fmtDayStart(day.year, day.month, day.day);
     const et = fmtDayEnd(day.year, day.month, day.day);
     let res = await client.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
-    if (gen !== host.loadGen) {
+    if (gen !== host.loadGen || epoch !== host.pumpEpoch) {
       return -1;
     }
 
@@ -445,7 +446,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
         }
       }
     }
-    if (gen !== host.loadGen) {
+    if (gen !== host.loadGen || epoch !== host.pumpEpoch) {
       return -1;
     }
 

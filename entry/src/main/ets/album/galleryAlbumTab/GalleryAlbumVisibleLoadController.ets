@@ -144,6 +144,23 @@ export function galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(
   }
 }
 
+export function galleryAlbumVisibleRefreshVisibleRangeIfAvailable(host: GalleryAlbumVisibleLoadHost): boolean {
+  const total = host.flowDataSource.totalCount();
+  if (total <= 0) {
+    return false;
+  }
+  if (!galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(host, total)) {
+    return false;
+  }
+  galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
+    host,
+    host.listVisibleFirstNodeIdx,
+    host.listVisibleLastNodeIdx
+  );
+  galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
+  return true;
+}
+
 export function galleryAlbumVisibleNudgeListScrollForScrollIndexRefresh(host: GalleryAlbumVisibleLoadHost): void {
   host.logScrollDebug('forceRefresh: 1vp nudge for onScrollIndex');
   try {
@@ -161,21 +178,12 @@ export function galleryAlbumVisibleNudgeListScrollForScrollIndexRefresh(host: Ga
   }
 }
 
-export function galleryAlbumVisibleForceRefreshVisibleRange(host: GalleryAlbumVisibleLoadHost): void {
-  const total = host.flowDataSource.totalCount();
-  if (total <= 0) {
-    return;
-  }
-  if (galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(host, total)) {
-    galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
-      host,
-      host.listVisibleFirstNodeIdx,
-      host.listVisibleLastNodeIdx
-    );
-    galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
-    return;
+export function galleryAlbumVisibleForceRefreshVisibleRange(host: GalleryAlbumVisibleLoadHost): boolean {
+  if (galleryAlbumVisibleRefreshVisibleRangeIfAvailable(host)) {
+    return true;
   }
   galleryAlbumVisibleNudgeListScrollForScrollIndexRefresh(host);
+  return false;
 }
 
 export function galleryAlbumVisibleFlushPendingFlowRebuild(host: GalleryAlbumVisibleLoadHost): void {

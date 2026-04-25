@@ -1,4 +1,5 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { AppSession } from '../../auth/AppSession';
 import { GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
 import {
   GALLERY_SCROLL_DEBUG_LOG,
@@ -57,6 +58,7 @@ export interface TimelineGestureControllerHost {
   pumpEpoch: number;
   refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void;
   captureListScrollIndexAnchor(): void;
+  refreshVisibleRangeIfAvailable(): boolean;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   flowHasVisibleYearMonth(year: number, month: number): boolean;
   startTimelineSeekWatchdog(year: number, month: number): void;
@@ -69,6 +71,13 @@ export interface TimelineGestureControllerHost {
   syncListVisibleRoughToTimelineSliderTarget(): void;
   pumpLoad(singleBatch?: boolean): void;
   runMainListScrollSettledWork(epochAtSchedule?: number): void;
+}
+
+class TimelineReleaseVisiblePassPlan {
+  delayMs: number = 0;
+  refreshVisibleRange: boolean = false;
+  allowRoughFallback: boolean = false;
+  label: string = '';
 }
 
 function scrollStateText(state: ScrollState): string {
@@ -279,25 +288,111 @@ export function timelineGestureShowTimelineBar(host: TimelineGestureControllerHo
   }, hideMs);
 }
 
-export function timelineGestureKickPostTimelineReleaseLoad(host: TimelineGestureControllerHost): void {
+function timelineGestureRunReleaseVisiblePass(
+  host: TimelineGestureControllerHost,
+  refreshVisibleRange: boolean,
+  allowRoughFallback: boolean,
+  passLabel: string
+): void {
   host.flushPendingFlowRebuild();
-  host.syncListVisibleRoughToTimelineSliderTarget();
-  host.loadVisibleItemsImmediate();
-  if (!host.loadingMore && !host.exhausted && !host.bootLoading) {
-    host.pumpLoad(true);
+  let refreshedByScroller = false;
+  if (refreshVisibleRange) {
+    refreshedByScroller = host.refreshVisibleRangeIfAvailable();
   }
-  const epoch = host.pumpEpoch;
+  if (!refreshedByScroller && allowRoughFallback) {
+    host.syncListVisibleRoughToTimelineSliderTarget();
+  }
+  if (!refreshedByScroller && !allowRoughFallback) {
+    timelineGestureLogScrollDebug(host, `timeline release ${passLabel}: wait visible range`);
+    return;
+  }
+  host.loadVisibleItemsImmediate();
+  timelineGestureLogScrollDebug(
+    host,
+    `timeline release ${passLabel}: scrollerRange=${refreshedByScroller ? 1 : 0}, roughFallback=${allowRoughFallback ? 1 : 0}`
+  );
+}
+
+export function timelineGestureKickPostTimelineReleaseLoad(host: TimelineGestureControllerHost): void {
+  const releaseGen = host.timelineDragWatchdogGen;
+  const passes: TimelineReleaseVisiblePassPlan[] = [];
+  const pass0 = new TimelineReleaseVisiblePassPlan();
+  pass0.delayMs = 0;
+  pass0.refreshVisibleRange = true;
+  pass0.allowRoughFallback = false;
+  pass0.label = 'pass0';
+  passes.push(pass0);
+
+  const pass1 = new TimelineReleaseVisiblePassPlan();
+  pass1.delayMs = 120;
+  pass1.refreshVisibleRange = true;
+  pass1.allowRoughFallback = false;
+  pass1.label = 'pass1';
+  passes.push(pass1);
+
+  const pass2 = new TimelineReleaseVisiblePassPlan();
+  pass2.delayMs = 280;
+  pass2.refreshVisibleRange = true;
+  pass2.allowRoughFallback = true;
+  pass2.label = 'pass2';
+  passes.push(pass2);
+  for (let i = 0; i < passes.length; i++) {
+    const pass = passes[i];
+    setTimeout((): void => {
+      if (releaseGen !== host.timelineDragWatchdogGen) {
+        return;
+      }
+      if (host.timelineSidebarDragging || host.isDraggingOrFling) {
+        return;
+      }
+      timelineGestureRunReleaseVisiblePass(
+        host,
+        pass.refreshVisibleRange,
+        pass.allowRoughFallback,
+        pass.label
+      );
+    }, pass.delayMs);
+  }
+}
+
+function timelineGesturePreemptStaleRequestsForVisiblePriority(host: TimelineGestureControllerHost): void {
+  timelineGestureCancelListSettledTimer(host);
+  host.pumpEpoch++;
+  host.loadingMore = false;
+  host.isDraggingOrFling = false;
+  host.listKineticScrolling = false;
+  host.visualPlaceholderMode = false;
+  const client = AppSession.getClient();
+  if (client !== null) {
+    client.cancelPendingRequests();
+  }
+  timelineGestureLogScrollDebug(host, 'timeline release: preempt stale requests for visible priority');
+}
+
+function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureControllerHost, ratio: number): void {
+  const releaseGen = host.timelineDragWatchdogGen;
   setTimeout((): void => {
-    if (epoch !== host.pumpEpoch || host.timelineSidebarDragging || host.isDraggingOrFling) {
+    if (releaseGen !== host.timelineDragWatchdogGen) {
       return;
     }
-    host.flushPendingFlowRebuild();
-    host.syncListVisibleRoughToTimelineSliderTarget();
-    host.loadVisibleItemsImmediate();
-    if (!host.loadingMore && !host.exhausted && !host.bootLoading) {
-      host.pumpLoad(true);
+    if (host.timelineSidebarDragging || host.isDraggingOrFling) {
+      return;
     }
-  }, 120);
+    host.seekTimelineListToDisplayRatio(ratio);
+    timelineGesturePreemptStaleRequestsForVisiblePriority(host);
+    host.timelineSeekInProgress = false;
+    host.ignoreListFreezeUntilMs = Date.now() + 700;
+    timelineGestureRefreshVisualPlaceholderMode(host);
+    timelineGestureKickPostTimelineReleaseLoad(host);
+    timelineGestureShowTimelineBar(host);
+    const settledEpoch = host.pumpEpoch;
+    setTimeout((): void => {
+      if (settledEpoch !== host.pumpEpoch || host.timelineSidebarDragging || host.isDraggingOrFling) {
+        return;
+      }
+      host.runMainListScrollSettledWork();
+    }, 220);
+  }, 72);
 }
 
 export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHost): void {
@@ -314,15 +409,5 @@ export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHo
   if (ym !== null && !host.flowHasVisibleYearMonth(ym.year, ym.month)) {
     host.startTimelineSeekWatchdog(ym.year, ym.month);
   }
-  setTimeout((): void => {
-    host.timelineSeekInProgress = false;
-    host.isDraggingOrFling = false;
-    host.listKineticScrolling = false;
-    host.visualPlaceholderMode = false;
-    host.ignoreListFreezeUntilMs = Date.now() + 600;
-    timelineGestureRefreshVisualPlaceholderMode(host);
-    timelineGestureKickPostTimelineReleaseLoad(host);
-    host.runMainListScrollSettledWork();
-    timelineGestureShowTimelineBar(host);
-  }, 120);
+  timelineGestureScheduleReleaseVisiblePriority(host, host.timelineSliderRatio);
 }
