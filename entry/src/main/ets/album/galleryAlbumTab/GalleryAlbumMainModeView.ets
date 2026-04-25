@@ -15,6 +15,8 @@ import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 
+const GALLERY_MAIN_LIST_CACHED_COUNT: number = 10;
+
 @Component
 export struct GalleryAlbumMainModeView {
   @Prop baseUrl: string = '';
@@ -99,6 +101,14 @@ export struct GalleryAlbumMainModeView {
       })
         .width('100%')
         .aspectRatio(1)
+      if (this.timelineSidebarDragging) {
+        GalleryStaticThumbPlaceholder({
+          animatePulse: this.timelineSidebarDragging
+        })
+          .width('100%')
+          .aspectRatio(1)
+          .hitTestBehavior(HitTestMode.None)
+      }
       Column()
         .width('100%')
         .height('100%')
@@ -340,7 +350,7 @@ export struct GalleryAlbumMainModeView {
               }
               .width('100%')
               .height('100%')
-              .cachedCount(this.isDraggingOrFling ? 3 : 16)
+              .cachedCount(GALLERY_MAIN_LIST_CACHED_COUNT)
               .edgeEffect(EdgeEffect.Spring)
               .scrollBar(BarState.Off)
               .scrollBarColor(Color.Transparent)

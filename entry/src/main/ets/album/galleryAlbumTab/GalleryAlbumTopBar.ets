@@ -220,6 +220,7 @@ export struct GalleryAlbumTopBar {
       top: GALLERY_TOP_BAR_PAD_TOP_VP,
       bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
     })
+    .backgroundColor('#CCFFFFFF')
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
   }
 }
-

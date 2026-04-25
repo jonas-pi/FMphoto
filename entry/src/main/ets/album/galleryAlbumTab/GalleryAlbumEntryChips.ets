@@ -8,6 +8,10 @@ import {
   GALLERY_HOME_NAV_CHIP_RADIUS_VP
 } from '../../common/GalleryButtonStyles';
 
+const GALLERY_HOME_ENTRY_STRIP_GAP_VP: number = 8;
+const GALLERY_HOME_ENTRY_STRIP_EDGE_GAP_VP: number = 2;
+const GALLERY_HOME_ENTRY_STRIP_MIN_CHIP_WIDTH_VP: number = 72;
+
 @Component
 export struct GalleryAlbumEntryChips {
   @Prop hidden: boolean = false;
@@ -21,40 +25,51 @@ export struct GalleryAlbumEntryChips {
 
   @Builder
   private chip(label: string, action: () => void) {
-    Button() {
+    Button({ type: ButtonType.Capsule, stateEffect: true }) {
       Text(label)
+        .height('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Clip })
+        .textAlign(TextAlign.Center)
         .fontSize(GALLERY_HOME_NAV_CHIP_FONT_VP)
         .fontColor($r('app.color.text_primary'))
     }
     .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+    .constraintSize({ minWidth: GALLERY_HOME_ENTRY_STRIP_MIN_CHIP_WIDTH_VP })
     .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP })
     .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
-    .backgroundColor($r('app.color.card_background'))
-    .margin({ right: 8, bottom: 8 })
-    .visibility(this.hidden ? Visibility.Hidden : Visibility.Visible)
-    .enabled(!this.hidden)
+    .backgroundColor('#CCFFFFFF')
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .margin({ right: GALLERY_HOME_ENTRY_STRIP_GAP_VP })
     .onClick(action)
   }
 
   build() {
-    Flex({
-      direction: FlexDirection.Row,
-      wrap: FlexWrap.Wrap,
-      justifyContent: FlexAlign.Start,
-      alignItems: ItemAlign.Center
-    }) {
-      this.chip('媒体分类', this.onOpenMediaCategory)
-      this.chip('智能分类', this.onOpenSmartCategory)
-      this.chip('人物', this.onOpenPerson)
-      this.chip('最近添加', this.onOpenRecent)
-      this.chip('收藏', this.onOpenCollect)
-      this.chip('回收站', this.onOpenRecycleBin)
+    if (this.hidden) {
+      Blank().height(0)
+    } else {
+      Scroll() {
+        Row() {
+          Blank().width(GALLERY_HOME_ENTRY_STRIP_EDGE_GAP_VP)
+          this.chip('媒体分类', this.onOpenMediaCategory)
+          this.chip('智能分类', this.onOpenSmartCategory)
+          this.chip('人物', this.onOpenPerson)
+          this.chip('最近添加', this.onOpenRecent)
+          this.chip('收藏', this.onOpenCollect)
+          this.chip('回收站', this.onOpenRecycleBin)
+        }
+        .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+        .alignItems(VerticalAlign.Center)
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+      .height(GALLERY_HOME_NAV_CHIP_HEIGHT_VP)
+      .padding({
+        left: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_LEFT_VP,
+        right: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_RIGHT_VP,
+        bottom: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_BOTTOM_VP
+      })
     }
-    .width('100%')
-    .padding({
-      left: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_LEFT_VP,
-      right: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_RIGHT_VP,
-      bottom: GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_BOTTOM_VP
-    })
   }
 }
