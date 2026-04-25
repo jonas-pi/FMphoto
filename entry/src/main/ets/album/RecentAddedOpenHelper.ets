@@ -1,17 +1,40 @@
 import { UIContext } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { GalleryGetListData, GalleryListItem, GalleryTimelineData } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { GALLERY_RECENT_DAY_MAX_ROUNDS } from './galleryAlbumTab/GalleryAlbumTabConstants';
 
+const DOMAIN = 0xFF00;
+const TAG = 'RecentAddedOpen';
 const RECENT_ADDED_FETCH_PAGE_LIMIT = 32;
+const RECENT_ADDED_INITIAL_OPEN_ITEMS = 96;
+const RECENT_ADDED_BACKGROUND_APPEND_ITEMS = 96;
+const RECENT_ADDED_BACKGROUND_APPEND_DELAY_MS = 48;
 
 interface TimelineDayModel {
   year: number;
   month: number;
   day: number;
   itemCount: number;
+}
+
+class RecentAddedFetchCursor {
+  dayIndex: number = 0;
+  dayOffset: number = 0;
+  loadedCount: number = 0;
+}
+
+class RecentAddedChunkResult {
+  items: GalleryListItem[] = [];
+  done: boolean = false;
+  errorMessage: string = '';
+}
+
+class RecentAddedTimelineResult {
+  days: TimelineDayModel[] = [];
+  errorMessage: string = '';
 }
 
 export interface RecentAddedLoadResult {
@@ -59,13 +82,10 @@ function parseRecentTimelineRows(rawList: Array<Record<string, string | number |
   const out: TimelineDayModel[] = [];
   for (let i = 0; i < rawList.length; i++) {
     const row = rawList[i];
-    const yearRaw = row['year'];
-    const monthRaw = row['month'];
-    const dayRaw = row['day'];
+    const year = Number(row['year']);
+    const month = Number(row['month']);
+    const day = Number(row['day']);
     const countRaw = row['itemCount'] ?? row['item_count'] ?? row['count'] ?? row['total'];
-    const year = Number(yearRaw);
-    const month = Number(monthRaw);
-    const day = Number(dayRaw);
     if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
       continue;
     }
@@ -127,57 +147,226 @@ function collectRecentTimelineDays(timeline: GalleryTimelineData): TimelineDayMo
   return parseRecentTimelineRows(rows);
 }
 
-async function fetchRecentDayItems(
-  client: FnHttpClient,
+function appendUniqueItems(
+  target: GalleryListItem[],
+  seen: Set<string>,
+  page: GalleryListItem[],
+  fallbackPrefix: string,
+  fallbackOffset: number,
+  itemIdOf: (item: GalleryListItem) => string
+): number {
+  let added = 0;
+  for (let i = 0; i < page.length; i++) {
+    const item = page[i];
+    const key = dedupKeyForItem(item, fallbackPrefix, fallbackOffset + i, itemIdOf);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    target.push(item);
+    added++;
+  }
+  return added;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function recentItemTimeOf(item: GalleryListItem | undefined): string {
+  if (item === undefined) {
+    return '';
+  }
+  return item.createdAt ?? item.dateTime ?? '';
+}
+
+function recentItemKeyOf(item: GalleryListItem | undefined, itemIdOf: (item: GalleryListItem) => string): string {
+  if (item === undefined) {
+    return '';
+  }
+  const id = itemIdOf(item);
+  if (id.length > 0) {
+    return id;
+  }
+  if (item.photoUUID !== undefined && String(item.photoUUID).trim().length > 0) {
+    return String(item.photoUUID).trim();
+  }
+  if (item.path !== undefined && String(item.path).trim().length > 0) {
+    return String(item.path).trim();
+  }
+  return '';
+}
+
+function logRecentPhotosPage(
   day: TimelineDayModel,
+  requestOffset: number,
+  list: GalleryListItem[],
+  itemIdOf: (item: GalleryListItem) => string
+): void {
+  const firstItem = list.length > 0 ? list[0] : undefined;
+  const lastItem = list.length > 0 ? list[list.length - 1] : undefined;
+  hilog.warn(
+    DOMAIN,
+    TAG,
+    'getRecentPhotos day=%{public}d-%{public}d-%{public}d offset=%{public}d listLen=%{public}d itemCount=%{public}d firstKey=%{public}s firstTime=%{public}s lastKey=%{public}s lastTime=%{public}s',
+    day.year,
+    day.month,
+    day.day,
+    requestOffset,
+    list.length,
+    day.itemCount,
+    recentItemKeyOf(firstItem, itemIdOf),
+    recentItemTimeOf(firstItem),
+    recentItemKeyOf(lastItem, itemIdOf),
+    recentItemTimeOf(lastItem)
+  );
+}
+
+async function fetchRecentTimelineDays(
+  client: FnHttpClient,
+  shouldContinue?: () => boolean
+): Promise<RecentAddedTimelineResult> {
+  const out = new RecentAddedTimelineResult();
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return out;
+  }
+  const timeline = await client.getRecentTimeline();
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return out;
+  }
+  if (!timeline.success || timeline.data === undefined) {
+    out.errorMessage = timeline.message ?? '最近添加时间轴加载失败';
+    return out;
+  }
+  out.days = collectRecentTimelineDays(timeline.data);
+  if (out.days.length === 0) {
+    out.errorMessage = '最近添加暂无数据';
+    return out;
+  }
+  return out;
+}
+
+async function fetchRecentAddedChunk(
+  client: FnHttpClient,
+  days: TimelineDayModel[],
+  cursor: RecentAddedFetchCursor,
+  targetItems: number,
   seen: Set<string>,
   itemIdOf: (item: GalleryListItem) => string,
   shouldContinue?: () => boolean
-): Promise<RecentAddedLoadResult> {
-  const st = fmtDayStart(day.year, day.month, day.day);
-  const et = fmtDayEnd(day.year, day.month, day.day);
-  const merged: GalleryListItem[] = [];
-  let off = 0;
+): Promise<RecentAddedChunkResult> {
+  const out = new RecentAddedChunkResult();
+  const startDayIndex = cursor.dayIndex;
+  const startDayOffset = cursor.dayOffset;
   let rounds = 0;
-  for (;;) {
+
+  while (cursor.dayIndex < days.length && rounds < GALLERY_RECENT_DAY_MAX_ROUNDS) {
     if (shouldContinue !== undefined && !shouldContinue()) {
-      return { items: merged, errorMessage: '' };
+      out.done = true;
+      return out;
     }
-    const one = await client.getRecentPhotos(st, et, RECENT_ADDED_FETCH_PAGE_LIMIT, off, 'recent');
+    if (targetItems > 0 && out.items.length >= targetItems) {
+      break;
+    }
+
+    const day = days[cursor.dayIndex];
+    const st = fmtDayStart(day.year, day.month, day.day);
+    const et = fmtDayEnd(day.year, day.month, day.day);
+    const requestOffset = cursor.dayOffset;
+
+    const one = await client.getRecentPhotos(st, et, RECENT_ADDED_FETCH_PAGE_LIMIT, requestOffset, 'recent');
+
     if (shouldContinue !== undefined && !shouldContinue()) {
-      return { items: merged, errorMessage: '' };
+      out.done = true;
+      return out;
     }
     if (!one.success || one.data === undefined) {
-      return {
-        items: [],
-        errorMessage: one.message ?? '最近添加媒体加载失败'
-      };
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'getRecentPhotos failed day=%{public}d-%{public}d-%{public}d offset=%{public}d msg=%{public}s',
+        day.year,
+        day.month,
+        day.day,
+        requestOffset,
+        one.message ?? ''
+      );
+      out.done = true;
+      out.errorMessage = one.message ?? '最近添加媒体加载失败';
+      return out;
     }
+
     const list = listFromData(one.data);
-    if (list.length <= 0) {
-      break;
+    logRecentPhotosPage(day, requestOffset, list, itemIdOf);
+
+    let reachedDayEnd = false;
+    if (list.length > 0) {
+      appendUniqueItems(out.items, seen, list, st, cursor.dayOffset, itemIdOf);
+      cursor.dayOffset += list.length;
+      cursor.loadedCount += list.length;
+      reachedDayEnd = list.length < RECENT_ADDED_FETCH_PAGE_LIMIT;
+    } else {
+      reachedDayEnd = true;
     }
-    let pageAdded = 0;
-    for (let i = 0; i < list.length; i++) {
-      const item = list[i];
-      const key = dedupKeyForItem(item, st, off + i, itemIdOf);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      merged.push(item);
-      pageAdded++;
+
+    if (!reachedDayEnd && day.itemCount > 0 && cursor.dayOffset >= day.itemCount) {
+      reachedDayEnd = true;
     }
-    off += list.length;
+
     rounds++;
-    if (pageAdded <= 0) {
-      break;
-    }
-    if (rounds >= GALLERY_RECENT_DAY_MAX_ROUNDS) {
-      break;
+
+    if (reachedDayEnd) {
+      cursor.dayIndex++;
+      cursor.dayOffset = 0;
     }
   }
-  return { items: merged, errorMessage: '' };
+
+  out.done =
+    cursor.dayIndex >= days.length ||
+    (cursor.dayIndex === startDayIndex && cursor.dayOffset === startDayOffset);
+
+  return out;
+}
+
+async function continueRecentAddedBackgroundLoad(
+  days: TimelineDayModel[],
+  cursor: RecentAddedFetchCursor,
+  seen: Set<string>,
+  itemIdOf: (item: GalleryListItem) => string,
+  token: number
+): Promise<void> {
+  const client = AppSession.getClient();
+  if (client === null) {
+    CategoryGalleryNavStore.setBackgroundLoading(token, false);
+    return;
+  }
+  CategoryGalleryNavStore.setBackgroundLoading(token, true);
+  for (;;) {
+    if (token !== CategoryGalleryNavStore.currentToken()) {
+      return;
+    }
+    const chunk = await fetchRecentAddedChunk(
+      client,
+      days,
+      cursor,
+      RECENT_ADDED_BACKGROUND_APPEND_ITEMS,
+      seen,
+      itemIdOf
+    );
+    if (token !== CategoryGalleryNavStore.currentToken()) {
+      return;
+    }
+    if (chunk.items.length > 0) {
+      CategoryGalleryNavStore.appendItems(token, chunk.items);
+    }
+    if (chunk.done || chunk.errorMessage.length > 0) {
+      CategoryGalleryNavStore.setBackgroundLoading(token, false);
+      return;
+    }
+    await sleep(RECENT_ADDED_BACKGROUND_APPEND_DELAY_MS);
+  }
 }
 
 export async function loadAllRecentAddedItems(
@@ -185,44 +374,38 @@ export async function loadAllRecentAddedItems(
   itemIdOf: (item: GalleryListItem) => string,
   shouldContinue?: () => boolean
 ): Promise<RecentAddedLoadResult> {
-  if (shouldContinue !== undefined && !shouldContinue()) {
-    return { items: [], errorMessage: '' };
+  const timelineResult = await fetchRecentTimelineDays(client, shouldContinue);
+  if (timelineResult.errorMessage.length > 0 || timelineResult.days.length === 0) {
+    return { items: [], errorMessage: timelineResult.errorMessage };
   }
-  const timeline = await client.getRecentTimeline();
-  if (shouldContinue !== undefined && !shouldContinue()) {
-    return { items: [], errorMessage: '' };
-  }
-  if (!timeline.success || timeline.data === undefined) {
-    return {
-      items: [],
-      errorMessage: timeline.message ?? '最近添加时间轴加载失败'
-    };
-  }
-  const days = collectRecentTimelineDays(timeline.data);
-  if (days.length === 0) {
-    return {
-      items: [],
-      errorMessage: '最近添加暂时无数据'
-    };
-  }
-
-  const merged: GalleryListItem[] = [];
+  const cursor = new RecentAddedFetchCursor();
   const seen = new Set<string>();
-  for (let i = 0; i < days.length; i++) {
-    if (shouldContinue !== undefined && !shouldContinue()) {
-      return { items: [], errorMessage: '' };
-    }
-    const oneDay = await fetchRecentDayItems(client, days[i], seen, itemIdOf, shouldContinue);
-    if (oneDay.errorMessage.length > 0) {
-      return oneDay;
-    }
-    if (oneDay.items.length > 0) {
-      for (let j = 0; j < oneDay.items.length; j++) {
-        merged.push(oneDay.items[j]);
+  const merged: GalleryListItem[] = [];
+  for (;;) {
+    const chunk = await fetchRecentAddedChunk(
+      client,
+      timelineResult.days,
+      cursor,
+      0,
+      seen,
+      itemIdOf,
+      shouldContinue
+    );
+    if (chunk.items.length > 0) {
+      for (let i = 0; i < chunk.items.length; i++) {
+        merged.push(chunk.items[i]);
       }
     }
+    if (chunk.errorMessage.length > 0) {
+      if (merged.length > 0) {
+        return { items: merged, errorMessage: '' };
+      }
+      return { items: [], errorMessage: chunk.errorMessage };
+    }
+    if (chunk.done) {
+      break;
+    }
   }
-
   return {
     items: merged,
     errorMessage: merged.length > 0 ? '' : '最近添加暂无可预览媒体'
@@ -239,16 +422,37 @@ export async function openRecentAddedGallery(
   if (client === null) {
     return { ok: false, errorMessage: '未登录' };
   }
-  const result = await loadAllRecentAddedItems(client, itemIdOf, shouldContinue);
-  if (result.items.length === 0) {
-    return { ok: false, errorMessage: result.errorMessage };
+  const timelineResult = await fetchRecentTimelineDays(client, shouldContinue);
+  if (timelineResult.errorMessage.length > 0 || timelineResult.days.length === 0) {
+    return { ok: false, errorMessage: timelineResult.errorMessage };
   }
+  const cursor = new RecentAddedFetchCursor();
+  const seen = new Set<string>();
+  const initialChunk = await fetchRecentAddedChunk(
+    client,
+    timelineResult.days,
+    cursor,
+    RECENT_ADDED_INITIAL_OPEN_ITEMS,
+    seen,
+    itemIdOf,
+    shouldContinue
+  );
   if (shouldContinue !== undefined && !shouldContinue()) {
     return { ok: false, errorMessage: '' };
   }
-  const opened = await CategoryGalleryNavStore.open(baseUrl, '最近添加', result.items, uiCtx);
+  if (initialChunk.items.length === 0) {
+    return {
+      ok: false,
+      errorMessage: initialChunk.errorMessage.length > 0 ? initialChunk.errorMessage : '最近添加暂无可预览媒体'
+    };
+  }
+  const opened = await CategoryGalleryNavStore.open(baseUrl, '最近添加', initialChunk.items, uiCtx, true);
   if (!opened) {
     return { ok: false, errorMessage: '打开最近添加失败' };
+  }
+  if (!initialChunk.done && initialChunk.errorMessage.length === 0) {
+    const token = CategoryGalleryNavStore.currentToken();
+    void continueRecentAddedBackgroundLoad(timelineResult.days, cursor, seen, itemIdOf, token);
   }
   return { ok: true, errorMessage: '' };
 }

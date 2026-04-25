@@ -13,6 +13,7 @@ export class CategoryGalleryNavStore {
   static baseUrl: string = '';
   static title: string = '';
   static items: GalleryListItem[] = [];
+  static useCreatedAtGrouping: boolean = false;
   static version: number = 0;
   static backgroundLoading: boolean = false;
   static sessionToken: number = 0;
@@ -21,7 +22,8 @@ export class CategoryGalleryNavStore {
     baseUrl: string,
     title: string,
     items: GalleryListItem[],
-    uiCtx: UIContext
+    uiCtx: UIContext,
+    useCreatedAtGrouping: boolean = false
   ): Promise<boolean> {
     if (items.length === 0) {
       hilog.warn(DOMAIN, TAG, 'open skipped: empty items');
@@ -31,6 +33,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.baseUrl = baseUrl;
     CategoryGalleryNavStore.title = title;
     CategoryGalleryNavStore.items = items.slice();
+    CategoryGalleryNavStore.useCreatedAtGrouping = useCreatedAtGrouping;
     CategoryGalleryNavStore.backgroundLoading = false;
     CategoryGalleryNavStore.version++;
     return uiCtx.getRouter().pushUrl({ url: 'pages/CategoryGallery' }).then((): boolean => {
@@ -75,6 +78,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.items = [];
     CategoryGalleryNavStore.baseUrl = '';
     CategoryGalleryNavStore.title = '';
+    CategoryGalleryNavStore.useCreatedAtGrouping = false;
     CategoryGalleryNavStore.backgroundLoading = false;
     CategoryGalleryNavStore.version++;
   }

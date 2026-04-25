@@ -117,7 +117,7 @@ export async function categoryGalleryConfirmBatchDelete(host: CategoryGalleryBat
 }
 
 export function categoryGalleryRebuildByFlatItems(host: CategoryGalleryBatchActionsHost): void {
-  const useCreatedAt = host.title.trim() === '最近添加';
+  const useCreatedAt = CategoryGalleryNavStore.useCreatedAtGrouping;
   const viewData = buildCategoryGalleryViewData(host.flatItems, useCreatedAt);
   host.groups = viewData.groups;
   host.groupOffsets = viewData.groupOffsets;
