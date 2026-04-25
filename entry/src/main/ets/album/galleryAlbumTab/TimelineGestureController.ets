@@ -59,6 +59,7 @@ export interface TimelineGestureControllerHost {
   refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void;
   captureListScrollIndexAnchor(): void;
   refreshVisibleRangeIfAvailable(): boolean;
+  forceRefreshVisibleRange(): boolean;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   flowHasVisibleYearMonth(year: number, month: number): boolean;
   startTimelineSeekWatchdog(year: number, month: number): void;
@@ -297,7 +298,7 @@ function timelineGestureRunReleaseVisiblePass(
   host.flushPendingFlowRebuild();
   let refreshedByScroller = false;
   if (refreshVisibleRange) {
-    refreshedByScroller = host.refreshVisibleRangeIfAvailable();
+    refreshedByScroller = host.forceRefreshVisibleRange();
   }
   if (!refreshedByScroller && allowRoughFallback) {
     host.syncListVisibleRoughToTimelineSliderTarget();
@@ -336,6 +337,13 @@ export function timelineGestureKickPostTimelineReleaseLoad(host: TimelineGesture
   pass2.allowRoughFallback = true;
   pass2.label = 'pass2';
   passes.push(pass2);
+
+  const pass3 = new TimelineReleaseVisiblePassPlan();
+  pass3.delayMs = 520;
+  pass3.refreshVisibleRange = true;
+  pass3.allowRoughFallback = true;
+  pass3.label = 'pass3';
+  passes.push(pass3);
   for (let i = 0; i < passes.length; i++) {
     const pass = passes[i];
     setTimeout((): void => {

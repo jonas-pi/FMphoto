@@ -44,6 +44,10 @@ import {
 
 const DOMAIN = 0xFF00;
 const TAG = 'Home';
+const HOME_BOTTOM_NAV_ITEM_HEIGHT_VP: number = 64;
+const HOME_BOTTOM_NAV_PAD_TOP_VP: number = 6;
+const HOME_BOTTOM_NAV_PAD_SIDE_VP: number = 6;
+const HOME_BOTTOM_NAV_PAD_EXTRA_BOTTOM_VP: number = 8;
 
 /**
  * 加载 NAS H5：仅首页 `base/`，相册已改为原生 API + 网格，不再用 Web 打开 /p/album。
@@ -180,6 +184,8 @@ struct NasWebPanel {
 
 @Component
 struct MePanel {
+  @Prop topSafeInsetVp: number = 0;
+
   build() {
     Column() {
       Row() {
@@ -203,7 +209,7 @@ struct MePanel {
       .padding({
         left: GALLERY_TOP_BAR_PAD_LEFT_VP,
         right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-        top: GALLERY_TOP_BAR_PAD_TOP_VP,
+        top: GALLERY_TOP_BAR_PAD_TOP_VP + this.topSafeInsetVp,
         bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
       })
 
@@ -259,6 +265,8 @@ struct Home {
    * @State 变更则必定触发 build() 重渲染，保证背景色实时同步。
    */
   @State private isDarkTheme: boolean = false;
+  @State private systemTopInsetVp: number = 0;
+  @State private systemBottomInsetVp: number = 0;
 
   // ── 系统栏颜色 ────────────────────────────────────────────────────────────
 
@@ -295,13 +303,14 @@ struct Home {
     try {
       const dark = this.colorMode === 1; // ColorMode.DARK = 1
       // light: page_background = #F5F5F5；dark: page_background = #1C1C1E
-      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win): void => {
+        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        this.syncSystemAvoidArea(win);
         win.setWindowSystemBarProperties({
-          statusBarColor: bg,
-          navigationBarColor: bg,
+          statusBarColor: '#00000000',
+          navigationBarColor: '#00000000',
           statusBarContentColor: content,
           navigationBarContentColor: content
         }).catch((_e: Error): void => {});
@@ -314,6 +323,29 @@ struct Home {
   /**
    * 相册 Tab 内可能已静默刷新 token；切回首页 Web 前同步快照，避免 Web 仍带过期 Cookie。
    */
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private syncSystemAvoidArea(win: window.Window): void {
+    try {
+      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
+      this.systemBottomInsetVp = Math.max(0, this.pxToVp(area.bottomRect.height));
+    } catch (_e) {
+      this.systemTopInsetVp = 0;
+      this.systemBottomInsetVp = 0;
+    }
+  }
+
+  private bottomNavPadBottom(): number {
+    return Math.max(HOME_BOTTOM_NAV_PAD_EXTRA_BOTTOM_VP, this.systemBottomInsetVp + HOME_BOTTOM_NAV_PAD_EXTRA_BOTTOM_VP);
+  }
+
   private syncWebSessionSnapshotFromAppSession(): void {
     const s = AppSession.getStored();
     if (s === null || !this.sessionOk) {
@@ -447,7 +479,7 @@ struct Home {
         .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     }
     .layoutWeight(1)
-    .height(60)
+    .height(HOME_BOTTOM_NAV_ITEM_HEIGHT_VP)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .onClick((): void => {
@@ -497,13 +529,15 @@ struct Home {
               GalleryAlbumTab({
                 baseUrl: this.snapWebBase,
                 albumReloadEpoch: this.albumReloadEpoch,
-                pageShowSignal: this.pageShowSignal
+                pageShowSignal: this.pageShowSignal,
+                topSafeInsetVp: this.systemTopInsetVp,
+                bottomSafeInsetVp: this.systemBottomInsetVp
               })
                 .width('100%')
                 .height('100%')
             }
             if (this.bottomNavIndex === 2) {
-              MePanel()
+              MePanel({ topSafeInsetVp: this.systemTopInsetVp })
                 .width('100%')
                 .height('100%')
                 .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
@@ -520,10 +554,16 @@ struct Home {
             this.tabItem(2, $r('sys.symbol.person'), $r('app.string.tab_me'))
           }
           .width('100%')
+          .alignItems(VerticalAlign.Center)
           .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
           .borderWidth({ top: 0.5 })
           .borderColor(this.isDarkTheme ? '#1AFFFFFF' : '#1A000000')
-          .padding({ bottom: 4 })
+          .padding({
+            left: HOME_BOTTOM_NAV_PAD_SIDE_VP,
+            right: HOME_BOTTOM_NAV_PAD_SIDE_VP,
+            top: HOME_BOTTOM_NAV_PAD_TOP_VP,
+            bottom: this.bottomNavPadBottom()
+          })
         }
         .width('100%')
         .layoutWeight(1)

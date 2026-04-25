@@ -10,7 +10,8 @@ import {
   isGifItem,
   isVideoItem,
   nasUrl,
-  pickThumb
+  pickThumb,
+  trimThumbPixCache
 } from '../album/GalleryAlbumCommon';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
@@ -65,6 +66,7 @@ struct CategoryGallery {
   @State private baseUrl: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
+  @State private systemTopInsetVp: number = 0;
   private flatItems: GalleryListItem[] = [];
   private groupOffsets: number[] = [];
   private handledDeleteSyncVersion: number = 0;
@@ -75,6 +77,8 @@ struct CategoryGallery {
   @State private cgScrollEnabled: boolean = true;
   @State private cgBatchDeleting: boolean = false;
   @State private cgBatchDownloading: boolean = false;
+  @State private cgThumbLoadingPaused: boolean = false;
+  @State private cgBackgroundLoading: boolean = false;
 
   private cgLongPressIgnoreUntil: number = 0;
   private cgThumbHitBounds: Map<string, CgThumbHitRect> = new Map();
@@ -85,6 +89,14 @@ struct CategoryGallery {
   private cgSlideUnionBase: string[] = [];
   private cgSlideLastEndFlat: number = -1;
   private cgSlideLastAppliedEndFlat: number = -99999;
+  private cgObservedStoreVersion: number = -1;
+  private cgStorePollTimer: number = -1;
+  private cgThumbResumeTimer: number = -1;
+
+  private recycleThumbCache(aggressive: boolean = false): void {
+    const targetKeep = aggressive ? 12 : (this.flatItems.length > 360 ? 40 : 64);
+    trimThumbPixCache(targetKeep);
+  }
 
   onBackPress(): boolean {
     if (this.selectionMode) {
@@ -103,16 +115,34 @@ struct CategoryGallery {
     }
   }
 
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private syncSystemAvoidArea(win: window.Window): void {
+    try {
+      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
+    } catch (_e) {
+      this.systemTopInsetVp = 0;
+    }
+  }
+
   private applySystemBar(): void {
     try {
       const dark = this.isDarkTheme;
-      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win): void => {
+        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        this.syncSystemAvoidArea(win);
         win.setWindowSystemBarProperties({
-          statusBarColor: bg,
-          navigationBarColor: bg,
+          statusBarColor: '#00000000',
+          navigationBarColor: '#00000000',
           statusBarContentColor: content,
           navigationBarContentColor: content
         }).catch((_e: Error): void => {});
@@ -133,6 +163,7 @@ struct CategoryGallery {
 
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
+    this.cgThumbLoadingPaused = false;
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
     const useCreatedAt = this.title.trim() === '最近添加';
@@ -140,9 +171,15 @@ struct CategoryGallery {
     this.groups = viewData.groups;
     this.flatItems = viewData.flatItems;
     this.groupOffsets = viewData.groupOffsets;
+    this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
+    this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
+    this.startStoreObserver();
   }
 
   aboutToDisappear(): void {
+    this.stopStoreObserver();
+    this.clearCgThumbResumeTimer();
+    this.recycleThumbCache(true);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -237,6 +274,64 @@ struct CategoryGallery {
 
   private applyDeleteSyncIfNeeded(): void {
     categoryGalleryApplyDeleteSyncIfNeeded(this.asBatchActionsHost());
+  }
+
+  private clearCgThumbResumeTimer(): void {
+    if (this.cgThumbResumeTimer >= 0) {
+      clearTimeout(this.cgThumbResumeTimer);
+      this.cgThumbResumeTimer = -1;
+    }
+  }
+
+  private stopStoreObserver(): void {
+    if (this.cgStorePollTimer >= 0) {
+      clearInterval(this.cgStorePollTimer);
+      this.cgStorePollTimer = -1;
+    }
+  }
+
+  private startStoreObserver(): void {
+    this.stopStoreObserver();
+    this.cgStorePollTimer = setInterval((): void => {
+      this.syncFromNavStore();
+    }, 180);
+  }
+
+  private syncFromNavStore(): void {
+    if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
+      return;
+    }
+    this.baseUrl = CategoryGalleryNavStore.baseUrl;
+    this.title = CategoryGalleryNavStore.title;
+    this.flatItems = CategoryGalleryNavStore.items.slice();
+    this.rebuildByFlatItems();
+    this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
+    this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
+    if (!this.cgBackgroundLoading) {
+      this.recycleThumbCache(false);
+    }
+  }
+
+  private onListScrollStateChange(scrollState: ScrollState): void {
+    if (!this.cgSlideGestureActive && !this.cgScrollEnabled) {
+      this.cgScrollEnabled = true;
+    }
+    if (!this.cgSlideGestureActive) {
+      this.cgThumbHitBounds.clear();
+    }
+    if (scrollState !== ScrollState.Idle) {
+      this.clearCgThumbResumeTimer();
+      if (!this.cgThumbLoadingPaused) {
+        this.cgThumbLoadingPaused = true;
+      }
+      this.recycleThumbCache(false);
+      return;
+    }
+    this.clearCgThumbResumeTimer();
+    this.cgThumbResumeTimer = setTimeout((): void => {
+      this.cgThumbResumeTimer = -1;
+      this.cgThumbLoadingPaused = false;
+    }, 96);
   }
 
   private asSelectionHost(): CategoryGallerySelectionHost {
@@ -340,6 +435,7 @@ struct CategoryGallery {
         uri: nasUrl(this.baseUrl, pickThumb(item)),
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
+        paused: this.cgThumbLoadingPaused,
       })
         .width('100%')
         .aspectRatio(1)
@@ -395,6 +491,7 @@ struct CategoryGallery {
         selectedCount: this.selectedIds.length,
         title: this.title,
         totalCount: this.flatItems.length,
+        topSafeInsetVp: this.systemTopInsetVp,
         onCancelSelection: (): void => {
           this.exitCgSelection();
         },
@@ -521,20 +618,29 @@ struct CategoryGallery {
             }
             .width('100%')
             .layoutWeight(1)
-            .cachedCount(4)
+            .cachedCount(3)
             .scrollBar(BarState.Auto)
             .backgroundColor(Color.Transparent)
             .edgeEffect(EdgeEffect.Spring)
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.cgScrollEnabled)
-            .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
-              if (!this.cgSlideGestureActive && !this.cgScrollEnabled) {
-                this.cgScrollEnabled = true;
-              }
-              if (!this.cgSlideGestureActive) {
-                this.cgThumbHitBounds.clear();
-              }
+            .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+              this.onListScrollStateChange(scrollState);
             })
+
+            if (this.cgBackgroundLoading) {
+              Row({ space: 8 }) {
+                LoadingProgress()
+                  .width(18)
+                  .height(18)
+                Text('继续加载中')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ top: 8, bottom: this.selectionMode && this.selectedIds.length > 0 ? 8 : 0 })
+            }
 
             if (this.selectionMode && this.selectedIds.length > 0) {
               GalleryAlbumBatchActionBar({

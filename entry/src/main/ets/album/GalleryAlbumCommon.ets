@@ -55,6 +55,10 @@ let thumbLoadActive = 0;
 const thumbLoadWaiters: Array<() => void> = [];
 let thumbWakeCount = 0;
 
+function thumbCacheKey(fullUrl: string, autoCropBlack: boolean): string {
+  return `${autoCropBlack ? '1' : '0'}|${fullUrl}`;
+}
+
 function acquireThumbSlot(): Promise<void> {
   if (thumbLoadActive < MAX_THUMB_CONCURRENT) {
     thumbLoadActive++;
@@ -91,8 +95,27 @@ export function getThumbPixCached(uri: string): PixelMap | undefined {
   if (uri.length === 0) {
     return undefined;
   }
-  const v = thumbPixCache.get(uri);
+  const v = thumbPixCache.get(thumbCacheKey(uri, false));
   return v;
+}
+
+export function trimThumbPixCache(maxKeep: number): void {
+  const keep = Math.max(0, Math.floor(maxKeep));
+  while (thumbPixCache.size > keep) {
+    let firstKey: string | undefined = undefined;
+    for (const k of thumbPixCache.keys()) {
+      firstKey = k;
+      break;
+    }
+    if (firstKey === undefined) {
+      break;
+    }
+    const old = thumbPixCache.get(firstKey);
+    thumbPixCache.delete(firstKey);
+    if (old !== undefined) {
+      releaseThumbPix(old);
+    }
+  }
 }
 
 export function itemFileExt(it: GalleryListItem): string {
@@ -275,11 +298,12 @@ async function autoCropBlackBorders(pix: PixelMap): Promise<void> {
   } catch (_e) {}
 }
 
-export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefined> {
+export async function loadThumbPix(fullUrl: string, autoCropBlack: boolean = false): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) { return undefined; }
-  const cached = thumbPixCache.get(fullUrl);
+  const key = thumbCacheKey(fullUrl, autoCropBlack);
+  const cached = thumbPixCache.get(key);
   if (cached !== undefined) { return cached; }
-  const failAt = thumbLoadFailAt.get(fullUrl);
+  const failAt = thumbLoadFailAt.get(key);
   if (failAt !== undefined && Date.now() - failAt < THUMB_FAIL_RETRY_COOLDOWN_MS) {
     return undefined;
   }
@@ -288,14 +312,14 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
   await acquireThumbSlot();
   try {
     // 二次检查：等待期间可能已由其他协程填充缓存
-    const cached2 = thumbPixCache.get(fullUrl);
+    const cached2 = thumbPixCache.get(key);
     if (cached2 !== undefined) { return cached2; }
 
     const client = AppSession.getClient();
     if (client === null) { return undefined; }
     const buf = await client.fetchGalleryImageBuffer(fullUrl, 8000);
     if (buf === undefined || buf.byteLength === 0) {
-      thumbLoadFailAt.set(fullUrl, Date.now());
+      thumbLoadFailAt.set(key, Date.now());
       return undefined;
     }
     const src = image.createImageSource(buf);
@@ -303,7 +327,9 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
     const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.SDR });
     src.release();
     // 裁掉服务端已预烘焙的 letterbox/pillarbox 黑边
-    await autoCropBlackBorders(pix);
+    if (autoCropBlack) {
+      await autoCropBlackBorders(pix);
+    }
     if (thumbPixCache.size >= THUMB_CACHE_MAX) {
       let firstKey: string | undefined = undefined;
       for (const k of thumbPixCache.keys()) {
@@ -318,11 +344,11 @@ export async function loadThumbPix(fullUrl: string): Promise<PixelMap | undefine
         }
       }
     }
-    thumbPixCache.set(fullUrl, pix);
-    thumbLoadFailAt.delete(fullUrl);
+    thumbPixCache.set(key, pix);
+    thumbLoadFailAt.delete(key);
     return pix;
   } catch (_e) {
-    thumbLoadFailAt.set(fullUrl, Date.now());
+    thumbLoadFailAt.set(key, Date.now());
     return undefined;
   } finally {
     releaseThumbSlot();
@@ -479,7 +505,8 @@ export struct GalleryNetworkThumb {
     if (this.uri.length === 0 || this.loading) {
       return;
     }
-    const cached = thumbPixCache.get(this.uri);
+    const cacheKey = thumbCacheKey(this.uri, this.isVideo);
+    const cached = thumbPixCache.get(cacheKey);
     if (cached !== undefined) {
       this.pix = cached;
       this.pixAlpha = 1;
@@ -491,7 +518,7 @@ export struct GalleryNetworkThumb {
     }
     const versionAtStart = this.loadVersion;
     this.loading = true;
-    const pix = await loadThumbPix(this.uri);
+    const pix = await loadThumbPix(this.uri, this.isVideo);
     if (versionAtStart !== this.loadVersion) {
       this.loading = false;
       return;

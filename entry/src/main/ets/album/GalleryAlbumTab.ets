@@ -50,6 +50,7 @@ import {
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { openPersonAlbumById } from './PersonAlbumOpenHelper';
+import { openRecentAddedGallery } from './RecentAddedOpenHelper';
 import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
 import {
@@ -196,7 +197,6 @@ import {
   galleryAlbumOpenCategory,
   galleryAlbumOpenCollectGallery,
   galleryAlbumOpenPerson,
-  galleryAlbumOpenRecentAdded,
   galleryAlbumPickAndUpload,
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
@@ -228,6 +228,7 @@ import {
   galleryAlbumVisibleCountSkeletonPhotoSlotsInFlowNodeRange,
   galleryAlbumVisibleEstimateFirstVisibleNodeIndexFromScrollY,
   galleryAlbumVisibleFlushPendingFlowRebuild,
+  galleryAlbumVisibleForceRefreshVisibleRange,
   galleryAlbumVisibleRefreshVisibleRangeIfAvailable,
   galleryAlbumVisibleGlobalSlotIndexAtDayStart,
   galleryAlbumVisibleLoadVisibleItems,
@@ -247,7 +248,6 @@ import {
   selectionEndGallerySlideSelectGesture,
   selectionHitGalleryThumbDomPx,
   selectionHitSearchThumbDomPx,
-  selectionIsGalleryIdSelected,
   selectionOnGallerySlidePanUpdate,
   selectionOnGalleryThumbLongPress,
   selectionOnGalleryThumbTap,
@@ -368,6 +368,8 @@ import {
 export struct GalleryAlbumTab {
   @Prop baseUrl: string = '';
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
+  @Prop topSafeInsetVp: number = 0;
+  @Prop bottomSafeInsetVp: number = 0;
   /** Home.onPageShow() 閫掑 鈫?瑙﹀彂鍒犻櫎鍚屾锛堝畨鍏ㄤ繚闅滐紝涓嶄緷璧栧瓙缁勪欢 onPageShow 浼犳挱锛?*/
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
 
@@ -444,6 +446,7 @@ export struct GalleryAlbumTab {
   private lastTimelineBarTouchMs: number = 0;
   /** 涓诲垪琛?-> 鏃堕棿杞存墜鏌勪綅缃悓姝ヨ妭娴佹椂闂存埑锛堥伩鍏?onScrollIndex 楂橀椹卞姩鎵嬫焺閲嶇粯锛?*/
   private lastTimelineHandleSyncMs: number = 0;
+  private navigationGuardEpoch: number = 0;
   /** 鏃堕棿杞存槸鍚︽樉绀猴紙婊氬姩涓?浜や簰涓樉寮忓彲瑙侊紝闈欐鍚庤嚜鍔ㄦ贰鍑猴級 */
   @State private timelineBarVisible: boolean = false;
   /** 鏃堕棿杞存寜鍘嬫€侊細鎵嬫寚鍦ㄨ建閬撲笂锛堢敤浜庢樉闅愪笌瑙︽劅锛屼笉绛夊悓浜庛€屽睍寮€ scrub銆嶏級 */
@@ -495,6 +498,7 @@ export struct GalleryAlbumTab {
   private pumpEpoch: number = 0;
   /** 鏃堕棿杞存澗鎵嬪悗鐭獥鍐呭拷鐣ョ▼搴忓寲婊氬姩瀵瑰喕缁撴€佺殑鍥炲啓锛岄槻姝⑩€滃繀椤诲啀婊戜竴涓嬫墠鍔犺浇鈥?*/
   private ignoreListFreezeUntilMs: number = 0;
+  private timelineReleaseAwaitVisibleCallback: boolean = false;
   /** 瑙嗚鍐荤粨鏈燂紙鎷栧姩/Fling锛夋敹鍒扮殑鏁版嵁鍙樻洿寤惰繜鍒拌В鍐诲悗鍐嶄竴娆℃€у埛鏂帮紝閬垮厤婊氬姩鏉′笉璺熸墜 */
   private pendingFlowRebuild: boolean = false;
   /** 閬垮厤婊氬姩鍋滄鍚庨噸澶嶈Е鍙戝悓涓€鐩爣鏃ョ殑鎶㈠崰鍔犺浇 */
@@ -550,6 +554,8 @@ export struct GalleryAlbumTab {
   private gallerySlideLastEndFlat: number = -1;
   /** 鍒掗€夋椂浠呭綋缁堢偣 flat 鍙樺寲鏃舵墠鎻愪氦 @State锛屽噺杞诲垪琛ㄦ暣琛ㄥ埛鏂板崱椤?*/
   private gallerySlideLastAppliedEndFlat: number = -99999;
+  private gallerySlideLastApplyMs: number = 0;
+  private gallerySlidePendingEndFlat: number = -1;
   /** 闃叉姈瀹氭椂鍣?id锛?0 琛ㄧず鏈寕璧凤級 */
   private bootstrapDebounceTimer: number = -1;
   /** 涓?GalleryTimelineRefreshStore.version 瀵归綈锛氭垚鍔?bootstrap 鏃堕棿杞村悗鏇存柊锛岄伩鍏嶉噸澶嶅叏閲忓埛 */
@@ -564,6 +570,32 @@ export struct GalleryAlbumTab {
   /** 涓嬫媺鏈洖鍒伴《閮ㄩ檮杩戝墠涓嶉噸澶嶈Е鍙戙€屽凡杈鹃槇鍊笺€嶉渿鍔紝閬垮厤鏉ュ洖鎷栧姩杩炵画鎸?*/
   private galleryPullRefreshThresholdHapticDone: boolean = false;
 
+  private isMainGalleryModeActive(): boolean {
+    return !this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode;
+  }
+
+  private notifyMainGallerySelectionVisualRefresh(): void {
+    if (!this.isMainGalleryModeActive()) {
+      return;
+    }
+    try {
+      this.flowDataSource.notifyDataReload();
+    } catch (_e) {
+    }
+  }
+
+  private setGallerySelectionModeState(value: boolean): void {
+    if (this.gallerySelectionMode === value) {
+      return;
+    }
+    this.gallerySelectionMode = value;
+    this.notifyMainGallerySelectionVisualRefresh();
+  }
+
+  private setGallerySelectedIdsStateLocal(value: string[]): void {
+    this.gallerySelectedIds = value;
+  }
+
   private asSelectionGestureHost(): SelectionGestureControllerHost {
     const self = this;
     class SelectionGestureHostBridge implements SelectionGestureControllerHost {
@@ -573,7 +605,7 @@ export struct GalleryAlbumTab {
       get inSearchMode(): boolean { return self.inSearchMode; }
       set inSearchMode(value: boolean) { self.inSearchMode = value; }
       get gallerySelectionMode(): boolean { return self.gallerySelectionMode; }
-      set gallerySelectionMode(value: boolean) { self.gallerySelectionMode = value; }
+      set gallerySelectionMode(value: boolean) { self.setGallerySelectionModeState(value); }
       get galleryTimelineRefreshing(): boolean { return self.galleryTimelineRefreshing; }
       set galleryTimelineRefreshing(value: boolean) { self.galleryTimelineRefreshing = value; }
       get gallerySlideGestureActive(): boolean { return self.gallerySlideGestureActive; }
@@ -588,6 +620,10 @@ export struct GalleryAlbumTab {
       set gallerySlideLastEndFlat(value: number) { self.gallerySlideLastEndFlat = value; }
       get gallerySlideLastAppliedEndFlat(): number { return self.gallerySlideLastAppliedEndFlat; }
       set gallerySlideLastAppliedEndFlat(value: number) { self.gallerySlideLastAppliedEndFlat = value; }
+      get gallerySlideLastApplyMs(): number { return self.gallerySlideLastApplyMs; }
+      set gallerySlideLastApplyMs(value: number) { self.gallerySlideLastApplyMs = value; }
+      get gallerySlidePendingEndFlat(): number { return self.gallerySlidePendingEndFlat; }
+      set gallerySlidePendingEndFlat(value: number) { self.gallerySlidePendingEndFlat = value; }
       get galleryLongPressIgnoreClickUntil(): number { return self.galleryLongPressIgnoreClickUntil; }
       set galleryLongPressIgnoreClickUntil(value: number) { self.galleryLongPressIgnoreClickUntil = value; }
       get gallerySlideRefX(): number { return self.gallerySlideRefX; }
@@ -605,7 +641,7 @@ export struct GalleryAlbumTab {
       get searchThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.searchThumbHitBounds; }
       set searchThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.searchThumbHitBounds = value; }
       get gallerySelectedIds(): string[] { return self.gallerySelectedIds; }
-      set gallerySelectedIds(value: string[]) { self.gallerySelectedIds = value; }
+      set gallerySelectedIds(value: string[]) { self.setGallerySelectedIdsStateLocal(value); }
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
       flatItems(): GalleryListItem[] { return galleryAlbumFlatItems(self.asVisibleLoadHost()); }
       galleryThumbDomId(photoId: string): string { return galleryAlbumGalleryThumbDomId(photoId); }
@@ -631,7 +667,7 @@ export struct GalleryAlbumTab {
       get inSearchMode(): boolean { return self.inSearchMode; }
       set inSearchMode(value: boolean) { self.inSearchMode = value; }
       get gallerySelectedIds(): string[] { return self.gallerySelectedIds; }
-      set gallerySelectedIds(value: string[]) { self.gallerySelectedIds = value; }
+      set gallerySelectedIds(value: string[]) { self.setGallerySelectedIdsStateLocal(value); }
       get galleryBatchDeleting(): boolean { return self.galleryBatchDeleting; }
       set galleryBatchDeleting(value: boolean) { self.galleryBatchDeleting = value; }
       get galleryBatchDownloading(): boolean { return self.galleryBatchDownloading; }
@@ -738,6 +774,9 @@ export struct GalleryAlbumTab {
       refreshVisibleRangeIfAvailable(): boolean {
         return galleryAlbumVisibleRefreshVisibleRangeIfAvailable(self.asVisibleLoadHost());
       }
+      forceRefreshVisibleRange(): boolean {
+        return galleryAlbumVisibleForceRefreshVisibleRange(self.asVisibleLoadHost());
+      }
       resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
         return galleryAlbumResolveYearMonthByTimelineRatio(this, ratio);
       }
@@ -836,6 +875,7 @@ export struct GalleryAlbumTab {
         return galleryAlbumBootstrap(self.asLoadOrchestratorHost(), showFullBleedSkeleton);
       }
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
+      createNavigationGuard(): () => boolean { return self.createNavigationGuard(); }
       toast(msg: string): void { self.toast(msg); }
     }
     return new ModeOrchestratorHostBridge();
@@ -884,7 +924,7 @@ export struct GalleryAlbumTab {
       get galleryTimelineAtTopForPull(): boolean { return self.galleryTimelineAtTopForPull; }
       set galleryTimelineAtTopForPull(value: boolean) { self.galleryTimelineAtTopForPull = value; }
       get gallerySelectionMode(): boolean { return self.gallerySelectionMode; }
-      set gallerySelectionMode(value: boolean) { self.gallerySelectionMode = value; }
+      set gallerySelectionMode(value: boolean) { self.setGallerySelectionModeState(value); }
       get galleryTimelineRefreshing(): boolean { return self.galleryTimelineRefreshing; }
       set galleryTimelineRefreshing(value: boolean) { self.galleryTimelineRefreshing = value; }
       get galleryPullRefreshThresholdHapticDone(): boolean { return self.galleryPullRefreshThresholdHapticDone; }
@@ -1129,6 +1169,7 @@ export struct GalleryAlbumTab {
   }
 
   private endTimelineDrag(): void {
+    this.timelineReleaseAwaitVisibleCallback = true;
     timelineGestureEndTimelineDrag(this.asTimelineGestureHost());
   }
 
@@ -1140,6 +1181,15 @@ export struct GalleryAlbumTab {
     }
   }
 
+  private createNavigationGuard(): () => boolean {
+    const token = ++this.navigationGuardEpoch;
+    return (): boolean => token === this.navigationGuardEpoch;
+  }
+
+  private invalidateNavigationGuard(): void {
+    this.navigationGuardEpoch++;
+  }
+
   private async openCategory(cat: MediaCategoryItem): Promise<void> {
     await galleryAlbumOpenCategory(this.asModeOrchestratorHost(), cat);
   }
@@ -1149,7 +1199,27 @@ export struct GalleryAlbumTab {
    * 鑱氬悎涓哄钩閾哄垪琛ㄥ苟澶嶇敤 CategoryGallery 棰勮椤垫墦寮€銆?
    */
   private async openRecentAdded(): Promise<void> {
-    await galleryAlbumOpenRecentAdded(this.asModeOrchestratorHost());
+    if (this.recentOpening) {
+      return;
+    }
+    const isActive = this.createNavigationGuard();
+    this.recentOpening = true;
+    try {
+      const result = await openRecentAddedGallery(
+        this.baseUrl,
+        this.getUIContext(),
+        (item: GalleryListItem): string => galleryAlbumItemIdOf(item),
+        isActive
+      );
+      if (!isActive()) {
+        return;
+      }
+      if (!result.ok && result.errorMessage.length > 0) {
+        this.toast(result.errorMessage);
+      }
+    } finally {
+      this.recentOpening = false;
+    }
   }
 
   /**
@@ -1178,6 +1248,7 @@ export struct GalleryAlbumTab {
     this.categoryOpening = false;
     this.recentOpening = false;
     this.collectOpening = false;
+    this.timelineReleaseAwaitVisibleCallback = false;
     gallerySetAlbumBackHandler((): boolean => galleryAlbumTryConsumeHardwareBack(this.asModeOrchestratorHost()));
     setTimeout((): void => {
       // 涓绘椂闂寸嚎锛氳嫢绂诲紑 Tab 鏃跺瓨杩囧揩鐓т笖鏈熼棿鏈?bump/鏈己鍒凤紝鐩存帴鎭㈠锛岄伩鍏嶆瘡娆″垏鍥為兘閲嶆媺鏃堕棿杞翠笌宸插姞杞藉潡
@@ -1201,6 +1272,8 @@ export struct GalleryAlbumTab {
   aboutToDisappear(): void {
     timelineGestureCancelListSettledTimer(this.asTimelineGestureHost());
     this.isDraggingOrFling = false;
+    this.timelineReleaseAwaitVisibleCallback = false;
+    this.invalidateNavigationGuard();
     this.pumpEpoch++;
     timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
     gallerySetAlbumBackHandler(null);
@@ -1246,7 +1319,7 @@ export struct GalleryAlbumTab {
       return;
     }
     playGalleryEnterSelectionHaptic();
-    this.gallerySelectionMode = true;
+    this.setGallerySelectionModeState(true);
     this.galleryTimelineRefreshing = false;
     galleryAlbumSetGallerySelectedIdsState(this.asSelectionGestureHost(), []);
   }
@@ -1265,6 +1338,8 @@ export struct GalleryAlbumTab {
         gallerySelectionMode: this.gallerySelectionMode,
         gallerySelectedCount: this.gallerySelectedIds.length,
         searchQuery: this.searchQuery,
+        topSafeInsetVp: this.topSafeInsetVp,
+        pageShowSignal: this.pageShowSignal,
         onSearchQueryChange: (value: string): void => {
           this.searchQuery = value;
         },
@@ -1318,7 +1393,7 @@ export struct GalleryAlbumTab {
           onOpenRecent: (): void => {
             galleryAlbumExitSelection(this.asSelectionGestureHost());
             galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            void galleryAlbumOpenRecentAdded(this.asModeOrchestratorHost());
+            void this.openRecentAdded();
           },
           onOpenCollect: (): void => {
             galleryAlbumExitSelection(this.asSelectionGestureHost());
@@ -1347,6 +1422,7 @@ export struct GalleryAlbumTab {
           searchResults: this.searchResults,
           gallerySelectionMode: this.gallerySelectionMode,
           gallerySelectedCount: this.gallerySelectedIds.length,
+          gallerySelectedIds: this.gallerySelectedIds,
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
@@ -1354,7 +1430,6 @@ export struct GalleryAlbumTab {
           modeSwitchOpacity: this.modeSwitchOpacity,
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           itemIdOf: (item: GalleryListItem): string => galleryAlbumItemIdOf(item),
-          isGalleryIdSelected: (id: string): boolean => selectionIsGalleryIdSelected(this.asSelectionGestureHost(), id),
           searchThumbDomId: (flatIndex: number): string => selectionSearchThumbDomId(this.asSelectionGestureHost(), flatIndex),
           recordSearchThumbRect: (flatIndex: number): void => selectionRecordSearchThumbRect(this.asSelectionGestureHost(), flatIndex),
           onSearchThumbTap: (item: GalleryListItem, flatIndex: number): void =>
@@ -1449,6 +1524,7 @@ export struct GalleryAlbumTab {
           galleryTimelineRefreshing: this.galleryTimelineRefreshing,
           gallerySelectionMode: this.gallerySelectionMode,
           gallerySelectedCount: this.gallerySelectedIds.length,
+          gallerySelectedIds: this.gallerySelectedIds,
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
@@ -1469,7 +1545,6 @@ export struct GalleryAlbumTab {
           scrollerRef: this.scrollerRef,
           flowDataSource: this.flowDataSource,
           itemIdOf: (item: GalleryListItem): string => galleryAlbumItemIdOf(item),
-          isGalleryIdSelected: (id: string): boolean => selectionIsGalleryIdSelected(this.asSelectionGestureHost(), id),
           galleryThumbDomId: (photoId: string): string => galleryAlbumGalleryThumbDomId(photoId),
           recordGalleryThumbRectFromDom: (photoId: string, domId: string): void =>
             galleryAlbumRecordGalleryThumbRectFromDom(this.asSelectionGestureHost(), photoId, domId),
@@ -1497,6 +1572,10 @@ export struct GalleryAlbumTab {
               this.listVisibleLastNodeIdx
             );
             galleryAlbumVisibleCaptureListScrollIndexAnchor(this.asVisibleLoadHost());
+            if (this.timelineReleaseAwaitVisibleCallback && !this.timelineSidebarDragging) {
+              this.timelineReleaseAwaitVisibleCallback = false;
+              galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
+            }
             if (this.timelineSidebarDragging || this.timelineSeekInProgress) {
               return;
             }
@@ -1515,6 +1594,7 @@ export struct GalleryAlbumTab {
             const shouldFreezeByListScroll =
               draggingOrFling && !this.timelineSeekInProgress && Date.now() >= this.ignoreListFreezeUntilMs;
             const wasDraggingOrFling = this.isDraggingOrFling;
+            let refreshedVisibleRangeWhileInteracting = false;
             let stateChanged = false;
             if (shouldFreezeByListScroll) {
               if (!this.isDraggingOrFling) {
@@ -1526,6 +1606,10 @@ export struct GalleryAlbumTab {
               if (!this.listKineticScrolling) {
                 this.listKineticScrolling = true;
                 stateChanged = true;
+              }
+              if (!this.timelineSidebarDragging) {
+                refreshedVisibleRangeWhileInteracting =
+                  galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
               }
             } else if (_scrollState === ScrollState.Idle) {
               if (this.isDraggingOrFling) {
@@ -1540,12 +1624,24 @@ export struct GalleryAlbumTab {
                 this.visualPlaceholderMode = false;
                 stateChanged = true;
               }
+              if (this.timelineReleaseAwaitVisibleCallback) {
+                this.timelineReleaseAwaitVisibleCallback = false;
+                galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
+              }
               if (wasDraggingOrFling) {
                 timelineGestureScheduleMainListSettledWork(this.asTimelineGestureHost());
               }
             }
             if (stateChanged) {
               timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
+            }
+            if (refreshedVisibleRangeWhileInteracting) {
+              if (this.timelineReleaseAwaitVisibleCallback) {
+                this.timelineReleaseAwaitVisibleCallback = false;
+                galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
+              } else {
+                galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, true, true);
+              }
             }
             if (draggingOrFling || this.timelineSidebarDragging) {
               timelineGestureTouchTimelineBarOnScroll(this.asTimelineGestureHost());
@@ -1630,10 +1726,10 @@ export struct GalleryAlbumTab {
             timelineGestureArmTimelineDragWatchdog(this.asTimelineGestureHost());
           },
           onTimelinePanEnd: (_event: GestureEvent): void => {
-            timelineGestureEndTimelineDrag(this.asTimelineGestureHost());
+            this.endTimelineDrag();
           },
           onTimelinePanCancel: (_event: GestureEvent): void => {
-            timelineGestureEndTimelineDrag(this.asTimelineGestureHost());
+            this.endTimelineDrag();
           }
         })
       }
@@ -1684,7 +1780,3 @@ export struct GalleryAlbumTab {
     .height('100%')
   }
 }
-
-
-
-

@@ -8,6 +8,7 @@ import {
 } from '../../model/FnApiTypes';
 import { pickThumb } from '../GalleryAlbumCommon';
 import { FnHttpClient } from '../../network/FnHttpClient';
+import { loadAllRecentAddedItems } from '../RecentAddedOpenHelper';
 import {
   GALLERY_RECENT_DAY_MAX_ROUNDS,
   GALLERY_RECENT_PAGE_LIMIT
@@ -256,60 +257,25 @@ export const galleryPersonModeLoader: GalleryAlbumModeLoader<GalleryPersonModeDa
 
 export async function loadRecentAddedItems(
   client: FnHttpClient,
-  itemIdOf: (item: GalleryListItem) => string
+  itemIdOf: (item: GalleryListItem) => string,
+  shouldContinue?: () => boolean
 ): Promise<SpecialCollectionLoadResult> {
-  const tl = await client.getRecentTimeline();
-  if (!tl.success || tl.data === undefined) {
-    return { items: [], error: tl.message ?? '最近添加时间轴加载失败' };
-  }
-  const days = collectTimelineDays(tl.data.list ?? []);
-  if (days.length === 0) {
-    return { items: [], error: '最近添加暂无数据' };
-  }
-
-  const merged: GalleryListItem[] = [];
-  const seen = new Set<string>();
-  for (let di = 0; di < days.length; di++) {
-    const day = days[di];
-    const st = fmtDayStart(day.year, day.month, day.day);
-    const et = fmtDayEnd(day.year, day.month, day.day);
-    let off = 0;
-    let rounds = 0;
-    for (;;) {
-      const one = await client.getRecentPhotos(st, et, GALLERY_RECENT_PAGE_LIMIT, off, 'recent');
-      if (!one.success || one.data === undefined) {
-        break;
-      }
-      const list = listFromData(one.data);
-      if (list.length <= 0) {
-        break;
-      }
-      dedupAndAppend(merged, seen, list, st, itemIdOf);
-      off += list.length;
-      rounds++;
-      if (list.length < GALLERY_RECENT_PAGE_LIMIT) {
-        break;
-      }
-      if (day.itemCount > 0 && off >= day.itemCount) {
-        break;
-      }
-      if (rounds >= GALLERY_RECENT_DAY_MAX_ROUNDS) {
-        break;
-      }
-    }
-  }
-
-  return {
-    items: merged,
-    error: merged.length > 0 ? '' : '最近添加暂无可预览媒体'
-  };
+  const result = await loadAllRecentAddedItems(client, itemIdOf, shouldContinue);
+  return { items: result.items, error: result.errorMessage };
 }
 
 export async function loadCollectGalleryItems(
   client: FnHttpClient,
-  itemIdOf: (item: GalleryListItem) => string
+  itemIdOf: (item: GalleryListItem) => string,
+  shouldContinue?: () => boolean
 ): Promise<SpecialCollectionLoadResult> {
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return { items: [], error: '' };
+  }
   const tl = await client.getCollectGalleryTimeline();
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return { items: [], error: '' };
+  }
   if (!tl.success || tl.data === undefined) {
     return { items: [], error: tl.message ?? '收藏时间轴加载失败' };
   }
@@ -321,13 +287,22 @@ export async function loadCollectGalleryItems(
   const merged: GalleryListItem[] = [];
   const seen = new Set<string>();
   for (let di = 0; di < days.length; di++) {
+    if (shouldContinue !== undefined && !shouldContinue()) {
+      return { items: [], error: '' };
+    }
     const day = days[di];
     const st = fmtDayStart(day.year, day.month, day.day);
     const et = fmtDayEnd(day.year, day.month, day.day);
     let off = 0;
     let rounds = 0;
     for (;;) {
+      if (shouldContinue !== undefined && !shouldContinue()) {
+        return { items: [], error: '' };
+      }
       const one = await client.getCollectGalleryList(st, et, GALLERY_RECENT_PAGE_LIMIT, off);
+      if (shouldContinue !== undefined && !shouldContinue()) {
+        return { items: [], error: '' };
+      }
       if (!one.success || one.data === undefined) {
         break;
       }

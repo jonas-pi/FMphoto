@@ -1,10 +1,12 @@
 import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { fileIo, fileUri as fileUriUtil, picker } from '@kit.CoreFileKit';
+import { fileIo, fileUri as fileUriUtil } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { systemShare } from '@kit.ShareKit';
 import { CategoryGalleryNavStore } from '../../album/CategoryGalleryNavStore';
 import { GalleryDeleteSyncStore } from '../../album/GalleryDeleteSyncStore';
 import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
+import { copyGalleryUriContentToAlbumUri } from '../../album/GalleryAlbumSaveToAlbum';
 import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshStore';
 import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../album/GalleryAlbumCommon';
 import { openPersonAlbumById } from '../../album/PersonAlbumOpenHelper';
@@ -43,6 +45,8 @@ export interface GalleryPreviewActionsHost {
   originalShowing: boolean;
   deleting: boolean;
   downloading: boolean;
+  downloadProgressPct: number;
+  downloadProgressKnown: boolean;
   sharing: boolean;
   previewItems: GalleryListItem[];
   itemSource: PreviewItemsDataSource;
@@ -145,6 +149,42 @@ async function galleryPreviewFetchCurrentVideoBuffer(host: GalleryPreviewActions
     return undefined;
   }
   return client.fetchGalleryImageBuffer(videoUrl, 120000);
+}
+
+function galleryPreviewCurrentVideoUrl(host: GalleryPreviewActionsHost): string {
+  const item = host.currentItem();
+  if (item === null) {
+    return '';
+  }
+  return nasUrl(host.baseUrl, pickVideo(item));
+}
+
+function galleryPreviewCurrentImageDownloadUrl(host: GalleryPreviewActionsHost, useOriginal: boolean): string {
+  const item = host.currentItem();
+  if (item === null) {
+    return '';
+  }
+  if (useOriginal) {
+    const originalUrl = nasUrl(host.baseUrl, pickOriginal(item));
+    if (originalUrl.length > 0) {
+      return originalUrl;
+    }
+  }
+  return nasUrl(host.baseUrl, pickThumb(item));
+}
+
+function galleryPreviewResetDownloadProgress(host: GalleryPreviewActionsHost): void {
+  host.downloadProgressPct = 0;
+  host.downloadProgressKnown = false;
+}
+
+function galleryPreviewUpdateDownloadProgress(host: GalleryPreviewActionsHost, receiveSize: number, totalSize: number): void {
+  if (!(totalSize > 0)) {
+    host.downloadProgressKnown = false;
+    return;
+  }
+  host.downloadProgressKnown = true;
+  host.downloadProgressPct = Math.max(0, Math.min(100, Math.floor(receiveSize * 100 / totalSize)));
 }
 
 export function galleryPreviewSyncCollectStateFromCurrentItem(host: GalleryPreviewActionsHost): void {
@@ -504,32 +544,29 @@ export function galleryPreviewDownloadCurrentImage(host: GalleryPreviewActionsHo
   if (host.downloading) {
     return;
   }
+  galleryPreviewResetDownloadProgress(host);
   host.downloading = true;
   void galleryPreviewDoDownload(host).finally((): void => {
+    galleryPreviewResetDownloadProgress(host);
     host.downloading = false;
   });
 }
 
 async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promise<void> {
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
   const isVideo = galleryPreviewCurrentItemIsVideo(host);
   let useOriginal = false;
-  let prefetchedOriginal: ArrayBuffer | undefined = undefined;
-  let prefetchedThumb: ArrayBuffer | undefined = undefined;
   if (!isVideo && galleryPreviewCurrentHasOriginalFromHost(host)) {
     let originalBytes = galleryPreviewCurrentOriginalSizeBytesFromHost(host);
     let thumbBytes: number | undefined = undefined;
-    prefetchedThumb = await galleryPreviewFetchCurrentImageBuffer(host, false);
+    const prefetchedThumb = await galleryPreviewFetchCurrentImageBuffer(host, false);
     if (prefetchedThumb !== undefined && prefetchedThumb.byteLength > 0) {
       thumbBytes = prefetchedThumb.byteLength;
-    } else {
-      prefetchedThumb = undefined;
     }
     if (originalBytes === undefined) {
-      prefetchedOriginal = await galleryPreviewFetchCurrentImageBuffer(host, true);
+      const prefetchedOriginal = await galleryPreviewFetchCurrentImageBuffer(host, true);
       if (prefetchedOriginal !== undefined && prefetchedOriginal.byteLength > 0) {
         originalBytes = prefetchedOriginal.byteLength;
-      } else {
-        prefetchedOriginal = undefined;
       }
     }
     try {
@@ -546,48 +583,126 @@ async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promis
     }
   }
 
-  let saveUri = '';
-  try {
-    const saveOptions = new picker.PhotoSaveOptions();
-    const ext = isVideo
-      ? galleryPreviewCurrentVideoExtFromHost(host)
-      : galleryPreviewCurrentImageExtFromHost(host);
-    saveOptions.newFileNames = [`${isVideo ? 'video' : 'photo'}_${Date.now()}.${ext}`];
-    const uris = await new picker.PhotoViewPicker().save(saveOptions);
-    if (uris.length === 0) {
-      host.toast('已取消保存');
+  host.toast('下载中...');
+
+  if (isVideo) {
+    const ext = galleryPreviewCurrentVideoExtFromHost(host);
+    const tempPath = `${ctx.cacheDir}/preview_download_${Date.now()}.${ext}`;
+    const videoUrl = galleryPreviewCurrentVideoUrl(host);
+    if (videoUrl.length === 0) {
+      host.toast('视频加载失败，请重试');
       return;
     }
-    saveUri = uris[0];
-  } catch (_e) {
-    host.toast('保存取消');
-    return;
+    const client = AppSession.getClient();
+    if (client === null) {
+      host.toast('未登录');
+      return;
+    }
+    const downloaded = await client.downloadGalleryAssetToFile(
+      videoUrl,
+      tempPath,
+      600000,
+      (receiveSize: number, totalSize: number): void => {
+        galleryPreviewUpdateDownloadProgress(host, receiveSize, totalSize);
+      }
+    );
+    if (!downloaded) {
+      host.toast('视频下载失败，请重试');
+      return;
+    }
+    host.downloadProgressKnown = true;
+    host.downloadProgressPct = 100;
+    const tempFileUri = fileUriUtil.getUriFromPath(tempPath);
+    try {
+      const helper = photoAccessHelper.getPhotoAccessHelper(ctx);
+      const uris = await helper.showAssetsCreationDialog(
+        [tempFileUri],
+        [{
+          title: `video_${Date.now()}`,
+          fileNameExtension: ext,
+          photoType: photoAccessHelper.PhotoType.VIDEO
+        }]
+      );
+      if (uris.length === 0) {
+        host.toast('已取消保存');
+        return;
+      }
+      const saved = await copyGalleryUriContentToAlbumUri(tempFileUri, uris[0]);
+      if (!saved) {
+        host.toast('保存失败，请重试');
+        return;
+      }
+      host.toast('视频已保存到相册');
+      return;
+    } catch (_e) {
+      host.toast('保存失败，请重试');
+      return;
+    } finally {
+      try {
+        await fileIo.unlink(tempPath);
+      } catch (_e) {
+      }
+    }
   }
 
-  let buf: ArrayBuffer | undefined;
-  if (isVideo) {
-    buf = await galleryPreviewFetchCurrentVideoBuffer(host);
-  } else if (useOriginal) {
-    buf = prefetchedOriginal !== undefined ? prefetchedOriginal : await galleryPreviewFetchCurrentImageBuffer(host, true);
-  } else {
-    buf = prefetchedThumb !== undefined ? prefetchedThumb : await galleryPreviewFetchCurrentImageBuffer(host, false);
-  }
-  if (buf === undefined || buf.byteLength === 0) {
+  const imageUrl = galleryPreviewCurrentImageDownloadUrl(host, useOriginal);
+  if (imageUrl.length === 0) {
     host.toast(isVideo ? '视频加载失败，请重试' : '图片加载失败，请重试');
     return;
   }
 
-  try {
-    const saveFile = await fileIo.open(saveUri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
-    await fileIo.write(saveFile.fd, buf);
-    await fileIo.close(saveFile.fd);
-    if (isVideo) {
-      host.toast('视频已保存到相册');
-    } else {
-      host.toast(useOriginal ? '原图已保存到相册' : '缩略图已保存到相册');
+  const imageClient = AppSession.getClient();
+  if (imageClient === null) {
+    host.toast('未登录');
+    return;
+  }
+  const imageExt = galleryPreviewCurrentImageExtFromHost(host);
+  const tempPath = `${ctx.cacheDir}/preview_download_${Date.now()}.${imageExt}`;
+  const imageDownloaded = await imageClient.downloadGalleryAssetToFile(
+    imageUrl,
+    tempPath,
+    useOriginal ? 120000 : 60000,
+    (receiveSize: number, totalSize: number): void => {
+      galleryPreviewUpdateDownloadProgress(host, receiveSize, totalSize);
     }
+  );
+  if (!imageDownloaded) {
+    host.toast('图片下载失败，请重试');
+    return;
+  }
+  host.downloadProgressKnown = true;
+  host.downloadProgressPct = 100;
+
+  const tempFileUri = fileUriUtil.getUriFromPath(tempPath);
+  try {
+    const helper = photoAccessHelper.getPhotoAccessHelper(ctx);
+    const uris = await helper.showAssetsCreationDialog(
+      [tempFileUri],
+      [{
+        title: `photo_${Date.now()}`,
+        fileNameExtension: imageExt,
+        photoType: photoAccessHelper.PhotoType.IMAGE
+      }]
+    );
+    if (uris.length === 0) {
+      host.toast('已取消保存');
+      return;
+    }
+    const saved = await copyGalleryUriContentToAlbumUri(tempFileUri, uris[0]);
+    if (!saved) {
+      host.toast('保存失败，请重试');
+      return;
+    }
+    host.toast(useOriginal ? '原图已保存到相册' : '缩略图已保存到相册');
+    return;
   } catch (_e) {
-    host.toast('写入失败，请重试');
+    host.toast('保存失败，请重试');
+    return;
+  } finally {
+    try {
+      await fileIo.unlink(tempPath);
+    } catch (_e) {
+    }
   }
 }
 

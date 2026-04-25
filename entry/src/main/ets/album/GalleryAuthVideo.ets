@@ -65,8 +65,10 @@ export struct GalleryAuthVideo {
   @Prop bottomPadding: number = 0;
   /** 当前视频允许的最大清晰度（p），由上游按原始分辨率估算传入 */
   @Prop maxResolutionP: number = 1080;
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private videoLoading: boolean = false;
   @State private hint: string = '';
+  @State private isDarkTheme: boolean = false;
   /** 播放链路失败时可手动重试（与「清晰度超限」等提示区分） */
   @State private showPlaybackRetry: boolean = false;
   @State private controlsVisible: boolean = true;
@@ -115,6 +117,14 @@ export struct GalleryAuthVideo {
    * 每次新起播在 startPlay 入口清零，仅在 arm… 时写入。
    */
   private playbackFalsePositiveGuardUntilMs: number = 0;
+
+  private surfaceBackgroundColor(): ResourceColor {
+    return this.isDarkTheme ? Color.Black : Color.White;
+  }
+
+  onColorModeChanged(): void {
+    this.isDarkTheme = this.colorMode === 1;
+  }
 
   /** 非原始档位必须 <= 原始清晰度；原始直链始终允许选择 */
   private isQualityAllowed(idx: number): boolean {
@@ -182,6 +192,7 @@ export struct GalleryAuthVideo {
    * 这里在首次出现时主动同步全局记忆，确保切到下一视频时“显示即记忆值”。
    */
   aboutToAppear(): void {
+    this.isDarkTheme = this.colorMode === 1;
     this.speedRate = LAST_VIDEO_SPEED_RATE;
     this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
     this.normalizeQualityIndex();
@@ -879,6 +890,7 @@ export struct GalleryAuthVideo {
       })
         .width('100%')
         .height('100%')
+        .backgroundColor(this.surfaceBackgroundColor())
         .onClick((): void => {
           this.controlsVisible = !this.controlsVisible;
         })
@@ -1074,6 +1086,6 @@ export struct GalleryAuthVideo {
     .height('100%')
     // 透明背景：XComponent 表面始终为黑（视频渲染区域），四周留白区域由父组件
     // GalleryPreviewSlide 的主题背景透出（深色模式=黑，浅色模式=白），跟随系统主题
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(this.surfaceBackgroundColor())
   }
 }

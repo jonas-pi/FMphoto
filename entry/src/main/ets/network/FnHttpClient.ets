@@ -960,6 +960,15 @@ export class FnHttpClient {
     return this.galleryOps.fetchGalleryImageBuffer(fullUrl, timeoutMs);
   }
 
+  async downloadGalleryAssetToFile(
+    fullUrl: string,
+    filePath: string,
+    timeoutMs: number = 300000,
+    onProgress?: (receiveSize: number, totalSize: number) => void
+  ): Promise<boolean> {
+    return this.galleryOps.downloadGalleryAssetToFile(fullUrl, filePath, timeoutMs, onProgress);
+  }
+
   async getGalleryStreamHeaders(fullUrl: string): Promise<Record<string, string>> {
     return this.galleryOps.getGalleryStreamHeaders(fullUrl);
   }

@@ -261,6 +261,7 @@ struct Login {
 
         TextInput({ placeholder: $r('app.string.hint_server'), text: this.domainInput })
           .enableAutoFill(false)
+          .enableKeyboardOnFocus(false)
           .onChange((v: string) => {
             this.domainInput = v;
           })
@@ -291,6 +292,7 @@ struct Login {
         TextInput({ placeholder: $r('app.string.hint_username'), text: this.username })
           .type(InputType.USER_NAME)
           .enableAutoFill(false)
+          .enableKeyboardOnFocus(false)
           .onChange((v: string) => {
             this.username = v;
           })
@@ -303,6 +305,7 @@ struct Login {
         TextInput({ placeholder: $r('app.string.hint_password'), text: this.password })
           .type(InputType.Password)
           .enableAutoFill(false)
+          .enableKeyboardOnFocus(false)
           .onChange((v: string) => {
             this.password = v;
           })

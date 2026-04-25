@@ -13,7 +13,7 @@ import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
-import { isVideoItem } from '../album/GalleryAlbumCommon';
+import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
 import { FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
 import {
@@ -56,11 +56,15 @@ struct GalleryPreview {
   @State private baseUrl: string = '';
   @State private swiperIndex: number = 0;
   @State private swiperLocked: boolean = false;
+  @State private pinchGestureActive: boolean = false;
+  @State private previewZoomLocked: boolean = false;
   @State private totalCount: number = 0;
   @State private dismissDragProgress: number = 0;
   @State private toolbarVisible: boolean = true;
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
+  @State private downloadProgressPct: number = 0;
+  @State private downloadProgressKnown: boolean = false;
   @State private sharing: boolean = false;
   @State private deleting: boolean = false;
   @State private detailsVisible: boolean = false;
@@ -75,6 +79,9 @@ struct GalleryPreview {
   @State private currentCollectState: number = -1;
   @State private bottomBarHeight: number = 80;
   @State private originalShowing: boolean = false;
+  @State private originalPreviewEnabled: boolean = false;
+  @State private systemTopInsetVp: number = 0;
+  @State private systemBottomInsetVp: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
 
@@ -117,6 +124,17 @@ struct GalleryPreview {
   }
 
   aboutToDisappear(): void {
+    this.detailsVisible = false;
+    this.detailsLoading = false;
+    this.detailsError = '';
+    this.detailsData = undefined;
+    this.detailsPhotoId = '';
+    this.personsInPhoto = [];
+    this.folderOpening = false;
+    this.personOpening = false;
+    this.downloadProgressPct = 0;
+    this.downloadProgressKnown = false;
+    trimThumbPixCache(24);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -127,13 +145,14 @@ struct GalleryPreview {
   private applySystemBar(): void {
     try {
       const dark = this.colorMode === 1;
-      const bg = dark ? '#FF000000' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win): void => {
+        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        this.syncSystemAvoidArea(win);
         win.setWindowSystemBarProperties({
-          statusBarColor: bg,
-          navigationBarColor: bg,
+          statusBarColor: '#00000000',
+          navigationBarColor: '#00000000',
           statusBarContentColor: content,
           navigationBarContentColor: content
         }).catch((_e: Error): void => {});
@@ -145,27 +164,46 @@ struct GalleryPreview {
     return this.isDarkTheme;
   }
 
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private syncSystemAvoidArea(win: window.Window): void {
+    try {
+      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
+      this.systemBottomInsetVp = Math.max(0, this.pxToVp(area.bottomRect.height));
+    } catch (_e) {
+      this.systemTopInsetVp = 0;
+      this.systemBottomInsetVp = 0;
+    }
+  }
+
   private pageBg(): string {
     return this.isDark() ? '#FF000000' : '#FFF5F5F5';
   }
 
   private toolbarBg(): string {
     if (this.currentItemIsVideo()) {
-      return '#CC000000';
+      return this.isDark() ? '#CC000000' : '#F2F5F5F5';
     }
     return this.isDark() ? '#FF000000' : '#FFF5F5F5';
   }
 
   private fgColor(): ResourceColor {
     if (this.currentItemIsVideo()) {
-      return Color.White;
+      return this.isDark() ? Color.White : Color.Black;
     }
     return this.isDark() ? Color.White : Color.Black;
   }
 
   private btnBg(): string {
     if (this.currentItemIsVideo()) {
-      return '#33FFFFFF';
+      return this.isDark() ? '#33FFFFFF' : '#22000000';
     }
     return this.isDark() ? '#33FFFFFF' : '#22000000';
   }
@@ -222,10 +260,35 @@ struct GalleryPreview {
     return galleryPreviewFavoriteStarTint();
   }
 
+  private runScopedTask(task: () => void): void {
+    try {
+      this.getUIContext().runScopedTask(task);
+    } catch (_e) {
+      task();
+    }
+  }
+
+  private syncSwiperLocked(): void {
+    this.swiperLocked = this.pinchGestureActive || this.previewZoomLocked;
+  }
+
   private toggleToolbar(): void {
     this.getUIContext().animateTo({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE }, (): void => {
       this.toolbarVisible = !this.toolbarVisible;
     });
+  }
+
+  private toggleOriginalPreview(): void {
+    if (!this.currentHasOriginal()) {
+      return;
+    }
+    if (this.originalPreviewEnabled) {
+      this.originalPreviewEnabled = false;
+      this.originalShowing = false;
+      return;
+    }
+    this.originalPreviewEnabled = true;
+    this.loadOriginalToken++;
   }
 
   private syncCollectStateFromCurrentItem(): void {
@@ -241,6 +304,8 @@ struct GalleryPreview {
   }
 
   private async deleteCurrentItem(): Promise<void> {
+    this.originalPreviewEnabled = false;
+    this.originalShowing = false;
     await galleryPreviewDeleteCurrentItem(this.asActionsHost());
   }
 
@@ -321,6 +386,12 @@ struct GalleryPreview {
       get downloading(): boolean { return self.downloading; }
       set downloading(v: boolean) { self.downloading = v; }
 
+      get downloadProgressPct(): number { return self.downloadProgressPct; }
+      set downloadProgressPct(v: number) { self.downloadProgressPct = v; }
+
+      get downloadProgressKnown(): boolean { return self.downloadProgressKnown; }
+      set downloadProgressKnown(v: boolean) { self.downloadProgressKnown = v; }
+
       get sharing(): boolean { return self.sharing; }
       set sharing(v: boolean) { self.sharing = v; }
 
@@ -359,6 +430,9 @@ struct GalleryPreview {
       },
       onFolderClick: (): void => {
         this.openFolderFromDetailPath();
+      },
+      onClose: (): void => {
+        this.closeDetailsPanel();
       }
     })
   }
@@ -372,15 +446,44 @@ struct GalleryPreview {
               baseUrl: this.baseUrl,
               item: item,
               loadOriginalToken: this.loadOriginalToken,
+              originalPreviewEnabled: idx === this.swiperIndex && this.originalPreviewEnabled,
               active: idx === this.swiperIndex,
               videoBottomPadding: this.toolbarVisible ? this.bottomBarHeight : 0,
-              onZoomLockChange: (locked: boolean): void => { this.swiperLocked = locked; },
+              onZoomLockChange: (locked: boolean): void => {
+                this.runScopedTask((): void => {
+                  this.previewZoomLocked = locked;
+                  this.syncSwiperLocked();
+                });
+              },
+              onPinchGestureActiveChange: (active: boolean): void => {
+                this.runScopedTask((): void => {
+                  this.pinchGestureActive = active;
+                  this.syncSwiperLocked();
+                });
+              },
+              onRequestPageSwitch: (delta: number): void => {
+                const targetIdx = this.swiperIndex + delta;
+                if (targetIdx < 0 || targetIdx >= this.totalCount) {
+                  return;
+                }
+                this.swiperCtrl.changeIndex(targetIdx, true);
+              },
               onVerticalDragProgress: (p: number): void => {
                 this.dismissDragProgress = Math.max(0, Math.min(1, p));
               },
               onVerticalDismiss: (): void => { this.getUIContext().getRouter().back(); },
-              onOriginalLoaded: (): void => { this.originalShowing = true; },
-              onOriginalLoadFailed: (msg: string): void => { this.toast(msg); }
+              onOriginalLoaded: (): void => {
+                if (this.originalPreviewEnabled) {
+                  this.originalShowing = true;
+                }
+              },
+              onOriginalLoadFailed: (msg: string): void => {
+                if (this.originalPreviewEnabled) {
+                  this.originalPreviewEnabled = false;
+                  this.originalShowing = false;
+                  this.toast(msg);
+                }
+              }
             })
           }, (item: GalleryListItem, i: number) => `gp_${item.id}_${i}`)
         }
@@ -391,15 +494,18 @@ struct GalleryPreview {
         .loop(false)
         .duration(FN_SWIPER_DURATION)
         .curve(FN_SWIPER_CURVE)
-        .cachedCount(2)
+        .cachedCount(1)
         .disableSwipe(this.swiperLocked)
         .onClick((): void => {
           this.toggleToolbar();
         })
         .onChange((idx: number): void => {
           this.swiperIndex = idx;
-          this.swiperLocked = false;
+          this.pinchGestureActive = false;
+          this.previewZoomLocked = false;
+          this.syncSwiperLocked();
           this.dismissDragProgress = 0;
+          this.originalPreviewEnabled = false;
           this.originalShowing = false;
           if (!this.toolbarVisible) {
             this.getUIContext().animateTo({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE }, (): void => {
@@ -428,11 +534,16 @@ struct GalleryPreview {
         titleText: this.titleCounter(),
         toolbarBg: this.toolbarBg(),
         buttonBg: this.btnBg(),
+        darkMaterial: this.isDark(),
+        topSafeInsetVp: this.systemTopInsetVp,
+        bottomSafeInsetVp: this.systemBottomInsetVp,
         fgColor: this.fgColor(),
         showOriginalAction: this.currentHasOriginal(),
-        originalShowing: this.originalShowing,
+        originalShowing: this.originalPreviewEnabled,
         sharing: this.sharing,
         downloading: this.downloading,
+        downloadProgressPct: this.downloadProgressPct,
+        downloadProgressKnown: this.downloadProgressKnown,
         deleting: this.deleting,
         favoriteToggling: this.favoriteToggling,
         starFilled: this.starFilled(),
@@ -441,7 +552,7 @@ struct GalleryPreview {
           this.getUIContext().getRouter().back();
         },
         onLoadOriginal: (): void => {
-          this.loadOriginalToken++;
+          this.toggleOriginalPreview();
         },
         onOpenDetails: (): void => {
           this.openDetailsPanel();
@@ -462,6 +573,7 @@ struct GalleryPreview {
           this.bottomBarHeight = height;
         }
       })
+      .hitTestBehavior(this.toolbarVisible ? HitTestMode.Transparent : HitTestMode.None)
       .opacity(this.toolbarVisible ? this.toolbarAlpha() : 0)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
@@ -475,9 +587,8 @@ struct GalleryPreview {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.detailsVisible, this.detailsSheetBuilder, {
       height: '50%',
+      showClose: false,
       dragBar: true,
-      showClose: true,
-      title: { title: '照片详情' },
       backgroundColor: this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF',
       onDisappear: (): void => {
         this.closeDetailsPanel();

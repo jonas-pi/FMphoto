@@ -2,7 +2,8 @@
  * 相册回收站：列表 + 多选恢复（GET recycle-bin/list，POST recycle-bin/restore）
  * 多选手势与图库主时间线一致：每行 Row + LongPress + Pan 划选 + 命中矩形缓存。
  */
-import { UIContext } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+import { UIContext, window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { GalleryNetworkThumb, nasUrl } from '../album/GalleryAlbumCommon';
 import { RecycleBinListItem } from '../model/FnApiTypes';
@@ -49,12 +50,16 @@ struct RecycleBinPage {
   @State private loading: boolean = false;
   @State private restoring: boolean = false;
   @State private rbBatchDownloading: boolean = false;
+  @State private rbBackgroundLoading: boolean = false;
   @State private error: string = '';
   @State private items: RecycleBinListItem[] = [];
   @State private selectionMode: boolean = false;
   @State private selectedIds: number[] = [];
   @State private rbSlideGestureActive: boolean = false;
   @State private rbScrollEnabled: boolean = true;
+  @State private rbThumbLoadingPaused: boolean = false;
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  @State private systemTopInsetVp: number = 0;
 
   private rbLongPressIgnoreUntil: number = 0;
   private rbThumbHitBounds: Map<string, RbThumbHitRect> = new Map();
@@ -65,6 +70,7 @@ struct RecycleBinPage {
   private rbSlideUnionBase: number[] = [];
   private rbSlideLastEndFlat: number = -1;
   private rbSlideLastAppliedEndFlat: number = -99999;
+  private rbThumbResumeTimer: number = -1;
 
   onBackPress(): boolean {
     if (this.selectionMode) {
@@ -83,12 +89,61 @@ struct RecycleBinPage {
     }
   }
 
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private syncSystemAvoidArea(win: window.Window): void {
+    try {
+      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
+    } catch (_e) {
+      this.systemTopInsetVp = 0;
+    }
+  }
+
+  private applySystemBar(): void {
+    try {
+      const dark = this.colorMode === 1;
+      const content = dark ? '#FFFFFFFF' : '#FF000000';
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win): void => {
+        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        this.syncSystemAvoidArea(win);
+        win.setWindowSystemBarProperties({
+          statusBarColor: '#00000000',
+          navigationBarColor: '#00000000',
+          statusBarContentColor: content,
+          navigationBarContentColor: content
+        }).catch((_e: Error): void => {});
+      }).catch((_e: Error): void => {});
+    } catch (_e) {}
+  }
+
+  onColorModeChanged(): void {
+    this.applySystemBar();
+  }
+
   aboutToAppear(): void {
+    this.applySystemBar();
+    this.rbThumbLoadingPaused = false;
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
     }
     void this.loadAll();
+  }
+
+  aboutToDisappear(): void {
+    this.clearRbThumbResumeTimer();
+    const client = AppSession.getClient();
+    if (client !== null) {
+      client.cancelPendingRequests();
+    }
   }
 
   private toast(msg: string): void {
@@ -169,6 +224,34 @@ struct RecycleBinPage {
     await recycleBinConfirmRestore(this.asActionsHost());
   }
 
+  private clearRbThumbResumeTimer(): void {
+    if (this.rbThumbResumeTimer >= 0) {
+      clearTimeout(this.rbThumbResumeTimer);
+      this.rbThumbResumeTimer = -1;
+    }
+  }
+
+  private onListScrollStateChange(scrollState: ScrollState): void {
+    if (!this.rbSlideGestureActive && !this.rbScrollEnabled) {
+      this.rbScrollEnabled = true;
+    }
+    if (!this.rbSlideGestureActive) {
+      this.rbThumbHitBounds.clear();
+    }
+    if (scrollState !== ScrollState.Idle) {
+      this.clearRbThumbResumeTimer();
+      if (!this.rbThumbLoadingPaused) {
+        this.rbThumbLoadingPaused = true;
+      }
+      return;
+    }
+    this.clearRbThumbResumeTimer();
+    this.rbThumbResumeTimer = setTimeout((): void => {
+      this.rbThumbResumeTimer = -1;
+      this.rbThumbLoadingPaused = false;
+    }, 96);
+  }
+
   private asSelectionHost(): RecycleBinSelectionHost {
     const self = this;
     class RecycleBinSelectionHostBridge implements RecycleBinSelectionHost {
@@ -241,6 +324,9 @@ struct RecycleBinPage {
       get rbBatchDownloading(): boolean { return self.rbBatchDownloading; }
       set rbBatchDownloading(v: boolean) { self.rbBatchDownloading = v; }
 
+      get rbBackgroundLoading(): boolean { return self.rbBackgroundLoading; }
+      set rbBackgroundLoading(v: boolean) { self.rbBackgroundLoading = v; }
+
       get error(): string { return self.error; }
       set error(v: string) { self.error = v; }
 
@@ -264,6 +350,7 @@ struct RecycleBinPage {
           uri: nasUrl(this.baseUrl, thumbRel),
           isVideo: false,
           isGif: false,
+          paused: this.rbThumbLoadingPaused,
         })
           .width('100%')
           .aspectRatio(1)
@@ -341,6 +428,7 @@ struct RecycleBinPage {
       RecycleBinChrome({
         selectionMode: this.selectionMode,
         selectedCount: this.selectedIds.length,
+        topSafeInsetVp: this.systemTopInsetVp,
         onCancelSelection: (): void => {
           this.exitSelection();
         },
@@ -460,19 +548,28 @@ struct RecycleBinPage {
             }
             .width('100%')
             .layoutWeight(1)
-            .cachedCount(6)
+            .cachedCount(3)
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.rbScrollEnabled)
-            .onDidScroll((_offset: number, _scrollState: ScrollState): void => {
-              if (!this.rbSlideGestureActive && !this.rbScrollEnabled) {
-                this.rbScrollEnabled = true;
-              }
-              if (!this.rbSlideGestureActive) {
-                this.rbThumbHitBounds.clear();
-              }
+            .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+              this.onListScrollStateChange(scrollState);
             })
+
+            if (this.rbBackgroundLoading) {
+              Row({ space: 8 }) {
+                LoadingProgress()
+                  .width(18)
+                  .height(18)
+                Text('继续加载中')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ top: 8, bottom: this.selectionMode && this.selectedIds.length > 0 ? 8 : 0 })
+            }
 
             if (this.selectionMode && this.selectedIds.length > 0) {
               RecycleBinBatchBar({

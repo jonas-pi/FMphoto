@@ -59,6 +59,7 @@ export interface GalleryAlbumModeOrchestratorHost {
   requestBootstrap(forceImmediate: boolean): void;
   bootstrap(showFullBleedSkeleton?: boolean): Promise<void>;
   itemIdOf(item: GalleryListItem): string;
+  createNavigationGuard(): () => boolean;
   toast(msg: string): void;
 }
 
@@ -105,8 +106,8 @@ export async function galleryAlbumRunSearch(
   host.searchLoading = true;
   host.searchError = '';
   host.searchResults = [];
-
   const client = AppSession.getClient();
+
   if (client === null) {
     host.searchError = '未登录';
     host.searchLoading = false;
@@ -379,14 +380,19 @@ export async function galleryAlbumOpenPerson(
     return;
   }
   host.personOpening = true;
+  const isActive = host.createNavigationGuard();
   let keepOpening = false;
   try {
     const result = await openPersonAlbumById(
       host.baseUrl,
       pid,
       personName(item),
-      host.getUIContext()
+      host.getUIContext(),
+      isActive
     );
+    if (!isActive()) {
+      return;
+    }
     if (!result.ok) {
       if (result.errorMessage.length > 0) {
         host.toast(result.errorMessage);
@@ -412,10 +418,14 @@ export async function galleryAlbumOpenCategory(
     return;
   }
   host.categoryOpening = true;
+  const isActive = host.createNavigationGuard();
   const title = categoryTitle(cat);
   try {
     const local = parseCategoryMedia(cat);
     if (local.length > 0) {
+      if (!isActive()) {
+        return;
+      }
       CategoryGalleryNavStore.open(host.baseUrl, title, local, host.getUIContext());
       return;
     }
@@ -425,6 +435,9 @@ export async function galleryAlbumOpenCategory(
       return;
     }
     const fetched = await client.searchResultsByCategory(cat);
+    if (!isActive()) {
+      return;
+    }
     if (!fetched.success || fetched.data === undefined || fetched.data.length === 0) {
       host.toast(fetched.message ?? '该分类暂无可预览媒体');
       return;
@@ -445,13 +458,20 @@ export async function galleryAlbumOpenRecentAdded(host: GalleryAlbumModeOrchestr
     return;
   }
   host.recentOpening = true;
+  const isActive = host.createNavigationGuard();
   try {
     const result = await loadRecentAddedItems(
       client,
-      (item: GalleryListItem): string => host.itemIdOf(item)
+      (item: GalleryListItem): string => host.itemIdOf(item),
+      isActive
     );
+    if (!isActive()) {
+      return;
+    }
     if (result.items.length <= 0) {
-      host.toast(result.error);
+      if (result.error.length > 0) {
+        host.toast(result.error);
+      }
       return;
     }
     CategoryGalleryNavStore.open(host.baseUrl, '最近添加', result.items, host.getUIContext());
@@ -470,13 +490,20 @@ export async function galleryAlbumOpenCollectGallery(host: GalleryAlbumModeOrche
     return;
   }
   host.collectOpening = true;
+  const isActive = host.createNavigationGuard();
   try {
     const result = await loadCollectGalleryItems(
       client,
-      (item: GalleryListItem): string => host.itemIdOf(item)
+      (item: GalleryListItem): string => host.itemIdOf(item),
+      isActive
     );
+    if (!isActive()) {
+      return;
+    }
     if (result.items.length <= 0) {
-      host.toast(result.error);
+      if (result.error.length > 0) {
+        host.toast(result.error);
+      }
       return;
     }
     CategoryGalleryNavStore.open(host.baseUrl, '收藏', result.items, host.getUIContext());
