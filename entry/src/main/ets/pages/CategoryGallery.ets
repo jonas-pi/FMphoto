@@ -166,7 +166,7 @@ struct CategoryGallery {
     this.cgThumbLoadingPaused = false;
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
-    const useCreatedAt = this.title.trim() === '最近添加';
+    const useCreatedAt = CategoryGalleryNavStore.useCreatedAtGrouping;
     const viewData = buildCategoryGalleryViewData(CategoryGalleryNavStore.items, useCreatedAt);
     this.groups = viewData.groups;
     this.flatItems = viewData.flatItems;
