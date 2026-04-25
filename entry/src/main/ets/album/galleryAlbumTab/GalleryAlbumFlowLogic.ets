@@ -52,13 +52,18 @@ export function galleryAlbumGalleryFlowLazyKey(node: GalleryFlowNode): string {
   if (node.kind !== 'row') {
     return node.key;
   }
-  const indices = node.rowSlotFlatIndices;
   let slotSig = '';
-  for (let i = 0; i < indices.length; i++) {
+  for (let i = 0; i < node.rowSlotItems.length; i++) {
     if (i > 0) {
       slotSig += 'x';
     }
-    slotSig += `${indices[i]}`;
+    const slot = node.rowSlotItems[i];
+    if (slot === null || slot === undefined) {
+      slotSig += `sk${i}`;
+      continue;
+    }
+    const id = galleryAlbumItemIdOf(slot);
+    slotSig += id.length > 0 ? `id${id}` : `it${i}`;
   }
   return `${node.key}_s${slotSig}`;
 }

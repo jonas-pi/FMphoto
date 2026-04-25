@@ -129,12 +129,28 @@ export function selectionReadGestureFingerWindow(
   return { x: x, y: y };
 }
 
+function selectionVpToPx(host: SelectionGestureControllerHost, value: number): number {
+  try {
+    return host.getUIContext().vp2px(value);
+  } catch (_e) {
+    return value;
+  }
+}
+
+function selectionPxToVp(host: SelectionGestureControllerHost, value: number): number {
+  try {
+    return host.getUIContext().px2vp(value);
+  } catch (_e) {
+    return value;
+  }
+}
+
 export function selectionPanOffsetVpToPx(
-  _host: SelectionGestureControllerHost,
+  host: SelectionGestureControllerHost,
   deltaVp: number
 ): number {
   const probePx = 100;
-  const probeVp = px2vp(probePx);
+  const probeVp = selectionPxToVp(host, probePx);
   if (probeVp < 0.0001) {
     return deltaVp;
   }
@@ -161,8 +177,8 @@ export function selectionBeginGallerySlideSelectGesture(
   }
   const win = selectionReadGestureFingerWindow(host, ev);
   if (win !== null) {
-    host.gallerySlideRefX = vp2px(win.x);
-    host.gallerySlideRefY = vp2px(win.y);
+    host.gallerySlideRefX = selectionVpToPx(host, win.x);
+    host.gallerySlideRefY = selectionVpToPx(host, win.y);
     host.gallerySlideHasRef = true;
   } else if (host.inSearchMode) {
     const rs = host.searchThumbHitBounds.get(`${anchorFlat}`);
@@ -207,7 +223,7 @@ export function selectionResolveSlidePointerWindowPx(
 ): GalleryFingerWindowPoint | null {
   const win = selectionReadGestureFingerWindow(host, ev);
   if (win !== null) {
-    return { x: vp2px(win.x), y: vp2px(win.y) };
+    return { x: selectionVpToPx(host, win.x), y: selectionVpToPx(host, win.y) };
   }
   if (!host.gallerySlideHasRef) {
     return null;

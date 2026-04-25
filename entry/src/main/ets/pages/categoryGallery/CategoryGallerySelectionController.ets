@@ -120,9 +120,25 @@ export function categoryGalleryReadGestureFingerWindow(ev: GestureEvent): CgFing
   return { x, y };
 }
 
-export function categoryGalleryPanOffsetVpToPx(deltaVp: number): number {
+function categoryGalleryVpToPx(host: CategoryGallerySelectionHost, value: number): number {
+  try {
+    return host.getUIContext().vp2px(value);
+  } catch (_e) {
+    return value;
+  }
+}
+
+function categoryGalleryPxToVp(host: CategoryGallerySelectionHost, value: number): number {
+  try {
+    return host.getUIContext().px2vp(value);
+  } catch (_e) {
+    return value;
+  }
+}
+
+export function categoryGalleryPanOffsetVpToPx(host: CategoryGallerySelectionHost, deltaVp: number): number {
   const probePx = 100;
-  const probeVp = px2vp(probePx);
+  const probeVp = categoryGalleryPxToVp(host, probePx);
   if (probeVp < 0.0001) {
     return deltaVp;
   }
@@ -316,8 +332,8 @@ export function categoryGalleryBeginSlideSelectGesture(
   categoryGalleryRecordThumbRect(host, anchorFlat);
   const win = categoryGalleryReadGestureFingerWindow(ev);
   if (win !== null) {
-    host.cgSlideRefX = vp2px(win.x);
-    host.cgSlideRefY = vp2px(win.y);
+    host.cgSlideRefX = categoryGalleryVpToPx(host, win.x);
+    host.cgSlideRefY = categoryGalleryVpToPx(host, win.y);
     host.cgSlideHasRef = true;
   } else {
     const cached = host.cgThumbHitBounds.get(`${anchorFlat}`);
@@ -351,14 +367,14 @@ export function categoryGalleryResolveSlidePointerWindowPx(
 ): CgFingerWindowPoint | null {
   const win = categoryGalleryReadGestureFingerWindow(ev);
   if (win !== null) {
-    return { x: vp2px(win.x), y: vp2px(win.y) };
+    return { x: categoryGalleryVpToPx(host, win.x), y: categoryGalleryVpToPx(host, win.y) };
   }
   if (!host.cgSlideHasRef) {
     return null;
   }
   return {
-    x: host.cgSlideRefX + categoryGalleryPanOffsetVpToPx(ev.offsetX),
-    y: host.cgSlideRefY + categoryGalleryPanOffsetVpToPx(ev.offsetY)
+    x: host.cgSlideRefX + categoryGalleryPanOffsetVpToPx(host, ev.offsetX),
+    y: host.cgSlideRefY + categoryGalleryPanOffsetVpToPx(host, ev.offsetY)
   };
 }
 

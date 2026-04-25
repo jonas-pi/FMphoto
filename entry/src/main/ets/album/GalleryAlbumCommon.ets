@@ -476,16 +476,20 @@ export struct GalleryNetworkThumb {
   }
 
   private async loadPix(): Promise<void> {
-    if (this.uri.length === 0 || this.loading || this.paused) {
+    if (this.uri.length === 0 || this.loading) {
       return;
     }
-    const versionAtStart = this.loadVersion;
     const cached = thumbPixCache.get(this.uri);
     if (cached !== undefined) {
       this.pix = cached;
       this.pixAlpha = 1;
+      this.retryCount = 0;
       return;
     }
+    if (this.paused) {
+      return;
+    }
+    const versionAtStart = this.loadVersion;
     this.loading = true;
     const pix = await loadThumbPix(this.uri);
     if (versionAtStart !== this.loadVersion) {

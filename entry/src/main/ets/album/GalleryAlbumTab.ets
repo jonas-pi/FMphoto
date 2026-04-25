@@ -489,6 +489,8 @@ export struct GalleryAlbumTab {
   private readonly visiblePhotoBufferSlots: number = 12;
   /** 鍙鍖洪┍鍔ㄥ姞杞借妭娴侊細閬垮厤 Idle 鎶栧姩鏃堕珮棰戣Е鍙?loadVisibleItems */
   private lastLoadVisibleAtMs: number = 0;
+  private loadVisibleRetryTimer: number = -1;
+  private loadVisibleRetryGen: number = 0;
   /** pump 浠ｆ锛氭柊婊氬姩寮€濮嬫椂閫掑锛屾棫 pump/鍥炶皟绔嬪嵆澶辨晥锛堟墦鏂苟鍙戦摼璺級 */
   private pumpEpoch: number = 0;
   /** 鏃堕棿杞存澗鎵嬪悗鐭獥鍐呭拷鐣ョ▼搴忓寲婊氬姩瀵瑰喕缁撴€佺殑鍥炲啓锛岄槻姝⑩€滃繀椤诲啀婊戜竴涓嬫墠鍔犺浇鈥?*/
@@ -981,6 +983,10 @@ export struct GalleryAlbumTab {
       set pumpEpoch(value: number) { self.pumpEpoch = value; }
       get loadGen(): number { return self.loadGen; }
       set loadGen(value: number) { self.loadGen = value; }
+      get loadVisibleRetryTimer(): number { return self.loadVisibleRetryTimer; }
+      set loadVisibleRetryTimer(value: number) { self.loadVisibleRetryTimer = value; }
+      get loadVisibleRetryGen(): number { return self.loadVisibleRetryGen; }
+      set loadVisibleRetryGen(value: number) { self.loadVisibleRetryGen = value; }
       get timelineSliderRatio(): number { return self.timelineSliderRatio; }
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
       resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null {
@@ -1675,8 +1681,6 @@ export struct GalleryAlbumTab {
     .height('100%')
   }
 }
-
-
 
 
 

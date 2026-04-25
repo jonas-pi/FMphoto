@@ -75,6 +75,14 @@ struct RecycleBinPage {
     return true;
   }
 
+  private vpToPx(value: number): number {
+    try {
+      return this.getUIContext().vp2px(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
   aboutToAppear(): void {
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
@@ -381,8 +389,8 @@ struct RecycleBinPage {
                         if (pt === null) {
                           return;
                         }
-                        const xPx = vp2px(pt.x);
-                        const yPx = vp2px(pt.y);
+                        const xPx = this.vpToPx(pt.x);
+                        const yPx = this.vpToPx(pt.y);
                         const fi = this.pickRbThumbFlatForRow(rowStart, xPx, yPx);
                         if (fi < 0 || fi >= this.items.length) {
                           return;
@@ -411,8 +419,8 @@ struct RecycleBinPage {
                         if (pt === null) {
                           return;
                         }
-                        const xPx = vp2px(pt.x);
-                        const yPx = vp2px(pt.y);
+                        const xPx = this.vpToPx(pt.x);
+                        const yPx = this.vpToPx(pt.y);
                         const fi = this.pickRbThumbFlatForRow(rowStart, xPx, yPx);
                         if (fi < 0 || fi >= this.items.length) {
                           return;

@@ -49,6 +49,14 @@ export struct GalleryAlbumSearchModeView {
     return rows;
   }
 
+  private vpToPx(value: number): number {
+    try {
+      return this.getUIContext().vp2px(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
   @Builder
   private buildSearchGridThumbCell(item: GalleryListItem, flatIndex: number) {
     Stack({ alignContent: Alignment.TopEnd }) {
@@ -152,8 +160,8 @@ export struct GalleryAlbumSearchModeView {
                       if (pt === null) {
                         return;
                       }
-                      const xPx = vp2px(pt.x);
-                      const yPx = vp2px(pt.y);
+                      const xPx = this.vpToPx(pt.x);
+                      const yPx = this.vpToPx(pt.y);
                       const rowStart = rowIdx * 3;
                       const fi = this.pickSearchThumbFlatForRow(rowStart, xPx, yPx);
                       if (fi < 0 || fi >= this.searchResults.length) {
@@ -186,8 +194,8 @@ export struct GalleryAlbumSearchModeView {
                       if (pt === null) {
                         return;
                       }
-                      const xPx = vp2px(pt.x);
-                      const yPx = vp2px(pt.y);
+                      const xPx = this.vpToPx(pt.x);
+                      const yPx = this.vpToPx(pt.y);
                       const rowStart = rowIdx * 3;
                       const fi = this.pickSearchThumbFlatForRow(rowStart, xPx, yPx);
                       if (fi < 0 || fi >= this.searchResults.length) {
