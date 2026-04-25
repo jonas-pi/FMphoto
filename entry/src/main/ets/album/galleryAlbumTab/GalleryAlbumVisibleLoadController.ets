@@ -1,5 +1,6 @@
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
 import {
+  DATE_FEED_BATCH,
   GALLERY_LAST_KNOWN_DEGENERATE_NEW_SLOT_SPAN,
   GALLERY_LAST_KNOWN_MIN_PREV_SLOT_SPAN,
   GALLERY_LAST_KNOWN_SHRINK_IGNORE_RATIO,
@@ -29,7 +30,7 @@ import {
   TimelineDayModel,
   TimelineYearMonthPair,
 } from './GalleryAlbumTabTypes';
-import { findTimelineMonthRange } from './GalleryAlbumTimelineLogic';
+import { findFlowRoughVisibleRangeForYearMonth, findTimelineMonthRange } from './GalleryAlbumTimelineLogic';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
 
 export interface GalleryAlbumVisibleLoadHost {
@@ -57,6 +58,8 @@ export interface GalleryAlbumVisibleLoadHost {
   dayOffsets: Map<string, number>;
   pumpEpoch: number;
   loadGen: number;
+  loadVisibleRetryTimer: number;
+  loadVisibleRetryGen: number;
   timelineSliderRatio: number;
   resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
@@ -65,6 +68,51 @@ export interface GalleryAlbumVisibleLoadHost {
   rebuildFlow(): void;
   pumpLoad(singleBatch?: boolean): void;
   loadOneBatch(): Promise<number>;
+}
+
+function galleryAlbumVisibleCancelScheduledRetry(
+  host: GalleryAlbumVisibleLoadHost,
+  invalidateGen: boolean = true
+): void {
+  if (host.loadVisibleRetryTimer >= 0) {
+    clearTimeout(host.loadVisibleRetryTimer);
+    host.loadVisibleRetryTimer = -1;
+  }
+  if (invalidateGen) {
+    host.loadVisibleRetryGen++;
+  }
+}
+
+function galleryAlbumVisibleScheduleRetryAfterInflight(
+  host: GalleryAlbumVisibleLoadHost,
+  aggressive: boolean,
+  delayMs: number = 48
+): void {
+  galleryAlbumVisibleCancelScheduledRetry(host, false);
+  const retryGen = ++host.loadVisibleRetryGen;
+  const epoch = host.pumpEpoch;
+  const loadGen = host.loadGen;
+  host.loadVisibleRetryTimer = setTimeout((): void => {
+    host.loadVisibleRetryTimer = -1;
+    if (retryGen !== host.loadVisibleRetryGen) {
+      return;
+    }
+    if (epoch !== host.pumpEpoch || loadGen !== host.loadGen) {
+      return;
+    }
+    if (host.exhausted || host.bootLoading) {
+      return;
+    }
+    if (host.timelineSidebarDragging || host.isDraggingOrFling || host.visualPlaceholderMode) {
+      return;
+    }
+    if (host.loadingMore) {
+      galleryAlbumVisibleScheduleRetryAfterInflight(host, aggressive, delayMs);
+      return;
+    }
+    host.lastLoadVisibleAtMs = 0;
+    galleryAlbumVisibleLoadVisibleItemsThrottled(host, true, aggressive);
+  }, delayMs);
 }
 
 export function galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(
@@ -172,6 +220,24 @@ export function galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host: Gallery
   host.lastKnownGlobalPhotoSlotStart = gStart;
   host.lastKnownGlobalPhotoSlotEndExclusive = Math.max(gStart + 1, gEndExclusive);
   return true;
+}
+
+export function galleryAlbumVisiblePrimeRoughVisibleRangeForTimelineTarget(
+  host: GalleryAlbumVisibleLoadHost
+): GalleryVisibleNodeRange | null {
+  const ym = host.resolveYearMonthByTimelineRatio(host.timelineSliderRatio);
+  if (ym === null) {
+    return null;
+  }
+  const range = findFlowRoughVisibleRangeForYearMonth(host.flowDataSource, ym.year, ym.month);
+  if (range === null) {
+    return null;
+  }
+  host.listVisibleFirstNodeIdx = range.first;
+  host.listVisibleLastNodeIdx = range.last;
+  galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(host, range.first, range.last);
+  galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
+  return range;
 }
 
 export function galleryAlbumVisibleCountPhotoSlotsBeforeNode(
@@ -565,6 +631,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   forceImmediate: boolean = false,
   aggressive: boolean = false
 ): void {
+  galleryAlbumVisibleCancelScheduledRetry(host);
   const now = Date.now();
   if (!forceImmediate && now - host.lastLoadVisibleAtMs < 300) {
     if (host.isInScrollInteractiveLogWindow()) {
@@ -600,8 +667,22 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   let refLast = Math.max(refFirst, Math.min(totalNodes - 1, host.listVisibleLastNodeIdx));
   let visStart = 0;
   let visEndExclusive = 0;
+  let aggressiveRoughVisibleRange: GalleryVisibleNodeRange | null = null;
   let usedAggressiveTimelineAnchor = false;
-  if (aggressive && galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host)) {
+  if (aggressive && !loadVisibleUsedScrollerRange) {
+    aggressiveRoughVisibleRange = galleryAlbumVisiblePrimeRoughVisibleRangeForTimelineTarget(host);
+  }
+  if (aggressiveRoughVisibleRange !== null) {
+    refFirst = aggressiveRoughVisibleRange.first;
+    refLast = aggressiveRoughVisibleRange.last;
+    visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, refFirst);
+    visEndExclusive = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, refLast + 1);
+    if (visEndExclusive <= visStart &&
+      host.lastKnownGlobalPhotoSlotEndExclusive > host.lastKnownGlobalPhotoSlotStart) {
+      visStart = host.lastKnownGlobalPhotoSlotStart;
+      visEndExclusive = host.lastKnownGlobalPhotoSlotEndExclusive;
+    }
+  } else if (aggressive && galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host)) {
     visStart = host.lastKnownGlobalPhotoSlotStart;
     visEndExclusive = host.lastKnownGlobalPhotoSlotEndExclusive;
     usedAggressiveTimelineAnchor = visEndExclusive > visStart;
@@ -641,7 +722,14 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       }
     }
     if (visEndExclusive <= visStart) {
-      if (aggressive && galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host) && !host.loadingMore && !host.exhausted) {
+      if (aggressive && !host.exhausted) {
+        if (host.loadingMore) {
+          galleryAlbumVisibleScheduleRetryAfterInflight(host, true);
+          return;
+        }
+        if (!galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host)) {
+          return;
+        }
         const epoch = host.pumpEpoch;
         host.pumpLoad(true);
         setTimeout((): void => {
@@ -690,7 +778,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     bufferScanFirst,
     bufferScanLast
   );
-  const start = Math.max(0, visStart - bufferSlots);
+  const start = aggressive ? Math.max(0, visStart) : Math.max(0, visStart - bufferSlots);
   const end = Math.max(start, visEndExclusive - 1 + bufferSlots);
   const startHit = host.resolveDayByGlobalIndex(start);
   if (startHit === null) {
@@ -700,6 +788,19 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
         + `listLast=${host.listVisibleLastNodeIdx}, timelineAnchor=${usedAggressiveTimelineAnchor ? 1 : 0}`
       );
     }
+    return;
+  }
+  const endHit = host.resolveDayByGlobalIndex(end);
+  if (endHit === null) {
+    return;
+  }
+  if (host.loadingMore) {
+    if (host.isInScrollInteractiveLogWindow()) {
+      host.logScrollDebug(
+        `loadVisible defer while inflight: start=${start}, end=${end}, day=${startHit.dayIdx}, aggressive=${aggressive ? 1 : 0}`
+      );
+    }
+    galleryAlbumVisibleScheduleRetryAfterInflight(host, aggressive);
     return;
   }
   if (startHit.dayIdx !== host.lastVisibleLoadDayIdx || startHit.dayIdx !== host.dayIndex) {
@@ -733,46 +834,19 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       );
     }
   }
-  const endHit = host.resolveDayByGlobalIndex(end);
-  if (endHit === null) {
-    return;
-  }
   const loD = startHit.dayIdx;
   const hiD = endHit.dayIdx;
   const spanDays = hiD - loD;
 
-  if (!host.loadingMore && !host.exhausted) {
+  if (!host.exhausted) {
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug(
-        `loadVisible trigger ${aggressive ? 'continuous' : 'single-batch'} pump: `
+        `loadVisible trigger visible-band pump: `
         + `dayIndex=${host.dayIndex}, start=${start}, end=${end}, spanDays=${spanDays}`
       );
     }
-    if (spanDays > 0) {
-      const epochBand = host.pumpEpoch;
-      void galleryAlbumVisiblePumpVisibleDayBandAllChunks(host, loD, hiD, start, end, epochBand);
-    } else if (aggressive) {
-      const epoch = host.pumpEpoch;
-      host.pumpLoad(true);
-      setTimeout((): void => {
-        if (epoch !== host.pumpEpoch || host.isDraggingOrFling || host.visualPlaceholderMode) {
-          return;
-        }
-        host.pumpLoad(true);
-      }, 40);
-    } else {
-      host.pumpLoad(true);
-      const skFollow = galleryAlbumVisibleCountSkeletonPhotoSlotsInFlowNodeRange(host, refFirst, refLast);
-      if (skFollow >= 6) {
-        const epochSk = host.pumpEpoch;
-        setTimeout((): void => {
-          if (epochSk !== host.pumpEpoch || host.isDraggingOrFling || host.visualPlaceholderMode) {
-            return;
-          }
-          host.pumpLoad(true);
-        }, 24);
-      }
-    }
+    const epochBand = host.pumpEpoch;
+    void galleryAlbumVisiblePumpVisibleDayBandAllChunks(host, loD, hiD, start, end, epochBand);
   }
 }
 
@@ -828,6 +902,7 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       }
     }
     if (host.loadingMore) {
+      galleryAlbumVisibleScheduleRetryAfterInflight(host, true);
       return;
     }
 
@@ -843,48 +918,61 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       localNeed + 1,
       Math.min(Math.max(0, day.itemCount), Math.max(0, Math.min(endG + 1, g1) - g0))
     );
-    galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, localNeed, overlapEndExclusive);
+    const maxRoundsForRange = Math.max(1, Math.ceil(Math.max(1, overlapEndExclusive - localNeed) / DATE_FEED_BATCH) + 2);
+    let rounds = 0;
+    while (rounds < maxRoundsForRange) {
+      const nextGap = galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
+      if (nextGap < 0) {
+        break;
+      }
+      galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, nextGap, overlapEndExclusive);
+      const key = dayKey(day.year, day.month, day.day);
+      const prevOffset = host.dayOffsets.get(key) ?? 0;
 
-    host.dayIndex = d;
-    host.lastVisibleLoadDayIdx = d;
+      host.dayIndex = d;
+      host.lastVisibleLoadDayIdx = d;
 
-    const gen = host.loadGen;
-    host.loadingMore = true;
-    let added = 0;
-    try {
-      added = await host.loadOneBatch();
-    } finally {
-      host.loadingMore = false;
+      const gen = host.loadGen;
+      host.loadingMore = true;
+      let added = 0;
+      try {
+        added = await host.loadOneBatch();
+      } finally {
+        host.loadingMore = false;
+      }
+
+      if (epoch !== host.pumpEpoch || gen !== host.loadGen) {
+        return;
+      }
+      if (added === -1) {
+        return;
+      }
+      if (added === -2) {
+        galleryAlbumVisibleScheduleRetryAfterInflight(host, true, 3000);
+        return;
+      }
+      if (added === -3) {
+        galleryAlbumVisibleScheduleRetryAfterInflight(host, true, 500);
+        return;
+      }
+
+      rounds++;
+      const nextGapAfter = galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
+      if (nextGapAfter < 0) {
+        break;
+      }
+      const nextOffset = host.dayOffsets.get(key) ?? prevOffset;
+      if (added <= 0 || nextOffset <= prevOffset) {
+        galleryAlbumVisibleScheduleRetryAfterInflight(host, true, added > 0 ? PUMP_UI_GAP_MS : 48);
+        return;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, added > 0 ? PUMP_UI_GAP_MS : 2));
     }
 
-    if (epoch !== host.pumpEpoch || gen !== host.loadGen) {
+    if (galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive) >= 0) {
+      galleryAlbumVisibleScheduleRetryAfterInflight(host, true, PUMP_UI_GAP_MS);
       return;
     }
-    if (added === -1) {
-      return;
-    }
-    if (added === -2) {
-      const e2 = host.pumpEpoch;
-      setTimeout((): void => {
-        if (e2 !== host.pumpEpoch || host.isDraggingOrFling || host.visualPlaceholderMode) {
-          return;
-        }
-        host.pumpLoad(true);
-      }, 3000);
-      return;
-    }
-    if (added === -3) {
-      const e3 = host.pumpEpoch;
-      setTimeout((): void => {
-        if (e3 !== host.pumpEpoch || host.isDraggingOrFling || host.visualPlaceholderMode) {
-          return;
-        }
-        host.pumpLoad(true);
-      }, 500);
-      return;
-    }
-
-    await new Promise<void>((resolve) => setTimeout(resolve, added > 0 ? PUMP_UI_GAP_MS : 2));
   }
 }
 

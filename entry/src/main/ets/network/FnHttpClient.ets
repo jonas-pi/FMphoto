@@ -752,8 +752,22 @@ export class FnHttpClient {
       if (skipRemoteCert) {
         opt.remoteValidation = 'skip';
       }
-      const resp = await httpRequest.request(fullUrl, opt);
-      const text = typeof resp.result === 'string' ? resp.result : JSON.stringify(resp.result);
+      let resp: http.HttpResponse;
+      try {
+        resp = await httpRequest.request(fullUrl, opt);
+      } catch (e) {
+        throw new Error(`http request failed: ${String(e)}`);
+      }
+      let text = '';
+      if (typeof resp.result === 'string') {
+        text = resp.result;
+      } else {
+        try {
+          text = JSON.stringify(resp.result);
+        } catch (e) {
+          throw new Error(`serialize http response failed: ${String(e)}`);
+        }
+      }
       const out: RawHttpResult = {
         code: resp.responseCode as number,
         headers: resp.header,

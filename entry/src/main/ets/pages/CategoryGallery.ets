@@ -95,6 +95,14 @@ struct CategoryGallery {
     return true;
   }
 
+  private vpToPx(value: number): number {
+    try {
+      return this.getUIContext().vp2px(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
   private applySystemBar(): void {
     try {
       const dark = this.isDarkTheme;
@@ -440,8 +448,8 @@ struct CategoryGallery {
                           if (pt === null) {
                             return;
                           }
-                          const xPx = vp2px(pt.x);
-                          const yPx = vp2px(pt.y);
+                          const xPx = this.vpToPx(pt.x);
+                          const yPx = this.vpToPx(pt.y);
                           const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
                           if (fi < 0 || fi >= this.flatItems.length) {
                             return;
@@ -470,8 +478,8 @@ struct CategoryGallery {
                           if (pt === null) {
                             return;
                           }
-                          const xPx = vp2px(pt.x);
-                          const yPx = vp2px(pt.y);
+                          const xPx = this.vpToPx(pt.x);
+                          const yPx = this.vpToPx(pt.y);
                           const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
                           if (fi < 0 || fi >= this.flatItems.length) {
                             return;

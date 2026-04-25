@@ -80,23 +80,25 @@ export struct GalleryAlbumMainModeView {
     return this.sectionsLength > 0 || this.orderedDaysLength > 0;
   }
 
+  private vpToPx(value: number): number {
+    try {
+      return this.getUIContext().vp2px(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
   @Builder
   private buildGalleryTimelineThumbCell(item: GalleryListItem, flatIndex: number) {
     Stack({ alignContent: Alignment.TopEnd }) {
-      if (this.timelineSidebarDragging) {
-        GalleryStaticThumbPlaceholder({ animatePulse: this.timelineSidebarDragging })
-          .width('100%')
-          .aspectRatio(1)
-      } else {
-        GalleryNetworkThumb({
-          uri: nasUrl(this.baseUrl, pickThumb(item)),
-          isVideo: isVideoItem(item),
-          isGif: isGifItem(item),
-          paused: false
-        })
-          .width('100%')
-          .aspectRatio(1)
-      }
+      GalleryNetworkThumb({
+        uri: nasUrl(this.baseUrl, pickThumb(item)),
+        isVideo: isVideoItem(item),
+        isGif: isGifItem(item),
+        paused: this.timelineSidebarDragging
+      })
+        .width('100%')
+        .aspectRatio(1)
       Column()
         .width('100%')
         .height('100%')
@@ -186,9 +188,15 @@ export struct GalleryAlbumMainModeView {
               }
             }
           }, (slot: GalleryListItem | null, k: number) => {
-            const fi = node.rowSlotFlatIndices[k];
-            if (slot !== null && slot !== undefined && fi >= 0) {
-              return `ti_${fi}`;
+            if (slot !== null && slot !== undefined) {
+              const id = this.itemIdOf(slot);
+              if (id.length > 0) {
+                return `ti_${node.key}_${k}_${id}`;
+              }
+              const fi = node.rowSlotFlatIndices[k];
+              if (fi >= 0) {
+                return `ti_${node.key}_${k}_f${fi}`;
+              }
             }
             return `sk_${node.key}_${k}`;
           })
@@ -210,8 +218,8 @@ export struct GalleryAlbumMainModeView {
               if (pt === null) {
                 return;
               }
-              const xPx = vp2px(pt.x);
-              const yPx = vp2px(pt.y);
+              const xPx = this.vpToPx(pt.x);
+              const yPx = this.vpToPx(pt.y);
               const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
               if (fi < 0) {
                 return;
@@ -247,8 +255,8 @@ export struct GalleryAlbumMainModeView {
               if (pt === null) {
                 return;
               }
-              const xPx = vp2px(pt.x);
-              const yPx = vp2px(pt.y);
+              const xPx = this.vpToPx(pt.x);
+              const yPx = this.vpToPx(pt.y);
               const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
               if (fi < 0) {
                 return;

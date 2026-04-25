@@ -1,6 +1,3 @@
-/**
- * 会话与信任列表持久化（preferences）
- */
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 
@@ -13,17 +10,12 @@ const K_DOMAIN_INPUT = 'domain_input';
 const K_USE_HTTPS = 'use_https';
 const K_ALBUM_PARENT = 'album_parent_guid';
 const K_TRUSTED = 'trusted_hosts_json';
-/** 上次登录成功时保存的密码（与系统密码保险箱配合；本地 preferences 仅存一份便于冷启动回填） */
 const K_LAST_PASSWORD = 'last_password';
 const K_FNOS_LONG_TOKEN = 'fnos_long_token';
-/** 通过 WebSocket 主通道登录；为 true 时 OpenAPI user/info 可能不可用，冷启动不强制校验 */
 const K_LOGIN_VIA_WS = 'login_via_ws';
-/** WS HMAC：解密 secret 得到的密钥原始字节，以 Base64 存储（与 Python hmac_key 一致） */
 const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
-/** OpenAPI Authx：登录阶段动态获取并持久化，避免源码硬编码敏感常量 */
 const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
-/** 首次启动免责声明同意标记：1=已同意，0/空=未同意 */
 const K_LEGAL_ACCEPTED = 'legal_notice_accepted';
 
 export interface StoredSession {
@@ -34,19 +26,13 @@ export interface StoredSession {
   useHttps: boolean;
   albumParentGuid: string;
   trustedHosts: string[];
-  /** 与浏览器 Cookie「fnos-long-token」对应，可能由登录响应 Set-Cookie 下发 */
   fnosLongToken: string;
-  /** 是否经 wss .../websocket?type=main 登录（与 HTTP OpenAPI 会话可能不互通） */
   loginViaWebSocket: boolean;
-  /** secret 解密密钥 K 的 Base64：与 WS HMAC、H5 localStorage「fnos-Secret」相同（见 sample） */
   wsSignKeyB64: string;
-  /** OpenAPI Authx 的动态 key（登录后注入；用于 /v/api/v1 签名） */
   openApiAuthxKey: string;
-  /** OpenAPI Authx 的动态 secret（登录后注入；用于 /v/api/v1 签名） */
   openApiAuthxSecret: string;
 }
 
-/** 登录页回填：不依赖 token，退出登录后仍可读 */
 export interface LoginFormDefaults {
   domainInput: string;
   username: string;
@@ -54,137 +40,152 @@ export interface LoginFormDefaults {
   useHttps: boolean;
 }
 
-async function openPrefs(ctx: common.UIAbilityContext) {
-  return preferences.getPreferences(ctx, PREF_NAME);
+async function openPrefs(ctx: common.UIAbilityContext): Promise<preferences.Preferences> {
+  try {
+    return await preferences.getPreferences(ctx, PREF_NAME);
+  } catch (e) {
+    throw new Error(`open preferences failed: ${String(e)}`);
+  }
+}
+
+async function prefsGetString(p: preferences.Preferences, key: string, def: string): Promise<string> {
+  try {
+    return await p.get(key, def) as string;
+  } catch (e) {
+    throw new Error(`preferences get ${key} failed: ${String(e)}`);
+  }
+}
+
+async function prefsPutString(p: preferences.Preferences, key: string, value: string): Promise<void> {
+  try {
+    await p.put(key, value);
+  } catch (e) {
+    throw new Error(`preferences put ${key} failed: ${String(e)}`);
+  }
+}
+
+async function prefsFlush(p: preferences.Preferences): Promise<void> {
+  try {
+    await p.flush();
+  } catch (e) {
+    throw new Error(`preferences flush failed: ${String(e)}`);
+  }
+}
+
+async function prefsClear(p: preferences.Preferences): Promise<void> {
+  try {
+    await p.clear();
+  } catch (e) {
+    throw new Error(`preferences clear failed: ${String(e)}`);
+  }
+}
+
+function parseTrustedHostsSafe(raw: string): string[] {
+  try {
+    return JSON.parse(raw) as string[];
+  } catch (_e) {
+    return [];
+  }
 }
 
 export class SessionPreferences {
-  /** 是否已同意启动免责声明 */
   static async isLegalNoticeAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
     const p = await openPrefs(ctx);
-    return (await p.get(K_LEGAL_ACCEPTED, '0') as string) === '1';
+    return (await prefsGetString(p, K_LEGAL_ACCEPTED, '0')) === '1';
   }
 
-  /** 持久化启动免责声明同意状态 */
   static async setLegalNoticeAccepted(ctx: common.UIAbilityContext, accepted: boolean): Promise<void> {
     const p = await openPrefs(ctx);
-    await p.put(K_LEGAL_ACCEPTED, accepted ? '1' : '0');
-    await p.flush();
+    await prefsPutString(p, K_LEGAL_ACCEPTED, accepted ? '1' : '0');
+    await prefsFlush(p);
   }
 
   static async load(ctx: common.UIAbilityContext): Promise<StoredSession | null> {
     const p = await openPrefs(ctx);
-    const token = await p.get(K_TOKEN, '') as string;
+    const token = await prefsGetString(p, K_TOKEN, '');
     if (token.length === 0) {
       return null;
     }
-    const baseUrl = await p.get(K_BASE_URL, '') as string;
-    const account = await p.get(K_ACCOUNT, '') as string;
-    const domainInput = await p.get(K_DOMAIN_INPUT, '') as string;
-    const useHttps = (await p.get(K_USE_HTTPS, '1') as string) === '1';
-    const albumParentGuid = await p.get(K_ALBUM_PARENT, '') as string;
-    let trustedHosts: string[] = [];
-    const tj = await p.get(K_TRUSTED, '[]') as string;
-    try {
-      trustedHosts = JSON.parse(tj) as string[];
-    } catch (_e) {
-      trustedHosts = [];
-    }
-    const fnosLongToken = await p.get(K_FNOS_LONG_TOKEN, '') as string;
-    const loginViaWs = (await p.get(K_LOGIN_VIA_WS, '0') as string) === '1';
-    const wsSignKeyB64 = await p.get(K_WS_SIGN_KEY_B64, '') as string;
-    const openApiAuthxKey = await p.get(K_OPENAPI_AUTHX_KEY, '') as string;
-    const openApiAuthxSecret = await p.get(K_OPENAPI_AUTHX_SECRET, '') as string;
     return {
-      baseUrl: baseUrl,
+      baseUrl: await prefsGetString(p, K_BASE_URL, ''),
       token: token,
-      account: account,
-      domainInput: domainInput,
-      useHttps: useHttps,
-      albumParentGuid: albumParentGuid,
-      trustedHosts: trustedHosts,
-      fnosLongToken: fnosLongToken,
-      loginViaWebSocket: loginViaWs,
-      wsSignKeyB64: wsSignKeyB64,
-      openApiAuthxKey: openApiAuthxKey,
-      openApiAuthxSecret: openApiAuthxSecret
+      account: await prefsGetString(p, K_ACCOUNT, ''),
+      domainInput: await prefsGetString(p, K_DOMAIN_INPUT, ''),
+      useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1',
+      albumParentGuid: await prefsGetString(p, K_ALBUM_PARENT, ''),
+      trustedHosts: parseTrustedHostsSafe(await prefsGetString(p, K_TRUSTED, '[]')),
+      fnosLongToken: await prefsGetString(p, K_FNOS_LONG_TOKEN, ''),
+      loginViaWebSocket: (await prefsGetString(p, K_LOGIN_VIA_WS, '0')) === '1',
+      wsSignKeyB64: await prefsGetString(p, K_WS_SIGN_KEY_B64, ''),
+      openApiAuthxKey: await prefsGetString(p, K_OPENAPI_AUTHX_KEY, ''),
+      openApiAuthxSecret: await prefsGetString(p, K_OPENAPI_AUTHX_SECRET, '')
     };
   }
 
   static async save(ctx: common.UIAbilityContext, s: StoredSession, loginPassword?: string): Promise<void> {
     const p = await openPrefs(ctx);
-    await p.put(K_BASE_URL, s.baseUrl);
-    await p.put(K_TOKEN, s.token);
-    await p.put(K_ACCOUNT, s.account);
-    await p.put(K_DOMAIN_INPUT, s.domainInput);
-    await p.put(K_USE_HTTPS, s.useHttps ? '1' : '0');
-    await p.put(K_ALBUM_PARENT, s.albumParentGuid);
-    await p.put(K_TRUSTED, JSON.stringify(s.trustedHosts));
-    // 仅在实际变更时写入密码，降低系统凭据服务对「重复提交同一密码」的感知
+    await prefsPutString(p, K_BASE_URL, s.baseUrl);
+    await prefsPutString(p, K_TOKEN, s.token);
+    await prefsPutString(p, K_ACCOUNT, s.account);
+    await prefsPutString(p, K_DOMAIN_INPUT, s.domainInput);
+    await prefsPutString(p, K_USE_HTTPS, s.useHttps ? '1' : '0');
+    await prefsPutString(p, K_ALBUM_PARENT, s.albumParentGuid);
+    await prefsPutString(p, K_TRUSTED, JSON.stringify(s.trustedHosts));
     if (loginPassword !== undefined) {
-      const prevPw = await p.get(K_LAST_PASSWORD, '') as string;
+      const prevPw = await prefsGetString(p, K_LAST_PASSWORD, '');
       if (prevPw !== loginPassword) {
-        await p.put(K_LAST_PASSWORD, loginPassword);
+        await prefsPutString(p, K_LAST_PASSWORD, loginPassword);
       }
     }
-    await p.put(K_FNOS_LONG_TOKEN, s.fnosLongToken);
-    await p.put(K_LOGIN_VIA_WS, s.loginViaWebSocket ? '1' : '0');
-    await p.put(K_WS_SIGN_KEY_B64, s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '');
-    await p.put(K_OPENAPI_AUTHX_KEY, s.openApiAuthxKey.length > 0 ? s.openApiAuthxKey : '');
-    await p.put(K_OPENAPI_AUTHX_SECRET, s.openApiAuthxSecret.length > 0 ? s.openApiAuthxSecret : '');
-    await p.flush();
+    await prefsPutString(p, K_FNOS_LONG_TOKEN, s.fnosLongToken);
+    await prefsPutString(p, K_LOGIN_VIA_WS, s.loginViaWebSocket ? '1' : '0');
+    await prefsPutString(p, K_WS_SIGN_KEY_B64, s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '');
+    await prefsPutString(p, K_OPENAPI_AUTHX_KEY, s.openApiAuthxKey.length > 0 ? s.openApiAuthxKey : '');
+    await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, s.openApiAuthxSecret.length > 0 ? s.openApiAuthxSecret : '');
+    await prefsFlush(p);
   }
 
-  /** 退出登录后用于回填服务器、账号、密码、HTTPS 开关 */
   static async loadLoginFormDefaults(ctx: common.UIAbilityContext): Promise<LoginFormDefaults> {
     const p = await openPrefs(ctx);
     return {
-      domainInput: await p.get(K_DOMAIN_INPUT, '') as string,
-      username: await p.get(K_ACCOUNT, '') as string,
-      password: await p.get(K_LAST_PASSWORD, '') as string,
-      useHttps: (await p.get(K_USE_HTTPS, '1') as string) === '1'
+      domainInput: await prefsGetString(p, K_DOMAIN_INPUT, ''),
+      username: await prefsGetString(p, K_ACCOUNT, ''),
+      password: await prefsGetString(p, K_LAST_PASSWORD, ''),
+      useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1'
     };
   }
 
-  /** 仅清除会话（令牌与 baseUrl），保留上次填写的登录信息与信任列表 */
   static async clearSession(ctx: common.UIAbilityContext): Promise<void> {
     const p = await openPrefs(ctx);
-    await p.put(K_TOKEN, '');
-    await p.put(K_BASE_URL, '');
-    await p.put(K_FNOS_LONG_TOKEN, '');
-    await p.put(K_LOGIN_VIA_WS, '0');
-    await p.put(K_WS_SIGN_KEY_B64, '');
-    await p.put(K_OPENAPI_AUTHX_KEY, '');
-    await p.put(K_OPENAPI_AUTHX_SECRET, '');
-    await p.flush();
+    await prefsPutString(p, K_TOKEN, '');
+    await prefsPutString(p, K_BASE_URL, '');
+    await prefsPutString(p, K_FNOS_LONG_TOKEN, '');
+    await prefsPutString(p, K_LOGIN_VIA_WS, '0');
+    await prefsPutString(p, K_WS_SIGN_KEY_B64, '');
+    await prefsPutString(p, K_OPENAPI_AUTHX_KEY, '');
+    await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, '');
+    await prefsFlush(p);
   }
 
-  /** 无有效 token 时仍恢复自签信任列表（与 clearSession 搭配使用） */
   static async loadTrustedHostsSnapshot(ctx: common.UIAbilityContext): Promise<string[]> {
     const p = await openPrefs(ctx);
-    const tj = await p.get(K_TRUSTED, '[]') as string;
-    try {
-      return JSON.parse(tj) as string[];
-    } catch (_e) {
-      return [];
-    }
+    return parseTrustedHostsSafe(await prefsGetString(p, K_TRUSTED, '[]'));
   }
 
-  /** 仅清除令牌（校验失败时） */
   static async clearToken(ctx: common.UIAbilityContext): Promise<void> {
     const p = await openPrefs(ctx);
-    await p.put(K_TOKEN, '');
-    await p.put(K_FNOS_LONG_TOKEN, '');
-    await p.put(K_LOGIN_VIA_WS, '0');
-    await p.put(K_WS_SIGN_KEY_B64, '');
-    await p.put(K_OPENAPI_AUTHX_KEY, '');
-    await p.put(K_OPENAPI_AUTHX_SECRET, '');
-    await p.flush();
+    await prefsPutString(p, K_TOKEN, '');
+    await prefsPutString(p, K_FNOS_LONG_TOKEN, '');
+    await prefsPutString(p, K_LOGIN_VIA_WS, '0');
+    await prefsPutString(p, K_WS_SIGN_KEY_B64, '');
+    await prefsPutString(p, K_OPENAPI_AUTHX_KEY, '');
+    await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, '');
+    await prefsFlush(p);
   }
 
   static async clearAll(ctx: common.UIAbilityContext): Promise<void> {
     const p = await openPrefs(ctx);
-    await p.clear();
-    await p.flush();
+    await prefsClear(p);
+    await prefsFlush(p);
   }
 }

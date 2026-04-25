@@ -3,7 +3,6 @@
  * getRSAPub -> encrypted(user.login) -> user.authToken（HMAC 前缀 + JSON）
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
 import { buildFnMainWebSocketUrl } from './ServerUrl';
@@ -92,8 +91,36 @@ function messageToString(value: string | ArrayBuffer): string {
     return value;
   }
   const u8 = new Uint8Array(value);
-  const dec = new util.TextDecoder('utf-8');
-  return dec.decode(u8);
+  let out = '';
+  for (let i = 0; i < u8.length; i++) {
+    const b0 = u8[i];
+    if (b0 < 0x80) {
+      out += String.fromCharCode(b0);
+      continue;
+    }
+    if ((b0 & 0xe0) === 0xc0 && i + 1 < u8.length) {
+      const b1 = u8[++i];
+      out += String.fromCharCode(((b0 & 0x1f) << 6) | (b1 & 0x3f));
+      continue;
+    }
+    if ((b0 & 0xf0) === 0xe0 && i + 2 < u8.length) {
+      const b1 = u8[++i];
+      const b2 = u8[++i];
+      out += String.fromCharCode(((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f));
+      continue;
+    }
+    if ((b0 & 0xf8) === 0xf0 && i + 3 < u8.length) {
+      const b1 = u8[++i];
+      const b2 = u8[++i];
+      const b3 = u8[++i];
+      const codePoint = ((b0 & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+      const cp = codePoint - 0x10000;
+      out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+      continue;
+    }
+    out += '\uFFFD';
+  }
+  return out;
 }
 
 function parseJsonSafe(text: string): WsJson | null {

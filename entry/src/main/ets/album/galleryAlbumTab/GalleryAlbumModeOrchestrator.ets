@@ -1,5 +1,5 @@
-import { picker } from '@kit.CoreFileKit';
 import { UIContext } from '@kit.ArkUI';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import {
   AiPersonItem,
   GalleryListItem,
@@ -214,10 +214,10 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
   }
   let uris: string[] = [];
   try {
-    const opt = new picker.PhotoSelectOptions();
+    const opt = new photoAccessHelper.PhotoSelectOptions();
     opt.maxSelectNumber = 20;
-    opt.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-    const out = await new picker.PhotoViewPicker().select(opt);
+    opt.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    const out = await new photoAccessHelper.PhotoViewPicker().select(opt);
     uris = out.photoUris ?? [];
   } catch (_e) {
     return;

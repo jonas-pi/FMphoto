@@ -160,9 +160,25 @@ export function recycleBinReadGestureFingerWindow(ev: GestureEvent): RbFingerWin
   return { x, y };
 }
 
-export function recycleBinPanOffsetVpToPx(deltaVp: number): number {
+function recycleBinVpToPx(host: RecycleBinSelectionHost, value: number): number {
+  try {
+    return host.getUIContext().vp2px(value);
+  } catch (_e) {
+    return value;
+  }
+}
+
+function recycleBinPxToVp(host: RecycleBinSelectionHost, value: number): number {
+  try {
+    return host.getUIContext().px2vp(value);
+  } catch (_e) {
+    return value;
+  }
+}
+
+export function recycleBinPanOffsetVpToPx(host: RecycleBinSelectionHost, deltaVp: number): number {
   const probePx = 100;
-  const probeVp = px2vp(probePx);
+  const probeVp = recycleBinPxToVp(host, probePx);
   if (probeVp < 0.0001) {
     return deltaVp;
   }
@@ -350,8 +366,8 @@ export function recycleBinBeginSlideSelectGesture(
   recycleBinRecordThumbRect(host, anchorFlat);
   const win = recycleBinReadGestureFingerWindow(ev);
   if (win !== null) {
-    host.rbSlideRefX = vp2px(win.x);
-    host.rbSlideRefY = vp2px(win.y);
+    host.rbSlideRefX = recycleBinVpToPx(host, win.x);
+    host.rbSlideRefY = recycleBinVpToPx(host, win.y);
     host.rbSlideHasRef = true;
   } else {
     const cached = host.rbThumbHitBounds.get(`${anchorFlat}`);
@@ -385,14 +401,14 @@ export function recycleBinResolveSlidePointerWindowPx(
 ): RbFingerWindowPoint | null {
   const win = recycleBinReadGestureFingerWindow(ev);
   if (win !== null) {
-    return { x: vp2px(win.x), y: vp2px(win.y) };
+    return { x: recycleBinVpToPx(host, win.x), y: recycleBinVpToPx(host, win.y) };
   }
   if (!host.rbSlideHasRef) {
     return null;
   }
   return {
-    x: host.rbSlideRefX + recycleBinPanOffsetVpToPx(ev.offsetX),
-    y: host.rbSlideRefY + recycleBinPanOffsetVpToPx(ev.offsetY)
+    x: host.rbSlideRefX + recycleBinPanOffsetVpToPx(host, ev.offsetX),
+    y: host.rbSlideRefY + recycleBinPanOffsetVpToPx(host, ev.offsetY)
   };
 }
 
