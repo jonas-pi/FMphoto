@@ -25,10 +25,38 @@ import {
 struct Settings {
   @State private albumParentGuid: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  @State private systemTopInsetVp: number = 0;
+
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private syncSystemTopInset(): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win): void => {
+        try {
+          const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+          this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
+        } catch (_e) {
+          this.systemTopInsetVp = 0;
+        }
+      }).catch((_e: Error): void => {
+        this.systemTopInsetVp = 0;
+      });
+    } catch (_e) {
+      this.systemTopInsetVp = 0;
+    }
+  }
 
   aboutToAppear(): void {
     const s = AppSession.getStored();
     this.albumParentGuid = s !== null ? s.albumParentGuid : '';
+    this.syncSystemTopInset();
   }
 
   onPageShow(): void {
@@ -103,7 +131,7 @@ struct Settings {
       .padding({
         left: GALLERY_TOP_BAR_PAD_LEFT_VP,
         right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-        top: GALLERY_TOP_BAR_PAD_TOP_VP,
+        top: GALLERY_TOP_BAR_PAD_TOP_VP + this.systemTopInsetVp,
         bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
       })
 
@@ -112,6 +140,7 @@ struct Settings {
         .width('100%')
 
       TextInput({ text: this.albumParentGuid, placeholder: 'fv_xxxx...' })
+        .enableKeyboardOnFocus(false)
         .onChange((v: string) => {
           this.albumParentGuid = v;
         })
@@ -136,7 +165,6 @@ struct Settings {
     .height('100%')
     .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.page_background'))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   pageTransition(): void {

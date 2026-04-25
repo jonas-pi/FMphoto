@@ -1,10 +1,13 @@
 /**
- * 批量下载 NAS 图库媒体到本机相册（PhotoViewPicker.save + 网络拉流写入）。
- * 与 GalleryPreview 单张下载逻辑对齐：图片可选原图/缩略图，视频始终拉流原文件。
+ * 批量下载 NAS 图库媒体到本机相册。
+ * 保留原有的批量选择与下载质量逻辑，只把最终保存出口改成系统相册保存确认。
  */
-import { fileIo, picker } from '@kit.CoreFileKit';
-import { GalleryListItem } from '../model/FnApiTypes';
+import { common } from '@kit.AbilityKit';
+import { fileIo, fileUri as fileUriUtil } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { AppSession } from '../auth/AppSession';
+import { GalleryListItem } from '../model/FnApiTypes';
+import { copyGalleryUriContentToAlbumUri } from './GalleryAlbumSaveToAlbum';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from './GalleryAlbumCommon';
 
 function itemHasOriginalPhoto(it: GalleryListItem): boolean {
@@ -50,8 +53,35 @@ function suggestedBaseName(it: GalleryListItem, idx: number): string {
   return `nas_${idx}_${Date.now()}`;
 }
 
+async function copyPreparedFilesToAlbum(
+  preparedFileUris: string[],
+  preparedConfigs: photoAccessHelper.PhotoCreationConfig[],
+  hostContext: common.UIAbilityContext
+): Promise<number> {
+  try {
+    const targetUris = await photoAccessHelper
+      .getPhotoAccessHelper(hostContext)
+      .showAssetsCreationDialog(preparedFileUris, preparedConfigs);
+    if (targetUris.length === 0) {
+      return 0;
+    }
+    let savedCount = 0;
+    const limit = Math.min(targetUris.length, preparedFileUris.length);
+    for (let i = 0; i < limit; i++) {
+      const saved = await copyGalleryUriContentToAlbumUri(preparedFileUris[i], targetUris[i]);
+      if (!saved) {
+        return -1;
+      }
+      savedCount++;
+    }
+    return savedCount;
+  } catch (_e) {
+    return -1;
+  }
+}
+
 /**
- * 按当前列表顺序收集已选 id 对应的条目（去重顺序与列表一致）。
+ * 按当前列表顺序收集已选中 id 对应的条目，去重顺序与列表一致。
  */
 export function galleryItemsMatchingSelectedIds(
   list: GalleryListItem[],
@@ -79,17 +109,18 @@ export function galleryItemsMatchingSelectedIds(
 }
 
 /**
- * 批量下载：一次系统保存面板（多文件名），再逐条拉取并写入对应 URI。
- * 使用独立回调参数而非 UI 对象字面量，以满足 arkts-no-untyped-obj-literals。
+ * 批量下载：先拉到应用缓存，再弹系统相册保存确认。
+ * 图片仍按原逻辑可选原图/缩略图，视频始终下载原文件。
  */
 export async function runBatchDownloadGalleryItems(
   baseUrl: string,
   items: GalleryListItem[],
+  hostContext: common.UIAbilityContext,
   toastMsg: (msg: string) => void,
   askBatchImageQuality: () => Promise<'original' | 'thumb' | 'cancel'>
 ): Promise<void> {
   if (items.length === 0) {
-    toastMsg('没有可下载的项');
+    toastMsg('没有可下载的项目');
     return;
   }
   const client = AppSession.getClient();
@@ -114,30 +145,11 @@ export async function runBatchDownloadGalleryItems(
     useOriginalForImages = q === 'original';
   }
 
-  const names: string[] = [];
+  const preparedFileUris: string[] = [];
+  const preparedConfigs: photoAccessHelper.PhotoCreationConfig[] = [];
+  const tempPaths: string[] = [];
   for (let i = 0; i < items.length; i++) {
-    const ext = suggestedSaveExt(items[i]);
-    names.push(`${suggestedBaseName(items[i], i)}.${ext}`);
-  }
-
-  let uris: string[] = [];
-  try {
-    const saveOptions = new picker.PhotoSaveOptions();
-    saveOptions.newFileNames = names;
-    uris = await new picker.PhotoViewPicker().save(saveOptions);
-  } catch (_e) {
-    toastMsg('保存已取消');
-    return;
-  }
-  if (uris.length === 0) {
-    toastMsg('已取消保存');
-    return;
-  }
-  const n = Math.min(items.length, uris.length);
-  let ok = 0;
-  for (let i = 0; i < n; i++) {
     const it = items[i];
-    const uri = uris[i];
     const isVideo = isVideoItem(it);
     let url = '';
     if (isVideo) {
@@ -150,18 +162,73 @@ export async function runBatchDownloadGalleryItems(
     if (url.length === 0) {
       continue;
     }
-    const timeoutMs = isVideo ? 120000 : (useOriginalForImages ? 60000 : 15000);
+
+    const ext = suggestedSaveExt(it);
+    const tempPath = `${hostContext.cacheDir}/batch_download_${Date.now()}_${i}.${ext}`;
+    if (isVideo) {
+      const downloaded = await client.downloadGalleryAssetToFile(url, tempPath, 600000);
+      if (!downloaded) {
+        continue;
+      }
+      tempPaths.push(tempPath);
+      preparedFileUris.push(fileUriUtil.getUriFromPath(tempPath));
+      preparedConfigs.push({
+        title: suggestedBaseName(it, i),
+        fileNameExtension: ext,
+        photoType: photoAccessHelper.PhotoType.VIDEO
+      });
+      continue;
+    }
+
+    const timeoutMs = useOriginalForImages ? 60000 : 15000;
     const buf = await client.fetchGalleryImageBuffer(url, timeoutMs);
     if (buf === undefined || buf.byteLength === 0) {
       continue;
     }
+
     try {
-      const saveFile = await fileIo.open(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
+      const saveFile = await fileIo.open(
+        tempPath,
+        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
       await fileIo.write(saveFile.fd, buf);
       await fileIo.close(saveFile.fd);
-      ok++;
+
+      tempPaths.push(tempPath);
+      preparedFileUris.push(fileUriUtil.getUriFromPath(tempPath));
+      preparedConfigs.push({
+        title: suggestedBaseName(it, i),
+        fileNameExtension: ext,
+        photoType: photoAccessHelper.PhotoType.IMAGE
+      });
     } catch (_e) {
     }
   }
-  toastMsg(`已保存 ${ok}/${items.length} 项`);
+
+  if (preparedFileUris.length === 0) {
+    toastMsg('没有可下载的项目');
+    return;
+  }
+
+  try {
+    const savedCount = await copyPreparedFilesToAlbum(preparedFileUris, preparedConfigs, hostContext);
+    if (savedCount < 0) {
+      toastMsg('保存失败，请重试');
+      return;
+    }
+    if (savedCount === 0) {
+      toastMsg('已取消保存');
+      return;
+    }
+    toastMsg(`已保存 ${savedCount}/${items.length} 项`);
+  } catch (_e) {
+    toastMsg('保存失败，请重试');
+  } finally {
+    for (let i = 0; i < tempPaths.length; i++) {
+      try {
+        await fileIo.unlink(tempPaths[i]);
+      } catch (_e) {
+      }
+    }
+  }
 }

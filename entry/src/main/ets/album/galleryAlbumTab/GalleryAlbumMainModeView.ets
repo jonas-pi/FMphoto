@@ -15,7 +15,7 @@ import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 
-const GALLERY_MAIN_LIST_CACHED_COUNT: number = 10;
+const GALLERY_MAIN_LIST_CACHED_COUNT: number = 6;
 
 @Component
 export struct GalleryAlbumMainModeView {
@@ -26,6 +26,7 @@ export struct GalleryAlbumMainModeView {
   @Prop galleryTimelineRefreshing: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
+  @Prop gallerySelectedIds: string[] = [];
   @Prop galleryBatchDownloading: boolean = false;
   @Prop galleryBatchDeleting: boolean = false;
   @Prop galleryMainListScrollEnabled: boolean = true;
@@ -48,7 +49,6 @@ export struct GalleryAlbumMainModeView {
   flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
-  isGalleryIdSelected: (id: string) => boolean = (_: string) => false;
   galleryThumbDomId: (photoId: string) => string = (_: string) => '';
   recordGalleryThumbRectFromDom: (photoId: string, domId: string) => void = (_: string, __: string) => {};
   onGalleryThumbTap: (item: GalleryListItem, flatIndex: number) => void = (_: GalleryListItem, __: number) => {};
@@ -82,6 +82,11 @@ export struct GalleryAlbumMainModeView {
     return this.sectionsLength > 0 || this.orderedDaysLength > 0;
   }
 
+  private isItemSelected(item: GalleryListItem): boolean {
+    const id = this.itemIdOf(item);
+    return id.length > 0 && this.gallerySelectedIds.indexOf(id) >= 0;
+  }
+
   private vpToPx(value: number): number {
     try {
       return this.getUIContext().vp2px(value);
@@ -97,7 +102,7 @@ export struct GalleryAlbumMainModeView {
         uri: nasUrl(this.baseUrl, pickThumb(item)),
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
-        paused: this.timelineSidebarDragging
+        paused: this.timelineSidebarDragging || this.isDraggingOrFling
       })
         .width('100%')
         .aspectRatio(1)
@@ -111,15 +116,15 @@ export struct GalleryAlbumMainModeView {
       }
       Column()
         .width('100%')
-        .height('100%')
+        .aspectRatio(1)
         .backgroundColor('#55000000')
-        .opacity(this.gallerySelectionMode && this.isGalleryIdSelected(this.itemIdOf(item)) ? 1 : 0)
+        .opacity(this.gallerySelectionMode && this.isItemSelected(item) ? 1 : 0)
         .hitTestBehavior(HitTestMode.None)
         .animation({ duration: 0, curve: Curve.Linear })
       Row() {
         Blank().layoutWeight(1)
         Column() {
-          if (this.isGalleryIdSelected(this.itemIdOf(item))) {
+          if (this.isItemSelected(item)) {
             SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
               .fontSize(24)
               .fontColor([$r('app.color.brand_primary')])

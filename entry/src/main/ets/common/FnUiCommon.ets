@@ -1,9 +1,12 @@
 /**
- * 通用 UI 组件：
- * - FnTopBar: 统一子页面顶栏（与图库首页 1-2-1、按钮 36vp 对齐）
+ * 通用 UI 组件。
+ * - FnTopBar: 统一子页面顶栏，与图库首页 1-2-1 布局和 36vp 按钮对齐
  * - FnPrimaryButton/FnSecondaryButton: 统一主次按钮样式
  * - FnFullLoadingMask: 统一全屏阻断式加载遮罩
  */
+
+import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 
 import {
   GALLERY_TOP_BAR_BUTTON_FONT_VP,
@@ -20,6 +23,37 @@ export struct FnTopBar {
   @Prop title: string = '';
   @Prop backText: string = '返回';
   @Prop rightText: string = '';
+  @State private systemTopInsetVp: number = 0;
+
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private syncSystemTopInset(): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win): void => {
+        try {
+          const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+          this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
+        } catch (_e) {
+          this.systemTopInsetVp = 0;
+        }
+      }).catch((_e: Error): void => {
+        this.systemTopInsetVp = 0;
+      });
+    } catch (_e) {
+      this.systemTopInsetVp = 0;
+    }
+  }
+
+  aboutToAppear(): void {
+    this.syncSystemTopInset();
+  }
 
   build() {
     Row() {
@@ -64,7 +98,7 @@ export struct FnTopBar {
     .padding({
       left: GALLERY_TOP_BAR_PAD_LEFT_VP,
       right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-      top: GALLERY_TOP_BAR_PAD_TOP_VP,
+      top: GALLERY_TOP_BAR_PAD_TOP_VP + this.systemTopInsetVp,
       bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
     })
   }
@@ -98,7 +132,7 @@ export struct FnSecondaryButton {
 
 @Component
 export struct FnFullLoadingMask {
-  @Prop text: string = '加载中…';
+  @Prop text: string = '加载中...';
 
   build() {
     Column({ space: 10 }) {
@@ -116,7 +150,7 @@ export struct FnFullLoadingMask {
 
 @Component
 export struct FnInlineLoading {
-  @Prop text: string = '加载中…';
+  @Prop text: string = '加载中...';
 
   build() {
     Row({ space: 10 }) {

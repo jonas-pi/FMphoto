@@ -637,22 +637,26 @@ export function galleryAlbumVisibleComputeLoadVisibleBufferAfterSlots(
 export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   host: GalleryAlbumVisibleLoadHost,
   forceImmediate: boolean = false,
-  aggressive: boolean = false
+  aggressive: boolean = false,
+  allowWhileInteracting: boolean = false
 ): void {
   galleryAlbumVisibleCancelScheduledRetry(host);
   const now = Date.now();
-  if (!forceImmediate && now - host.lastLoadVisibleAtMs < 300) {
+  const throttleWindowMs = allowWhileInteracting ? 96 : 300;
+  if (!forceImmediate && now - host.lastLoadVisibleAtMs < throttleWindowMs) {
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug('loadVisible throttled');
     }
     return;
   }
   host.lastLoadVisibleAtMs = now;
-  if (host.bootLoading || host.orderedDays.length === 0 || host.visualPlaceholderMode || host.isDraggingOrFling) {
+  if (host.bootLoading || host.orderedDays.length === 0 || host.visualPlaceholderMode
+    || (!allowWhileInteracting && host.isDraggingOrFling)) {
     if (GALLERY_SCROLL_DEBUG_LOG) {
       host.logScrollDebug(
         `loadVisible skip: boot=${host.bootLoading ? 1 : 0}, days=${host.orderedDays.length}, `
-        + `placeholder=${host.visualPlaceholderMode ? 1 : 0}, dragFling=${host.isDraggingOrFling ? 1 : 0}`
+        + `placeholder=${host.visualPlaceholderMode ? 1 : 0}, dragFling=${host.isDraggingOrFling ? 1 : 0}, `
+        + `allowInteractive=${allowWhileInteracting ? 1 : 0}`
       );
     }
     return;
@@ -670,6 +674,12 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       host.listVisibleLastNodeIdx
     );
     galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
+  }
+  if (allowWhileInteracting && !loadVisibleUsedScrollerRange) {
+    if (host.isInScrollInteractiveLogWindow()) {
+      host.logScrollDebug('loadVisible interactive skip: scroller visible range unavailable');
+    }
+    return;
   }
   let refFirst = Math.max(0, Math.min(totalNodes - 1, host.listVisibleFirstNodeIdx));
   let refLast = Math.max(refFirst, Math.min(totalNodes - 1, host.listVisibleLastNodeIdx));

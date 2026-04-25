@@ -27,6 +27,8 @@ export interface SelectionGestureControllerHost {
   gallerySlideUnionBase: string[];
   gallerySlideLastEndFlat: number;
   gallerySlideLastAppliedEndFlat: number;
+  gallerySlideLastApplyMs: number;
+  gallerySlidePendingEndFlat: number;
   galleryLongPressIgnoreClickUntil: number;
   gallerySlideRefX: number;
   gallerySlideRefY: number;
@@ -45,6 +47,9 @@ export interface SelectionGestureControllerHost {
   openPreview(flatIndex: number): void;
   resolveGalleryFlatIndexForOpenPreview(item: GalleryListItem, hintFlat: number): number;
 }
+
+const GALLERY_SLIDE_SELECTION_APPLY_MIN_GAP_MS: number = 24;
+const GALLERY_SLIDE_SELECTION_APPLY_FORCE_GAP_FLATS: number = 2;
 
 function pickSearchThumbFlatUnderPointForSlide(
   host: SelectionGestureControllerHost,
@@ -169,6 +174,8 @@ export function selectionBeginGallerySlideSelectGesture(
   host.gallerySlideUnionBase = host.gallerySelectedIds.slice();
   host.gallerySlideLastEndFlat = host.gallerySlideAnchorFlat;
   host.gallerySlideLastAppliedEndFlat = -99999;
+  host.gallerySlideLastApplyMs = 0;
+  host.gallerySlidePendingEndFlat = host.gallerySlideAnchorFlat;
   const anchorId = host.itemIdOf(item);
   if (host.inSearchMode) {
     selectionRecordSearchThumbRect(host, anchorFlat);
@@ -205,6 +212,10 @@ export function selectionBeginGallerySlideSelectGesture(
 }
 
 export function selectionEndGallerySlideSelectGesture(host: SelectionGestureControllerHost): void {
+  const pendingEndFlat = host.gallerySlidePendingEndFlat;
+  if (pendingEndFlat >= 0 && pendingEndFlat !== host.gallerySlideLastAppliedEndFlat) {
+    selectionApplyGallerySlideRowRangeSelection(host, pendingEndFlat);
+  }
   if (!host.gallerySlideGestureActive && host.galleryMainListScrollEnabled) {
     return;
   }
@@ -214,6 +225,8 @@ export function selectionEndGallerySlideSelectGesture(host: SelectionGestureCont
   host.gallerySlideUnionBase = [];
   host.gallerySlideLastEndFlat = -1;
   host.gallerySlideLastAppliedEndFlat = -99999;
+  host.gallerySlideLastApplyMs = 0;
+  host.gallerySlidePendingEndFlat = -1;
   host.galleryMainListScrollEnabled = true;
 }
 
@@ -565,6 +578,8 @@ export function selectionApplyGallerySlideRowRangeSelection(
     }
   }
   host.gallerySlideLastAppliedEndFlat = ef;
+  host.gallerySlideLastApplyMs = Date.now();
+  host.gallerySlidePendingEndFlat = ef;
   host.setGallerySelectedIdsState(next);
 }
 
@@ -585,7 +600,19 @@ export function selectionOnGallerySlidePanUpdate(
   if (hitFlat >= 0) {
     host.gallerySlideLastEndFlat = hitFlat;
   }
-  selectionApplyGallerySlideRowRangeSelection(host, host.gallerySlideLastEndFlat);
+  const targetEndFlat = host.gallerySlideLastEndFlat >= 0 ? host.gallerySlideLastEndFlat : host.gallerySlideAnchorFlat;
+  if (targetEndFlat < 0) {
+    return;
+  }
+  host.gallerySlidePendingEndFlat = targetEndFlat;
+  const now = Date.now();
+  const distanceFromApplied = host.gallerySlideLastAppliedEndFlat < 0
+    ? Number.MAX_SAFE_INTEGER
+    : Math.abs(targetEndFlat - host.gallerySlideLastAppliedEndFlat);
+  if (distanceFromApplied >= GALLERY_SLIDE_SELECTION_APPLY_FORCE_GAP_FLATS ||
+    now - host.gallerySlideLastApplyMs >= GALLERY_SLIDE_SELECTION_APPLY_MIN_GAP_MS) {
+    selectionApplyGallerySlideRowRangeSelection(host, targetEndFlat);
+  }
 }
 
 export function selectionIsGalleryIdSelected(

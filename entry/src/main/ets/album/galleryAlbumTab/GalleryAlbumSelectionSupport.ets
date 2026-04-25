@@ -42,16 +42,31 @@ export function galleryAlbumExitSelection(host: SelectionGestureControllerHost):
   host.gallerySlideUnionBase = [];
   host.gallerySlideLastEndFlat = -1;
   host.gallerySlideLastAppliedEndFlat = -99999;
+  host.gallerySlideLastApplyMs = 0;
+  host.gallerySlidePendingEndFlat = -1;
   host.galleryThumbHitBounds.clear();
   host.searchThumbHitBounds.clear();
   host.galleryMainListScrollEnabled = true;
 }
 
 export function galleryAlbumSameGalleryIdBagUnordered(a: string[], b: string[]): boolean {
+  if (a === b) {
+    return true;
+  }
   if (a.length !== b.length) {
     return false;
   }
   if (a.length === 0) {
+    return true;
+  }
+  let sameOrder = true;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      sameOrder = false;
+      break;
+    }
+  }
+  if (sameOrder) {
     return true;
   }
   const counts = new Map<string, number>();

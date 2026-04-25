@@ -91,6 +91,34 @@
     {
       "name": "gallery_timeline_month_pill_fg",
       "value": "#FFFFFFFF"
+    },
+    {
+      "name": "gallery_material_shell_bg",
+      "value": "#CFF7F9FC"
+    },
+    {
+      "name": "gallery_material_shell_border",
+      "value": "#26FFFFFF"
+    },
+    {
+      "name": "gallery_material_surface_bg",
+      "value": "#E8FFFFFF"
+    },
+    {
+      "name": "gallery_material_surface_strong_bg",
+      "value": "#F5FFFFFF"
+    },
+    {
+      "name": "gallery_material_surface_border",
+      "value": "#14001A33"
+    },
+    {
+      "name": "gallery_material_search_bg",
+      "value": "#B8FFFFFF"
+    },
+    {
+      "name": "gallery_material_search_placeholder",
+      "value": "#7A5B6675"
     }
   ]
 }

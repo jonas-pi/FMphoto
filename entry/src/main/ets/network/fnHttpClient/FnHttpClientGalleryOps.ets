@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPost, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
@@ -189,6 +190,109 @@ export class FnHttpClientGalleryOps {
       return out;
     } finally {
       FnHttpClientGalleryOps.inflightAssetReq.delete(fullUrl);
+    }
+  }
+
+  async downloadGalleryAssetToFile(
+    fullUrl: string,
+    filePath: string,
+    timeoutMs: number = 300000,
+    onProgress?: (receiveSize: number, totalSize: number) => void
+  ): Promise<boolean> {
+    let targetFd = -1;
+    const req = http.createHttp();
+    this.registerPendingRequest(req);
+    let writeQueue: Promise<void> = Promise.resolve();
+    let writeFailed = false;
+    let dataEndResolve: (() => void) | undefined = undefined;
+    const dataEndPromise = new Promise<void>((resolve) => {
+      dataEndResolve = resolve;
+    });
+    const onDataReceive = (chunk: ArrayBuffer): void => {
+      if (writeFailed || chunk.byteLength === 0) {
+        return;
+      }
+      const piece = chunk.slice(0);
+      writeQueue = writeQueue.then(async (): Promise<void> => {
+        if (writeFailed || targetFd < 0) {
+          return;
+        }
+        await fileIo.write(targetFd, piece);
+      }).catch((_e: Error): void => {
+        writeFailed = true;
+      });
+    };
+    const onDataEnd = (): void => {
+      if (dataEndResolve !== undefined) {
+        dataEndResolve();
+      }
+    };
+    const onDataReceiveProgress = (info: http.DataReceiveProgressInfo): void => {
+      if (onProgress === undefined) {
+        return;
+      }
+      const receiveSize = Number(info.receiveSize);
+      const totalSize = Number(info.totalSize);
+      onProgress(
+        Number.isFinite(receiveSize) ? receiveSize : 0,
+        Number.isFinite(totalSize) ? totalSize : 0
+      );
+    };
+    req.on('dataReceive', onDataReceive);
+    req.on('dataEnd', onDataEnd);
+    req.on('dataReceiveProgress', onDataReceiveProgress);
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const parsed = FnHttpClientGalleryOps.parseGalleryAssetUrl(fullUrl);
+      const authx = await genFnGalleryAuthxGet(parsed.signPath, parsed.queryParams);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Accept'] = '*/*';
+      const targetFile = await fileIo.open(
+        filePath,
+        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      targetFd = targetFile.fd;
+      const opt: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        header: headers,
+        connectTimeout: timeoutMs,
+        readTimeout: timeoutMs,
+        maxLimit: 100 * 1024 * 1024
+      };
+      if (CertPolicy.isTrusted(activeBase)) {
+        opt.remoteValidation = 'skip';
+      }
+      const responseCode = await req.requestInStream(fullUrl, opt);
+      if (responseCode < 200 || responseCode >= 300) {
+        return false;
+      }
+      await dataEndPromise;
+      await writeQueue;
+      if (writeFailed) {
+        return false;
+      }
+      return true;
+    } catch (_e) {
+      return false;
+    } finally {
+      req.off('dataReceive', onDataReceive);
+      req.off('dataEnd', onDataEnd);
+      req.off('dataReceiveProgress', onDataReceiveProgress);
+      this.unregisterPendingRequest(req);
+      try {
+        req.destroy();
+      } catch (_e) {
+      }
+      if (targetFd >= 0) {
+        try {
+          await fileIo.close(targetFd);
+        } catch (_e) {
+        }
+      }
     }
   }
 

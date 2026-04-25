@@ -1,4 +1,5 @@
 import { UIContext } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { runBatchDownloadGalleryItems } from '../../album/GalleryBatchDownload';
 import { AppSession } from '../../auth/AppSession';
 import { RecycleBinListItem } from '../../model/FnApiTypes';
@@ -11,6 +12,7 @@ export interface RecycleBinActionsHost {
   loading: boolean;
   restoring: boolean;
   rbBatchDownloading: boolean;
+  rbBackgroundLoading: boolean;
   error: string;
   items: RecycleBinListItem[];
   selectedIds: number[];
@@ -20,7 +22,9 @@ export interface RecycleBinActionsHost {
 
 export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<void> {
   host.loading = true;
+  host.rbBackgroundLoading = false;
   host.error = '';
+  host.items = [];
   const client = AppSession.getClient();
   if (client === null) {
     host.loading = false;
@@ -35,7 +39,9 @@ export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<vo
     for (;;) {
       const res = await client.getRecycleBinList(offset, RB_PAGE_LIMIT, startStr, endStr);
       if (!res.success || res.data === undefined) {
-        host.error = res.message ?? '回收站列表加载失败';
+        if (merged.length === 0) {
+          host.error = res.message ?? '回收站列表加载失败';
+        }
         break;
       }
       const batch = res.data.list;
@@ -48,18 +54,26 @@ export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<vo
           merged.push(el as RecycleBinListItem);
         }
       }
+      host.items = merged.slice();
+      if (host.loading) {
+        host.loading = false;
+      }
       if (batch.length < RB_PAGE_LIMIT) {
         break;
       }
+      host.rbBackgroundLoading = true;
       offset += RB_PAGE_LIMIT;
       if (offset > RB_SAFETY_MAX_OFFSET) {
         break;
       }
     }
-    host.items = merged;
+    host.items = merged.slice();
   } catch (e) {
-    host.error = String(e) || '回收站列表加载失败';
+    if (merged.length === 0) {
+      host.error = String(e) || '回收站列表加载失败';
+    }
   }
+  host.rbBackgroundLoading = false;
   host.loading = false;
 }
 
@@ -97,6 +111,7 @@ export async function recycleBinConfirmBatchDownload(host: RecycleBinActionsHost
     await runBatchDownloadGalleryItems(
       host.baseUrl,
       items,
+      host.getUIContext().getHostContext() as common.UIAbilityContext,
       (msg: string): void => {
         host.toast(msg);
       },

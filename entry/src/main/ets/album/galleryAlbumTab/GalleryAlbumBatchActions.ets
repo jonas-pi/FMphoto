@@ -1,4 +1,5 @@
 import { UIContext } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { galleryItemsMatchingSelectedIds, runBatchDownloadGalleryItems } from '../GalleryBatchDownload';
@@ -103,6 +104,7 @@ export async function galleryAlbumConfirmAndBatchDownload(host: GalleryAlbumBatc
     await runBatchDownloadGalleryItems(
       host.baseUrl,
       items,
+      host.getUIContext().getHostContext() as common.UIAbilityContext,
       (msg: string): void => {
         host.toast(msg);
       },
