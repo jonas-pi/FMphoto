@@ -6,6 +6,8 @@ import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../Galler
 @Component
 export struct GalleryAlbumCategoryModeView {
   @Prop baseUrl: string = '';
+  @Prop contentInsetTopVp: number = 0;
+  @Prop contentInsetBottomVp: number = 0;
   @Prop loading: boolean = false;
   @Prop error: string = '';
   @Prop opening: boolean = false;
@@ -115,7 +117,12 @@ export struct GalleryAlbumCategoryModeView {
           })
           .width('100%')
           .height('100%')
-          .padding({ left: 12, right: 12, top: 8 })
+          .padding({
+            left: 12,
+            right: 12,
+            top: this.contentInsetTopVp + 8,
+            bottom: this.contentInsetBottomVp + 12
+          })
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
 

@@ -5,7 +5,11 @@
 import { common } from '@kit.AbilityKit';
 import { UIContext, window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
-import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
+import {
+  GalleryNetworkThumb,
+  nasUrl,
+  trimThumbPixCacheForList
+} from '../album/GalleryAlbumCommon';
 import { RecycleBinListItem } from '../model/FnApiTypes';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
@@ -42,6 +46,9 @@ import {
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
 import { RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
+
+const RECYCLE_BIN_CONTENT_INSET_TOP_VP: number = 68;
+const RECYCLE_BIN_COLUMNS_PER_ROW: number = 4;
 
 @Entry
 @Component
@@ -95,6 +102,10 @@ struct RecycleBinPage {
     } catch (_e) {
       return value;
     }
+  }
+
+  private contentInsetTopVp(): number {
+    return this.systemTopInsetVp + RECYCLE_BIN_CONTENT_INSET_TOP_VP;
   }
 
   private syncSystemAvoidArea(win: window.Window): void {
@@ -171,6 +182,14 @@ struct RecycleBinPage {
 
   private thumbRelOf(it: RecycleBinListItem): string {
     return recycleBinThumbRelOf(it);
+  }
+
+  private topHeroImageUri(): string {
+    if (this.items.length === 0) {
+      return '';
+    }
+    const rel = this.thumbRelOf(this.items[0]);
+    return rel.length > 0 ? nasUrl(this.baseUrl, rel) : '';
   }
 
   private isIdSelected(nid: number): boolean {
@@ -417,34 +436,25 @@ struct RecycleBinPage {
 
   @Builder
   private rbCellSlot(rowIdx: number, col: number) {
-    if (rowIdx * 3 + col >= this.items.length) {
+    if (this.rbFlatIdx(rowIdx, col) >= this.items.length) {
       Blank().layoutWeight(1).aspectRatio(1)
     } else {
       this.thumbCell(
-        this.items[rowIdx * 3 + col],
-        rowIdx * 3 + col,
-        this.thumbRelOf(this.items[rowIdx * 3 + col]),
-        this.numericIdOf(this.items[rowIdx * 3 + col])
+        this.items[this.rbFlatIdx(rowIdx, col)],
+        this.rbFlatIdx(rowIdx, col),
+        this.thumbRelOf(this.items[this.rbFlatIdx(rowIdx, col)]),
+        this.numericIdOf(this.items[this.rbFlatIdx(rowIdx, col)])
       )
     }
   }
 
+  private rbFlatIdx(rowIdx: number, col: number): number {
+    return rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW + col;
+  }
+
   build() {
-    Column() {
-      RecycleBinChrome({
-        selectionMode: this.selectionMode,
-        selectedCount: this.selectedIds.length,
-        topSafeInsetVp: this.systemTopInsetVp,
-        onCancelSelection: (): void => {
-          this.exitSelection();
-        },
-        onBack: (): void => {
-          this.getUIContext().getRouter().back();
-        },
-        onToggleMode: (): void => {
-          this.toggleToolbarMode();
-        }
-      })
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
 
       if (this.loading) {
         FnInlineLoading({ text: '加载回收站…' }).layoutWeight(1)
@@ -477,6 +487,7 @@ struct RecycleBinPage {
                     this.rbCellSlot(rowIdx, 0)
                     this.rbCellSlot(rowIdx, 1)
                     this.rbCellSlot(rowIdx, 2)
+                    this.rbCellSlot(rowIdx, 3)
                   }
                   .width('100%')
                   .padding({ left: 2, right: 2, top: 1, bottom: 1 })
@@ -484,7 +495,7 @@ struct RecycleBinPage {
                     LongPressGesture({ repeat: false, duration: 420 })
                       .onAction((ev: GestureEvent): void => {
                         this.endRbSlideSelectGesture();
-                        const rowStart = rowIdx * 3;
+                        const rowStart = rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW;
                         const pt = this.readGestureFingerWindow(ev);
                         if (pt === null) {
                           return;
@@ -514,7 +525,7 @@ struct RecycleBinPage {
                         if (this.rbSlideGestureActive) {
                           this.endRbSlideSelectGesture();
                         }
-                        const rowStart = rowIdx * 3;
+                        const rowStart = rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW;
                         const pt = this.readGestureFingerWindow(ev);
                         if (pt === null) {
                           return;
@@ -561,6 +572,7 @@ struct RecycleBinPage {
             .width('100%')
             .layoutWeight(1)
             .cachedCount(3)
+            .padding({ top: this.contentInsetTopVp() })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
             .divider({ strokeWidth: 0 })
@@ -606,10 +618,37 @@ struct RecycleBinPage {
         .layoutWeight(1)
         .width('100%')
       }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.page_background'))
+
+      Column() {
+        RecycleBinChrome({
+          selectionMode: this.selectionMode,
+          selectedCount: this.selectedIds.length,
+          topSafeInsetVp: this.systemTopInsetVp,
+          onCancelSelection: (): void => {
+            this.exitSelection();
+          },
+          onBack: (): void => {
+            this.getUIContext().getRouter().back();
+          },
+          onToggleMode: (): void => {
+            this.toggleToolbarMode();
+          }
+        })
+
+        Blank()
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+      }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

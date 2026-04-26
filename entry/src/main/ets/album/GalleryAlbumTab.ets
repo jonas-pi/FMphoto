@@ -72,41 +72,10 @@ import {
 } from './GallerySelectionHaptic';
 import { FnFullLoadingMask } from '../common/FnUiCommon';
 import {
-  FN_TAB_SWITCH_CURVE,
-  FN_TAB_SWITCH_IN_DURATION,
-  FN_TAB_SWITCH_OUT_DURATION
-} from '../common/FnMotion';
-import {
-  GALLERY_TOP_BAR_BUTTON_FONT_VP,
-  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_PAD_TOP_VP,
-  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
-  GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
-  GALLERY_TOP_BAR_TITLE_FONT_VP
-} from '../common/GalleryTopBarLayout';
-import {
-  GALLERY_BATCH_ACTION_HEIGHT_VP,
-  GALLERY_BATCH_BAR_PAD_BOTTOM_VP,
-  GALLERY_BATCH_BAR_PAD_LEFT_VP,
-  GALLERY_BATCH_BAR_PAD_RIGHT_VP,
-  GALLERY_BATCH_BAR_PAD_TOP_VP,
-  GALLERY_BATCH_BAR_SPACE_VP,
-  GALLERY_BATCH_DESTRUCTIVE_BG,
-  GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_BOTTOM_VP,
-  GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_LEFT_VP,
-  GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_RIGHT_VP,
-  GALLERY_HOME_NAV_CHIP_FONT_VP,
-  GALLERY_HOME_NAV_CHIP_HEIGHT_VP,
-  GALLERY_HOME_NAV_CHIP_PAD_H_VP,
-  GALLERY_HOME_NAV_CHIP_RADIUS_VP,
-  GALLERY_HOME_UPLOAD_FAB_MARGIN_BOTTOM_VP,
-  GALLERY_HOME_UPLOAD_FAB_MARGIN_RIGHT_VP,
-  GALLERY_HOME_UPLOAD_FAB_SIZE_VP
-} from '../common/GalleryButtonStyles';
-import { GalleryAlbumTopBar } from './galleryAlbumTab/GalleryAlbumTopBar';
-import { GalleryAlbumEntryChips } from './galleryAlbumTab/GalleryAlbumEntryChips';
+  GalleryAlbumTopBar,
+  GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP
+} from './galleryAlbumTab/GalleryAlbumTopBar';
+import { GalleryAlbumAlbumsHomeView } from './galleryAlbumTab/GalleryAlbumAlbumsHomeView';
 import { GalleryAlbumSearchModeView } from './galleryAlbumTab/GalleryAlbumSearchModeView';
 import { GalleryAlbumCategoryModeView } from './galleryAlbumTab/GalleryAlbumCategoryModeView';
 import { GalleryAlbumSmartCategoryModeView } from './galleryAlbumTab/GalleryAlbumSmartCategoryModeView';
@@ -198,11 +167,9 @@ import {
   galleryAlbumOpenCategory,
   galleryAlbumOpenCollectGallery,
   galleryAlbumOpenPerson,
-  galleryAlbumPickAndUpload,
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
   galleryAlbumStartUpload,
-  galleryAlbumTryConsumeHardwareBack,
 } from './galleryAlbumTab/GalleryAlbumModeOrchestrator';
 import {
   GalleryAlbumLoadOrchestratorHost,
@@ -329,6 +296,7 @@ import {
   GALLERY_TIMELINE_EXPANDED_AUTO_HIDE_MS,
   GALLERY_TIMELINE_HIT_WIDTH_VP,
   GALLERY_TIMELINE_INDICATOR_PAD_VP,
+  GALLERY_TIMELINE_INDICATOR_RESERVED_VP,
   GALLERY_TIMELINE_LONG_PRESS_EXPAND_MS,
   GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS,
   GALLERY_TIMELINE_RAIL_DRAG_VP,
@@ -338,6 +306,7 @@ import {
   GALLERY_TIMELINE_SCRUB_PILL_MIN_WIDTH_VP,
   GALLERY_TIMELINE_SCRUB_PILL_X_VP,
   GALLERY_TIMELINE_THUMB_VP,
+  GALLERY_TIMELINE_TRACK_DOM_ID,
   GALLERY_TIMELINE_YEAR_BADGE_X_VP,
   GALLERY_UPLOAD_RECHECK_MS,
   PUMP_UI_GAP_MS,
@@ -371,6 +340,9 @@ export struct GalleryAlbumTab {
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
   @Prop topSafeInsetVp: number = 0;
   @Prop bottomSafeInsetVp: number = 0;
+  @Prop floatingDockInsetBottomVp: number = 0;
+  @Prop @Watch('onHomeSurfaceChanged') homeSurface: string = 'photos';
+  onSearchModeVisibilityChange: (hiddenBottomNav: boolean) => void = (_: boolean): void => {};
   /** Home.onPageShow() 閫掑 鈫?瑙﹀彂鍒犻櫎鍚屾锛堝畨鍏ㄤ繚闅滐紝涓嶄緷璧栧瓙缁勪欢 onPageShow 浼犳挱锛?*/
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
 
@@ -378,10 +350,13 @@ export struct GalleryAlbumTab {
   @State private loadError: string = '';
   @State private footText: string = '';
   @State private sections: GalleryAlbumDaySectionState[] = [];
+  @State private rootPhotosScrollTitle: string = '照片';
+  private albumsHomeSmartPrefetchGen: number = 0;
+  private albumsHomePersonPrefetchGen: number = 0;
 
   // 鈹€鈹€ 鎼滅储鐘舵€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   @State private searchQuery: string = '';
-  @State private inSearchMode: boolean = false;
+  @State @Watch('onSearchModeChanged') private inSearchMode: boolean = false;
   @State private searchResults: GalleryListItem[] = [];
   @State private searchLoading: boolean = false;
   @State private searchError: string = '';
@@ -462,10 +437,6 @@ export struct GalleryAlbumTab {
   @State private timelineIndicatorY: number = 12;
   /** 鏃堕棿杞村彲鐢ㄨ建閬撻珮搴︼紙vp锛夛紝鐢?onAreaChange 瀹炴祴鍐欏叆 */
   @State private timelineScrubTrackHeightVp: number = 500;
-  /** 鎷栧姩寮€濮嬫椂姣斾緥 */
-  private timelineDragStartRatio: number = 0;
-  /** 鎷栧姩鑺傛祦锛坢s锛?*/
-  private lastTimelineDragScrollMs: number = 0;
   /** 鑷姩闅愯棌瀹氭椂鍣?*/
   private timelineHideTimer: number = -1;
   /** seek 淇濇姢鏍囪锛氭澗鎵嬪悗鐭獥鍐呴樆鏂弽鍚戝悓姝?*/
@@ -1169,6 +1140,60 @@ export struct GalleryAlbumTab {
     timelineGestureKickPostTimelineReleaseLoad(this.asTimelineGestureHost());
   }
 
+  private pxToVp(value: number): number {
+    try {
+      return this.getUIContext().px2vp(value);
+    } catch (_e) {
+      return value;
+    }
+  }
+
+  private readTimelineFingerWindow(ev: GestureEvent): GalleryFingerWindowPoint | null {
+    const fingerList = ev.fingerList;
+    if (fingerList === undefined || fingerList.length < 1) {
+      return null;
+    }
+    const finger = fingerList[0] as GalleryFingerCoordCompat;
+    const x = finger.windowX ?? finger.globalX ?? finger.screenX ?? finger.displayX ?? finger.x;
+    const y = finger.windowY ?? finger.globalY ?? finger.screenY ?? finger.displayY ?? finger.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
+  }
+
+  private resolveTimelineSliderRatioFromFinger(ev: GestureEvent): number | null {
+    const finger = this.readTimelineFingerWindow(ev);
+    if (finger === null) {
+      return null;
+    }
+    try {
+      const rect = this.getUIContext().getComponentUtils().getRectangleById(GALLERY_TIMELINE_TRACK_DOM_ID);
+      const trackTopVp = this.pxToVp(rect.windowOffset.y as number);
+      const trackHeightVp = Math.max(64, this.pxToVp(rect.size.height as number));
+      this.timelineScrubTrackHeightVp = trackHeightVp;
+      const dragSpanVp = Math.max(trackHeightVp - GALLERY_TIMELINE_INDICATOR_RESERVED_VP, 40);
+      const localYVp = finger.y - trackTopVp;
+      return Math.max(0, Math.min(1, (localYVp - GALLERY_TIMELINE_INDICATOR_PAD_VP) / dragSpanVp));
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  private applyTimelineSliderRatioFromFinger(ev: GestureEvent, ymListLength: number): void {
+    const ratio = this.resolveTimelineSliderRatioFromFinger(ev);
+    if (ratio === null) {
+      return;
+    }
+    if (Math.abs(ratio - this.timelineSliderRatio) < 0.001) {
+      return;
+    }
+    this.timelineSliderRatio = ratio;
+    this.timelineSidebarHighlightIndex =
+      Math.max(0, Math.min(ymListLength - 1, Math.round(ratio * (ymListLength - 1))));
+    this.timelineIndicatorY = galleryAlbumTimelineIndicatorYForRatio(this.timelineScrubTrackHeightVp, ratio);
+  }
+
   private endTimelineDrag(): void {
     this.timelineReleaseAwaitVisibleCallback = true;
     timelineGestureEndTimelineDrag(this.asTimelineGestureHost());
@@ -1247,6 +1272,300 @@ export struct GalleryAlbumTab {
     await galleryAlbumOpenCollectGallery(this.asModeOrchestratorHost());
   }
 
+  private onSearchModeChanged(): void {
+    this.onSearchModeVisibilityChange(this.inSearchMode);
+  }
+
+  private isPhotosHomeSurface(): boolean {
+    return this.homeSurface !== 'albums';
+  }
+
+  private isAlbumsHomeSurface(): boolean {
+    return this.homeSurface === 'albums';
+  }
+
+  private setRootPhotosScrollTitle(title: string): void {
+    if (this.rootPhotosScrollTitle === title) {
+      return;
+    }
+    this.rootPhotosScrollTitle = title;
+  }
+
+  private readMainGalleryScrollOffsetVp(): number {
+    try {
+      const off = this.scrollerRef.currentOffset();
+      const yRaw = off.yOffset;
+      if (typeof yRaw === 'number' && Number.isFinite(yRaw)) {
+        return Math.max(0, yRaw);
+      }
+    } catch (_e) {
+    }
+    return 0;
+  }
+
+  private isRootPhotosContentScrolledUnderTopBar(): boolean {
+    const y = this.readMainGalleryScrollOffsetVp();
+    return y >= Math.max(1, this.mainGalleryContentInsetTopVp() - 0.5);
+  }
+
+  private formatRootPhotosVisibleDayTitle(year: number, month: number, day: number): string {
+    return `${year}年${month}月${day}日`;
+  }
+
+  private resolveRootPhotosVisibleDayTitle(): string | null {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return null;
+    }
+    const anchor = Math.max(0, Math.min(this.listVisibleFirstNodeIdx, total - 1));
+    const forwardEnd = Math.min(total - 1, anchor + 12);
+    for (let i = anchor; i <= forwardEnd; i++) {
+      const node = this.flowDataSource.getData(i);
+      if ((node.kind === 'day' || node.kind === 'row') && node.year > 0 && node.month > 0 && node.day > 0) {
+        return this.formatRootPhotosVisibleDayTitle(node.year, node.month, node.day);
+      }
+    }
+    const backwardStart = Math.max(0, anchor - 12);
+    for (let i = anchor; i >= backwardStart; i--) {
+      const node = this.flowDataSource.getData(i);
+      if ((node.kind === 'day' || node.kind === 'row') && node.year > 0 && node.month > 0 && node.day > 0) {
+        return this.formatRootPhotosVisibleDayTitle(node.year, node.month, node.day);
+      }
+    }
+    return null;
+  }
+
+  private refreshRootPhotosScrollTitle(): void {
+    if (!this.isPhotosHomeSurface()) {
+      this.setRootPhotosScrollTitle('照片');
+      return;
+    }
+    if (!this.isRootPhotosSurfaceVisible()) {
+      return;
+    }
+    if (!this.isRootPhotosContentScrolledUnderTopBar()) {
+      this.setRootPhotosScrollTitle('照片');
+      return;
+    }
+    const title = this.resolveRootPhotosVisibleDayTitle();
+    this.setRootPhotosScrollTitle(title ?? '照片');
+  }
+
+  private currentHomeSurfaceTitle(): string {
+    return this.isAlbumsHomeSurface() ? '相册' : this.rootPhotosScrollTitle;
+  }
+
+  private albumsHomeSmartItems(): SmartCategoryItem[] {
+    return this.smartSceneItems.concat(this.smartInfoItems);
+  }
+
+  private ensureAlbumsHomeSupplementaryData(): void {
+    if (!this.isAlbumsHomeSurface()) {
+      return;
+    }
+    if (this.inSmartCategoryMode || this.inPersonMode) {
+      return;
+    }
+    const needSmartPrefetch = this.albumsHomeSmartItems().length <= 0 && !this.smartCategoryLoading;
+    const needPersonPrefetch = this.personItems.length <= 0 && !this.personLoading;
+    if (!needSmartPrefetch && !needPersonPrefetch) {
+      return;
+    }
+    const client = AppSession.getClient();
+    if (client === null) {
+      return;
+    }
+    if (needSmartPrefetch) {
+      const gen = ++this.albumsHomeSmartPrefetchGen;
+      this.smartCategoryLoading = true;
+      this.smartCategoryError = '';
+      void (async (): Promise<void> => {
+        const result = await requestSmartCategories(client);
+        if (gen !== this.albumsHomeSmartPrefetchGen) {
+          return;
+        }
+        this.smartSceneItems = result.sceneItems;
+        this.smartInfoItems = result.infoItems;
+        this.smartCategoryError = result.error;
+        this.smartCategoryLoading = false;
+      })();
+    }
+    if (needPersonPrefetch) {
+      const personGen = ++this.albumsHomePersonPrefetchGen;
+      this.personLoading = true;
+      this.personError = '';
+      void (async (): Promise<void> => {
+        const result = await requestPersons(client);
+        if (personGen !== this.albumsHomePersonPrefetchGen) {
+          return;
+        }
+        this.personItems = result.items;
+        this.personError = result.error;
+        this.personLoading = false;
+      })();
+    }
+  }
+
+  private openRecycleBinPage(): void {
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/RecycleBinPage',
+      params: { baseUrl: this.baseUrl }
+    }).catch((_e: Error): void => {
+      this.toast('打开回收站失败');
+    });
+  }
+
+  private openPersonPage(): void {
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/PersonPage',
+      params: { baseUrl: this.baseUrl }
+    }).catch((_e: Error): void => {
+      this.toast('打开人物页失败');
+    });
+  }
+
+  private openSmartCategoryPage(): void {
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/SmartCategoryPage',
+      params: { baseUrl: this.baseUrl }
+    }).catch((_e: Error): void => {
+      this.toast('打开智能分类失败');
+    });
+  }
+
+  private isRootPhotosSurfaceVisible(): boolean {
+    return this.isPhotosHomeSurface() && !this.inSearchMode && !this.inCategoryMode &&
+      !this.inSmartCategoryMode && !this.inPersonMode;
+  }
+
+  private isRootAlbumsSurfaceVisible(): boolean {
+    return this.isAlbumsHomeSurface() && !this.inSearchMode && this.inCategoryMode &&
+      !this.inSmartCategoryMode && !this.inPersonMode;
+  }
+
+  private isRootSurfaceVisible(): boolean {
+    return this.isRootPhotosSurfaceVisible() || this.isRootAlbumsSurfaceVisible();
+  }
+
+  private returnToHomeSurfaceRoot(animate: boolean): void {
+    if (this.isAlbumsHomeSurface()) {
+      if (this.isRootAlbumsSurfaceVisible()) {
+        this.ensureAlbumsHomeSupplementaryData();
+        return;
+      }
+      if (animate) {
+        void galleryAlbumLoadMediaCategories(this.asModeOrchestratorHost());
+        this.ensureAlbumsHomeSupplementaryData();
+        return;
+      }
+      galleryAlbumExitSelection(this.asSelectionGestureHost());
+      this.inSearchMode = false;
+      this.inSmartCategoryMode = false;
+      this.inPersonMode = false;
+      this.inCategoryMode = true;
+      this.categoryLoading = false;
+      this.categoryOpening = false;
+      if (this.categoryItems.length <= 0) {
+        void galleryAlbumLoadMediaCategories(this.asModeOrchestratorHost());
+      }
+      this.ensureAlbumsHomeSupplementaryData();
+      return;
+    }
+    if (this.inSearchMode || this.inCategoryMode || this.inSmartCategoryMode || this.inPersonMode) {
+      if (animate) {
+        galleryAlbumBackToMain(this.asModeOrchestratorHost());
+      } else {
+        galleryAlbumExitSelection(this.asSelectionGestureHost());
+        this.inSearchMode = false;
+        this.inCategoryMode = false;
+        this.inSmartCategoryMode = false;
+        this.inPersonMode = false;
+      }
+    }
+  }
+
+  private syncHomeSurface(animate: boolean): void {
+    this.returnToHomeSurfaceRoot(animate);
+  }
+
+  private tryConsumeSurfaceBack(): boolean {
+    if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
+      return false;
+    }
+    this.returnToHomeSurfaceRoot(true);
+    return true;
+  }
+
+  private onHomeSurfaceChanged(): void {
+    this.syncHomeSurface(true);
+    this.refreshRootPhotosScrollTitle();
+    this.ensureAlbumsHomeSupplementaryData();
+  }
+
+  private openSearchPanel(): void {
+    galleryAlbumExitSelection(this.asSelectionGestureHost());
+    if (!this.inSearchMode) {
+      galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
+    }
+    this.inSearchMode = true;
+    this.inCategoryMode = false;
+    this.inSmartCategoryMode = false;
+    this.inPersonMode = false;
+    this.searchLoading = false;
+    this.searchError = '';
+    this.searchResults = [];
+  }
+
+  private async showMoreMenu(): Promise<void> {
+    try {
+      const choice = await this.getUIContext().getPromptAction().showActionMenu({
+        title: this.isAlbumsHomeSurface() ? '相册更多' : '照片更多',
+        buttons: [
+          { text: '智能分类', color: '#007AFF' },
+          { text: '人物', color: '#007AFF' },
+          { text: '最近添加', color: '#007AFF' },
+          { text: '收藏', color: '#007AFF' },
+          { text: '回收站', color: '#007AFF' }
+        ]
+      });
+      switch (choice.index) {
+        case 0:
+          void galleryAlbumLoadSmartCategories(this.asModeOrchestratorHost());
+          return;
+        case 1:
+          void galleryAlbumLoadPersons(this.asModeOrchestratorHost());
+          return;
+        case 2:
+          void this.openRecentAdded();
+          return;
+        case 3:
+          void this.openCollectGallery();
+          return;
+        case 4:
+          this.openRecycleBinPage();
+          return;
+        default:
+          return;
+      }
+    } catch (_e) {
+    }
+  }
+
+  private secondaryModeContentInsetTopVp(): number {
+    return this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP;
+  }
+
+  private mainGalleryContentInsetTopVp(): number {
+    return this.secondaryModeContentInsetTopVp();
+  }
+
+  private currentBottomDockInsetVp(): number {
+    if (this.inSearchMode) {
+      return 0;
+    }
+    return this.floatingDockInsetBottomVp;
+  }
+
   // 鈹€鈹€ 鐢熷懡鍛ㄦ湡 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   private onEpochChange(): void {
@@ -1257,16 +1576,22 @@ export struct GalleryAlbumTab {
 
   private onPageShowSignal(): void {
     galleryAlbumOnTabVisibleAgain(this.asLoadOrchestratorHost());
+    this.refreshRootPhotosScrollTitle();
+    this.ensureAlbumsHomeSupplementaryData();
   }
 
   aboutToAppear(): void {
+    this.onSearchModeVisibilityChange(this.inSearchMode);
+    this.syncHomeSurface(false);
+    this.refreshRootPhotosScrollTitle();
+    this.ensureAlbumsHomeSupplementaryData();
     // 椤甸潰閲嶆柊鍑虹幇鏃堕噸缃墦寮€鎬侊紝閬垮厤鎵嬪娍杩斿洖鍚庤鏃ч伄缃╃姸鎬佸崱浣?
     this.personOpening = false;
     this.categoryOpening = false;
     this.recentOpening = false;
     this.collectOpening = false;
     this.timelineReleaseAwaitVisibleCallback = false;
-    gallerySetAlbumBackHandler((): boolean => galleryAlbumTryConsumeHardwareBack(this.asModeOrchestratorHost()));
+    gallerySetAlbumBackHandler((): boolean => this.tryConsumeSurfaceBack());
     setTimeout((): void => {
       // 涓绘椂闂寸嚎锛氳嫢绂诲紑 Tab 鏃跺瓨杩囧揩鐓т笖鏈熼棿鏈?bump/鏈己鍒凤紝鐩存帴鎭㈠锛岄伩鍏嶆瘡娆″垏鍥為兘閲嶆媺鏃堕棿杞翠笌宸插姞杞藉潡
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
@@ -1287,6 +1612,7 @@ export struct GalleryAlbumTab {
 
   /** 鍒囧埌鍏朵粬搴曢儴 Tab 鏃跺嵏杞斤細鎶婁富鏃堕棿绾垮揩鐓у啓鍏ュ唴瀛橈紝渚涗笅娆?aboutToAppear 鎭㈠ */
   aboutToDisappear(): void {
+    this.onSearchModeVisibilityChange(false);
     timelineGestureCancelListSettledTimer(this.asTimelineGestureHost());
     this.isDraggingOrFling = false;
     this.timelineReleaseAwaitVisibleCallback = false;
@@ -1347,12 +1673,15 @@ export struct GalleryAlbumTab {
    */
   build() {
     Stack({ alignContent: Alignment.BottomEnd }) {
-      Column() {
+      Stack({ alignContent: Alignment.TopStart }) {
+        Column() {
       GalleryAlbumTopBar({
+        homeSurface: this.isAlbumsHomeSurface() ? 'albums' : 'photos',
         inSearchMode: this.inSearchMode,
         inCategoryMode: this.inCategoryMode,
         inSmartCategoryMode: this.inSmartCategoryMode,
         inPersonMode: this.inPersonMode,
+        rootSurfaceTitle: this.currentHomeSurfaceTitle(),
         gallerySelectionMode: this.gallerySelectionMode,
         gallerySelectedCount: this.gallerySelectedIds.length,
         searchQuery: this.searchQuery,
@@ -1364,6 +1693,12 @@ export struct GalleryAlbumTab {
         onSearchSubmit: (): void => {
           void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
         },
+        onOpenSearch: (): void => {
+          this.openSearchPanel();
+        },
+        onStartUpload: (): void => {
+          galleryAlbumStartUpload(this.asModeOrchestratorHost());
+        },
         onExitSelection: (): void => {
           galleryAlbumExitSelection(this.asSelectionGestureHost());
         },
@@ -1371,70 +1706,29 @@ export struct GalleryAlbumTab {
           this.enterGallerySelectionModeFromToolbar();
         },
         onBackToGallery: (): void => {
-          galleryAlbumBackToMain(this.asModeOrchestratorHost());
+          this.returnToHomeSurfaceRoot(true);
+        },
+        onShowMoreMenu: (): void => {
+          void this.showMoreMenu();
         }
       })
 
-      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
-        GalleryAlbumEntryChips({
-          hidden: this.gallerySelectionMode,
-          onOpenMediaCategory: (): void => {
-            galleryAlbumExitSelection(this.asSelectionGestureHost());
-            galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            this.getUIContext().getRouter().pushUrl({
-              url: 'pages/MediaCategoryPage',
-              params: { baseUrl: this.baseUrl }
-            }).catch((_e: Error): void => {
-              this.toast('鎵撳紑濯掍綋鍒嗙被澶辫触');
-            });
-          },
-          onOpenSmartCategory: (): void => {
-            galleryAlbumExitSelection(this.asSelectionGestureHost());
-            galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            this.getUIContext().getRouter().pushUrl({
-              url: 'pages/SmartCategoryPage',
-              params: { baseUrl: this.baseUrl }
-            }).catch((_e: Error): void => {
-              this.toast('鎵撳紑鏅鸿兘鍒嗙被澶辫触');
-            });
-          },
-          onOpenPerson: (): void => {
-            galleryAlbumExitSelection(this.asSelectionGestureHost());
-            galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            this.getUIContext().getRouter().pushUrl({
-              url: 'pages/PersonPage',
-              params: { baseUrl: this.baseUrl }
-            }).catch((_e: Error): void => {
-              this.toast('打开人物页失败');
-            });
-          },
-          onOpenRecent: (): void => {
-            galleryAlbumExitSelection(this.asSelectionGestureHost());
-            galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            void this.openRecentAdded();
-          },
-          onOpenCollect: (): void => {
-            galleryAlbumExitSelection(this.asSelectionGestureHost());
-            galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            void galleryAlbumOpenCollectGallery(this.asModeOrchestratorHost());
-          },
-          onOpenRecycleBin: (): void => {
-            galleryAlbumExitSelection(this.asSelectionGestureHost());
-            galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
-            this.getUIContext().getRouter().pushUrl({
-              url: 'pages/RecycleBinPage',
-              params: { baseUrl: this.baseUrl }
-            }).catch((_e: Error): void => {
-              this.toast('打开回收站失败');
-            });
-          }
-        })
-      }
+        Blank()
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
+        .zIndex(1)
 
+        Column() {
       // 鈹€鈹€ 鎼滅储缁撴灉瑙嗗浘 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
       if (this.inSearchMode) {
         GalleryAlbumSearchModeView({
           baseUrl: this.baseUrl,
+          contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
+          contentInsetBottomVp: this.currentBottomDockInsetVp(),
           loading: this.searchLoading,
           error: this.searchError,
           searchResults: this.searchResults,
@@ -1479,26 +1773,78 @@ export struct GalleryAlbumTab {
       }
 
       if (this.inCategoryMode) {
-        GalleryAlbumCategoryModeView({
-          baseUrl: this.baseUrl,
-          loading: this.categoryLoading,
-          error: this.categoryError,
-          opening: this.categoryOpening,
-          items: this.categoryItems,
-          modeSwitchOpacity: this.modeSwitchOpacity,
-          modeSwitchOffsetY: this.modeSwitchOffsetY,
-          getCategoryTitle: (item: MediaCategoryItem): string => categoryTitle(item),
-          getCategoryCount: (item: MediaCategoryItem): number => categoryCount(item),
-          getCategoryCover: (item: MediaCategoryItem): string => categoryCover(item),
-          onOpenCategory: (item: MediaCategoryItem): void => {
-            void galleryAlbumOpenCategory(this.asModeOrchestratorHost(), item);
-          }
-        })
+        if (this.isAlbumsHomeSurface()) {
+          GalleryAlbumAlbumsHomeView({
+            baseUrl: this.baseUrl,
+            contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
+            contentInsetBottomVp: this.currentBottomDockInsetVp(),
+            mediaLoading: this.categoryLoading,
+            mediaError: this.categoryError,
+            mediaOpening: this.categoryOpening,
+            mediaItems: this.categoryItems,
+            personLoading: this.personLoading,
+            personError: this.personError,
+            personItems: this.personItems,
+            smartLoading: this.smartCategoryLoading,
+            smartError: this.smartCategoryError,
+            smartSceneItems: this.smartSceneItems,
+            smartInfoItems: this.smartInfoItems,
+            modeSwitchOpacity: this.modeSwitchOpacity,
+            modeSwitchOffsetY: this.modeSwitchOffsetY,
+            getMediaCategoryTitle: (item: MediaCategoryItem): string => categoryTitle(item),
+            getMediaCategoryCount: (item: MediaCategoryItem): number => categoryCount(item),
+            getMediaCategoryCover: (item: MediaCategoryItem): string => categoryCover(item),
+            getPersonName: (item: AiPersonItem): string => personName(item),
+            getPersonFace: (item: AiPersonItem): string => personFace(item),
+            getSmartCategoryCover: (item: SmartCategoryItem): string => smartCategoryCover(item),
+            onOpenMediaCategory: (item: MediaCategoryItem): void => {
+              void galleryAlbumOpenCategory(this.asModeOrchestratorHost(), item);
+            },
+            onOpenPersonPage: (): void => {
+              this.openPersonPage();
+            },
+            onOpenSmartCategoryPage: (): void => {
+              this.openSmartCategoryPage();
+            },
+            onOpenPlacePlaceholder: (): void => {
+              this.toast('地点功能预留中');
+            },
+            onOpenRecentAdded: (): void => {
+              void this.openRecentAdded();
+            },
+            onOpenCollect: (): void => {
+              void this.openCollectGallery();
+            },
+            onOpenRecycleBin: (): void => {
+              this.openRecycleBinPage();
+            }
+          })
+        } else {
+          GalleryAlbumCategoryModeView({
+            baseUrl: this.baseUrl,
+            contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
+            contentInsetBottomVp: this.currentBottomDockInsetVp(),
+            loading: this.categoryLoading,
+            error: this.categoryError,
+            opening: this.categoryOpening,
+            items: this.categoryItems,
+            modeSwitchOpacity: this.modeSwitchOpacity,
+            modeSwitchOffsetY: this.modeSwitchOffsetY,
+            getCategoryTitle: (item: MediaCategoryItem): string => categoryTitle(item),
+            getCategoryCount: (item: MediaCategoryItem): number => categoryCount(item),
+            getCategoryCover: (item: MediaCategoryItem): string => categoryCover(item),
+            onOpenCategory: (item: MediaCategoryItem): void => {
+              void galleryAlbumOpenCategory(this.asModeOrchestratorHost(), item);
+            }
+          })
+        }
       }
 
       if (this.inSmartCategoryMode) {
         GalleryAlbumSmartCategoryModeView({
           baseUrl: this.baseUrl,
+          contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
+          contentInsetBottomVp: this.currentBottomDockInsetVp(),
           loading: this.smartCategoryLoading,
           error: this.smartCategoryError,
           sceneItems: this.smartSceneItems,
@@ -1517,6 +1863,8 @@ export struct GalleryAlbumTab {
       if (this.inPersonMode) {
         GalleryAlbumPersonModeView({
           baseUrl: this.baseUrl,
+          contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
+          contentInsetBottomVp: this.currentBottomDockInsetVp(),
           loading: this.personLoading,
           error: this.personError,
           opening: this.personOpening,
@@ -1536,6 +1884,8 @@ export struct GalleryAlbumTab {
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         GalleryAlbumMainModeView({
           baseUrl: this.baseUrl,
+          contentInsetTopVp: this.mainGalleryContentInsetTopVp(),
+          contentInsetBottomVp: this.currentBottomDockInsetVp(),
           bootLoading: this.bootLoading,
           loadError: this.loadError,
           footText: this.footText,
@@ -1584,6 +1934,7 @@ export struct GalleryAlbumTab {
           onListScrollIndex: (firstIdx: number, lastIdx: number, _centerIdx: number): void => {
             this.listVisibleFirstNodeIdx = firstIdx;
             this.listVisibleLastNodeIdx = Math.max(firstIdx, lastIdx);
+            this.refreshRootPhotosScrollTitle();
             galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
               this.asVisibleLoadHost(),
               this.listVisibleFirstNodeIdx,
@@ -1607,6 +1958,7 @@ export struct GalleryAlbumTab {
             timelineGestureTouchTimelineBarOnScroll(this.asTimelineGestureHost());
           },
           onListDidScroll: (_offset: number, _scrollState: ScrollState): void => {
+            this.refreshRootPhotosScrollTitle();
             timelineGestureMaybeLogMainScrollTick(this.asTimelineGestureHost(), _offset, _scrollState);
             const draggingOrFling = _scrollState === ScrollState.Scroll || _scrollState === ScrollState.Fling;
             const shouldFreezeByListScroll =
@@ -1718,8 +2070,10 @@ export struct GalleryAlbumTab {
           onTimelinePanStart: (_event: GestureEvent): void => {
             this.timelineSidebarDragging = true;
             this.timelineLongPressExpanded = false;
-            this.timelineDragStartRatio = this.timelineSliderRatio;
-            this.lastTimelineDragScrollMs = 0;
+            const ymList = galleryAlbumGetTimelineYearMonths(this.asTimelineGestureHost());
+            if (ymList.length > 0) {
+              this.applyTimelineSliderRatioFromFinger(_event, ymList.length);
+            }
             timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
             timelineGestureArmTimelineDragWatchdog(this.asTimelineGestureHost());
             if (this.timelineHideTimer >= 0) {
@@ -1732,16 +2086,7 @@ export struct GalleryAlbumTab {
             if (ymList.length === 0) {
               return;
             }
-            const th = Math.max(64, this.timelineScrubTrackHeightVp);
-            let ratio = this.timelineDragStartRatio + (event.offsetY / th);
-            ratio = Math.max(0, Math.min(1, ratio));
-            if (Math.abs(ratio - this.timelineSliderRatio) < 0.001) {
-              return;
-            }
-            this.timelineSliderRatio = ratio;
-            this.timelineSidebarHighlightIndex =
-              Math.max(0, Math.min(ymList.length - 1, Math.round(ratio * (ymList.length - 1))));
-            this.timelineIndicatorY = galleryAlbumTimelineIndicatorYForRatio(th, ratio);
+            this.applyTimelineSliderRatioFromFinger(event, ymList.length);
             timelineGestureArmTimelineDragWatchdog(this.asTimelineGestureHost());
           },
           onTimelinePanEnd: (_event: GestureEvent): void => {
@@ -1752,10 +2097,13 @@ export struct GalleryAlbumTab {
           }
         })
       }
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.page_background'))
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.page_background'))
 
       if (this.galleryBatchDeleting) {
         FnFullLoadingMask({ text: '移入回收站中...' })
@@ -1773,26 +2121,6 @@ export struct GalleryAlbumTab {
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         if (this.uploading) {
           FnFullLoadingMask({ text: this.uploadText.length > 0 ? this.uploadText : '上传中...' })
-        }
-        if (!this.gallerySelectionMode) {
-          Button({ type: ButtonType.Circle, stateEffect: true }) {
-            SymbolGlyph($r('sys.symbol.plus'))
-              .fontSize(24)
-              .fontColor([Color.White])
-              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-          }
-          .width(GALLERY_HOME_UPLOAD_FAB_SIZE_VP)
-          .height(GALLERY_HOME_UPLOAD_FAB_SIZE_VP)
-          .backgroundColor($r('app.color.brand_primary'))
-          .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-          .shadow({ radius: 20, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
-          .margin({
-            right: GALLERY_HOME_UPLOAD_FAB_MARGIN_RIGHT_VP,
-            bottom: GALLERY_HOME_UPLOAD_FAB_MARGIN_BOTTOM_VP
-          })
-          .onClick((): void => {
-            galleryAlbumStartUpload(this.asModeOrchestratorHost());
-          })
         }
       }
     }

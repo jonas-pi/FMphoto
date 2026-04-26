@@ -1,19 +1,16 @@
 import {
-  GALLERY_TOP_BAR_BUTTON_FONT_VP,
-  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
+  FN_FLOATING_TOP_BOTTOM_GAP_VP,
+  FN_FLOATING_TOP_CONTROL_SIZE_VP,
+  FN_FLOATING_TOP_MARGIN_VP,
+  FnFloatingTopPillButton
+} from '../../common/FnUiCommon';
+import {
   GALLERY_TOP_BAR_PAD_LEFT_VP,
   GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_PAD_TOP_VP,
-  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
   GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
-
-const RECYCLE_BIN_SHELL_RADIUS_VP: number = 26;
-const RECYCLE_BIN_SHELL_MARGIN_H_VP: number = 10;
-const RECYCLE_BIN_SHELL_MARGIN_TOP_VP: number = 8;
-const RECYCLE_BIN_ACTION_MIN_WIDTH_VP: number = 72;
 
 @Component
 export struct RecycleBinChrome {
@@ -33,89 +30,59 @@ export struct RecycleBinChrome {
   }
 
   build() {
-    Row() {
+    Column() {
       Row() {
-        Stack({ alignContent: Alignment.Center }) {
-          Button($r('app.string.gallery_batch_cancel'), { type: ButtonType.Capsule, stateEffect: true })
-            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-            .constraintSize({ minWidth: RECYCLE_BIN_ACTION_MIN_WIDTH_VP })
-            .backgroundColor($r('app.color.button_primary_bg'))
-            .fontColor($r('app.color.button_primary_fg'))
-            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
-            .visibility(this.selectionMode ? Visibility.Visible : Visibility.Hidden)
-            .onClick(this.onCancelSelection)
-          Button('\u8fd4\u56de', { type: ButtonType.Capsule, stateEffect: true })
-            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-            .constraintSize({ minWidth: RECYCLE_BIN_ACTION_MIN_WIDTH_VP })
-            .backgroundColor($r('app.color.gallery_material_surface_bg'))
-            .fontColor($r('app.color.button_secondary_fg'))
-            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-            .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-            .visibility(this.selectionMode ? Visibility.Hidden : Visibility.Visible)
-            .onClick(this.onBack)
+        Row() {
+          if (this.selectionMode) {
+            FnFloatingTopPillButton({
+              text: $r('app.string.gallery_batch_cancel'),
+              action: this.onCancelSelection
+            })
+          } else {
+            FnFloatingTopPillButton({
+              text: '返回',
+              action: this.onBack
+            })
+          }
         }
-      }
-      .layoutWeight(1)
-      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-      .justifyContent(FlexAlign.Start)
+        .layoutWeight(1)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+        .justifyContent(FlexAlign.Start)
 
-      Row() {
-        Text(this.titleText())
-          .fontSize(this.selectionMode ? GALLERY_TOP_BAR_SUBTITLE_FONT_VP : GALLERY_TOP_BAR_TITLE_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .fontColor($r('app.color.text_primary'))
-      }
-      .layoutWeight(2)
-      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
+        Row() {
+          Text(this.titleText())
+            .fontSize(this.selectionMode ? GALLERY_TOP_BAR_SUBTITLE_FONT_VP : GALLERY_TOP_BAR_TITLE_FONT_VP)
+            .fontWeight(this.selectionMode ? FontWeight.Medium : FontWeight.Bold)
+            .textAlign(TextAlign.Center)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .fontColor($r('app.color.text_primary'))
+        }
+        .layoutWeight(2)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
 
-      Row() {
-        Stack({ alignContent: Alignment.Center }) {
-          Button(this.selectionMode ? '\u5b8c\u6210' : $r('app.string.gallery_multiselect'), {
-            type: ButtonType.Capsule,
-            stateEffect: true
+        Row() {
+          FnFloatingTopPillButton({
+            text: this.selectionMode ? '完成' : $r('app.string.gallery_multiselect'),
+            action: this.onToggleMode
           })
-            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-            .constraintSize({ minWidth: RECYCLE_BIN_ACTION_MIN_WIDTH_VP })
-            .backgroundColor($r('app.color.gallery_material_surface_bg'))
-            .fontColor($r('app.color.button_secondary_fg'))
-            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-            .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-            .onClick(this.onToggleMode)
         }
+        .layoutWeight(1)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+        .justifyContent(FlexAlign.End)
       }
-      .layoutWeight(1)
-      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-      .justifyContent(FlexAlign.End)
+      .width('100%')
+      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
     }
     .width('100%')
-    .alignItems(VerticalAlign.Center)
-    .padding({
-      left: GALLERY_TOP_BAR_PAD_LEFT_VP,
-      right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-      top: GALLERY_TOP_BAR_PAD_TOP_VP,
-      bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
-    })
-    .backgroundColor($r('app.color.gallery_material_shell_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .borderRadius(RECYCLE_BIN_SHELL_RADIUS_VP)
-    .border({ width: 1, color: $r('app.color.gallery_material_shell_border') })
-    .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
     .margin({
-      left: RECYCLE_BIN_SHELL_MARGIN_H_VP,
-      right: RECYCLE_BIN_SHELL_MARGIN_H_VP,
-      top: RECYCLE_BIN_SHELL_MARGIN_TOP_VP + this.topSafeInsetVp,
-      bottom: 4
+      top: FN_FLOATING_TOP_MARGIN_VP + this.topSafeInsetVp,
+      bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
     })
-    .clip(true)
     .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
   }
 }

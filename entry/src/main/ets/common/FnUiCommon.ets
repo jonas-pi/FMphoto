@@ -18,6 +18,66 @@ import {
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from './GalleryTopBarLayout';
 
+export const FN_FLOATING_TOP_MARGIN_VP: number = 8;
+export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
+export const FN_FLOATING_TOP_CONTROL_SIZE_VP: number = 44;
+export const FN_FLOATING_TOP_CONTROL_RADIUS_VP: number = FN_FLOATING_TOP_CONTROL_SIZE_VP / 2;
+export const FN_FLOATING_TOP_PILL_MIN_WIDTH_VP: number = 72;
+export const FN_FLOATING_TOP_TOTAL_HEIGHT_VP: number =
+  FN_FLOATING_TOP_MARGIN_VP + FN_FLOATING_TOP_CONTROL_SIZE_VP + FN_FLOATING_TOP_BOTTOM_GAP_VP;
+
+@Component
+export struct FnFloatingTopPillButton {
+  @Prop text: ResourceStr = '';
+  @Prop prominent: boolean = false;
+  action: () => void = () => {};
+
+  build() {
+    Button(this.text, { type: ButtonType.Capsule, stateEffect: true })
+      .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
+      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+      .constraintSize({ minWidth: FN_FLOATING_TOP_PILL_MIN_WIDTH_VP })
+      .backgroundColor(this.prominent ? $r('app.color.button_primary_bg') : $r('app.color.gallery_material_surface_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .fontColor(this.prominent ? $r('app.color.button_primary_fg') : $r('app.color.button_secondary_fg'))
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .shadow({
+        radius: this.prominent ? 18 : 14,
+        color: this.prominent ? '#334A8BFF' : '#14001A33',
+        offsetX: 0,
+        offsetY: this.prominent ? 8 : 6
+      })
+      .onClick(this.action)
+  }
+}
+
+@Component
+export struct FnFloatingTopCircleButton {
+  @Prop symbol: Resource = $r('sys.symbol.more');
+  @Prop active: boolean = false;
+  @Prop fontColor: ResourceColor = $r('app.color.icon_primary');
+  @Prop activeBg: ResourceColor = $r('app.color.brand_primary');
+  action: () => void = () => {};
+
+  build() {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      SymbolGlyph(this.symbol)
+        .fontSize(18)
+        .fontColor([this.active ? Color.White : this.fontColor])
+    }
+    .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+    .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+    .borderRadius(FN_FLOATING_TOP_CONTROL_RADIUS_VP)
+    .backgroundColor(this.active ? this.activeBg : $r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
+    .padding(0)
+    .clip(true)
+    .onClick(this.action)
+  }
+}
+
 @Component
 export struct FnTopBar {
   @Prop title: string = '';
@@ -58,26 +118,21 @@ export struct FnTopBar {
   build() {
     Row() {
       Row() {
-        Button(this.backText, { type: ButtonType.Capsule, stateEffect: true })
-          .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-          .backgroundColor($r('app.color.button_secondary_bg'))
-          .fontColor($r('app.color.button_secondary_fg'))
-          .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
-          .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-          .onClick((): void => {
+        FnFloatingTopPillButton({
+          text: this.backText,
+          action: (): void => {
             this.getUIContext().getRouter().back();
-          })
+          }
+        })
       }
       .layoutWeight(1)
-      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .justifyContent(FlexAlign.Start)
 
       Text(this.title)
         .layoutWeight(2)
         .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
-        .fontWeight(FontWeight.Medium)
+        .fontWeight(FontWeight.Bold)
         .textAlign(TextAlign.Center)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -93,16 +148,16 @@ export struct FnTopBar {
         }
       }
       .layoutWeight(1)
-      .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .justifyContent(FlexAlign.End)
     }
     .width('100%')
+    .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
     .alignItems(VerticalAlign.Center)
-    .padding({
-      left: GALLERY_TOP_BAR_PAD_LEFT_VP,
-      right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-      top: GALLERY_TOP_BAR_PAD_TOP_VP + this.systemTopInsetVp,
-      bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
+    .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
+    .margin({
+      top: this.systemTopInsetVp + FN_FLOATING_TOP_MARGIN_VP,
+      bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
     })
   }
 }

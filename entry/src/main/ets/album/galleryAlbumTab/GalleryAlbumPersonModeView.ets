@@ -6,6 +6,8 @@ import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../Galler
 @Component
 export struct GalleryAlbumPersonModeView {
   @Prop baseUrl: string = '';
+  @Prop contentInsetTopVp: number = 0;
+  @Prop contentInsetBottomVp: number = 0;
   @Prop loading: boolean = false;
   @Prop error: string = '';
   @Prop opening: boolean = false;
@@ -84,7 +86,8 @@ export struct GalleryAlbumPersonModeView {
                 })
                   .width('100%')
                   .aspectRatio(1)
-                  .borderRadius(12)
+                  .borderRadius(999)
+                  .clip(true)
                 Text(this.getPersonName(item))
                   .fontSize(13)
                   .fontColor($r('app.color.text_primary'))
@@ -113,7 +116,12 @@ export struct GalleryAlbumPersonModeView {
         })
         .width('100%')
         .layoutWeight(1)
-        .padding({ left: 12, right: 12, top: 8, bottom: 10 })
+        .padding({
+          left: 12,
+          right: 12,
+          top: this.contentInsetTopVp + 8,
+          bottom: this.contentInsetBottomVp + 12
+        })
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         if (this.opening) {

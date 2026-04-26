@@ -66,12 +66,18 @@ interface CategoryGalleryListBlock {
   row?: RowModel;
 }
 
+const CATEGORY_GALLERY_CONTENT_INSET_TOP_NORMAL_VP: number = 88;
+const CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP: number = 68;
+
 @Entry
 @Component
 struct CategoryGallery {
   @State private groups: DayGroup[] = [];
   @State private title: string = '';
   @State private baseUrl: string = '';
+  @State private totalCount: number = 0;
+  @State private heroImageUri: string = '';
+  @State private columnsPerRow: number = 3;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
   @State private systemTopInsetVp: number = 0;
@@ -89,6 +95,7 @@ struct CategoryGallery {
   @State private cgBackgroundLoading: boolean = false;
 
   private cgLongPressIgnoreUntil: number = 0;
+  private listBlocks: Array<CategoryGalleryListBlock> = [];
   private cgThumbHitBounds: Map<string, CgThumbHitRect> = new Map();
   private cgSlideRefX: number = 0;
   private cgSlideRefY: number = 0;
@@ -98,6 +105,7 @@ struct CategoryGallery {
   private cgSlideLastEndFlat: number = -1;
   private cgSlideLastAppliedEndFlat: number = -99999;
   private cgObservedStoreVersion: number = -1;
+  private cgPendingStoreSync: boolean = false;
   private cgStorePollTimer: number = -1;
   private cgThumbResumeTimer: number = -1;
 
@@ -129,6 +137,12 @@ struct CategoryGallery {
     } catch (_e) {
       return value;
     }
+  }
+
+  private contentInsetTopVp(): number {
+    return this.systemTopInsetVp + (this.selectionMode
+      ? CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP
+      : CATEGORY_GALLERY_CONTENT_INSET_TOP_NORMAL_VP);
   }
 
   private syncSystemAvoidArea(win: window.Window): void {
@@ -172,16 +186,9 @@ struct CategoryGallery {
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
     this.cgThumbLoadingPaused = false;
-    this.baseUrl = CategoryGalleryNavStore.baseUrl;
-    this.title = CategoryGalleryNavStore.title;
-    const useCreatedAt = CategoryGalleryNavStore.useCreatedAtGrouping;
-    const viewData = buildCategoryGalleryViewData(CategoryGalleryNavStore.items, useCreatedAt);
-    this.groups = viewData.groups;
-    this.flatItems = viewData.flatItems;
-    this.groupOffsets = viewData.groupOffsets;
-    this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
-    this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
+    this.applyNavStoreSnapshot();
     this.startStoreObserver();
+    this.ensureCategoryBackgroundLoad();
   }
 
   aboutToDisappear(): void {
@@ -278,6 +285,11 @@ struct CategoryGallery {
 
   private rebuildByFlatItems(): void {
     categoryGalleryRebuildByFlatItems(this.asBatchActionsHost());
+    this.rebuildListBlocks();
+    this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
+    if (this.heroImageUri.length === 0 && this.flatItems.length > 0) {
+      this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.flatItems[0]));
+    }
   }
 
   private applyDeleteSyncIfNeeded(): void {
@@ -314,6 +326,89 @@ struct CategoryGallery {
     return blocks;
   }
 
+  private rebuildListBlocks(): void {
+    this.listBlocks = this.buildListBlocks();
+  }
+
+  private applyNavStoreSnapshot(): void {
+    this.baseUrl = CategoryGalleryNavStore.baseUrl;
+    this.title = CategoryGalleryNavStore.title;
+    this.heroImageUri = CategoryGalleryNavStore.heroImageUri;
+    this.columnsPerRow = CategoryGalleryNavStore.columnsPerRow === 4 ? 4 : 3;
+    this.flatItems = CategoryGalleryNavStore.items.slice();
+    this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
+    this.rebuildByFlatItems();
+    this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
+    this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
+    this.cgPendingStoreSync = false;
+    if (this.heroImageUri.length === 0 && this.flatItems.length > 0) {
+      this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.flatItems[0]));
+    }
+  }
+
+  private async loadRemainingCategoryItems(token: number): Promise<void> {
+    const categoryKey = CategoryGalleryNavStore.categoryKey;
+    const expectedTotal = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
+    if (categoryKey.length === 0 || expectedTotal <= this.flatItems.length) {
+      return;
+    }
+    const client = AppSession.getClient();
+    if (client === null) {
+      return;
+    }
+    CategoryGalleryNavStore.setBackgroundLoading(token, true);
+    const seenIds: Set<string> = new Set<string>();
+    for (let i = 0; i < this.flatItems.length; i++) {
+      seenIds.add(this.itemIdOf(this.flatItems[i]));
+    }
+    const pageSize = 200;
+    let offset = this.flatItems.length;
+    try {
+      while (token === CategoryGalleryNavStore.currentToken() && offset < expectedTotal) {
+        const res = await client.getCategoryPhotos(categoryKey, pageSize, offset);
+        if (!res.success || res.data === undefined || res.data.length === 0) {
+          break;
+        }
+        const incoming = res.data;
+        const appendItems: GalleryListItem[] = [];
+        for (let i = 0; i < incoming.length; i++) {
+          const one = incoming[i];
+          const id = this.itemIdOf(one);
+          if (id.length > 0 && seenIds.has(id)) {
+            continue;
+          }
+          if (id.length > 0) {
+            seenIds.add(id);
+          }
+          appendItems.push(one);
+        }
+        if (appendItems.length > 0) {
+          CategoryGalleryNavStore.appendItems(token, appendItems);
+        }
+        offset += incoming.length > 0 ? incoming.length : pageSize;
+        if (incoming.length < pageSize) {
+          break;
+        }
+      }
+    } finally {
+      CategoryGalleryNavStore.setBackgroundLoading(token, false);
+    }
+  }
+
+  private ensureCategoryBackgroundLoad(): void {
+    const token = CategoryGalleryNavStore.currentToken();
+    if (CategoryGalleryNavStore.backgroundLoading) {
+      return;
+    }
+    if (CategoryGalleryNavStore.categoryKey.length === 0) {
+      return;
+    }
+    if (CategoryGalleryNavStore.expectedTotalCount <= this.flatItems.length) {
+      return;
+    }
+    void this.loadRemainingCategoryItems(token);
+  }
+
   private stopStoreObserver(): void {
     if (this.cgStorePollTimer >= 0) {
       clearInterval(this.cgStorePollTimer);
@@ -332,12 +427,13 @@ struct CategoryGallery {
     if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
       return;
     }
-    this.baseUrl = CategoryGalleryNavStore.baseUrl;
-    this.title = CategoryGalleryNavStore.title;
-    this.flatItems = CategoryGalleryNavStore.items.slice();
-    this.rebuildByFlatItems();
-    this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
-    this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
+    if (this.cgThumbLoadingPaused || this.cgSlideGestureActive) {
+      this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.totalCount, this.flatItems.length);
+      this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
+      this.cgPendingStoreSync = true;
+      return;
+    }
+    this.applyNavStoreSnapshot();
     if (!this.cgBackgroundLoading) {
       this.recycleThumbCache(false);
     }
@@ -362,6 +458,9 @@ struct CategoryGallery {
     this.cgThumbResumeTimer = setTimeout((): void => {
       this.cgThumbResumeTimer = -1;
       this.cgThumbLoadingPaused = false;
+      if (this.cgPendingStoreSync) {
+        this.applyNavStoreSnapshot();
+      }
     }, 96);
   }
 
@@ -375,6 +474,9 @@ struct CategoryGallery {
 
       get groupOffsets(): number[] { return self.groupOffsets; }
       set groupOffsets(v: number[]) { self.groupOffsets = v; }
+
+      get columnsPerRow(): number { return self.columnsPerRow; }
+      set columnsPerRow(v: number) { self.columnsPerRow = v === 4 ? 4 : 3; }
 
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.selectionMode = v; }
@@ -531,17 +633,9 @@ struct CategoryGallery {
   private dayRowListItem(groupIdx: number, row: RowModel) {
     ListItem() {
       Row({ space: 2 }) {
-        this.thumbCellWithFlat(row.c0, this.flatPos(groupIdx, row.startIdx))
-        if (row.c1 !== undefined) {
-          this.thumbCellWithFlat(row.c1 as GalleryListItem, this.flatPos(groupIdx, row.startIdx + 1))
-        } else {
-          Blank().layoutWeight(1).aspectRatio(1)
-        }
-        if (row.c2 !== undefined) {
-          this.thumbCellWithFlat(row.c2 as GalleryListItem, this.flatPos(groupIdx, row.startIdx + 2))
-        } else {
-          Blank().layoutWeight(1).aspectRatio(1)
-        }
+        ForEach(this.rowColumnIndexes(), (col: number) => {
+          this.dayRowCell(groupIdx, row, col)
+        }, (col: number) => `cg_col_${col}`)
       }
       .width('100%')
       .padding({ left: 2, right: 2, top: 1, bottom: 1 })
@@ -616,24 +710,29 @@ struct CategoryGallery {
     .margin({ bottom: 2 })
   }
 
+  private rowColumnIndexes(): number[] {
+    return this.columnsPerRow === 4 ? [0, 1, 2, 3] : [0, 1, 2];
+  }
+
+  private rowCellAt(row: RowModel, col: number): GalleryListItem | undefined {
+    return col >= 0 && col < row.cells.length ? row.cells[col] : undefined;
+  }
+
+  @Builder
+  private dayRowCell(groupIdx: number, row: RowModel, col: number) {
+    if (this.rowCellAt(row, col) !== undefined) {
+      this.thumbCellWithFlat(
+        this.rowCellAt(row, col) as GalleryListItem,
+        this.flatPos(groupIdx, row.startIdx + col)
+      )
+    } else {
+      Blank().layoutWeight(1).aspectRatio(1)
+    }
+  }
+
   build() {
-    Column() {
-      CategoryGalleryChrome({
-        selectionMode: this.selectionMode,
-        selectedCount: this.selectedIds.length,
-        title: this.title,
-        totalCount: this.flatItems.length,
-        topSafeInsetVp: this.systemTopInsetVp,
-        onCancelSelection: (): void => {
-          this.exitCgSelection();
-        },
-        onBack: (): void => {
-          this.getUIContext().getRouter().back();
-        },
-        onToggleMode: (): void => {
-          this.toggleToolbarMode();
-        }
-      })
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
 
       if (this.groups.length === 0) {
         FnStateText({ text: '暂无媒体' }).layoutWeight(1)
@@ -641,7 +740,7 @@ struct CategoryGallery {
         Stack() {
           Column() {
             List() {
-              ForEach(this.buildListBlocks(), (block: CategoryGalleryListBlock) => {
+              ForEach(this.listBlocks, (block: CategoryGalleryListBlock) => {
                 if (block.isHeader) {
                   this.dayHeaderListItem(block.label ?? '')
                 } else if (block.row !== undefined) {
@@ -660,6 +759,7 @@ struct CategoryGallery {
             .width('100%')
             .layoutWeight(1)
             .cachedCount(3)
+            .padding({ top: this.contentInsetTopVp() })
             .scrollBar(BarState.Auto)
             .backgroundColor(Color.Transparent)
             .edgeEffect(EdgeEffect.Spring)
@@ -706,10 +806,39 @@ struct CategoryGallery {
         .layoutWeight(1)
         .width('100%')
       }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.page_background'))
+
+      Column() {
+        CategoryGalleryChrome({
+          selectionMode: this.selectionMode,
+          selectedCount: this.selectedIds.length,
+          title: this.title,
+          totalCount: this.totalCount,
+          topSafeInsetVp: this.systemTopInsetVp,
+          onCancelSelection: (): void => {
+            this.exitCgSelection();
+          },
+          onBack: (): void => {
+            this.getUIContext().getRouter().back();
+          },
+          onToggleMode: (): void => {
+            this.toggleToolbarMode();
+          }
+        })
+
+        Blank()
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+      }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

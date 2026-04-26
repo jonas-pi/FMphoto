@@ -23,6 +23,8 @@ export struct GalleryAlbumMainModeView {
   @Prop bootLoading: boolean = false;
   @Prop loadError: string = '';
   @Prop footText: string = '';
+  @Prop contentInsetTopVp: number = 0;
+  @Prop contentInsetBottomVp: number = 0;
   @Prop galleryTimelineRefreshing: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
@@ -334,6 +336,13 @@ export struct GalleryAlbumMainModeView {
           Stack({ alignContent: Alignment.TopEnd }) {
             Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 78 }) {
               List({ scroller: this.scrollerRef }) {
+                if (this.contentInsetTopVp > 0) {
+                  ListItem() {
+                    Column()
+                      .width('100%')
+                      .height(this.contentInsetTopVp)
+                  }
+                }
                 LazyForEach(this.flowDataSource, (node: GalleryFlowNode) => {
                   this.buildFlowNode(node)
                 }, (node: GalleryFlowNode) => this.galleryFlowLazyKey(node))
@@ -348,7 +357,8 @@ export struct GalleryAlbumMainModeView {
                         .textAlign(TextAlign.Center)
                         .padding(12)
                     }
-                    Blank().height(this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32)
+                    Blank().height((this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32) +
+                      this.contentInsetBottomVp)
                   }
                   .width('100%')
                 }
@@ -373,6 +383,8 @@ export struct GalleryAlbumMainModeView {
 
             if (this.showTimelineSidebar()) {
               GalleryAlbumTimelineSidebar({
+                trackInsetTopVp: this.contentInsetTopVp,
+                trackInsetBottomVp: this.contentInsetBottomVp,
                 expandedChrome: this.timelineExpandedChrome,
                 scrollRailOnly: this.timelineScrollRailOnly,
                 yearMarkers: this.timelineYearMarkers,

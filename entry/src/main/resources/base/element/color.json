@@ -74,23 +74,23 @@
     },
     {
       "name": "gallery_timeline_thumb_border",
-      "value": "#7A000000"
+      "value": "#F2FFFFFF"
     },
     {
       "name": "gallery_timeline_year_badge_bg",
-      "value": "#E6000000"
+      "value": "#FFFFFFFF"
     },
     {
       "name": "gallery_timeline_year_badge_fg",
-      "value": "#F5FFFFFF"
+      "value": "#FF000000"
     },
     {
       "name": "gallery_timeline_month_pill_bg",
-      "value": "#E6313134"
+      "value": "#FFFFFFFF"
     },
     {
       "name": "gallery_timeline_month_pill_fg",
-      "value": "#FFFFFFFF"
+      "value": "#FF000000"
     },
     {
       "name": "gallery_material_shell_bg",

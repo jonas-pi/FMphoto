@@ -118,7 +118,7 @@ export async function categoryGalleryConfirmBatchDelete(host: CategoryGalleryBat
 
 export function categoryGalleryRebuildByFlatItems(host: CategoryGalleryBatchActionsHost): void {
   const useCreatedAt = CategoryGalleryNavStore.useCreatedAtGrouping;
-  const viewData = buildCategoryGalleryViewData(host.flatItems, useCreatedAt);
+  const viewData = buildCategoryGalleryViewData(host.flatItems, useCreatedAt, CategoryGalleryNavStore.columnsPerRow);
   host.groups = viewData.groups;
   host.groupOffsets = viewData.groupOffsets;
 }

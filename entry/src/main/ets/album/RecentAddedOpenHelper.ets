@@ -446,7 +446,14 @@ export async function openRecentAddedGallery(
       errorMessage: initialChunk.errorMessage.length > 0 ? initialChunk.errorMessage : '最近添加暂无可预览媒体'
     };
   }
-  const opened = await CategoryGalleryNavStore.open(baseUrl, '最近添加', initialChunk.items, uiCtx, true);
+  const opened = await CategoryGalleryNavStore.open(
+    baseUrl,
+    '最近添加',
+    initialChunk.items,
+    uiCtx,
+    true,
+    { columnsPerRow: 4 }
+  );
   if (!opened) {
     return { ok: false, errorMessage: '打开最近添加失败' };
   }

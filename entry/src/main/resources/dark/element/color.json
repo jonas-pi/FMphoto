@@ -74,19 +74,19 @@
     },
     {
       "name": "gallery_timeline_thumb_border",
-      "value": "#D9FFFFFF"
+      "value": "#F2FFFFFF"
     },
     {
       "name": "gallery_timeline_year_badge_bg",
-      "value": "#E6FFFFFF"
+      "value": "#FF000000"
     },
     {
       "name": "gallery_timeline_year_badge_fg",
-      "value": "#FF1C1C1E"
+      "value": "#FFFFFFFF"
     },
     {
       "name": "gallery_timeline_month_pill_bg",
-      "value": "#E63A3A3C"
+      "value": "#FF000000"
     },
     {
       "name": "gallery_timeline_month_pill_fg",

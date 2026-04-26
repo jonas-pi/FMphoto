@@ -19,7 +19,8 @@ import {
   loadCollectGalleryItems,
   loadRecentAddedItems
 } from './GalleryAlbumModeLoaders';
-import { personId, personName, categoryTitle, parseCategoryMedia } from './GalleryAlbumModeData';
+import { categoryCount, categoryCover, categoryTitle, parseCategoryMedia, personId, personName } from './GalleryAlbumModeData';
+import { nasUrl } from '../GalleryAlbumCommon';
 import { GALLERY_UPLOAD_RECHECK_MS } from './GalleryAlbumTabConstants';
 
 export interface GalleryAlbumModeOrchestratorHost {
@@ -420,13 +421,24 @@ export async function galleryAlbumOpenCategory(
   host.categoryOpening = true;
   const isActive = host.createNavigationGuard();
   const title = categoryTitle(cat);
+  const local = parseCategoryMedia(cat);
+  const categoryKey = cat.key !== undefined ? cat.key : '';
+  const heroRel = categoryCover(cat);
+  const heroImageUri = heroRel.length > 0 ? nasUrl(host.baseUrl, heroRel) : '';
+  const expectedTotalCount = Math.max(categoryCount(cat), local.length);
   try {
-    const local = parseCategoryMedia(cat);
     if (local.length > 0) {
       if (!isActive()) {
         return;
       }
-      CategoryGalleryNavStore.open(host.baseUrl, title, local, host.getUIContext());
+      CategoryGalleryNavStore.open(
+        host.baseUrl,
+        title,
+        local,
+        host.getUIContext(),
+        false,
+        { expectedTotalCount, categoryKey, heroImageUri }
+      );
       return;
     }
     const client = AppSession.getClient();
@@ -442,7 +454,14 @@ export async function galleryAlbumOpenCategory(
       host.toast(fetched.message ?? '该分类暂无可预览媒体');
       return;
     }
-    CategoryGalleryNavStore.open(host.baseUrl, title, fetched.data, host.getUIContext());
+    CategoryGalleryNavStore.open(
+      host.baseUrl,
+      title,
+      fetched.data,
+      host.getUIContext(),
+      false,
+      { expectedTotalCount, categoryKey, heroImageUri }
+    );
   } finally {
     host.categoryOpening = false;
   }
@@ -474,7 +493,14 @@ export async function galleryAlbumOpenRecentAdded(host: GalleryAlbumModeOrchestr
       }
       return;
     }
-    CategoryGalleryNavStore.open(host.baseUrl, '最近添加', result.items, host.getUIContext());
+    CategoryGalleryNavStore.open(
+      host.baseUrl,
+      '最近添加',
+      result.items,
+      host.getUIContext(),
+      false,
+      { columnsPerRow: 4 }
+    );
   } finally {
     host.recentOpening = false;
   }

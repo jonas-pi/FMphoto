@@ -97,6 +97,11 @@ export function galleryAlbumSeekTimelineListToDisplayRatio(
   host: TimelineGestureControllerHost,
   ratio: number
 ): void {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  if (clamped >= 0.995) {
+    galleryAlbumScrollListByRatioEstimate(host, clamped);
+    return;
+  }
   const ym = galleryAlbumResolveYearMonthByTimelineRatio(host, ratio);
   if (ym === null) {
     return;
@@ -178,6 +183,9 @@ export function galleryAlbumGetCurrentHighlightDay(host: TimelineGestureControll
 }
 
 export function galleryAlbumGetTimelineScrubPillLabel(host: TimelineGestureControllerHost): string {
+  if (host.timelineSidebarDragging) {
+    return `${galleryAlbumGetCurrentHighlightYear(host)}年${galleryAlbumGetCurrentHighlightMonth(host)}月`;
+  }
   return buildTimelineScrubPillLabel(
     galleryAlbumGetCurrentHighlightYear(host),
     galleryAlbumGetCurrentHighlightMonth(host),

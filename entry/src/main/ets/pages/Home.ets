@@ -1,24 +1,12 @@
-/**
- * 主页：底层 Web 固定首页（/）；相册 Tab 为原生 GalleryAlbumTab；「我的」叠在最上。
- * 底部导航使用鸿蒙标准 Tabs 风格（SymbolGlyph + 文字 + 选中态动画）。
- */
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { webview } from '@kit.ArkWeb';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
 import { AppSession } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
-import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
-import {
-  fnWebDefaultUserAgent,
-  fnWebLocalStorageSecretInjectScript,
-  injectFnWebCookies
-} from '../network/FnWebCookies';
-import { FnImmersiveBackdrop, FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
+import { FnImmersiveBackdrop, FnPrimaryButton } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -27,9 +15,6 @@ import {
   FN_TAB_ALBUM_ME_CURVE,
   FN_TAB_ALBUM_ME_IN_MS,
   FN_TAB_ALBUM_ME_OUT_MS,
-  FN_TAB_HOME_CONTENT_CURVE,
-  FN_TAB_HOME_CONTENT_IN_MS,
-  FN_TAB_HOME_CONTENT_OUT_MS,
   FN_TAB_SWITCH_CURVE,
   FN_TAB_SWITCH_IN_DURATION
 } from '../common/FnMotion';
@@ -42,145 +27,15 @@ import {
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../common/GalleryTopBarLayout';
 
-const DOMAIN = 0xFF00;
-const TAG = 'Home';
-const HOME_BOTTOM_NAV_ITEM_HEIGHT_VP: number = 64;
-const HOME_BOTTOM_NAV_PAD_TOP_VP: number = 6;
-const HOME_BOTTOM_NAV_PAD_SIDE_VP: number = 6;
-const HOME_BOTTOM_NAV_PAD_EXTRA_BOTTOM_VP: number = 8;
-
-/**
- * 加载 NAS H5：仅首页 `base/`，相册已改为原生 API + 网格，不再用 Web 打开 /p/album。
- */
-@Component
-struct NasWebPanel {
-  @Prop webPath: string = '/';
-  @Prop baseUrl: string = '';
-  @Prop token: string = '';
-  @Prop useHttps: boolean = true;
-  @Prop @Watch('onLongTokenChange') longToken: string = '';
-  @Prop wsSignKeyB64: string = '';
-
-  private controller: webview.WebviewController = new webview.WebviewController();
-  private webControllerReady: boolean = false;
-  private lastWebLongTokenApplied: string = '';
-
-  private onLongTokenChange(): void {
-    if (!this.webControllerReady || this.baseUrl.length === 0 || this.token.length === 0) {
-      return;
-    }
-    if (this.longToken === this.lastWebLongTokenApplied) {
-      return;
-    }
-    this.lastWebLongTokenApplied = this.longToken;
-    setTimeout((): void => {
-      this.applyWebLoad();
-    }, 0);
-  }
-
-  private injectFnosSecretIfNeeded(pageUrl: string): void {
-    if (this.wsSignKeyB64.length === 0) {
-      return;
-    }
-    if (pageUrl.length === 0 || pageUrl.startsWith('about:') || !pageUrl.startsWith('http')) {
-      return;
-    }
-    try {
-      void this.controller.runJavaScript(fnWebLocalStorageSecretInjectScript(this.wsSignKeyB64));
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'fnos-Secret inject: %{public}s', String(e));
-    }
-  }
-
-  private applyWebLoad(): void {
-    if (this.baseUrl.length === 0 || this.token.length === 0) {
-      hilog.warn(DOMAIN, TAG, 'Web skip load: empty baseUrl or token');
-      return;
-    }
-    let base = this.baseUrl;
-    if (base.endsWith('/')) {
-      base = base.substring(0, base.length - 1);
-    }
-    let path = this.webPath.trim();
-    let target: string;
-    if (path.length === 0 || path === '/') {
-      target = `${base}/`;
-    } else {
-      if (!path.startsWith('/')) {
-        path = `/${path}`;
-      }
-      target = `${base}${path}`;
-    }
-    const longTok = this.longToken.length > 0 ? this.longToken : undefined;
-    try {
-      injectFnWebCookies(base, this.token, this.useHttps, longTok);
-      this.controller.loadUrl(target);
-      setTimeout((): void => {
-        this.injectFnosSecretIfNeeded(target);
-      }, 80);
-    } catch (e) {
-      hilog.error(DOMAIN, TAG, 'inject/loadUrl err: %{public}s', String(e));
-      try {
-        this.controller.loadUrl(target);
-        setTimeout((): void => {
-          this.injectFnosSecretIfNeeded(target);
-        }, 80);
-      } catch (e2) {
-        hilog.error(DOMAIN, TAG, 'loadUrl retry err: %{public}s', String(e2));
-      }
-    }
-  }
-
-  build() {
-    Stack({ alignContent: Alignment.BottomEnd }) {
-      Web({ src: 'about:blank', controller: this.controller })
-        .width('100%')
-        .height('100%')
-        .javaScriptAccess(true)
-        .domStorageAccess(true)
-        .fileAccess(true)
-        .zoomAccess(true)
-        .onControllerAttached((): void => {
-          this.webControllerReady = true;
-          this.lastWebLongTokenApplied = this.longToken;
-          try {
-            this.controller.setCustomUserAgent(fnWebDefaultUserAgent());
-          } catch (_e) {
-          }
-          setTimeout((): void => {
-            this.applyWebLoad();
-          }, 100);
-        })
-        .onPageBegin((event) => {
-          const u = event !== undefined && event.url !== undefined ? event.url : '';
-          this.injectFnosSecretIfNeeded(u);
-        })
-        .onPageEnd((event) => {
-          const u = event !== undefined && event.url !== undefined ? event.url : '';
-          this.injectFnosSecretIfNeeded(u);
-        })
-        .onSslErrorEvent((event) => {
-          if (event === null || event.handler === undefined) {
-            return;
-          }
-          let base = this.baseUrl;
-          if (base.endsWith('/')) {
-            base = base.substring(0, base.length - 1);
-          }
-          if (base.length > 0 && CertPolicy.isTrusted(base)) {
-            event.handler.handleConfirm();
-          }
-        })
-      FnSecondaryButton({ text: $r('app.string.web_reload') })
-        .margin({ right: 10, bottom: 56 })
-        .onClick((): void => {
-          this.applyWebLoad();
-        })
-    }
-    .width('100%')
-    .height('100%')
-  }
-}
+const HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP: number = 58;
+const HOME_FLOATING_DOCK_SIDE_GAP_VP: number = 12;
+const HOME_FLOATING_DOCK_CENTER_HEIGHT_VP: number = 58;
+const HOME_FLOATING_DOCK_BOTTOM_GAP_VP: number = 16;
+const HOME_FLOATING_DOCK_SIDE_PADDING_VP: number = 14;
+const HOME_FLOATING_DOCK_NAV_ITEM_RADIUS_VP: number = 18;
+const HOME_FLOATING_DOCK_NAV_ICON_SIZE_VP: number = 20;
+const HOME_FLOATING_DOCK_NAV_LABEL_SIZE_VP: number = 12;
+const HOME_FLOATING_DOCK_CENTER_RADIUS_VP: number = 29;
 
 @Component
 struct MePanel {
@@ -192,7 +47,8 @@ struct MePanel {
         Row()
           .layoutWeight(1)
           .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-        Text($r('app.string.tab_me'))
+
+        Text('我的')
           .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -200,6 +56,7 @@ struct MePanel {
           .textAlign(TextAlign.Center)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+
         Row()
           .layoutWeight(1)
           .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
@@ -220,7 +77,7 @@ struct MePanel {
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
 
-          Text('延续首页的沉浸光感风格，保留轻透材质与柔和高光。')
+          Text('首页已经切换为纯原生图库壳体，这里保留账号与系统入口。')
             .fontSize(13)
             .lineHeight(20)
             .fontColor($r('app.color.text_secondary'))
@@ -228,23 +85,24 @@ struct MePanel {
         .width('100%')
         .padding(18)
         .backgroundColor($r('app.color.immersive_panel_bg'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
         .borderRadius(24)
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
         .shadow({ radius: 24, color: '#14001A33', offsetX: 0, offsetY: 10 })
 
         Column({ space: 12 }) {
-          Text('当前视觉特征')
+          Text('当前状态')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
-          Text('1. 顶部与底部使用半透明悬浮材质。')
+          Text('1. 首页 Web 已完全移除。')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
-          Text('2. 页面背景加入多层柔光，增强空间深度。')
+          Text('2. 底部主导航统一为照片、相册、我的。')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
-          Text('3. 主要操作按钮保留清晰的焦点高亮。')
+          Text('3. 图库主页使用悬浮标题栏与悬浮底部导航。')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
         }
@@ -284,36 +142,20 @@ struct MePanel {
 @Entry
 @Component
 struct Home {
-  @State private snapWebBase: string = '';
-  @State private snapToken: string = '';
-  @State private snapLongToken: string = '';
-  @State private snapWsSignKeyB64: string = '';
+  @State private galleryBaseUrl: string = '';
   @State private sessionOk: boolean = false;
-  /** 0 首页 Web / 1 原生相册 / 2 我的 */
+  @State private albumSearchModeActive: boolean = false;
   @State private bottomNavIndex: number = 0;
-  /** 递增以触发 GalleryAlbumTab 重新拉 timeline */
   @State private albumReloadEpoch: number = 0;
-  /** 页面可见时递增 → 通知 GalleryAlbumTab 做删除同步 */
   @State private pageShowSignal: number = 0;
-  /** Tab 切换时内容区水平位移（保持不透明，避免底层 Web 透出） */
   @State private contentTranslateX: number = 0;
-  /**
-   * 系统深浅色模式（框架自动写入 AppStorage 'colorMode'）：
-   * ColorMode.LIGHT = 0，ColorMode.DARK = 1
-   */
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
-  /**
-   * 用 @State 镜像深色标志：@StorageProp 在嵌套方法链中依赖追踪可能丢失，
-   * @State 变更则必定触发 build() 重渲染，保证背景色实时同步。
-   */
   @State private isDarkTheme: boolean = false;
   @State private systemTopInsetVp: number = 0;
   @State private systemBottomInsetVp: number = 0;
 
-  // ── 系统栏颜色 ────────────────────────────────────────────────────────────
-
   onBackPress(): boolean {
-    if (this.bottomNavIndex === 1 && galleryTryConsumeAlbumBack()) {
+    if (this.bottomNavIndex !== 2 && galleryTryConsumeAlbumBack()) {
       return true;
     }
     return false;
@@ -323,14 +165,10 @@ struct Home {
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBarTheme();
     this.pageShowSignal++;
-    // 节流探测 long-token，降低长时间挂起后进相册 HTTP 401 的概率（非永久保活，仅前台轻量刷新）
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void proactiveRefreshLongTokenOnForeground(ctx).then((changed: boolean): void => {
       if (changed) {
-        const s = AppSession.getStored();
-        if (s !== null) {
-          this.snapLongToken = s.fnosLongToken.length > 0 ? s.fnosLongToken : '';
-        }
+        this.albumReloadEpoch++;
       }
     });
   }
@@ -340,11 +178,9 @@ struct Home {
     this.applySystemBarTheme();
   }
 
-  /** 根据深浅色模式同步状态栏/导航栏背景与文字颜色 */
   private applySystemBarTheme(): void {
     try {
-      const dark = this.colorMode === 1; // ColorMode.DARK = 1
-      // light: page_background = #F5F5F5；dark: page_background = #1C1C1E
+      const dark = this.colorMode === 1;
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win): void => {
@@ -357,14 +193,10 @@ struct Home {
           navigationBarContentColor: content
         }).catch((_e: Error): void => {});
       }).catch((_e: Error): void => {});
-    } catch (_e) {}
+    } catch (_e) {
+    }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * 相册 Tab 内可能已静默刷新 token；切回首页 Web 前同步快照，避免 Web 仍带过期 Cookie。
-   */
   private pxToVp(value: number): number {
     try {
       return this.getUIContext().px2vp(value);
@@ -384,149 +216,259 @@ struct Home {
     }
   }
 
-  private bottomNavPadBottom(): number {
-    return Math.max(HOME_BOTTOM_NAV_PAD_EXTRA_BOTTOM_VP, this.systemBottomInsetVp + HOME_BOTTOM_NAV_PAD_EXTRA_BOTTOM_VP);
+  private bottomDockBottomGap(): number {
+    const liftedGap = HOME_FLOATING_DOCK_BOTTOM_GAP_VP + (HOME_FLOATING_DOCK_CENTER_HEIGHT_VP / 4);
+    return Math.max(liftedGap, this.systemBottomInsetVp + liftedGap);
   }
 
-  private syncWebSessionSnapshotFromAppSession(): void {
-    const s = AppSession.getStored();
-    if (s === null || !this.sessionOk) {
-      return;
+  private dockReserveHeight(): number {
+    if (!this.sessionOk || !this.shouldShowBottomDock()) {
+      return 0;
     }
-    this.snapToken = s.token;
-    this.snapLongToken = s.fnosLongToken.length > 0 ? s.fnosLongToken : '';
-    this.snapWsSignKeyB64 = s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '';
+    return Math.max(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP, HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP) +
+      this.bottomDockBottomGap() + 16;
+  }
+
+  private shouldShowBottomDock(): boolean {
+    return !this.albumSearchModeActive;
+  }
+
+  private isGalleryShellVisible(): boolean {
+    return this.bottomNavIndex !== 2;
+  }
+
+  private currentHomeSurface(): string {
+    return this.bottomNavIndex === 1 ? 'albums' : 'photos';
+  }
+
+  private toast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    } catch (_e) {
+    }
+  }
+
+  private isDockNavItemSelected(index: number): boolean {
+    return this.bottomNavIndex === index;
   }
 
   private switchTab(target: number): void {
     if (target === this.bottomNavIndex) {
       return;
     }
-    const involvesHome = target === 0 || this.bottomNavIndex === 0;
-    const albumMeSwitch =
-      (target === 1 && this.bottomNavIndex === 2) || (target === 2 && this.bottomNavIndex === 1);
-
-    if (albumMeSwitch) {
-      const towardMe = target === 2;
-      const outPx = towardMe ? -22 : 22;
-      this.getUIContext().animateTo(
-        { duration: FN_TAB_ALBUM_ME_OUT_MS, curve: FN_TAB_ALBUM_ME_CURVE },
-        (): void => {
-          this.contentTranslateX = outPx;
-        }
-      );
-      setTimeout((): void => {
-        this.bottomNavIndex = target;
-        this.getUIContext().animateTo(
-          { duration: FN_TAB_ALBUM_ME_IN_MS, curve: FN_TAB_ALBUM_ME_CURVE },
-          (): void => {
-            this.contentTranslateX = 0;
-          }
-        );
-      }, Math.floor(FN_TAB_ALBUM_ME_OUT_MS * 0.55));
+    const albumMeSwitch = target === 2 || this.bottomNavIndex === 2;
+    if (!albumMeSwitch) {
+      this.bottomNavIndex = target;
       return;
     }
-
-    if (involvesHome) {
-      const towardHome = target === 0;
-      const outPx = towardHome ? 14 : -12;
+    const towardMe = target === 2;
+    const outPx = towardMe ? -22 : 22;
+    this.getUIContext().animateTo(
+      { duration: FN_TAB_ALBUM_ME_OUT_MS, curve: FN_TAB_ALBUM_ME_CURVE },
+      (): void => {
+        this.contentTranslateX = outPx;
+      }
+    );
+    setTimeout((): void => {
+      this.bottomNavIndex = target;
       this.getUIContext().animateTo(
-        { duration: FN_TAB_HOME_CONTENT_OUT_MS, curve: FN_TAB_HOME_CONTENT_CURVE },
+        { duration: FN_TAB_ALBUM_ME_IN_MS, curve: FN_TAB_ALBUM_ME_CURVE },
         (): void => {
-          this.contentTranslateX = outPx;
+          this.contentTranslateX = 0;
         }
       );
-      setTimeout((): void => {
-        this.bottomNavIndex = target;
-        if (target === 0) {
-          this.syncWebSessionSnapshotFromAppSession();
-        }
-        this.getUIContext().animateTo(
-          { duration: FN_TAB_HOME_CONTENT_IN_MS, curve: FN_TAB_HOME_CONTENT_CURVE },
-          (): void => {
-            this.contentTranslateX = 0;
-          }
-        );
-      }, Math.floor(FN_TAB_HOME_CONTENT_OUT_MS * 0.65));
-      return;
-    }
-
-    this.bottomNavIndex = target;
+    }, Math.floor(FN_TAB_ALBUM_ME_OUT_MS * 0.55));
   }
 
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
-    const s = AppSession.getStored();
-    if (s !== null && s.token.length > 0 && s.baseUrl.length > 0) {
-      let b = s.baseUrl;
-      if (b.endsWith('/')) {
-        b = b.substring(0, b.length - 1);
+    const session = AppSession.getStored();
+    if (session !== null && session.token.length > 0 && session.baseUrl.length > 0) {
+      let base = session.baseUrl;
+      if (base.endsWith('/')) {
+        base = base.substring(0, base.length - 1);
       }
-      this.snapWebBase = fnWebViewBaseUrl(b);
-      this.snapWsSignKeyB64 = s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '';
-      hilog.info(DOMAIN, TAG, 'WebView base %{public}s (session %{public}s)', this.snapWebBase, b);
-      this.snapToken = s.token;
-      this.snapLongToken = s.fnosLongToken.length > 0 ? s.fnosLongToken : '';
+      this.galleryBaseUrl = fnWebViewBaseUrl(base);
       this.sessionOk = true;
-      if (this.snapLongToken.length === 0) {
+      if (session.fnosLongToken.length === 0) {
         const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-        const c = AppSession.getClient();
-        if (c !== null) {
-          void c.fetchFnosLongTokenProbe(12000).then((tok: string) => {
-            if (tok.length === 0) {
+        const client = AppSession.getClient();
+        if (client !== null) {
+          void client.fetchFnosLongTokenProbe(12000).then((token: string): void => {
+            if (token.length <= 0) {
               return;
             }
-            setTimeout((): void => {
-              const cur = AppSession.getStored();
-              if (cur === null) {
-                return;
-              }
-              cur.fnosLongToken = tok;
-              AppSession.apply(cur);
-              void SessionPreferences.save(ctx, cur);
-              this.snapLongToken = tok;
-              this.albumReloadEpoch++;
-            }, 0);
+            const current = AppSession.getStored();
+            if (current === null) {
+              return;
+            }
+            current.fnosLongToken = token;
+            AppSession.apply(current);
+            void SessionPreferences.save(ctx, current);
+            this.albumReloadEpoch++;
           });
         }
       }
     }
   }
 
-  /** 标准 Tabs 风格单项（SymbolGlyph + 文字 + 选中动画） */
   @Builder
-  private tabItem(idx: number, symbol: Resource, label: Resource) {
+  private floatingDockGridGlyph() {
     Column({ space: 4 }) {
-      // 选中指示条
+      Row({ space: 4 }) {
+        ForEach([0, 1], (idx: number) => {
+          Column()
+            .width(8)
+            .height(8)
+            .borderRadius(3)
+            .backgroundColor(idx === 0 ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
+        }, (idx: number) => `dock_grid_top_${idx}`)
+      }
+      Row({ space: 4 }) {
+        ForEach([0, 1], (idx: number) => {
+          Column()
+            .width(8)
+            .height(8)
+            .borderRadius(3)
+            .backgroundColor(idx === 1 ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
+        }, (idx: number) => `dock_grid_bottom_${idx}`)
+      }
+    }
+  }
+
+  @Builder
+  private floatingDockAlbumGlyph(active: boolean) {
+    Stack({ alignContent: Alignment.Center }) {
       Column()
-        .width(this.bottomNavIndex === idx ? 24 : 0)
-        .height(3)
-        .borderRadius(1.5)
-        .backgroundColor($r('app.color.brand_primary'))
-        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
+        .width(16)
+        .height(12)
+        .borderRadius(4)
+        .border({ width: 1.5, color: active ? $r('app.color.brand_primary') : $r('app.color.text_secondary') })
+        .translate({ x: 3, y: -3 })
+      Column()
+        .width(16)
+        .height(12)
+        .borderRadius(4)
+        .border({ width: 1.5, color: active ? $r('app.color.brand_primary') : $r('app.color.text_secondary') })
+        .translate({ x: -3, y: 3 })
+    }
+    .width(24)
+    .height(24)
+  }
 
-      SymbolGlyph(symbol)
-        .fontSize(this.bottomNavIndex === idx ? 25 : 23)
-        .fontColor([this.bottomNavIndex === idx
-          ? $r('app.color.brand_primary')
-          : $r('app.color.text_secondary')])
-        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
+  @Builder
+  private floatingDockNavItem(index: number, label: string) {
+    Button() {
+      Column({ space: 6 }) {
+        if (index === 0) {
+          SymbolGlyph($r('sys.symbol.picture'))
+            .fontSize(HOME_FLOATING_DOCK_NAV_ICON_SIZE_VP)
+            .fontColor([this.isDockNavItemSelected(index)
+              ? $r('app.color.brand_primary')
+              : $r('app.color.text_secondary')])
+        } else if (index === 1) {
+          this.floatingDockAlbumGlyph(this.isDockNavItemSelected(index))
+        } else {
+          SymbolGlyph($r('sys.symbol.person'))
+            .fontSize(HOME_FLOATING_DOCK_NAV_ICON_SIZE_VP)
+            .fontColor([this.isDockNavItemSelected(index)
+              ? $r('app.color.brand_primary')
+              : $r('app.color.text_secondary')])
+        }
 
-      Text(label)
-        .fontSize(11)
-        .fontWeight(this.bottomNavIndex === idx ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(this.bottomNavIndex === idx
-          ? $r('app.color.brand_primary')
-          : $r('app.color.text_secondary'))
-        .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
+        Text(label)
+          .fontSize(HOME_FLOATING_DOCK_NAV_LABEL_SIZE_VP)
+          .fontWeight(this.isDockNavItemSelected(index) ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.isDockNavItemSelected(index)
+            ? $r('app.color.brand_primary')
+            : $r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
     .layoutWeight(1)
-    .height(HOME_BOTTOM_NAV_ITEM_HEIGHT_VP)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .onClick((): void => {
-      this.switchTab(idx);
+    .height(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP - 10)
+    .borderRadius(HOME_FLOATING_DOCK_NAV_ITEM_RADIUS_VP)
+    .backgroundColor(this.isDockNavItemSelected(index) ? $r('app.color.gallery_material_surface_bg') : Color.Transparent)
+    .border(this.isDockNavItemSelected(index)
+      ? { width: 1, color: $r('app.color.immersive_panel_border') }
+      : { width: 0, color: Color.Transparent })
+    .scale({
+      x: this.isDockNavItemSelected(index) ? 1 : 0.98,
+      y: this.isDockNavItemSelected(index) ? 1 : 0.98
     })
+    .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
+    .onClick((): void => {
+      this.switchTab(index);
+    })
+  }
+
+  @Builder
+  private floatingDockSideButton(isLayoutButton: boolean) {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      if (isLayoutButton) {
+        this.floatingDockGridGlyph()
+      } else {
+        Text('日')
+          .fontSize(24)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+      }
+    }
+    .width(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+    .height(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+    .borderRadius(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP / 2)
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
+    .padding(0)
+    .clip(true)
+    .onClick((): void => {
+      this.toast(isLayoutButton ? '显示模式切换入口预留中' : '视图粒度切换入口预留中');
+    })
+  }
+
+  @Builder
+  private floatingBottomDock() {
+    Row({ space: HOME_FLOATING_DOCK_SIDE_GAP_VP }) {
+      if (this.isGalleryShellVisible()) {
+        this.floatingDockSideButton(true)
+      } else {
+        Blank()
+          .width(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+      }
+
+      Row({ space: 8 }) {
+        this.floatingDockNavItem(0, '照片')
+        this.floatingDockNavItem(1, '相册')
+        this.floatingDockNavItem(2, '我的')
+      }
+      .layoutWeight(1)
+      .height(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP)
+      .padding({ left: 6, right: 6 })
+      .backgroundColor($r('app.color.immersive_tabbar_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .borderRadius(HOME_FLOATING_DOCK_CENTER_RADIUS_VP)
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
+
+      if (this.isGalleryShellVisible()) {
+        this.floatingDockSideButton(false)
+      } else {
+        Blank()
+          .width(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+      }
+    }
+    .width('100%')
+    .padding({ left: HOME_FLOATING_DOCK_SIDE_PADDING_VP, right: HOME_FLOATING_DOCK_SIDE_PADDING_VP })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .margin({ bottom: this.bottomDockBottomGap() })
   }
 
   build() {
@@ -536,31 +478,33 @@ struct Home {
       if (!this.sessionOk) {
         Column() {
           Column({ space: 16 }) {
-          Text($r('app.string.home_session_missing'))
-            .fontSize(22)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-            .width('100%')
-          Text($r('app.string.home_session_hint'))
-            .fontSize(14)
-            .lineHeight(22)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-          FnPrimaryButton({ text: $r('app.string.back_to_login') })
-            .width('100%')
-            .margin({ top: 8 })
-            .onClick((): void => {
-              this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
-              });
-            })
-        }
-        .padding(24)
-        .backgroundColor($r('app.color.immersive_panel_bg'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .borderRadius(28)
-        .borderWidth(1)
-        .borderColor($r('app.color.immersive_panel_border'))
-        .shadow({ radius: 24, color: '#16002B55', offsetX: 0, offsetY: 10 })
+            Text($r('app.string.home_session_missing'))
+              .fontSize(22)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .width('100%')
+
+            Text($r('app.string.home_session_hint'))
+              .fontSize(14)
+              .lineHeight(22)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
+            FnPrimaryButton({ text: $r('app.string.back_to_login') })
+              .width('100%')
+              .margin({ top: 8 })
+              .onClick((): void => {
+                this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
+                });
+              })
+          }
+          .padding(24)
+          .backgroundColor($r('app.color.immersive_panel_bg'))
+          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+          .borderRadius(28)
+          .borderWidth(1)
+          .borderColor($r('app.color.immersive_panel_border'))
+          .shadow({ radius: 24, color: '#16002B55', offsetX: 0, offsetY: 10 })
         }
         .width('100%')
         .height('100%')
@@ -568,32 +512,23 @@ struct Home {
         .justifyContent(FlexAlign.Center)
       } else {
         Column() {
-          // ── 内容区 ───────────────────────────────────────────────────
           Stack() {
-            NasWebPanel({
-              webPath: '/',
-              baseUrl: this.snapWebBase,
-              token: this.snapToken,
-              useHttps: true,
-              longToken: this.snapLongToken,
-              wsSignKeyB64: this.snapWsSignKeyB64
-            })
-              .width('100%')
-              .height('100%')
-              .visibility(this.bottomNavIndex === 0 ? Visibility.Visible : Visibility.Hidden)
-              .hitTestBehavior(this.bottomNavIndex === 0 ? HitTestMode.Default : HitTestMode.None)
-            if (this.bottomNavIndex === 1) {
+            if (this.isGalleryShellVisible()) {
               GalleryAlbumTab({
-                baseUrl: this.snapWebBase,
+                baseUrl: this.galleryBaseUrl,
                 albumReloadEpoch: this.albumReloadEpoch,
                 pageShowSignal: this.pageShowSignal,
                 topSafeInsetVp: this.systemTopInsetVp,
-                bottomSafeInsetVp: this.systemBottomInsetVp
+                bottomSafeInsetVp: this.systemBottomInsetVp,
+                floatingDockInsetBottomVp: this.dockReserveHeight(),
+                homeSurface: this.currentHomeSurface(),
+                onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
+                  this.albumSearchModeActive = hiddenBottomNav;
+                }
               })
                 .width('100%')
                 .height('100%')
-            }
-            if (this.bottomNavIndex === 2) {
+            } else {
               MePanel({ topSafeInsetVp: this.systemTopInsetVp })
                 .width('100%')
                 .height('100%')
@@ -601,32 +536,23 @@ struct Home {
           }
           .width('100%')
           .layoutWeight(1)
+          .padding({ bottom: this.isGalleryShellVisible() ? 0 : this.dockReserveHeight() })
           .translate({ x: this.contentTranslateX, y: 0 })
-
-          // ── 标准鸿蒙底部 Tabs 栏 ────────────────────────────────────
-          Row() {
-            this.tabItem(0, $r('sys.symbol.house'), $r('app.string.tab_home'))
-            this.tabItem(1, $r('sys.symbol.picture'), $r('app.string.tab_album'))
-            this.tabItem(2, $r('sys.symbol.person'), $r('app.string.tab_me'))
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-          .backgroundColor($r('app.color.immersive_tabbar_bg'))
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .borderRadius({ topLeft: 26, topRight: 26 })
-          .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
-          .shadow({ radius: 28, color: '#16002B55', offsetX: 0, offsetY: -4 })
-          .margin({ left: 12, right: 12, bottom: 10 })
-          .padding({
-            left: HOME_BOTTOM_NAV_PAD_SIDE_VP,
-            right: HOME_BOTTOM_NAV_PAD_SIDE_VP,
-            top: HOME_BOTTOM_NAV_PAD_TOP_VP,
-            bottom: this.bottomNavPadBottom()
-          })
         }
         .width('100%')
         .height('100%')
+
+        if (this.shouldShowBottomDock()) {
+          Column() {
+            Blank()
+              .layoutWeight(1)
+              .hitTestBehavior(HitTestMode.None)
+            this.floatingBottomDock()
+          }
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.Transparent)
+        }
       }
     }
     .width('100%')
