@@ -5,6 +5,8 @@ import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../Galler
 @Component
 export struct GalleryAlbumSmartCategoryModeView {
   @Prop baseUrl: string = '';
+  @Prop contentInsetTopVp: number = 0;
+  @Prop contentInsetBottomVp: number = 0;
   @Prop loading: boolean = false;
   @Prop error: string = '';
   @Prop sceneItems: SmartCategoryItem[] = [];
@@ -91,7 +93,7 @@ export struct GalleryAlbumSmartCategoryModeView {
         }
       }, (_item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}`)
     }
-    .columnsTemplate('1fr 1fr')
+    .columnsTemplate('1fr 1fr 1fr')
     .columnsGap(8)
     .rowsGap(8)
     .cachedCount(4)
@@ -152,6 +154,7 @@ export struct GalleryAlbumSmartCategoryModeView {
         }
         .width('100%')
         .layoutWeight(1)
+        .padding({ top: this.contentInsetTopVp, bottom: this.contentInsetBottomVp + 12 })
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         .divider({ strokeWidth: 0 })

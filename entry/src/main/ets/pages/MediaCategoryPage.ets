@@ -163,8 +163,18 @@ struct MediaCategoryPage {
     const title = this.titleOf(item);
     try {
       const local = this.parseMedia(item);
+      const categoryKey = item.key !== undefined ? item.key : '';
+      const heroImageUri = nasUrl(this.baseUrl, this.coverOf(item));
+      const expectedTotalCount = Math.max(this.countOf(item), local.length);
       if (local.length > 0) {
-        const ok = await CategoryGalleryNavStore.open(this.baseUrl, title, local, this.getUIContext());
+        const ok = await CategoryGalleryNavStore.open(
+          this.baseUrl,
+          title,
+          local,
+          this.getUIContext(),
+          false,
+          { expectedTotalCount, categoryKey, heroImageUri }
+        );
         if (!ok) { this.toast('打开分类失败'); }
         return;
       }
@@ -178,7 +188,14 @@ struct MediaCategoryPage {
         this.toast(fetched.message ?? '该分类暂无可预览媒体');
         return;
       }
-      const ok = await CategoryGalleryNavStore.open(this.baseUrl, title, fetched.data, this.getUIContext());
+      const ok = await CategoryGalleryNavStore.open(
+        this.baseUrl,
+        title,
+        fetched.data,
+        this.getUIContext(),
+        false,
+        { expectedTotalCount, categoryKey, heroImageUri }
+      );
       if (!ok) { this.toast('打开分类失败'); }
     } finally {
       this.opening = false;

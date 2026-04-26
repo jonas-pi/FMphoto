@@ -11,6 +11,10 @@ export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
 export const GALLERY_PREVIEW_SCALE_MAX = 4;
 export const GALLERY_PREVIEW_ZOOM_EPS = 0.02;
 export const GALLERY_PREVIEW_SNAP_EPS = 0.12;
+export const GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP = 232;
+const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOFT_VP = 64;
+const GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP = 42;
+const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
 
 /** 缩略图全局缓存上限；HDR 缩略图单张占用大，过高易 OOM；配合 SDR 解码与 release 淘汰 */
 export const THUMB_CACHE_MAX = 96;
@@ -628,5 +632,167 @@ export struct GalleryNetworkThumb {
     .draggable(false)
     // Image/骨架会参与命中并吞掉长按与 Pan，父级 Stack 上的多选手势永远收不到；整卡不参与命中，事件落到外层图库格
     .hitTestBehavior(HitTestMode.None)
+  }
+}
+
+@Component
+export struct GalleryNetworkBackdropImage {
+  @Prop @Watch('onUriChange') uri: string = '';
+  @Prop @Watch('onPausedChange') paused: boolean = false;
+  @StorageProp('colorMode') private colorMode: number = 0;
+  @State private pix: PixelMap | undefined = undefined;
+  @State private loading: boolean = false;
+  @State private pixAlpha: number = 0;
+  private loadVersion: number = 0;
+  private retryCount: number = 0;
+
+  onUriChange(): void {
+    this.loadVersion++;
+    this.pix = undefined;
+    this.pixAlpha = 0;
+    this.loading = false;
+    this.retryCount = 0;
+    void this.loadPix();
+  }
+
+  onPausedChange(): void {
+    if (!this.paused && this.pix === undefined && !this.loading) {
+      void this.loadPix();
+    }
+  }
+
+  aboutToAppear(): void {
+    void this.loadPix();
+  }
+
+  aboutToDisappear(): void {
+    this.loadVersion++;
+  }
+
+  private async loadPix(): Promise<void> {
+    if (this.uri.length === 0 || this.loading) {
+      return;
+    }
+    const cacheKey = thumbCacheKey(this.uri, false);
+    const cached = thumbPixCache.get(cacheKey);
+    if (cached !== undefined) {
+      this.pix = cached;
+      this.pixAlpha = 1;
+      this.retryCount = 0;
+      return;
+    }
+    if (this.paused) {
+      return;
+    }
+    const versionAtStart = this.loadVersion;
+    this.loading = true;
+    const pix = await loadThumbPix(this.uri, false);
+    if (versionAtStart !== this.loadVersion) {
+      this.loading = false;
+      return;
+    }
+    this.loading = false;
+    if (pix !== undefined) {
+      this.pix = pix;
+      this.retryCount = 0;
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+        this.pixAlpha = 1;
+      });
+    } else if (this.retryCount < 2) {
+      this.retryCount++;
+      const retryVersion = this.loadVersion;
+      const delay = this.retryCount * 700;
+      setTimeout((): void => {
+        if (retryVersion !== this.loadVersion || this.pix !== undefined) {
+          return;
+        }
+        void this.loadPix();
+      }, delay);
+    }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.loading || this.pix === undefined) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.colorMode === 1 ? '#14181F' : '#E8EEF6')
+      }
+      if (this.pix !== undefined) {
+        Image(this.pix)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .opacity(this.pixAlpha)
+          .draggable(false)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .clip(true)
+    .hitTestBehavior(HitTestMode.None)
+  }
+}
+
+@Component
+export struct GalleryFloatingHeroBackdrop {
+  @Prop imageUri: string = '';
+  @Prop topSafeInsetVp: number = 0;
+  @Prop heightVp: number = GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP;
+
+  build() {
+    if (this.imageUri.length === 0) {
+      Blank()
+        .width('100%')
+        .height(0)
+        .hitTestBehavior(HitTestMode.None)
+    } else {
+      Stack({ alignContent: Alignment.Bottom }) {
+        GalleryNetworkBackdropImage({
+          uri: this.imageUri,
+          paused: false,
+        })
+          .width('100%')
+          .height('100%')
+          .opacity(0.94)
+
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#1AFFFFFF')
+          .hitTestBehavior(HitTestMode.None)
+
+        Column() {
+          Blank()
+            .layoutWeight(1)
+
+          Column()
+            .width('100%')
+            .height(GALLERY_FLOATING_HERO_BACKDROP_FADE_SOFT_VP)
+            .backgroundColor($r('app.color.page_background'))
+            .opacity(0.36)
+
+          Column()
+            .width('100%')
+            .height(GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP)
+            .backgroundColor($r('app.color.page_background'))
+            .opacity(0.62)
+
+          Column()
+            .width('100%')
+            .height(GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP)
+            .backgroundColor($r('app.color.page_background'))
+            .opacity(0.92)
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
+      }
+      .width('100%')
+      .height(this.heightVp + this.topSafeInsetVp)
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
+    }
   }
 }

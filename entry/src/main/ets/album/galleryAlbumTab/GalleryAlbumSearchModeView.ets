@@ -14,6 +14,8 @@ const GALLERY_SEARCH_THUMB_RESUME_DELAY_MS = 96;
 @Component
 export struct GalleryAlbumSearchModeView {
   @Prop baseUrl: string = '';
+  @Prop contentInsetTopVp: number = 0;
+  @Prop contentInsetBottomVp: number = 0;
   @Prop @Watch('onLoadingChanged') loading: boolean = false;
   @Prop error: string = '';
   @Prop @Watch('onSearchResultsChanged') searchResults: GalleryListItem[] = [];
@@ -346,6 +348,13 @@ export struct GalleryAlbumSearchModeView {
       } else {
         Column() {
           List() {
+            if (this.contentInsetTopVp > 0) {
+              ListItem() {
+                Column()
+                  .width('100%')
+                  .height(this.contentInsetTopVp)
+              }
+            }
             ForEach(this.searchRowIndices(), (rowIdx: number) => {
               ListItem() {
                 Row({ space: 2 }) {
@@ -432,7 +441,8 @@ export struct GalleryAlbumSearchModeView {
               Column() {
                 Blank()
                   .width('100%')
-                  .height(this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32)
+                  .height((this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32) +
+                    (this.hasMoreSearchResults() ? 0 : this.contentInsetBottomVp))
               }
               .width('100%')
             }
@@ -448,7 +458,11 @@ export struct GalleryAlbumSearchModeView {
                 }
                 .width('100%')
                 .justifyContent(FlexAlign.Center)
-                .padding({ top: 8, bottom: this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 8 : 16 })
+                .padding({
+                  top: 8,
+                  bottom: (this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 8 : 16) +
+                    this.contentInsetBottomVp
+                })
                 .onAppear((): void => {
                   this.maybeAppendSearchChunkSoon(0);
                 })

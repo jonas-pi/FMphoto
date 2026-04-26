@@ -1,21 +1,24 @@
 import {
+  FN_FLOATING_TOP_BOTTOM_GAP_VP,
+  FN_FLOATING_TOP_CONTROL_RADIUS_VP,
+  FN_FLOATING_TOP_CONTROL_SIZE_VP,
+  FN_FLOATING_TOP_MARGIN_VP,
+  FnFloatingTopPillButton
+} from '../../common/FnUiCommon';
+import {
   GALLERY_TOP_BAR_PAD_BOTTOM_VP,
   GALLERY_TOP_BAR_PAD_LEFT_VP,
   GALLERY_TOP_BAR_PAD_RIGHT_VP,
   GALLERY_TOP_BAR_PAD_TOP_VP,
-  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
   GALLERY_TOP_BAR_SUBTITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 
-const PREVIEW_CHROME_TOP_RADIUS_VP: number = 26;
 const PREVIEW_CHROME_BOTTOM_RADIUS_VP: number = 28;
 const PREVIEW_CHROME_MARGIN_H_VP: number = 10;
-const PREVIEW_CHROME_TOP_MARGIN_VP: number = 8;
 const PREVIEW_CHROME_BOTTOM_MARGIN_VP: number = 8;
-const PREVIEW_CHROME_ACTION_SIZE_VP: number = 36;
-const PREVIEW_CHROME_ACTION_RADIUS_VP: number = PREVIEW_CHROME_ACTION_SIZE_VP / 2;
 const PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP: number = 60;
+const PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP: number = 18;
 const PREVIEW_CHROME_BOTTOM_GAP_VP: number = 6;
 
 @Component
@@ -81,7 +84,7 @@ export struct GalleryPreviewChrome {
   }
 
   private topMargin(): number {
-    return PREVIEW_CHROME_TOP_MARGIN_VP + this.topSafeInsetVp;
+    return FN_FLOATING_TOP_MARGIN_VP + this.topSafeInsetVp;
   }
 
   private bottomPad(): number {
@@ -110,7 +113,7 @@ export struct GalleryPreviewChrome {
     }
     .layoutWeight(1)
     .height(PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP)
-    .borderRadius(PREVIEW_CHROME_ACTION_RADIUS_VP)
+    .borderRadius(PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP)
     .backgroundColor(Color.Transparent)
     .enabled(!dimmed && this.toolbarVisible)
     .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
@@ -150,7 +153,7 @@ export struct GalleryPreviewChrome {
     }
     .layoutWeight(1)
     .height(PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP)
-    .borderRadius(PREVIEW_CHROME_ACTION_RADIUS_VP)
+    .borderRadius(PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP)
     .backgroundColor(Color.Transparent)
     .enabled(this.toolbarVisible && !this.downloading)
     .onClick((!this.toolbarVisible || this.downloading) ? (): void => {} : this.onDownload)
@@ -176,7 +179,7 @@ export struct GalleryPreviewChrome {
     }
     .layoutWeight(1)
     .height(PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP)
-    .borderRadius(PREVIEW_CHROME_ACTION_RADIUS_VP)
+    .borderRadius(PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP)
     .backgroundColor(Color.Transparent)
     .enabled(this.toolbarVisible)
     .onClick(!this.toolbarVisible ? (): void => {} : this.onFavorite)
@@ -187,9 +190,9 @@ export struct GalleryPreviewChrome {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
       SymbolGlyph(icon).fontSize(18).fontColor([selected ? Color.White : this.fgColor])
     }
-    .width(PREVIEW_CHROME_ACTION_SIZE_VP)
-    .height(PREVIEW_CHROME_ACTION_SIZE_VP)
-    .borderRadius(PREVIEW_CHROME_ACTION_RADIUS_VP)
+    .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+    .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+    .borderRadius(FN_FLOATING_TOP_CONTROL_RADIUS_VP)
     .backgroundColor(selected ? this.selectedSurfaceBackground() : this.surfaceBackground())
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
     .border({ width: 1, color: this.surfaceBorder() })
@@ -201,10 +204,13 @@ export struct GalleryPreviewChrome {
     Column() {
       Row() {
         Row() {
-          this.topCircleAction($r('sys.symbol.chevron_backward'), this.onBack)
+          FnFloatingTopPillButton({
+            text: '返回',
+            action: this.onBack
+          })
         }
         .layoutWeight(1)
-        .height(PREVIEW_CHROME_ACTION_SIZE_VP)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
         .justifyContent(FlexAlign.Start)
 
         Row() {
@@ -217,7 +223,7 @@ export struct GalleryPreviewChrome {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .layoutWeight(2)
-        .height(PREVIEW_CHROME_ACTION_SIZE_VP)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
 
@@ -228,28 +234,17 @@ export struct GalleryPreviewChrome {
           this.topCircleAction($r('sys.symbol.more'), this.onOpenDetails)
         }
         .layoutWeight(1)
-        .height(PREVIEW_CHROME_ACTION_SIZE_VP)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
         .justifyContent(FlexAlign.End)
       }
       .width('100%')
+      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .alignItems(VerticalAlign.Center)
-      .padding({
-        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
-        right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-        top: GALLERY_TOP_BAR_PAD_TOP_VP,
-        bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
-      })
-      .backgroundColor(this.shellBackground())
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .borderRadius(PREVIEW_CHROME_TOP_RADIUS_VP)
-      .border({ width: 1, color: this.shellBorder() })
-      .shadow({ radius: 18, color: this.shadowColor(), offsetX: 0, offsetY: 8 })
+      .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
       .margin({
-        left: PREVIEW_CHROME_MARGIN_H_VP,
-        right: PREVIEW_CHROME_MARGIN_H_VP,
-        top: this.topMargin()
+        top: this.topMargin(),
+        bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
       })
-      .clip(true)
       .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 

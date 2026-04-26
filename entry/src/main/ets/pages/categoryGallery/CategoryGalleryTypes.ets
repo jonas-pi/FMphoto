@@ -2,9 +2,7 @@ import { GalleryListItem } from '../../model/FnApiTypes';
 
 export interface RowModel {
   startIdx: number;
-  c0: GalleryListItem;
-  c1: GalleryListItem | undefined;
-  c2: GalleryListItem | undefined;
+  cells: GalleryListItem[];
 }
 
 export interface DayGroup {
@@ -71,8 +69,10 @@ function formatDayLabel(sortKey: string): string {
 
 export function buildCategoryGalleryViewData(
   items: GalleryListItem[],
-  useCreatedAt: boolean = false
+  useCreatedAt: boolean = false,
+  columnsPerRow: number = 3
 ): CategoryGalleryViewData {
+  const normalizedColumns = columnsPerRow === 4 ? 4 : 3;
   const keyOrder: string[] = [];
   const mapItems: Map<string, GalleryListItem[]> = new Map();
 
@@ -105,12 +105,14 @@ export function buildCategoryGalleryViewData(
     const key = keyOrder[ki];
     const dayItems = mapItems.get(key) as GalleryListItem[];
     const rows: RowModel[] = [];
-    for (let ri = 0; ri < dayItems.length; ri += 3) {
+    for (let ri = 0; ri < dayItems.length; ri += normalizedColumns) {
+      const cells: GalleryListItem[] = [];
+      for (let ci = 0; ci < normalizedColumns && ri + ci < dayItems.length; ci++) {
+        cells.push(dayItems[ri + ci]);
+      }
       rows.push({
         startIdx: ri,
-        c0: dayItems[ri],
-        c1: ri + 1 < dayItems.length ? dayItems[ri + 1] : undefined,
-        c2: ri + 2 < dayItems.length ? dayItems[ri + 2] : undefined,
+        cells: cells,
       });
     }
     groups.push({

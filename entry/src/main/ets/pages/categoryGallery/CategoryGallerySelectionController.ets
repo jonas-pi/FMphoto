@@ -17,6 +17,7 @@ export interface CategoryGallerySelectionHost {
   getUIContext(): UIContext;
   flatItems: GalleryListItem[];
   groupOffsets: number[];
+  columnsPerRow: number;
   selectionMode: boolean;
   selectedIds: string[];
   cgSlideGestureActive: boolean;
@@ -216,11 +217,12 @@ export function categoryGalleryPickFlatForRow(
   yPx: number
 ): number {
   const n = host.flatItems.length;
+  const columnsPerRow = host.columnsPerRow === 4 ? 4 : 3;
   const fromCache = categoryGalleryPickFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= rowStart && fromCache < rowStart + 3 && fromCache < n) {
+  if (fromCache >= rowStart && fromCache < rowStart + columnsPerRow && fromCache < n) {
     return fromCache;
   }
-  for (let k = 2; k >= 0; k--) {
+  for (let k = columnsPerRow - 1; k >= 0; k--) {
     const fi = rowStart + k;
     if (fi >= n) {
       continue;

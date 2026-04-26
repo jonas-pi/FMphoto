@@ -9,6 +9,8 @@ import {
 import { GalleryListItem, RecycleBinListItem } from '../../model/FnApiTypes';
 import { RbFingerCoordCompat, RbFingerWindowPoint, RbThumbHitRect } from './RecycleBinTypes';
 
+const RECYCLE_BIN_COLUMNS_PER_ROW: number = 4;
+
 export interface RecycleBinSelectionHost {
   getUIContext(): UIContext;
   baseUrl: string;
@@ -257,10 +259,10 @@ export function recycleBinPickThumbFlatForRow(
 ): number {
   const n = host.items.length;
   const fromCache = recycleBinPickThumbFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= rowStart && fromCache < rowStart + 3 && fromCache < n) {
+  if (fromCache >= rowStart && fromCache < rowStart + RECYCLE_BIN_COLUMNS_PER_ROW && fromCache < n) {
     return fromCache;
   }
-  for (let k = 2; k >= 0; k--) {
+  for (let k = RECYCLE_BIN_COLUMNS_PER_ROW - 1; k >= 0; k--) {
     const fi = rowStart + k;
     if (fi >= n) {
       continue;
@@ -477,7 +479,7 @@ export function recycleBinOnCellClick(
 
 export function recycleBinRowCount(items: RecycleBinListItem[]): number {
   const n = items.length;
-  return n <= 0 ? 0 : Math.floor((n + 2) / 3);
+  return n <= 0 ? 0 : Math.floor((n + RECYCLE_BIN_COLUMNS_PER_ROW - 1) / RECYCLE_BIN_COLUMNS_PER_ROW);
 }
 
 export function recycleBinRowIndexArray(items: RecycleBinListItem[]): number[] {
