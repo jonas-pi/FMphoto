@@ -63,6 +63,9 @@ export struct FnTopBar {
           .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
           .backgroundColor($r('app.color.button_secondary_bg'))
           .fontColor($r('app.color.button_secondary_fg'))
+          .borderWidth(1)
+          .borderColor($r('app.color.immersive_panel_border'))
+          .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
           .onClick((): void => {
             this.getUIContext().getRouter().back();
           })
@@ -114,6 +117,7 @@ export struct FnPrimaryButton {
       .fontColor($r('app.color.button_primary_fg'))
       .backgroundColor($r('app.color.button_primary_bg'))
       .borderRadius($r('app.float.radius_medium'))
+      .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
   }
 }
 
@@ -127,6 +131,75 @@ export struct FnSecondaryButton {
       .backgroundColor($r('app.color.button_secondary_bg'))
       .fontColor($r('app.color.button_secondary_fg'))
       .borderRadius($r('app.float.radius_medium'))
+      .borderWidth(1)
+      .borderColor($r('app.color.immersive_panel_border'))
+      .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
+  }
+}
+
+@Component
+export struct FnImmersiveBackdrop {
+  build() {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.page_background'))
+
+      Column() {
+        Row() {
+          Column()
+            .width(240)
+            .height(240)
+            .borderRadius(120)
+            .backgroundColor($r('app.color.immersive_glow_primary'))
+            .opacity(0.55)
+            .shadow({ radius: 70, color: $r('app.color.immersive_glow_primary'), offsetX: 0, offsetY: 0 })
+
+          Row()
+            .layoutWeight(1)
+
+          Column()
+            .width(180)
+            .height(180)
+            .borderRadius(90)
+            .backgroundColor($r('app.color.immersive_glow_secondary'))
+            .opacity(0.42)
+            .shadow({ radius: 56, color: $r('app.color.immersive_glow_secondary'), offsetX: 0, offsetY: 0 })
+        }
+        .width('100%')
+        .padding({ left: 24, right: 12, top: 18 })
+
+        Row()
+          .layoutWeight(1)
+
+        Row() {
+          Row()
+            .layoutWeight(1)
+
+          Column()
+            .width(220)
+            .height(220)
+            .borderRadius(110)
+            .backgroundColor($r('app.color.immersive_glow_tertiary'))
+            .opacity(0.34)
+            .shadow({ radius: 64, color: $r('app.color.immersive_glow_tertiary'), offsetX: 0, offsetY: 0 })
+        }
+        .width('100%')
+        .padding({ right: 18, bottom: 72 })
+      }
+      .width('100%')
+      .height('100%')
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.immersive_halo_soft'))
+        .opacity(0.78)
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
   }
 }
 

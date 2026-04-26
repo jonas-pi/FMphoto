@@ -91,6 +91,9 @@ struct Settings {
             .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
             .backgroundColor($r('app.color.button_secondary_bg'))
             .fontColor($r('app.color.button_secondary_fg'))
+            .borderWidth(1)
+            .borderColor($r('app.color.immersive_panel_border'))
+            .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
             .onClick((): void => {
               this.getUIContext().getRouter().back();
             })
@@ -114,6 +117,9 @@ struct Settings {
             .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
             .backgroundColor($r('app.color.button_primary_bg'))
             .fontColor($r('app.color.button_primary_fg'))
+            .borderWidth(1)
+            .borderColor($r('app.color.immersive_panel_border'))
+            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
             .onClick((): void => {
               const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
               AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());

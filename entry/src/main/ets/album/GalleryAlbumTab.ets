@@ -1784,7 +1784,8 @@ export struct GalleryAlbumTab {
           .width(GALLERY_HOME_UPLOAD_FAB_SIZE_VP)
           .height(GALLERY_HOME_UPLOAD_FAB_SIZE_VP)
           .backgroundColor($r('app.color.brand_primary'))
-          .shadow({ radius: 16, color: '#33000000', offsetX: 0, offsetY: 6 })
+          .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+          .shadow({ radius: 20, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
           .margin({
             right: GALLERY_HOME_UPLOAD_FAB_MARGIN_RIGHT_VP,
             bottom: GALLERY_HOME_UPLOAD_FAB_MARGIN_BOTTOM_VP

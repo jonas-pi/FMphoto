@@ -1,0 +1,890 @@
+{
+    "children":  [
+                     {
+                         "children":  [
+
+                                      ],
+                         "isLeaf":  true,
+                         "nodeId":  "000201776839955443355b0dfe30d61f",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "UI Design Kit简介",
+                         "relateDocument":  "ui-design-introduction",
+                         "relateDocId":  "c31d7132a0cb4c1dadc7fc57e4421e98",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  1,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "00020177683995544348228520cee456",
+                                              "parent":  "000201776839955443362dd7c510b20d",
+                                              "nodeName":  "（推荐）分层图标处理",
+                                              "relateDocument":  "ui-design-layered-process",
+                                              "relateDocId":  "317db226da534fafb376129d1bd49ad1",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443513fbc4afda468",
+                                              "parent":  "000201776839955443362dd7c510b20d",
+                                              "nodeName":  "单层图标处理",
+                                              "relateDocument":  "ui-design-normal-process",
+                                              "relateDocId":  "715f8768404e44498a94639490f33a13",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "000201776839955443362dd7c510b20d",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "图标处理",
+                         "relateDocument":  "ui-design-icon-process",
+                         "relateDocId":  "d7f6915439d64e2b9bb6e3959f01c02c",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  2,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443456d54046c1eec",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "设置动态模糊样式",
+                                              "relateDocument":  "ui-design-navigation-dynamic-blur",
+                                              "relateDocId":  "e6f8d6a10b3144448a66dd7a22b56789",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443521726f52c3e36",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "设置信息提醒",
+                                              "relateDocument":  "ui-design-navigation-message-reminder",
+                                              "relateDocId":  "1cf36855e16c4885ac37da3d25676216",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554435668fad1777581",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "设置自定义区域",
+                                              "relateDocument":  "ui-design-navigation-customized-area",
+                                              "relateDocId":  "306bc6939a3647e0af2031728409dd38",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  3,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443589b1d3c8a0ba7",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "标题栏动态显隐",
+                                              "relateDocument":  "ui-design-navigation-dynamic-display-and-hiding",
+                                              "relateDocId":  "66ec9b3d0d0e4f5b85d63ebda65ae106",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  4,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443641977177d8c5c",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "半模态样式",
+                                              "relateDocument":  "ui-design-navigation-half-modal-style",
+                                              "relateDocId":  "cd321d67245e44798a5e462478ec5613",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  5,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554436581b4ae391c1d",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "图标类型设置",
+                                              "relateDocument":  "ui-design-navigation-icon-type",
+                                              "relateDocId":  "78386983a1634bb38cba6784de21bb0d",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  6,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "00020177683995544367728ab9f1779f",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "设置应用内多窗",
+                                              "relateDocument":  "ui-design-navigation-set-multi-window",
+                                              "relateDocId":  "23478ad142b846d1a87c0ec585f7b4e1",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  7,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554436850fbd040b292",
+                                              "parent":  "0002017768399554433805f6898c2922",
+                                              "nodeName":  "开发实例",
+                                              "relateDocument":  "ui-design-navigation-dynamic-blur-demo",
+                                              "relateDocId":  "ee71f617eb704c0abe7efb58f4ebb63e",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  8,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "0002017768399554433805f6898c2922",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "组件导航",
+                         "relateDocument":  "ui-design-navigation",
+                         "relateDocId":  "ffbceffaf6b6437488d34a92f5cf3e59",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  3,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554434973a9b275411d",
+                                              "parent":  "0002017768399554433881168b537c12",
+                                              "nodeName":  "设置overlay模式的侧边栏",
+                                              "relateDocument":  "ui-design-sidebar-overlay-mode",
+                                              "relateDocId":  "4df7ace0af3849318330f25424912f4a",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "00020177683995544351795572b848f0",
+                                              "parent":  "0002017768399554433881168b537c12",
+                                              "nodeName":  "设置embed模式的侧边栏",
+                                              "relateDocument":  "ui-design-sidebar-enbed-mode",
+                                              "relateDocId":  "12304a7126fc400aa65f57acf90202e2",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "0002017768399554433881168b537c12",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "侧边栏样式",
+                         "relateDocument":  "ui-design-sidebar",
+                         "relateDocId":  "271607e8ab634eaa92ad5772743b2d64",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  4,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+
+                                      ],
+                         "isLeaf":  true,
+                         "nodeId":  "00020177683995544340479a5c589a41",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "侧边栏菜单样式",
+                         "relateDocument":  "ui-design-side-menu",
+                         "relateDocId":  "99d094094b8e49b79ed42cf4d119b53d",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  5,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554434638f09b60efb0",
+                                              "parent":  "000201776839955443414fb130cbdbb1",
+                                              "nodeName":  "设置页签栏的分割线",
+                                              "relateDocument":  "ui-design-hds-tabs-split-line",
+                                              "relateDocId":  "58848ec7681546b2b5fd9aea930c92b3",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "00020177683995544353833fe060427a",
+                                              "parent":  "000201776839955443414fb130cbdbb1",
+                                              "nodeName":  "设置页签栏的模糊样式",
+                                              "relateDocument":  "ui-design-hds-tabs-fuzzy-style",
+                                              "relateDocId":  "aded337a6f834d49baadc2106af22a38",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443554211ef696607",
+                                              "parent":  "000201776839955443414fb130cbdbb1",
+                                              "nodeName":  "设置页签的图标出血样式",
+                                              "relateDocument":  "ui-design-hds-tabs-icon-bleed-substyle",
+                                              "relateDocId":  "b0772a0952e74cd395e49c35a44b152a",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  3,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443598fe428ace157",
+                                              "parent":  "000201776839955443414fb130cbdbb1",
+                                              "nodeName":  "设置侧边栏半屏居中对齐样式",
+                                              "relateDocument":  "ui-design-hds-tabs-sidebar-alignment-substyle",
+                                              "relateDocId":  "c5bdeef605e844d38a50a17c47d4c74a",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  4,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443633dccae6d4bff",
+                                              "parent":  "000201776839955443414fb130cbdbb1",
+                                              "nodeName":  "设置页签栏的悬浮样式",
+                                              "relateDocument":  "ui-design-hds-tabs-bar-floating",
+                                              "relateDocId":  "777ff09ce79c45dbae27677be4b29120",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  5,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "000201776839955443414fb130cbdbb1",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "底部页签",
+                         "relateDocument":  "ui-design-hds-tabs",
+                         "relateDocId":  "b17d04fcd6ea407eae726fc205be8e1c",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  6,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554434813622fbe68f7",
+                                              "parent":  "000201776839955443422461d9bbfb96",
+                                              "nodeName":  "设置常驻通知弹窗",
+                                              "relateDocument":  "ui-design-snackbar-resident-notification",
+                                              "relateDocId":  "0aa059bbd08449b09a7c95d5dff16308",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "00020177683995544354099ab810f095",
+                                              "parent":  "000201776839955443422461d9bbfb96",
+                                              "nodeName":  "设置定时通知弹窗",
+                                              "relateDocument":  "ui-design-snackbar-scheduled-notification",
+                                              "relateDocId":  "e8697c6170c44216895625a46afd69e4",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "000201776839955443422461d9bbfb96",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "即时操作",
+                         "relateDocument":  "ui-design-snackbar",
+                         "relateDocId":  "7eb526ed84d64451b49690b0d7432aea",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  7,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554434911e490e38273",
+                                              "parent":  "00020177683995544342468127bbc3e2",
+                                              "nodeName":  "设置有主按钮的组件",
+                                              "relateDocument":  "ui-design-actionbar-main-buttons",
+                                              "relateDocId":  "a2933784285d4784993a055cee0048c3",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443509809870cc755",
+                                              "parent":  "00020177683995544342468127bbc3e2",
+                                              "nodeName":  "设置无主按钮的组件",
+                                              "relateDocument":  "ui-design-actionbar-without-master-button",
+                                              "relateDocId":  "82cc2f8035d749c08ebca57de80803b6",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "00020177683995544342468127bbc3e2",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "核心操作栏",
+                         "relateDocument":  "ui-design-actionbar",
+                         "relateDocId":  "ac322885c3c842ab957738545e4bf351",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  8,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443466be60e4c9914",
+                                              "parent":  "00020177683995544343135a6b57ba0e",
+                                              "nodeName":  "设置附带横滑的列表样式",
+                                              "relateDocument":  "ui-design-set-hds-slide-horizon-listitem",
+                                              "relateDocId":  "dd84f26250d34d97a960bbc442122108",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443543636c19c7b22",
+                                              "parent":  "00020177683995544343135a6b57ba0e",
+                                              "nodeName":  "设置列表卡片样式",
+                                              "relateDocument":  "ui-design-set-listitem-style",
+                                              "relateDocId":  "4c939364a8534e008a15bed0a33b478d",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "00020177683995544343135a6b57ba0e",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "列表",
+                         "relateDocument":  "ui-design-list-item-card",
+                         "relateDocId":  "8ed29e2fcc2d476b9c7b7e7ca1118f98",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  9,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+
+                                      ],
+                         "isLeaf":  true,
+                         "nodeId":  "000201776839955443435d3cd61ecbdc",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "应用加载自定义Symbol",
+                         "relateDocument":  "ui-design-custom-symbol-res-register",
+                         "relateDocId":  "02f1cdfab41f41ecb5856da3ea7c770b",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  10,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443473220011a35a1",
+                                              "parent":  "0002017768399554434362211661b517",
+                                              "nodeName":  "点光源效果",
+                                              "relateDocument":  "ui-design-visual-effect-point-light",
+                                              "relateDocId":  "d98ff00aaa074b0e9f5bf39e2307316c",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554435299471d36d550",
+                                              "parent":  "0002017768399554434362211661b517",
+                                              "nodeName":  "按压阴影",
+                                              "relateDocument":  "ui-design-visual-effect-background-color",
+                                              "relateDocId":  "145ba87188684b7cbb1b17251eab03f7",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554435632bb8eed59eb",
+                                              "parent":  "0002017768399554434362211661b517",
+                                              "nodeName":  "双边边缘流光",
+                                              "relateDocument":  "ui-design-visual-effect-double-edge-streamer",
+                                              "relateDocId":  "db1a584f21524583a2ec631e6ca43f88",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  3,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554435953ee8adb1fe6",
+                                              "parent":  "0002017768399554434362211661b517",
+                                              "nodeName":  "背景流光",
+                                              "relateDocument":  "ui-design-visual-effect-background-streamer",
+                                              "relateDocId":  "7742156becc94d44a7aaa36e54fcecbe",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  4,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "00020177683995544363769d4a1d96ca",
+                                              "parent":  "0002017768399554434362211661b517",
+                                              "nodeName":  "自带背景的双边流光",
+                                              "relateDocument":  "design-visual-effect-background-streamer-with-mask",
+                                              "relateDocId":  "f9499f06a600419b94823c2df016527e",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  5,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "0002017768399554434362211661b517",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "视效",
+                         "relateDocument":  "ui-design-visual-effect",
+                         "relateDocId":  "f4d5ff5aa0a944c292b252bcf4cc3536",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  11,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+
+                                      ],
+                         "isLeaf":  true,
+                         "nodeId":  "00020177683995544343976cfd225491",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "应用内多窗",
+                         "relateDocument":  "ui-design-multiwindowentryinapp",
+                         "relateDocId":  "7e3244eb87544c1bb426c931c1d7f2d0",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  12,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+
+                                      ],
+                         "isLeaf":  true,
+                         "nodeId":  "000201776839955443442142ea18fb24",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "沉浸光感",
+                         "relateDocument":  "ui-design-hds-component-material",
+                         "relateDocId":  "e483fb3bb21e4336a05a691ec9135e79",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  13,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     },
+                     {
+                         "children":  [
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "000201776839955443493b90989d456a",
+                                              "parent":  "000201776839955443444885b5fb8990",
+                                              "nodeName":  "怎么获取layeredDrawableDescriptor对象信息？",
+                                              "relateDocument":  "ui-design-faq1",
+                                              "relateDocId":  "53f160227e1b484f800bc3ef67e068a5",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  1,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          },
+                                          {
+                                              "children":  [
+
+                                                           ],
+                                              "isLeaf":  true,
+                                              "nodeId":  "0002017768399554435443048f10c262",
+                                              "parent":  "000201776839955443444885b5fb8990",
+                                              "nodeName":  "401 参数检查失败的可能原因和解决办法",
+                                              "relateDocument":  "ui-design-faq2",
+                                              "relateDocId":  "092c738c0706421187c6f0c8879aa2df",
+                                              "hided":  0,
+                                              "realHided":  0,
+                                              "searchVisible":  1,
+                                              "catalogIndex":  2,
+                                              "released":  0,
+                                              "restrictedType":  0,
+                                              "showBeta":  0,
+                                              "apiAtomic":  0,
+                                              "rootFlag":  "N"
+                                          }
+                                      ],
+                         "isLeaf":  false,
+                         "nodeId":  "000201776839955443444885b5fb8990",
+                         "parent":  "000201776839955443345ea6e821ce79",
+                         "nodeName":  "UI Design Kit常见问题",
+                         "relateDocument":  "ui-design-faq",
+                         "relateDocId":  "c0b1502c96f64e4b98cf7dc1c0af95d4",
+                         "hided":  0,
+                         "realHided":  0,
+                         "searchVisible":  1,
+                         "catalogIndex":  14,
+                         "released":  0,
+                         "restrictedType":  0,
+                         "showBeta":  0,
+                         "apiAtomic":  0,
+                         "rootFlag":  "N"
+                     }
+                 ],
+    "isLeaf":  false,
+    "nodeId":  "000201776839955443345ea6e821ce79",
+    "parent":  "00020177683995544233109a095c4df8",
+    "nodeName":  "UI Design Kit（UI设计套件）",
+    "relateDocument":  "ui-design-kit-guide",
+    "relateDocId":  "9316deffc74b46df87a96344d1c4c24b",
+    "hided":  0,
+    "realHided":  0,
+    "searchVisible":  1,
+    "catalogIndex":  14,
+    "released":  0,
+    "restrictedType":  0,
+    "showBeta":  0,
+    "apiAtomic":  0,
+    "rootFlag":  "N"
+}

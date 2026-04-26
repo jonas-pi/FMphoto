@@ -46,8 +46,10 @@ export struct GalleryAlbumEntryChips {
     .height(GALLERY_HOME_ENTRY_CHIP_HEIGHT_VP)
     .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP, top: 0, bottom: 0 })
     .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
-    .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
+    .backgroundColor($r('app.color.button_secondary_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    .shadow({ radius: 10, color: '#12001A33', offsetX: 0, offsetY: 4 })
     .onClick(action)
   }
 

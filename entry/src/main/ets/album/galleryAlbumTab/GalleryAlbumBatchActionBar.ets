@@ -21,8 +21,11 @@ export struct GalleryAlbumBatchActionBar {
       Button($r('app.string.gallery_batch_download'), { type: ButtonType.Capsule, stateEffect: true })
         .layoutWeight(1)
         .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
-        .fontColor($r('app.color.text_primary'))
-        .backgroundColor($r('app.color.card_background'))
+        .fontColor($r('app.color.button_secondary_fg'))
+        .backgroundColor($r('app.color.button_secondary_bg'))
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
         .enabled(!this.downloading)
         .onClick(this.onDownload)
       Button($r('app.string.gallery_batch_delete'), { type: ButtonType.Capsule, stateEffect: true })
@@ -30,6 +33,7 @@ export struct GalleryAlbumBatchActionBar {
         .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
         .fontColor(Color.White)
         .backgroundColor(GALLERY_BATCH_DESTRUCTIVE_BG)
+        .shadow({ radius: 18, color: '#40E11D48', offsetX: 0, offsetY: 8 })
         .enabled(!this.deleting)
         .onClick(this.onDelete)
     }
@@ -43,4 +47,3 @@ export struct GalleryAlbumBatchActionBar {
     .backgroundColor($r('app.color.page_background'))
   }
 }
-
