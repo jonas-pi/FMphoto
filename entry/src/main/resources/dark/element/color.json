@@ -6,11 +6,11 @@
     },
     {
       "name": "page_background",
-      "value": "#1C1C1E"
+      "value": "#0F1115"
     },
     {
       "name": "brand_primary",
-      "value": "#0A84FF"
+      "value": "#7DB0FF"
     },
     {
       "name": "text_primary",
@@ -26,7 +26,7 @@
     },
     {
       "name": "card_background",
-      "value": "#2C2C2E"
+      "value": "#1B2028"
     },
     {
       "name": "card_border",
@@ -38,7 +38,7 @@
     },
     {
       "name": "button_primary_bg",
-      "value": "#0A84FF"
+      "value": "#7DB0FF"
     },
     {
       "name": "button_primary_fg",
@@ -46,11 +46,11 @@
     },
     {
       "name": "button_secondary_bg",
-      "value": "#33FFFFFF"
+      "value": "#242C3650"
     },
     {
       "name": "button_secondary_fg",
-      "value": "#F2F2F7"
+      "value": "#F5F8FF"
     },
     {
       "name": "list_item_background",
@@ -119,6 +119,38 @@
     {
       "name": "gallery_material_search_placeholder",
       "value": "#8CAEAEB2"
+    },
+    {
+      "name": "immersive_glow_primary",
+      "value": "#3358A6FF"
+    },
+    {
+      "name": "immersive_glow_secondary",
+      "value": "#2A4EE6C6"
+    },
+    {
+      "name": "immersive_glow_tertiary",
+      "value": "#265FD4C8"
+    },
+    {
+      "name": "immersive_halo_soft",
+      "value": "#CC111722"
+    },
+    {
+      "name": "immersive_panel_bg",
+      "value": "#242A3344"
+    },
+    {
+      "name": "immersive_panel_strong_bg",
+      "value": "#30374466"
+    },
+    {
+      "name": "immersive_panel_border",
+      "value": "#26FFFFFF"
+    },
+    {
+      "name": "immersive_tabbar_bg",
+      "value": "#2E11161E"
     }
   ]
 }

@@ -18,7 +18,7 @@ import {
   fnWebLocalStorageSecretInjectScript,
   injectFnWebCookies
 } from '../network/FnWebCookies';
-import { FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
+import { FnImmersiveBackdrop, FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -213,13 +213,55 @@ struct MePanel {
         bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
       })
 
-      Column({ space: 16 }) {
+      Column({ space: 18 }) {
+        Column({ space: 10 }) {
+          Text('FNOS 个人中心')
+            .fontSize(20)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+
+          Text('延续首页的沉浸光感风格，保留轻透材质与柔和高光。')
+            .fontSize(13)
+            .lineHeight(20)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .width('100%')
+        .padding(18)
+        .backgroundColor($r('app.color.immersive_panel_bg'))
+        .borderRadius(24)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .shadow({ radius: 24, color: '#14001A33', offsetX: 0, offsetY: 10 })
+
+        Column({ space: 12 }) {
+          Text('当前视觉特征')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text('1. 顶部与底部使用半透明悬浮材质。')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+          Text('2. 页面背景加入多层柔光，增强空间深度。')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+          Text('3. 主要操作按钮保留清晰的焦点高亮。')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .width('100%')
+        .padding(18)
+        .backgroundColor($r('app.color.immersive_panel_strong_bg'))
+        .borderRadius(24)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+
         Button($r('app.string.logout'))
           .width('100%')
           .height($r('app.float.button_height'))
           .backgroundColor('#E11D48')
           .fontColor(Color.White)
           .borderRadius($r('app.float.radius_medium'))
+          .shadow({ radius: 18, color: '#40E11D48', offsetX: 0, offsetY: 8 })
           .onClick((): void => {
             const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
             void SessionPreferences.clearSession(ctx).then(() => {
@@ -488,26 +530,41 @@ struct Home {
   }
 
   build() {
-    Column() {
+    Stack() {
+      FnImmersiveBackdrop()
+
       if (!this.sessionOk) {
-        Column({ space: 16 }) {
+        Column() {
+          Column({ space: 16 }) {
           Text($r('app.string.home_session_missing'))
-            .fontSize(16)
+            .fontSize(22)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
             .width('100%')
           Text($r('app.string.home_session_hint'))
             .fontSize(14)
+            .lineHeight(22)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
           FnPrimaryButton({ text: $r('app.string.back_to_login') })
             .width('100%')
+            .margin({ top: 8 })
             .onClick((): void => {
               this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
               });
             })
         }
         .padding(24)
+        .backgroundColor($r('app.color.immersive_panel_bg'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .borderRadius(28)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .shadow({ radius: 24, color: '#16002B55', offsetX: 0, offsetY: 10 })
+        }
         .width('100%')
-        .layoutWeight(1)
+        .height('100%')
+        .padding({ left: 20, right: 20 })
         .justifyContent(FlexAlign.Center)
       } else {
         Column() {
@@ -540,7 +597,6 @@ struct Home {
               MePanel({ topSafeInsetVp: this.systemTopInsetVp })
                 .width('100%')
                 .height('100%')
-                .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
             }
           }
           .width('100%')
@@ -555,9 +611,13 @@ struct Home {
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
-          .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
-          .borderWidth({ top: 0.5 })
-          .borderColor(this.isDarkTheme ? '#1AFFFFFF' : '#1A000000')
+          .backgroundColor($r('app.color.immersive_tabbar_bg'))
+          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+          .borderRadius({ topLeft: 26, topRight: 26 })
+          .borderWidth(1)
+          .borderColor($r('app.color.immersive_panel_border'))
+          .shadow({ radius: 28, color: '#16002B55', offsetX: 0, offsetY: -4 })
+          .margin({ left: 12, right: 12, bottom: 10 })
           .padding({
             left: HOME_BOTTOM_NAV_PAD_SIDE_VP,
             right: HOME_BOTTOM_NAV_PAD_SIDE_VP,
@@ -566,12 +626,11 @@ struct Home {
           })
         }
         .width('100%')
-        .layoutWeight(1)
+        .height('100%')
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkTheme ? '#FF1C1C1E' : '#FFF5F5F5')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

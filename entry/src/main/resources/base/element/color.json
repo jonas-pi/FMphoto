@@ -6,11 +6,11 @@
     },
     {
       "name": "page_background",
-      "value": "#F5F5F5"
+      "value": "#F4F7FB"
     },
     {
       "name": "brand_primary",
-      "value": "#007AFF"
+      "value": "#4A8BFF"
     },
     {
       "name": "text_primary",
@@ -38,7 +38,7 @@
     },
     {
       "name": "button_primary_bg",
-      "value": "#007AFF"
+      "value": "#4A8BFF"
     },
     {
       "name": "button_primary_fg",
@@ -46,11 +46,11 @@
     },
     {
       "name": "button_secondary_bg",
-      "value": "#12000000"
+      "value": "#CCFFFFFF"
     },
     {
       "name": "button_secondary_fg",
-      "value": "#1C1C1E"
+      "value": "#162033"
     },
     {
       "name": "list_item_background",
@@ -119,6 +119,38 @@
     {
       "name": "gallery_material_search_placeholder",
       "value": "#7A5B6675"
+    },
+    {
+      "name": "immersive_glow_primary",
+      "value": "#66A7C7FF"
+    },
+    {
+      "name": "immersive_glow_secondary",
+      "value": "#66A9FFD6"
+    },
+    {
+      "name": "immersive_glow_tertiary",
+      "value": "#5CFEE7B1"
+    },
+    {
+      "name": "immersive_halo_soft",
+      "value": "#E8F9FBFF"
+    },
+    {
+      "name": "immersive_panel_bg",
+      "value": "#D9FFFFFF"
+    },
+    {
+      "name": "immersive_panel_strong_bg",
+      "value": "#F2FFFFFF"
+    },
+    {
+      "name": "immersive_panel_border",
+      "value": "#24FFFFFF"
+    },
+    {
+      "name": "immersive_tabbar_bg",
+      "value": "#D6FFFFFF"
     }
   ]
 }

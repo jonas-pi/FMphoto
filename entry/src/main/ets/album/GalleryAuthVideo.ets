@@ -946,7 +946,10 @@ export struct GalleryAuthVideo {
                   .fontSize(20)
                   .fontColor([Color.White])
               }
-              .width(40).height(40).backgroundColor('#55000000')
+              .width(40).height(40).backgroundColor('#D9333C48')
+              .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+              .border({ width: 1, color: '#26FFFFFF' })
+              .shadow({ radius: 14, color: '#22000000', offsetX: 0, offsetY: 6 })
               .onClick((): void => { void this.togglePlayPause(); })
 
               Button({ type: ButtonType.Capsule, stateEffect: true }) {
@@ -954,7 +957,10 @@ export struct GalleryAuthVideo {
                   .fontSize(13)
                   .fontColor(Color.White)
               }
-              .height(36).backgroundColor('#55000000')
+              .height(36).backgroundColor('#D9333C48')
+              .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+              .border({ width: 1, color: '#26FFFFFF' })
+              .shadow({ radius: 12, color: '#22000000', offsetX: 0, offsetY: 5 })
               .onClick((): void => { void this.chooseSpeed(); })
 
               Button({ type: ButtonType.Capsule, stateEffect: true }) {
@@ -962,7 +968,10 @@ export struct GalleryAuthVideo {
                   .fontSize(13)
                   .fontColor(Color.White)
               }
-              .height(36).backgroundColor('#55000000')
+              .height(36).backgroundColor('#D9333C48')
+              .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+              .border({ width: 1, color: '#26FFFFFF' })
+              .shadow({ radius: 12, color: '#22000000', offsetX: 0, offsetY: 5 })
               .onClick((): void => { void this.chooseQuality(); })
             }
             .width('100%')
@@ -1070,7 +1079,9 @@ export struct GalleryAuthVideo {
             }
             .height(40)
             .padding({ left: 28, right: 28 })
-            .backgroundColor('#0A63D8')
+            .backgroundColor($r('app.color.button_primary_bg'))
+            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
             .onClick((): void => {
               this.onUserRetryPlayback();
             })

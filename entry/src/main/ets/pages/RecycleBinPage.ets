@@ -452,6 +452,12 @@ struct RecycleBinPage {
         Column({ space: 12 }) {
           FnStateText({ text: this.error })
           Button('刷新')
+            .height($r('app.float.button_height'))
+            .padding({ left: 28, right: 28 })
+            .backgroundColor($r('app.color.button_primary_bg'))
+            .fontColor($r('app.color.button_primary_fg'))
+            .borderRadius($r('app.float.radius_medium'))
+            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
             .onClick((): void => {
               void this.loadAll();
             })

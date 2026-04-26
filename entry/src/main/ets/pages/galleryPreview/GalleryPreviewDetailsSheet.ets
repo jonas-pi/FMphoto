@@ -39,7 +39,10 @@ export struct GalleryPreviewDetailsSheet {
       }
       .width(32)
       .height(32)
-      .backgroundColor(this.isDark ? '#2BFFFFFF' : '#12000000')
+      .backgroundColor(this.isDark ? '#30374466' : '#D9FFFFFF')
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .border({ width: 1, color: this.isDark ? '#26FFFFFF' : '#24FFFFFF' })
+      .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
       .onClick(this.onClose)
     }
     .width('100%')

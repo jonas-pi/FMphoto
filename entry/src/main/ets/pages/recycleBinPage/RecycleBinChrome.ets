@@ -42,8 +42,8 @@ export struct RecycleBinChrome {
             .constraintSize({ minWidth: RECYCLE_BIN_ACTION_MIN_WIDTH_VP })
             .backgroundColor($r('app.color.button_primary_bg'))
             .fontColor($r('app.color.button_primary_fg'))
-            .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
-            .shadow({ radius: 12, color: '#16001A33', offsetX: 0, offsetY: 4 })
+            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
             .visibility(this.selectionMode ? Visibility.Visible : Visibility.Hidden)
             .onClick(this.onCancelSelection)
           Button('\u8fd4\u56de', { type: ButtonType.Capsule, stateEffect: true })
@@ -52,8 +52,8 @@ export struct RecycleBinChrome {
             .constraintSize({ minWidth: RECYCLE_BIN_ACTION_MIN_WIDTH_VP })
             .backgroundColor($r('app.color.gallery_material_surface_bg'))
             .fontColor($r('app.color.button_secondary_fg'))
-            .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
-            .shadow({ radius: 12, color: '#12001A33', offsetX: 0, offsetY: 4 })
+            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+            .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
             .visibility(this.selectionMode ? Visibility.Hidden : Visibility.Visible)
             .onClick(this.onBack)
         }
@@ -87,8 +87,8 @@ export struct RecycleBinChrome {
             .constraintSize({ minWidth: RECYCLE_BIN_ACTION_MIN_WIDTH_VP })
             .backgroundColor($r('app.color.gallery_material_surface_bg'))
             .fontColor($r('app.color.button_secondary_fg'))
-            .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
-            .shadow({ radius: 12, color: '#12001A33', offsetX: 0, offsetY: 4 })
+            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+            .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
             .onClick(this.onToggleMode)
         }
       }

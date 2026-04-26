@@ -11,6 +11,7 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 
 @Entry
 @Component
@@ -126,25 +127,43 @@ struct Index {
   }
 
   build() {
-    Column() {
-      Text('FNOS')
-        .fontSize(24)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .margin({ top: 80, bottom: 8 })
-      if (this.busy) {
-        LoadingProgress().width(48).height(48).margin({ top: 120 })
-        Text(this.hint)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-          .margin({ top: 16 })
+    Stack() {
+      FnImmersiveBackdrop()
+
+      Column() {
+        Column({ space: 14 }) {
+          Text('FNOS')
+            .fontSize(28)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+
+          Text('沉浸光感相册')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+
+          if (this.busy) {
+            LoadingProgress().width(44).height(44).margin({ top: 18 })
+            Text(this.hint)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+          }
+        }
+        .width('84%')
+        .padding({ left: 24, right: 24, top: 28, bottom: 28 })
+        .backgroundColor($r('app.color.immersive_panel_bg'))
+        .borderRadius(28)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .shadow({ radius: 28, color: '#16002B55', offsetX: 0, offsetY: 12 })
+        .alignItems(HorizontalAlign.Center)
       }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
     .height('100%')
-    .justifyContent(FlexAlign.Start)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor($r('app.color.page_background'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
