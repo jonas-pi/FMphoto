@@ -5,6 +5,7 @@
 import { image } from '@kit.ImageKit';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem, GalleryThumbnailBlock } from '../model/FnApiTypes';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
@@ -12,6 +13,8 @@ export const GALLERY_PREVIEW_SCALE_MAX = 4;
 export const GALLERY_PREVIEW_ZOOM_EPS = 0.02;
 export const GALLERY_PREVIEW_SNAP_EPS = 0.12;
 export const GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP = 232;
+const DOMAIN = 0xFF00;
+const TAG = 'GalleryDiag';
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOFT_VP = 64;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP = 42;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
@@ -511,6 +514,7 @@ export struct GalleryNetworkThumb {
   @Prop isGif: boolean = false;
   /** true 时仅显示骨架占位，不发起真实图加载 */
   @Prop @Watch('onPausedChange') paused: boolean = false;
+  @Prop debugLabel: string = '';
   @StorageProp('colorMode') private colorMode: number = 0;
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
@@ -520,7 +524,15 @@ export struct GalleryNetworkThumb {
   /** 失败重试次数：用于弱网/短时请求失败后自动补偿加载 */
   private retryCount: number = 0;
 
+  private logDebug(message: string): void {
+    if (this.debugLabel.length <= 0) {
+      return;
+    }
+    hilog.warn(DOMAIN, TAG, 'thumb %{public}s %{public}s uri=%{public}s', this.debugLabel, message, this.uri);
+  }
+
   onUriChange(): void {
+    this.logDebug('onUriChange');
     this.loadVersion++;
     this.pix = undefined;
     this.pixAlpha = 0;
@@ -530,12 +542,14 @@ export struct GalleryNetworkThumb {
   }
 
   onPausedChange(): void {
+    this.logDebug(this.paused ? 'paused' : 'resumed');
     if (!this.paused && this.pix === undefined && !this.loading) {
       void this.loadPix();
     }
   }
 
   aboutToAppear(): void {
+    this.logDebug('aboutToAppear');
     void this.loadPix();
   }
 
@@ -554,27 +568,33 @@ export struct GalleryNetworkThumb {
       this.pix = cached;
       this.pixAlpha = 1;
       this.retryCount = 0;
+      this.logDebug('cache-hit');
       return;
     }
     if (this.paused) {
+      this.logDebug('load-skipped-paused');
       return;
     }
+    this.logDebug('load-start');
     const versionAtStart = this.loadVersion;
     this.loading = true;
     const pix = await loadThumbPix(this.uri, this.isVideo);
     if (versionAtStart !== this.loadVersion) {
       this.loading = false;
+      this.logDebug('load-stale');
       return;
     }
     this.loading = false;
     if (pix !== undefined) {
       this.pix = pix;
       this.retryCount = 0;
+      this.logDebug('load-success');
       this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
         this.pixAlpha = 1;
       });
     } else if (this.retryCount < 2) {
       this.retryCount++;
+      this.logDebug(`load-retry-${this.retryCount}`);
       const retryVersion = this.loadVersion;
       const delay = this.retryCount * 700;
       setTimeout((): void => {
@@ -583,6 +603,8 @@ export struct GalleryNetworkThumb {
         }
         void this.loadPix();
       }, delay);
+    } else {
+      this.logDebug('load-failed');
     }
   }
 

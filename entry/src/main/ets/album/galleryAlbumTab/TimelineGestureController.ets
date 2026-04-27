@@ -22,6 +22,7 @@ export interface TimelineGestureControllerHost {
   scrollerRef: Scroller;
   flowDataSource: GalleryWaterFlowDataSource;
   orderedDays: TimelineDayModel[];
+  dayGlobalSlotStarts: number[];
   sections: GalleryAlbumDaySectionState[];
   visualPlaceholderMode: boolean;
   timelineSidebarDragging: boolean;
@@ -69,7 +70,9 @@ export interface TimelineGestureControllerHost {
   flushPendingFlowRebuild(): void;
   loadVisibleItemsThrottled(forceImmediate?: boolean, aggressive?: boolean): void;
   loadVisibleItemsImmediate(): void;
+  loadVisibleItemsInteractiveVisiblePriority(): void;
   syncListVisibleRoughToTimelineSliderTarget(): void;
+  refreshRootPhotosScrollTitle(): void;
   pumpLoad(singleBatch?: boolean): void;
   runMainListScrollSettledWork(epochAtSchedule?: number): void;
 }
@@ -127,7 +130,7 @@ export function timelineGestureSyncTimelineHandleFromListThrottled(
   syncTimelineSliderFromFirstIndex: (idx: number) => void
 ): void {
   const now = Date.now();
-  if (now - host.lastTimelineHandleSyncMs < 80) {
+  if (now - host.lastTimelineHandleSyncMs < 96) {
     return;
   }
   host.lastTimelineHandleSyncMs = now;
@@ -307,7 +310,8 @@ function timelineGestureRunReleaseVisiblePass(
     timelineGestureLogScrollDebug(host, `timeline release ${passLabel}: wait visible range`);
     return;
   }
-  host.loadVisibleItemsImmediate();
+  host.loadVisibleItemsInteractiveVisiblePriority();
+  host.refreshRootPhotosScrollTitle();
   timelineGestureLogScrollDebug(
     host,
     `timeline release ${passLabel}: scrollerRange=${refreshedByScroller ? 1 : 0}, roughFallback=${allowRoughFallback ? 1 : 0}`
@@ -350,7 +354,7 @@ export function timelineGestureKickPostTimelineReleaseLoad(host: TimelineGesture
       if (releaseGen !== host.timelineDragWatchdogGen) {
         return;
       }
-      if (host.timelineSidebarDragging || host.isDraggingOrFling) {
+      if (host.timelineSidebarDragging) {
         return;
       }
       timelineGestureRunReleaseVisiblePass(
@@ -383,7 +387,7 @@ function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureCont
     if (releaseGen !== host.timelineDragWatchdogGen) {
       return;
     }
-    if (host.timelineSidebarDragging || host.isDraggingOrFling) {
+    if (host.timelineSidebarDragging) {
       return;
     }
     host.seekTimelineListToDisplayRatio(ratio);

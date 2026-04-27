@@ -4,6 +4,7 @@
  */
 import { UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryListItem } from '../model/FnApiTypes';
 import {
   GalleryNetworkThumb,
@@ -11,7 +12,7 @@ import {
   isVideoItem,
   nasUrl,
   pickThumb,
-  trimThumbPixCache
+  trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
@@ -57,6 +58,7 @@ import {
   DayGroup,
   RowModel
 } from './categoryGallery/CategoryGalleryTypes';
+import { CategoryGalleryListBlockDataSource } from './categoryGallery/CategoryGalleryListBlockDataSource';
 
 interface CategoryGalleryListBlock {
   key: string;
@@ -68,6 +70,14 @@ interface CategoryGalleryListBlock {
 
 const CATEGORY_GALLERY_CONTENT_INSET_TOP_NORMAL_VP: number = 88;
 const CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP: number = 68;
+const CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS: number = 240;
+const CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS: number = 96;
+const CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS: number = 160;
+const CATEGORY_GALLERY_RECENT_STREAM_MIN_APPEND_DELTA: number = 288;
+const CATEGORY_GALLERY_RECENT_STREAM_MIN_APPLY_GAP_MS: number = 180;
+const CATEGORY_GALLERY_RECENT_STREAM_IDLE_RESUME_MS: number = 180;
+const DOMAIN = 0xFF00;
+const TAG = 'GalleryDiag';
 
 @Entry
 @Component
@@ -96,6 +106,8 @@ struct CategoryGallery {
 
   private cgLongPressIgnoreUntil: number = 0;
   private listBlocks: Array<CategoryGalleryListBlock> = [];
+  private listBlockSource: CategoryGalleryListBlockDataSource<CategoryGalleryListBlock> =
+    new CategoryGalleryListBlockDataSource<CategoryGalleryListBlock>();
   private cgThumbHitBounds: Map<string, CgThumbHitRect> = new Map();
   private cgSlideRefX: number = 0;
   private cgSlideRefY: number = 0;
@@ -108,10 +120,14 @@ struct CategoryGallery {
   private cgPendingStoreSync: boolean = false;
   private cgStorePollTimer: number = -1;
   private cgThumbResumeTimer: number = -1;
+  private cgDeferredBackgroundLoadTimer: number = -1;
+  private cgDeferredSnapshotApplyTimer: number = -1;
+  private cgLastSnapshotApplyAtMs: number = 0;
 
   private recycleThumbCache(aggressive: boolean = false): void {
-    const targetKeep = aggressive ? 12 : (this.flatItems.length > 360 ? 40 : 64);
-    trimThumbPixCache(targetKeep);
+    const recentAddedAggressive = this.isRecentAddedStreamingMode() &&
+      (aggressive || this.cgBackgroundLoading || this.flatItems.length > 360);
+    trimThumbPixCacheForList(this.flatItems.length, aggressive || recentAddedAggressive);
   }
 
   onBackPress(): boolean {
@@ -143,6 +159,10 @@ struct CategoryGallery {
     return this.systemTopInsetVp + (this.selectionMode
       ? CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP
       : CATEGORY_GALLERY_CONTENT_INSET_TOP_NORMAL_VP);
+  }
+
+  private isRecentAddedStreamingMode(): boolean {
+    return CategoryGalleryNavStore.useCreatedAtGrouping && CategoryGalleryNavStore.categoryKey.length === 0;
   }
 
   private syncSystemAvoidArea(win: window.Window): void {
@@ -188,13 +208,17 @@ struct CategoryGallery {
     this.cgThumbLoadingPaused = false;
     this.applyNavStoreSnapshot();
     this.startStoreObserver();
-    this.ensureCategoryBackgroundLoad();
+    this.scheduleCategoryBackgroundLoad();
   }
 
   aboutToDisappear(): void {
     this.stopStoreObserver();
     this.clearCgThumbResumeTimer();
+    this.clearCgDeferredBackgroundLoadTimer();
+    this.clearCgDeferredSnapshotApplyTimer();
     this.recycleThumbCache(true);
+    this.listBlocks = [];
+    this.listBlockSource.reloadAll([]);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -290,6 +314,7 @@ struct CategoryGallery {
     if (this.heroImageUri.length === 0 && this.flatItems.length > 0) {
       this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.flatItems[0]));
     }
+    this.recycleThumbCache(this.cgBackgroundLoading || this.flatItems.length > 720);
   }
 
   private applyDeleteSyncIfNeeded(): void {
@@ -301,6 +326,43 @@ struct CategoryGallery {
       clearTimeout(this.cgThumbResumeTimer);
       this.cgThumbResumeTimer = -1;
     }
+  }
+
+  private clearCgDeferredBackgroundLoadTimer(): void {
+    if (this.cgDeferredBackgroundLoadTimer >= 0) {
+      clearTimeout(this.cgDeferredBackgroundLoadTimer);
+      this.cgDeferredBackgroundLoadTimer = -1;
+    }
+  }
+
+  private clearCgDeferredSnapshotApplyTimer(): void {
+    if (this.cgDeferredSnapshotApplyTimer >= 0) {
+      clearTimeout(this.cgDeferredSnapshotApplyTimer);
+      this.cgDeferredSnapshotApplyTimer = -1;
+    }
+  }
+
+  private scheduleCgDeferredSnapshotApply(delayMs: number = CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS): void {
+    if (!this.isRecentAddedStreamingMode()) {
+      return;
+    }
+    this.clearCgDeferredSnapshotApplyTimer();
+    this.cgDeferredSnapshotApplyTimer = setTimeout((): void => {
+      this.cgDeferredSnapshotApplyTimer = -1;
+      if (this.cgSlideGestureActive || this.cgThumbLoadingPaused) {
+        this.cgPendingStoreSync = true;
+        this.scheduleCgDeferredSnapshotApply(CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS);
+        return;
+      }
+      if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
+        this.cgPendingStoreSync = false;
+        return;
+      }
+      this.applyNavStoreSnapshot();
+      if (!this.cgBackgroundLoading) {
+        this.recycleThumbCache(false);
+      }
+    }, Math.max(48, Math.floor(delayMs)));
   }
 
   private buildListBlocks(): Array<CategoryGalleryListBlock> {
@@ -328,19 +390,36 @@ struct CategoryGallery {
 
   private rebuildListBlocks(): void {
     this.listBlocks = this.buildListBlocks();
+    this.listBlockSource.reloadAll(this.listBlocks);
   }
 
   private applyNavStoreSnapshot(): void {
+    this.clearCgDeferredSnapshotApplyTimer();
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
     this.heroImageUri = CategoryGalleryNavStore.heroImageUri;
     this.columnsPerRow = CategoryGalleryNavStore.columnsPerRow === 4 ? 4 : 3;
     this.flatItems = CategoryGalleryNavStore.items.slice();
     this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
-    this.rebuildByFlatItems();
     this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
+    this.rebuildByFlatItems();
     this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
     this.cgPendingStoreSync = false;
+    this.cgLastSnapshotApplyAtMs = Date.now();
+    if (this.isRecentAddedStreamingMode()) {
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'applyNavStoreSnapshot title=%{public}s flatItems=%{public}d totalCount=%{public}d storeItems=%{public}d listBlocks=%{public}d storeVersion=%{public}d backgroundLoading=%{public}s',
+        this.title,
+        this.flatItems.length,
+        this.totalCount,
+        CategoryGalleryNavStore.items.length,
+        this.listBlocks.length,
+        CategoryGalleryNavStore.version,
+        this.cgBackgroundLoading ? 'true' : 'false'
+      );
+    }
     if (this.heroImageUri.length === 0 && this.flatItems.length > 0) {
       this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.flatItems[0]));
     }
@@ -363,6 +442,14 @@ struct CategoryGallery {
     }
     const pageSize = 200;
     let offset = this.flatItems.length;
+    let pendingAppendItems: GalleryListItem[] = [];
+    const flushPendingAppendItems = (): void => {
+      if (pendingAppendItems.length <= 0) {
+        return;
+      }
+      CategoryGalleryNavStore.appendItems(token, pendingAppendItems);
+      pendingAppendItems = [];
+    };
     try {
       while (token === CategoryGalleryNavStore.currentToken() && offset < expectedTotal) {
         const res = await client.getCategoryPhotos(categoryKey, pageSize, offset);
@@ -383,13 +470,17 @@ struct CategoryGallery {
           appendItems.push(one);
         }
         if (appendItems.length > 0) {
-          CategoryGalleryNavStore.appendItems(token, appendItems);
+          pendingAppendItems = pendingAppendItems.concat(appendItems);
+          if (pendingAppendItems.length >= CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS) {
+            flushPendingAppendItems();
+          }
         }
         offset += incoming.length > 0 ? incoming.length : pageSize;
         if (incoming.length < pageSize) {
           break;
         }
       }
+      flushPendingAppendItems();
     } finally {
       CategoryGalleryNavStore.setBackgroundLoading(token, false);
     }
@@ -409,6 +500,21 @@ struct CategoryGallery {
     void this.loadRemainingCategoryItems(token);
   }
 
+  private scheduleCategoryBackgroundLoad(): void {
+    this.clearCgDeferredBackgroundLoadTimer();
+    if (CategoryGalleryNavStore.categoryKey.length === 0) {
+      return;
+    }
+    if (CategoryGalleryNavStore.expectedTotalCount <= this.flatItems.length) {
+      return;
+    }
+    const delayMs = CategoryGalleryNavStore.categoryKey === 'photo' ? 240 : 96;
+    this.cgDeferredBackgroundLoadTimer = setTimeout((): void => {
+      this.cgDeferredBackgroundLoadTimer = -1;
+      this.ensureCategoryBackgroundLoad();
+    }, delayMs);
+  }
+
   private stopStoreObserver(): void {
     if (this.cgStorePollTimer >= 0) {
       clearInterval(this.cgStorePollTimer);
@@ -420,17 +526,80 @@ struct CategoryGallery {
     this.stopStoreObserver();
     this.cgStorePollTimer = setInterval((): void => {
       this.syncFromNavStore();
-    }, 180);
+    }, CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS);
   }
 
   private syncFromNavStore(): void {
     if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
       return;
     }
-    if (this.cgThumbLoadingPaused || this.cgSlideGestureActive) {
-      this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.totalCount, this.flatItems.length);
+    const recentAddedStreaming = this.isRecentAddedStreamingMode();
+    const navStoreHasAppendItems = CategoryGalleryNavStore.items.length > this.flatItems.length;
+    const allowAppendSyncWhilePaused = false;
+    const appendDelta = Math.max(0, CategoryGalleryNavStore.items.length - this.flatItems.length);
+    const applyGapMs = Date.now() - this.cgLastSnapshotApplyAtMs;
+    const shouldCoalesceRecentAppend =
+      recentAddedStreaming &&
+      navStoreHasAppendItems &&
+      CategoryGalleryNavStore.backgroundLoading &&
+      (appendDelta < CATEGORY_GALLERY_RECENT_STREAM_MIN_APPEND_DELTA ||
+        applyGapMs < CATEGORY_GALLERY_RECENT_STREAM_MIN_APPLY_GAP_MS);
+    if (recentAddedStreaming) {
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'syncFromNavStore storeVersion=%{public}d observedVersion=%{public}d storeItems=%{public}d flatItems=%{public}d navStoreHasAppend=%{public}s paused=%{public}s slideActive=%{public}s allowAppendWhilePaused=%{public}s',
+        CategoryGalleryNavStore.version,
+        this.cgObservedStoreVersion,
+        CategoryGalleryNavStore.items.length,
+        this.flatItems.length,
+        navStoreHasAppendItems ? 'true' : 'false',
+        this.cgThumbLoadingPaused ? 'true' : 'false',
+        this.cgSlideGestureActive ? 'true' : 'false',
+        allowAppendSyncWhilePaused ? 'true' : 'false'
+      );
+    }
+    if (this.cgSlideGestureActive || (this.cgThumbLoadingPaused && (!allowAppendSyncWhilePaused || !navStoreHasAppendItems))) {
+      this.totalCount = Math.max(
+        CategoryGalleryNavStore.expectedTotalCount,
+        this.totalCount,
+        this.flatItems.length,
+        CategoryGalleryNavStore.items.length
+      );
       this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
       this.cgPendingStoreSync = true;
+      if (recentAddedStreaming) {
+        this.scheduleCgDeferredSnapshotApply();
+        hilog.warn(
+          DOMAIN,
+          TAG,
+          'syncDeferred totalCount=%{public}d backgroundLoading=%{public}s pending=%{public}s',
+          this.totalCount,
+          this.cgBackgroundLoading ? 'true' : 'false',
+          this.cgPendingStoreSync ? 'true' : 'false'
+        );
+      }
+      return;
+    }
+    if (shouldCoalesceRecentAppend) {
+      this.totalCount = Math.max(
+        CategoryGalleryNavStore.expectedTotalCount,
+        this.totalCount,
+        this.flatItems.length,
+        CategoryGalleryNavStore.items.length
+      );
+      this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
+      this.cgPendingStoreSync = true;
+      this.scheduleCgDeferredSnapshotApply();
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'syncCoalesced totalCount=%{public}d appendDelta=%{public}d applyGapMs=%{public}d pending=%{public}s',
+        this.totalCount,
+        appendDelta,
+        applyGapMs,
+        this.cgPendingStoreSync ? 'true' : 'false'
+      );
       return;
     }
     this.applyNavStoreSnapshot();
@@ -451,17 +620,25 @@ struct CategoryGallery {
       if (!this.cgThumbLoadingPaused) {
         this.cgThumbLoadingPaused = true;
       }
-      this.recycleThumbCache(false);
+      this.recycleThumbCache(this.isRecentAddedStreamingMode() || this.flatItems.length > 720);
       return;
     }
     this.clearCgThumbResumeTimer();
+    const resumeDelayMs = this.isRecentAddedStreamingMode() && (this.cgBackgroundLoading || this.flatItems.length > 720)
+      ? CATEGORY_GALLERY_RECENT_STREAM_IDLE_RESUME_MS
+      : CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS;
     this.cgThumbResumeTimer = setTimeout((): void => {
       this.cgThumbResumeTimer = -1;
       this.cgThumbLoadingPaused = false;
+      this.recycleThumbCache(this.isRecentAddedStreamingMode() && this.flatItems.length > 720);
       if (this.cgPendingStoreSync) {
-        this.applyNavStoreSnapshot();
+        if (this.isRecentAddedStreamingMode()) {
+          this.scheduleCgDeferredSnapshotApply(48);
+        } else {
+          this.applyNavStoreSnapshot();
+        }
       }
-    }, 96);
+    }, resumeDelayMs);
   }
 
   private asSelectionHost(): CategoryGallerySelectionHost {
@@ -740,13 +917,28 @@ struct CategoryGallery {
         Stack() {
           Column() {
             List() {
-              ForEach(this.listBlocks, (block: CategoryGalleryListBlock) => {
+              LazyForEach(this.listBlockSource, (block: CategoryGalleryListBlock) => {
                 if (block.isHeader) {
                   this.dayHeaderListItem(block.label ?? '')
                 } else if (block.row !== undefined) {
                   this.dayRowListItem(block.groupIdx, block.row as RowModel)
                 }
               }, (block: CategoryGalleryListBlock) => block.key)
+              if (this.cgBackgroundLoading) {
+                ListItem() {
+                  Row({ space: 8 }) {
+                    LoadingProgress()
+                      .width(18)
+                      .height(18)
+                    Text('继续加载中')
+                      .fontSize(12)
+                      .fontColor($r('app.color.text_secondary'))
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.Center)
+                  .padding({ top: 8, bottom: 8 })
+                }
+              }
               ListItem() {
                 Column() {
                   Blank()
@@ -758,8 +950,8 @@ struct CategoryGallery {
             }
             .width('100%')
             .layoutWeight(1)
-            .cachedCount(3)
-            .padding({ top: this.contentInsetTopVp() })
+            .cachedCount(this.isRecentAddedStreamingMode() ? 1 : 3)
+            .margin({ top: this.contentInsetTopVp() })
             .scrollBar(BarState.Auto)
             .backgroundColor(Color.Transparent)
             .edgeEffect(EdgeEffect.Spring)
@@ -769,7 +961,7 @@ struct CategoryGallery {
               this.onListScrollStateChange(scrollState);
             })
 
-            if (this.cgBackgroundLoading) {
+            if (false && this.cgBackgroundLoading) {
               Row({ space: 8 }) {
                 LoadingProgress()
                   .width(18)

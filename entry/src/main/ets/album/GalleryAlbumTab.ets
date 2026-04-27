@@ -351,6 +351,8 @@ export struct GalleryAlbumTab {
   @State private footText: string = '';
   @State private sections: GalleryAlbumDaySectionState[] = [];
   @State private rootPhotosScrollTitle: string = '照片';
+  private rootPhotosScrolledUnderTopBar: boolean = false;
+  private lastInteractiveVisibleRangeRefreshAtMs: number = 0;
   private albumsHomeSmartPrefetchGen: number = 0;
   private albumsHomePersonPrefetchGen: number = 0;
 
@@ -485,6 +487,7 @@ export struct GalleryAlbumTab {
   private personStatGen: number = 0;
   private personStatOverrides: Map<string, string> = new Map<string, string>();
   private orderedDays: TimelineDayModel[] = [];
+  private dayGlobalSlotStarts: number[] = [];
   private dayIndex: number = 0;
   private loadingMore: boolean = false;
   private exhausted: boolean = false;
@@ -668,7 +671,9 @@ export struct GalleryAlbumTab {
       get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
       set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
       get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
-      set orderedDays(value: TimelineDayModel[]) { self.orderedDays = value; }
+      set orderedDays(value: TimelineDayModel[]) { self.setOrderedDays(value); }
+      get dayGlobalSlotStarts(): number[] { return self.dayGlobalSlotStarts; }
+      set dayGlobalSlotStarts(value: number[]) { self.dayGlobalSlotStarts = value; }
       get sections(): GalleryAlbumDaySectionState[] { return self.sections; }
       set sections(value: GalleryAlbumDaySectionState[]) { self.sections = value; }
       get visualPlaceholderMode(): boolean { return self.visualPlaceholderMode; }
@@ -766,7 +771,11 @@ export struct GalleryAlbumTab {
         galleryAlbumVisibleLoadVisibleItemsThrottled(self.asVisibleLoadHost(), forceImmediate, aggressive);
       }
       loadVisibleItemsImmediate(): void { galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost()); }
+      loadVisibleItemsInteractiveVisiblePriority(): void {
+        galleryAlbumVisibleLoadVisibleItemsThrottled(self.asVisibleLoadHost(), true, true, true);
+      }
       syncListVisibleRoughToTimelineSliderTarget(): void { galleryAlbumSyncListVisibleRoughToTimelineSliderTarget(this); }
+      refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
       pumpLoad(singleBatch?: boolean): void { galleryAlbumPumpLoad(self.asLoadOrchestratorHost(), singleBatch); }
       runMainListScrollSettledWork(epochAtSchedule?: number): void {
         timelineGestureRunMainListScrollSettledWork(this, epochAtSchedule);
@@ -908,7 +917,7 @@ export struct GalleryAlbumTab {
       get dayIndex(): number { return self.dayIndex; }
       set dayIndex(value: number) { self.dayIndex = value; }
       get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
-      set orderedDays(value: TimelineDayModel[]) { self.orderedDays = value; }
+      set orderedDays(value: TimelineDayModel[]) { self.setOrderedDays(value); }
       get dayOffsets(): Map<string, number> { return self.dayOffsets; }
       set dayOffsets(value: Map<string, number>) { self.dayOffsets = value; }
       get dayRounds(): Map<string, number> { return self.dayRounds; }
@@ -957,7 +966,9 @@ export struct GalleryAlbumTab {
       get bootLoading(): boolean { return self.bootLoading; }
       set bootLoading(value: boolean) { self.bootLoading = value; }
       get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
-      set orderedDays(value: TimelineDayModel[]) { self.orderedDays = value; }
+      set orderedDays(value: TimelineDayModel[]) { self.setOrderedDays(value); }
+      get dayGlobalSlotStarts(): number[] { return self.dayGlobalSlotStarts; }
+      set dayGlobalSlotStarts(value: number[]) { self.dayGlobalSlotStarts = value; }
       get sections(): GalleryAlbumDaySectionState[] { return self.sections; }
       set sections(value: GalleryAlbumDaySectionState[]) { self.sections = value; }
       get visualPlaceholderMode(): boolean { return self.visualPlaceholderMode; }
@@ -1005,13 +1016,14 @@ export struct GalleryAlbumTab {
       get timelineSliderRatio(): number { return self.timelineSliderRatio; }
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
       resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null {
-        return galleryAlbumResolveDayByGlobalIndex(self.asTimelineGestureHost(), globalIndex);
+        return self.resolveDayByGlobalIndexFast(globalIndex);
       }
       resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
         return galleryAlbumResolveYearMonthByTimelineRatio(self.asTimelineGestureHost(), ratio);
       }
       isInScrollInteractiveLogWindow(): boolean { return timelineGestureIsInScrollInteractiveLogWindow(self.asTimelineGestureHost()); }
       logScrollDebug(msg: string): void { timelineGestureLogScrollDebug(self.asTimelineGestureHost(), msg); }
+      refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
       rebuildFlow(): void { galleryAlbumRebuildFlow(self.asVisibleLoadHost()); }
       pumpLoad(singleBatch?: boolean): void { galleryAlbumPumpLoad(self.asLoadOrchestratorHost(), singleBatch); }
       loadOneBatch(): Promise<number> { return galleryAlbumLoadOneBatch(self.asLoadOrchestratorHost()); }
@@ -1039,6 +1051,19 @@ export struct GalleryAlbumTab {
 
   private captureListScrollIndexAnchor(): void {
     galleryAlbumVisibleCaptureListScrollIndexAnchor(this.asVisibleLoadHost());
+  }
+
+  private applyListVisibleNodeRange(firstIdx: number, lastIdx: number): void {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return;
+    }
+    const first = Math.max(0, Math.min(Math.floor(firstIdx), total - 1));
+    const last = Math.max(first, Math.min(Math.floor(lastIdx), total - 1));
+    this.listVisibleFirstNodeIdx = first;
+    this.listVisibleLastNodeIdx = last;
+    this.refreshLastKnownGlobalSlotsFromListIndices(first, last);
+    this.captureListScrollIndexAnchor();
   }
 
   private approxGalleryFlowListNodeHeightVp(node: GalleryFlowNode): number {
@@ -1291,6 +1316,49 @@ export struct GalleryAlbumTab {
     this.rootPhotosScrollTitle = title;
   }
 
+  private rebuildDayGlobalSlotStarts(): void {
+    const next: number[] = [];
+    let acc = 0;
+    for (let i = 0; i < this.orderedDays.length; i++) {
+      next.push(acc);
+      acc += Math.max(0, this.orderedDays[i].itemCount);
+    }
+    this.dayGlobalSlotStarts = next;
+  }
+
+  private setOrderedDays(value: TimelineDayModel[]): void {
+    this.orderedDays = value;
+    this.rebuildDayGlobalSlotStarts();
+  }
+
+  private resolveDayByGlobalIndexFast(globalIndex: number): DayGlobalResolveResult | null {
+    if (this.orderedDays.length <= 0) {
+      return null;
+    }
+    const g = Math.max(0, globalIndex);
+    if (this.dayGlobalSlotStarts.length === this.orderedDays.length && this.dayGlobalSlotStarts.length > 0) {
+      let lo = 0;
+      let hi = this.dayGlobalSlotStarts.length - 1;
+      while (lo <= hi) {
+        const mid = lo + Math.floor((hi - lo) / 2);
+        const start = Math.max(0, this.dayGlobalSlotStarts[mid]);
+        const nextStart = mid + 1 < this.dayGlobalSlotStarts.length
+          ? Math.max(start, this.dayGlobalSlotStarts[mid + 1])
+          : Number.MAX_SAFE_INTEGER;
+        if (g < start) {
+          hi = mid - 1;
+          continue;
+        }
+        if (g >= nextStart) {
+          lo = mid + 1;
+          continue;
+        }
+        return { dayIdx: mid, dayOffset: Math.max(0, g - start) };
+      }
+    }
+    return galleryAlbumResolveDayByGlobalIndex(this.asTimelineGestureHost(), g);
+  }
+
   private readMainGalleryScrollOffsetVp(): number {
     try {
       const off = this.scrollerRef.currentOffset();
@@ -1304,6 +1372,9 @@ export struct GalleryAlbumTab {
   }
 
   private isRootPhotosContentScrolledUnderTopBar(): boolean {
+    if (this.listVisibleFirstNodeIdx > 0) {
+      return true;
+    }
     const y = this.readMainGalleryScrollOffsetVp();
     return y >= Math.max(1, this.mainGalleryContentInsetTopVp() - 0.5);
   }
@@ -1312,21 +1383,37 @@ export struct GalleryAlbumTab {
     return `${year}年${month}月${day}日`;
   }
 
-  private resolveRootPhotosVisibleDayTitle(): string | null {
-    const total = this.flowDataSource.totalCount();
-    if (total <= 0) {
+  private resolveRootPhotosVisibleDayTitleFromGlobalSlots(): string | null {
+    if (this.orderedDays.length <= 0) {
       return null;
     }
-    const anchor = Math.max(0, Math.min(this.listVisibleFirstNodeIdx, total - 1));
-    const forwardEnd = Math.min(total - 1, anchor + 12);
-    for (let i = anchor; i <= forwardEnd; i++) {
+    const haveVisibleSlots = this.lastKnownGlobalPhotoSlotEndExclusive > this.lastKnownGlobalPhotoSlotStart;
+    if (!haveVisibleSlots) {
+      return null;
+    }
+    const resolved = this.resolveDayByGlobalIndexFast(Math.max(0, this.lastKnownGlobalPhotoSlotStart));
+    if (resolved === null || resolved.dayIdx < 0 || resolved.dayIdx >= this.orderedDays.length) {
+      return null;
+    }
+    const day = this.orderedDays[resolved.dayIdx];
+    if (day.year <= 0 || day.month <= 0 || day.day <= 0) {
+      return null;
+    }
+    return this.formatRootPhotosVisibleDayTitle(day.year, day.month, day.day);
+  }
+
+  private resolveRootPhotosVisibleDayTitleNearAnchor(anchor: number, total: number): string | null {
+    const searchRadius = 18;
+    const safeAnchor = Math.max(0, Math.min(anchor, total - 1));
+    const forwardEnd = Math.min(total - 1, safeAnchor + searchRadius);
+    for (let i = safeAnchor; i <= forwardEnd; i++) {
       const node = this.flowDataSource.getData(i);
       if ((node.kind === 'day' || node.kind === 'row') && node.year > 0 && node.month > 0 && node.day > 0) {
         return this.formatRootPhotosVisibleDayTitle(node.year, node.month, node.day);
       }
     }
-    const backwardStart = Math.max(0, anchor - 12);
-    for (let i = anchor; i >= backwardStart; i--) {
+    const backwardStart = Math.max(0, safeAnchor - searchRadius);
+    for (let i = safeAnchor; i >= backwardStart; i--) {
       const node = this.flowDataSource.getData(i);
       if ((node.kind === 'day' || node.kind === 'row') && node.year > 0 && node.month > 0 && node.day > 0) {
         return this.formatRootPhotosVisibleDayTitle(node.year, node.month, node.day);
@@ -1335,20 +1422,63 @@ export struct GalleryAlbumTab {
     return null;
   }
 
+  private resolveRootPhotosVisibleDayTitle(): string | null {
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return null;
+    }
+    const titleFromGlobalSlots = this.resolveRootPhotosVisibleDayTitleFromGlobalSlots();
+    if (titleFromGlobalSlots !== null) {
+      return titleFromGlobalSlots;
+    }
+    const scrollY = this.readMainGalleryScrollOffsetVp();
+    const estimatedAnchor = Math.max(
+      0,
+      Math.min(this.estimateFirstVisibleNodeIndexFromScrollY(scrollY, total), total - 1)
+    );
+    const estimatedTitle = this.resolveRootPhotosVisibleDayTitleNearAnchor(estimatedAnchor, total);
+    if (estimatedTitle !== null) {
+      return estimatedTitle;
+    }
+    const visibleAnchor = Math.max(0, Math.min(this.listVisibleFirstNodeIdx, total - 1));
+    return this.resolveRootPhotosVisibleDayTitleNearAnchor(visibleAnchor, total);
+  }
+
   private refreshRootPhotosScrollTitle(): void {
     if (!this.isPhotosHomeSurface()) {
+      this.rootPhotosScrolledUnderTopBar = false;
       this.setRootPhotosScrollTitle('照片');
       return;
     }
     if (!this.isRootPhotosSurfaceVisible()) {
       return;
     }
-    if (!this.isRootPhotosContentScrolledUnderTopBar()) {
+    const scrolledUnderTopBar = this.isRootPhotosContentScrolledUnderTopBar();
+    this.rootPhotosScrolledUnderTopBar = scrolledUnderTopBar;
+    if (!scrolledUnderTopBar) {
       this.setRootPhotosScrollTitle('照片');
       return;
     }
     const title = this.resolveRootPhotosVisibleDayTitle();
-    this.setRootPhotosScrollTitle(title ?? '照片');
+    if (title !== null && title.length > 0) {
+      this.setRootPhotosScrollTitle(title);
+      return;
+    }
+    if (this.rootPhotosScrollTitle.length <= 0) {
+      this.setRootPhotosScrollTitle('照片');
+    }
+  }
+
+  private maybeRefreshRootPhotosScrollTitleForThreshold(): void {
+    if (!this.isPhotosHomeSurface() || !this.isRootPhotosSurfaceVisible()) {
+      return;
+    }
+    const nextScrolledUnderTopBar = this.isRootPhotosContentScrolledUnderTopBar();
+    if (nextScrolledUnderTopBar === this.rootPhotosScrolledUnderTopBar) {
+      return;
+    }
+    this.rootPhotosScrolledUnderTopBar = nextScrolledUnderTopBar;
+    this.refreshRootPhotosScrollTitle();
   }
 
   private currentHomeSurfaceTitle(): string {
@@ -1932,15 +2062,8 @@ export struct GalleryAlbumTab {
           onGallerySlidePanUpdate: (ev: GestureEvent): void =>
             selectionOnGallerySlidePanUpdate(this.asSelectionGestureHost(), ev),
           onListScrollIndex: (firstIdx: number, lastIdx: number, _centerIdx: number): void => {
-            this.listVisibleFirstNodeIdx = firstIdx;
-            this.listVisibleLastNodeIdx = Math.max(firstIdx, lastIdx);
+            this.applyListVisibleNodeRange(firstIdx, lastIdx);
             this.refreshRootPhotosScrollTitle();
-            galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
-              this.asVisibleLoadHost(),
-              this.listVisibleFirstNodeIdx,
-              this.listVisibleLastNodeIdx
-            );
-            galleryAlbumVisibleCaptureListScrollIndexAnchor(this.asVisibleLoadHost());
             if (this.timelineReleaseAwaitVisibleCallback && !this.timelineSidebarDragging) {
               this.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
@@ -1958,7 +2081,7 @@ export struct GalleryAlbumTab {
             timelineGestureTouchTimelineBarOnScroll(this.asTimelineGestureHost());
           },
           onListDidScroll: (_offset: number, _scrollState: ScrollState): void => {
-            this.refreshRootPhotosScrollTitle();
+            this.maybeRefreshRootPhotosScrollTitleForThreshold();
             timelineGestureMaybeLogMainScrollTick(this.asTimelineGestureHost(), _offset, _scrollState);
             const draggingOrFling = _scrollState === ScrollState.Scroll || _scrollState === ScrollState.Fling;
             const shouldFreezeByListScroll =
@@ -1971,6 +2094,7 @@ export struct GalleryAlbumTab {
                 this.pumpEpoch++;
                 timelineGestureCancelListSettledTimer(this.asTimelineGestureHost());
                 this.isDraggingOrFling = true;
+                this.lastInteractiveVisibleRangeRefreshAtMs = 0;
                 trimThumbPixCacheForList(this.currentThumbHeavyItemCount(), false);
                 stateChanged = true;
               }
@@ -1979,8 +2103,16 @@ export struct GalleryAlbumTab {
                 stateChanged = true;
               }
               if (!this.timelineSidebarDragging) {
-                refreshedVisibleRangeWhileInteracting =
-                  galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
+                const now = Date.now();
+                const shouldRefreshVisibleRange = this.lastInteractiveVisibleRangeRefreshAtMs <= 0 ||
+                  now - this.lastInteractiveVisibleRangeRefreshAtMs >= 96;
+                if (shouldRefreshVisibleRange) {
+                  refreshedVisibleRangeWhileInteracting =
+                    galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
+                  if (refreshedVisibleRangeWhileInteracting) {
+                    this.lastInteractiveVisibleRangeRefreshAtMs = now;
+                  }
+                }
               }
             } else if (_scrollState === ScrollState.Idle) {
               if (this.isDraggingOrFling) {
@@ -1991,6 +2123,7 @@ export struct GalleryAlbumTab {
                 this.listKineticScrolling = false;
                 stateChanged = true;
               }
+              this.lastInteractiveVisibleRangeRefreshAtMs = 0;
               if (this.visualPlaceholderMode) {
                 this.visualPlaceholderMode = false;
                 stateChanged = true;
@@ -2007,6 +2140,7 @@ export struct GalleryAlbumTab {
               timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
             }
             if (refreshedVisibleRangeWhileInteracting) {
+              this.refreshRootPhotosScrollTitle();
               if (this.timelineReleaseAwaitVisibleCallback) {
                 this.timelineReleaseAwaitVisibleCallback = false;
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
@@ -2016,6 +2150,21 @@ export struct GalleryAlbumTab {
             }
             if (draggingOrFling || this.timelineSidebarDragging) {
               timelineGestureTouchTimelineBarOnScroll(this.asTimelineGestureHost());
+            }
+          },
+          onListVisibleContentChange: (start: VisibleListContentInfo, end: VisibleListContentInfo): void => {
+            if (start.index < 0 || end.index < 0) {
+              return;
+            }
+            this.applyListVisibleNodeRange(start.index, end.index);
+            this.refreshRootPhotosScrollTitle();
+            if (this.timelineReleaseAwaitVisibleCallback) {
+              this.timelineReleaseAwaitVisibleCallback = false;
+              galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
+            } else if (this.timelineSeekInProgress) {
+              galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, true, true);
+            } else {
+              void galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
             }
           },
           onRefreshOffsetChange: (offset: number): void => {
@@ -2073,6 +2222,8 @@ export struct GalleryAlbumTab {
             const ymList = galleryAlbumGetTimelineYearMonths(this.asTimelineGestureHost());
             if (ymList.length > 0) {
               this.applyTimelineSliderRatioFromFinger(_event, ymList.length);
+              galleryAlbumSyncListVisibleRoughToTimelineSliderTarget(this.asTimelineGestureHost());
+              this.refreshRootPhotosScrollTitle();
             }
             timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
             timelineGestureArmTimelineDragWatchdog(this.asTimelineGestureHost());
@@ -2087,6 +2238,8 @@ export struct GalleryAlbumTab {
               return;
             }
             this.applyTimelineSliderRatioFromFinger(event, ymList.length);
+            galleryAlbumSyncListVisibleRoughToTimelineSliderTarget(this.asTimelineGestureHost());
+            this.refreshRootPhotosScrollTitle();
             timelineGestureArmTimelineDragWatchdog(this.asTimelineGestureHost());
           },
           onTimelinePanEnd: (_event: GestureEvent): void => {

@@ -2,6 +2,7 @@ import { AppSession } from '../auth/AppSession';
 import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
+import { personFace as resolvePersonFace } from '../album/galleryAlbumTab/GalleryAlbumModeData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -85,14 +86,7 @@ struct PersonPage {
   }
 
   private personFace(item: AiPersonItem): string {
-    if (item.faceUrl !== undefined && item.faceUrl.length > 0) {
-      return item.faceUrl;
-    }
-    const id = item.faceId ?? item.avatarId ?? item.posterId ?? item.coverId ?? item.id;
-    if (id === undefined || id === null) {
-      return '';
-    }
-    return `/p/api/v1/stream/face/${String(id)}`;
+    return resolvePersonFace(item);
   }
 
   private personId(item: AiPersonItem): string {

@@ -33,6 +33,7 @@ import {
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost, VideoDecodePlayInfo, VideoDecodePlayRequest } from './FnHttpClientTypes';
 import {
+  AiPersonItem,
   AiPersonData,
   AiPersonDetailData,
   FnClientResult,
@@ -47,7 +48,8 @@ import {
   MediaCategoryItem,
   PersonInPhotoData,
   RecycleBinListData,
-  SmartCategoryData
+  SmartCategoryData,
+  SmartCategoryItem
 } from '../../model/FnApiTypes';
 
 export class FnHttpClientGalleryOps {
@@ -854,7 +856,18 @@ export class FnHttpClientGalleryOps {
       if (!res.success || res.data === undefined) {
         return { success: false, message: res.message ?? '智能分类加载失败' };
       }
-      return { success: true, data: res.data };
+      const normList = FnHttpClientGalleryOps.smartCategoryItemsFromData(res.data as Object);
+      if (normList.length > 0) {
+        const first = normList[0] as Record<string, Object | string | number | boolean | undefined | null>;
+        hilog.info(
+          DOMAIN,
+          TAG,
+          'smartCat normCount=%{public}d firstCover=%{public}s',
+          normList.length,
+          FnHttpClientGalleryOps.readFirstString(first, ['cover', 'thumb', 'posterUrl', 'imageUrl'])
+        );
+      }
+      return { success: true, data: { list: normList } };
     } catch (e) {
       return { success: false, message: String(e) || '智能分类加载异常' };
     }
@@ -888,7 +901,18 @@ export class FnHttpClientGalleryOps {
       if (!res.success || res.data === undefined) {
         return { success: false, message: res.message ?? '人物列表加载失败' };
       }
-      return { success: true, data: res.data };
+      const normList = FnHttpClientGalleryOps.aiPersonItemsFromData(res.data as Object);
+      if (normList.length > 0) {
+        const first = normList[0] as Record<string, Object | string | number | boolean | undefined | null>;
+        hilog.info(
+          DOMAIN,
+          TAG,
+          'person normCount=%{public}d firstFace=%{public}s',
+          normList.length,
+          FnHttpClientGalleryOps.readFirstString(first, ['faceUrl', 'cover', 'thumb'])
+        );
+      }
+      return { success: true, data: { list: normList } };
     } catch (e) {
       return { success: false, message: String(e) || '人物列表加载异常' };
     }
@@ -1066,6 +1090,230 @@ export class FnHttpClientGalleryOps {
       const el = rawArr[i];
       if (typeof el === 'object' && el !== null) {
         result.push(FnHttpClientGalleryOps.normalizeCategoryItem(el as Record<string, Object | undefined>));
+      }
+    }
+    return result;
+  }
+
+  private static readTrimmedString(
+    value: Object | string | number | boolean | undefined | null
+  ): string {
+    if (typeof value === 'string') {
+      return value.trim();
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value).trim();
+    }
+    return '';
+  }
+
+  private static asLooseJsonRecord(
+    value: Object | string | number | boolean | undefined | null
+  ): Record<string, Object | string | number | boolean | undefined | null> | null {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return null;
+    }
+    return value as Record<string, Object | string | number | boolean | undefined | null>;
+  }
+
+  private static readFirstString(
+    raw: Record<string, Object | string | number | boolean | undefined | null>,
+    keys: string[]
+  ): string {
+    for (let i = 0; i < keys.length; i++) {
+      const text = FnHttpClientGalleryOps.readTrimmedString(raw[keys[i]]);
+      if (text.length > 0) {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  private static readThumbnailLikeUrl(
+    raw: Record<string, Object | string | number | boolean | undefined | null>
+  ): string {
+    const thumbVal = raw['thumbnail'];
+    if (typeof thumbVal === 'string') {
+      const text = thumbVal.trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+    const thumbObj = FnHttpClientGalleryOps.asLooseJsonRecord(thumbVal);
+    if (thumbObj === null) {
+      return '';
+    }
+    return FnHttpClientGalleryOps.readFirstString(thumbObj, [
+      'mUrl',
+      'sUrl',
+      'xsUrl',
+      'xxsUrl',
+      'originalUrl',
+      'videoUrl',
+      'url',
+      'src'
+    ]);
+  }
+
+  private static buildPhotoThumbStream(
+    raw: Record<string, Object | string | number | boolean | undefined | null>,
+    mode: 'm' | 's' = 'm'
+  ): string {
+    const id = FnHttpClientGalleryOps.readFirstString(raw, ['photoId', 'id']);
+    const uuid = FnHttpClientGalleryOps.readFirstString(raw, ['uuid', 'photoUUID', 'session']);
+    if (id.length === 0 || uuid.length === 0 || id === 'null' || uuid === 'null') {
+      return '';
+    }
+    return `${FN_PHOTO_API_PREFIX}/stream/p/t/${id}/${mode}/${uuid}`;
+  }
+
+  private static pickBestCoverUrl(
+    raw: Record<string, Object | string | number | boolean | undefined | null>,
+    nestedKeys: string[]
+  ): string {
+    const direct = FnHttpClientGalleryOps.readFirstString(raw, [
+      'cover',
+      'thumb',
+      'small_thumb',
+      'thumb_url',
+      'poster',
+      'posterUrl',
+      'avatarUrl',
+      'faceUrl',
+      'imageUrl',
+      'imgUrl',
+      'photoUrl',
+      'url',
+      'src',
+      'path'
+    ]);
+    if (direct.length > 0) {
+      return direct;
+    }
+    const thumbnailUrl = FnHttpClientGalleryOps.readThumbnailLikeUrl(raw);
+    if (thumbnailUrl.length > 0) {
+      return thumbnailUrl;
+    }
+    for (let i = 0; i < nestedKeys.length; i++) {
+      const nested = FnHttpClientGalleryOps.asLooseJsonRecord(raw[nestedKeys[i]]);
+      if (nested === null) {
+        continue;
+      }
+      const nestedDirect = FnHttpClientGalleryOps.readFirstString(nested, [
+        'cover',
+        'thumb',
+        'small_thumb',
+        'thumb_url',
+        'poster',
+        'posterUrl',
+        'avatarUrl',
+        'faceUrl',
+        'imageUrl',
+        'imgUrl',
+        'photoUrl',
+        'url',
+        'src',
+        'path'
+      ]);
+      if (nestedDirect.length > 0) {
+        return nestedDirect;
+      }
+      const nestedThumbUrl = FnHttpClientGalleryOps.readThumbnailLikeUrl(nested);
+      if (nestedThumbUrl.length > 0) {
+        return nestedThumbUrl;
+      }
+      const nestedPhotoStream = FnHttpClientGalleryOps.buildPhotoThumbStream(nested);
+      if (nestedPhotoStream.length > 0) {
+        return nestedPhotoStream;
+      }
+    }
+    return FnHttpClientGalleryOps.buildPhotoThumbStream(raw);
+  }
+
+  private static normalizeSmartCategoryItem(
+    raw: Record<string, Object | string | number | boolean | undefined | null>
+  ): SmartCategoryItem {
+    const out = raw as SmartCategoryItem;
+    const coverUrl = FnHttpClientGalleryOps.pickBestCoverUrl(raw, ['poster', 'coverInfo', 'coverPhoto']);
+    if (coverUrl.length > 0) {
+      raw['cover'] = coverUrl;
+      if (FnHttpClientGalleryOps.readTrimmedString(raw['thumb']).length <= 0) {
+        raw['thumb'] = coverUrl;
+      }
+    }
+    return out;
+  }
+
+  private static smartCategoryItemsFromData(dataObj: Object | undefined): SmartCategoryItem[] {
+    if (dataObj === undefined || dataObj === null) {
+      return [];
+    }
+    let rawArr: Object[];
+    if (Array.isArray(dataObj)) {
+      rawArr = dataObj as Object[];
+    } else {
+      const d = dataObj as Record<string, Object | undefined>;
+      const found = d['list'] ?? d['items'] ?? d['records'] ?? d['rows'] ?? d['data'] ?? d['result'];
+      if (!Array.isArray(found)) {
+        return [];
+      }
+      rawArr = found as Object[];
+    }
+    const result: SmartCategoryItem[] = [];
+    for (let i = 0; i < rawArr.length; i++) {
+      const el = rawArr[i];
+      const raw = FnHttpClientGalleryOps.asLooseJsonRecord(el);
+      if (raw !== null) {
+        result.push(FnHttpClientGalleryOps.normalizeSmartCategoryItem(raw));
+      }
+    }
+    return result;
+  }
+
+  private static normalizeAiPersonItem(
+    raw: Record<string, Object | string | number | boolean | undefined | null>
+  ): AiPersonItem {
+    const out = raw as AiPersonItem;
+    let faceUrl = FnHttpClientGalleryOps.pickBestCoverUrl(raw, ['face', 'avatar', 'poster', 'coverInfo', 'coverPhoto']);
+    if (faceUrl.length <= 0) {
+      const faceId = FnHttpClientGalleryOps.readFirstString(raw, ['faceId', 'avatarId', 'posterId', 'coverId', 'id']);
+      if (faceId.length > 0) {
+        faceUrl = `${FN_PHOTO_API_PREFIX}/stream/face/${faceId}`;
+      }
+    }
+    if (faceUrl.length > 0) {
+      raw['faceUrl'] = faceUrl;
+      if (FnHttpClientGalleryOps.readTrimmedString(raw['cover']).length <= 0) {
+        raw['cover'] = faceUrl;
+      }
+      if (FnHttpClientGalleryOps.readTrimmedString(raw['thumb']).length <= 0) {
+        raw['thumb'] = faceUrl;
+      }
+    }
+    return out;
+  }
+
+  private static aiPersonItemsFromData(dataObj: Object | undefined): AiPersonItem[] {
+    if (dataObj === undefined || dataObj === null) {
+      return [];
+    }
+    let rawArr: Object[];
+    if (Array.isArray(dataObj)) {
+      rawArr = dataObj as Object[];
+    } else {
+      const d = dataObj as Record<string, Object | undefined>;
+      const found = d['list'] ?? d['items'] ?? d['records'] ?? d['rows'] ?? d['data'] ?? d['result'];
+      if (!Array.isArray(found)) {
+        return [];
+      }
+      rawArr = found as Object[];
+    }
+    const result: AiPersonItem[] = [];
+    for (let i = 0; i < rawArr.length; i++) {
+      const el = rawArr[i];
+      const raw = FnHttpClientGalleryOps.asLooseJsonRecord(el);
+      if (raw !== null) {
+        result.push(FnHttpClientGalleryOps.normalizeAiPersonItem(raw));
       }
     }
     return result;

@@ -93,6 +93,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         monthNode.key = `m_${day.year}_${day.month}_od_${i}`;
         monthNode.year = day.year;
         monthNode.month = day.month;
+        monthNode.globalPhotoSlotStart = flatLoaded;
         nodes.push(monthNode);
       }
 
@@ -102,6 +103,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
       dayNode.year = day.year;
       dayNode.month = day.month;
       dayNode.day = day.day;
+      dayNode.globalPhotoSlotStart = flatLoaded;
       nodes.push(dayNode);
 
       const section = secMap.get(dayKey(day.year, day.month, day.day));
@@ -111,6 +113,10 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         const rowNode = new GalleryFlowNode();
         rowNode.kind = 'row';
         rowNode.key = `r_${day.year}_${day.month}_${day.day}_row_${row}`;
+        rowNode.year = day.year;
+        rowNode.month = day.month;
+        rowNode.day = day.day;
+        rowNode.globalPhotoSlotStart = flatLoaded;
 
         const rowStart = row * 3;
         const totalInRow = Math.min(3, Math.max(0, totalCount - rowStart));
@@ -140,6 +146,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         monthNode.key = `m_${section.year}_${section.month}_i${i}`;
         monthNode.year = section.year;
         monthNode.month = section.month;
+        monthNode.globalPhotoSlotStart = flatLoaded;
         nodes.push(monthNode);
       }
       const dayNode = new GalleryFlowNode();
@@ -148,6 +155,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
       dayNode.year = section.year;
       dayNode.month = section.month;
       dayNode.day = section.day;
+      dayNode.globalPhotoSlotStart = flatLoaded;
       nodes.push(dayNode);
 
       const keys = Array.from(section.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
@@ -161,6 +169,10 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         const rowNode = new GalleryFlowNode();
         rowNode.kind = 'row';
         rowNode.key = `r_${section.year}_${section.month}_${section.day}_row_${row}`;
+        rowNode.year = section.year;
+        rowNode.month = section.month;
+        rowNode.day = section.day;
+        rowNode.globalPhotoSlotStart = flatLoaded;
         const rowStart = row * 3;
         const totalInRow = Math.min(3, Math.max(0, totalCount - rowStart));
         for (let k = 0; k < totalInRow; k++) {

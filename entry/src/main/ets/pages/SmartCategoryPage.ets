@@ -2,6 +2,7 @@ import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryListItem, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
+import { smartCategoryCover } from '../album/galleryAlbumTab/GalleryAlbumModeData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -92,16 +93,7 @@ struct SmartCategoryPage {
   }
 
   private coverOf(item: SmartCategoryItem): string {
-    const p = item.poster;
-    if (p === undefined || p === null) {
-      return '';
-    }
-    const id = p.photoId !== undefined ? String(p.photoId) : '';
-    const uuid = p.uuid !== undefined ? p.uuid : '';
-    if (id.length === 0 || uuid.length === 0) {
-      return '';
-    }
-    return `/p/api/v1/stream/p/t/${id}/s/${uuid}`;
+    return smartCategoryCover(item);
   }
 
   private async loadData(): Promise<void> {

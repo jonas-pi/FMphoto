@@ -381,9 +381,6 @@ export struct GalleryAlbumSearchModeView {
                       }
                       const longPressItem = this.searchResults[fi];
                       this.onGalleryThumbLongPress(longPressItem);
-                      if (!this.gallerySelectionMode) {
-                        return;
-                      }
                       if (this.gallerySlideGestureActive) {
                         return;
                       }
@@ -428,9 +425,6 @@ export struct GalleryAlbumSearchModeView {
                 .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
                   if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
                     return GestureJudgeResult.CONTINUE;
-                  }
-                  if (!this.gallerySelectionMode) {
-                    return GestureJudgeResult.REJECT;
                   }
                   return GestureJudgeResult.CONTINUE;
                 })

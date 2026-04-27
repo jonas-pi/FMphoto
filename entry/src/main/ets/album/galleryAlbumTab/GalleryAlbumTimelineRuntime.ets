@@ -202,6 +202,14 @@ export function galleryAlbumCalculateGlobalIndex(
   day: TimelineDayModel,
   offsetInDay: number
 ): number {
+  if (host.dayGlobalSlotStarts.length === host.orderedDays.length && host.orderedDays.length > 0) {
+    for (let i = 0; i < host.orderedDays.length; i++) {
+      const current = host.orderedDays[i];
+      if (current.year === day.year && current.month === day.month && current.day === day.day) {
+        return Math.max(0, host.dayGlobalSlotStarts[i]) + Math.max(0, offsetInDay);
+      }
+    }
+  }
   let acc = 0;
   for (let i = 0; i < host.orderedDays.length; i++) {
     const current = host.orderedDays[i];
@@ -221,6 +229,26 @@ export function galleryAlbumResolveDayByGlobalIndex(
     return null;
   }
   const g = Math.max(0, globalIndex);
+  if (host.dayGlobalSlotStarts.length === host.orderedDays.length && host.dayGlobalSlotStarts.length > 0) {
+    let lo = 0;
+    let hi = host.dayGlobalSlotStarts.length - 1;
+    while (lo <= hi) {
+      const mid = lo + Math.floor((hi - lo) / 2);
+      const start = Math.max(0, host.dayGlobalSlotStarts[mid]);
+      const nextStart = mid + 1 < host.dayGlobalSlotStarts.length
+        ? Math.max(start, host.dayGlobalSlotStarts[mid + 1])
+        : Number.MAX_SAFE_INTEGER;
+      if (g < start) {
+        hi = mid - 1;
+        continue;
+      }
+      if (g >= nextStart) {
+        lo = mid + 1;
+        continue;
+      }
+      return { dayIdx: mid, dayOffset: Math.max(0, g - start) };
+    }
+  }
   let acc = 0;
   for (let i = 0; i < host.orderedDays.length; i++) {
     const count = Math.max(0, host.orderedDays[i].itemCount);

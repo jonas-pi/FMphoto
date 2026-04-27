@@ -9,7 +9,7 @@ import {
 } from '../../model/FnApiTypes';
 import { AppSession } from '../../auth/AppSession';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION, FN_TAB_SWITCH_OUT_DURATION } from '../../common/FnMotion';
-import { CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
+import { CATEGORY_GALLERY_INITIAL_RENDER_CAP, CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
 import {
@@ -19,9 +19,19 @@ import {
   loadCollectGalleryItems,
   loadRecentAddedItems
 } from './GalleryAlbumModeLoaders';
-import { categoryCount, categoryCover, categoryTitle, parseCategoryMedia, personId, personName } from './GalleryAlbumModeData';
+import {
+  categoryCount,
+  categoryCover,
+  categoryLocalMediaCount,
+  categoryTitle,
+  parseCategoryMedia,
+  personId,
+  personName
+} from './GalleryAlbumModeData';
 import { nasUrl } from '../GalleryAlbumCommon';
 import { GALLERY_UPLOAD_RECHECK_MS } from './GalleryAlbumTabConstants';
+
+const CATEGORY_GALLERY_LARGE_INITIAL_RENDER_CAP = 120;
 
 export interface GalleryAlbumModeOrchestratorHost {
   getUIContext(): UIContext;
@@ -421,11 +431,18 @@ export async function galleryAlbumOpenCategory(
   host.categoryOpening = true;
   const isActive = host.createNavigationGuard();
   const title = categoryTitle(cat);
-  const local = parseCategoryMedia(cat);
   const categoryKey = cat.key !== undefined ? cat.key : '';
+  const initialRenderCap = categoryKey === 'photo'
+    ? CATEGORY_GALLERY_LARGE_INITIAL_RENDER_CAP
+    : CATEGORY_GALLERY_INITIAL_RENDER_CAP;
+  const localMediaCount = categoryLocalMediaCount(cat);
+  const local = parseCategoryMedia(
+    cat,
+    categoryKey.length > 0 ? initialRenderCap : -1
+  );
   const heroRel = categoryCover(cat);
   const heroImageUri = heroRel.length > 0 ? nasUrl(host.baseUrl, heroRel) : '';
-  const expectedTotalCount = Math.max(categoryCount(cat), local.length);
+  const expectedTotalCount = Math.max(categoryCount(cat), localMediaCount, local.length);
   try {
     if (local.length > 0) {
       if (!isActive()) {

@@ -7,7 +7,8 @@ import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 
 const DOMAIN = 0xFF00;
-const TAG = 'CategoryGalleryNav';
+const TAG = 'GalleryDiag';
+export const CATEGORY_GALLERY_INITIAL_RENDER_CAP = 240;
 
 export interface CategoryGalleryOpenMeta {
   expectedTotalCount?: number;
@@ -41,19 +42,36 @@ export class CategoryGalleryNavStore {
       hilog.warn(DOMAIN, TAG, 'open skipped: empty items');
       return Promise.resolve(false);
     }
+    const shouldCapInitialItems = (meta?.categoryKey ?? '').length > 0 && items.length > CATEGORY_GALLERY_INITIAL_RENDER_CAP;
+    const initialItems = shouldCapInitialItems
+      ? items.slice(0, CATEGORY_GALLERY_INITIAL_RENDER_CAP)
+      : items.slice();
     CategoryGalleryNavStore.sessionToken++;
     CategoryGalleryNavStore.baseUrl = baseUrl;
     CategoryGalleryNavStore.title = title;
-    CategoryGalleryNavStore.items = items.slice();
+    CategoryGalleryNavStore.items = initialItems;
     CategoryGalleryNavStore.useCreatedAtGrouping = useCreatedAtGrouping;
     CategoryGalleryNavStore.backgroundLoading = false;
     CategoryGalleryNavStore.expectedTotalCount = Math.max(
       items.length,
+      CategoryGalleryNavStore.items.length,
       meta?.expectedTotalCount !== undefined ? Math.max(0, Math.floor(meta.expectedTotalCount)) : items.length
     );
     CategoryGalleryNavStore.categoryKey = meta?.categoryKey ?? '';
     CategoryGalleryNavStore.heroImageUri = meta?.heroImageUri ?? '';
     CategoryGalleryNavStore.columnsPerRow = meta?.columnsPerRow === 4 ? 4 : 3;
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'open title=%{public}s items=%{public}d initialItems=%{public}d expectedTotal=%{public}d categoryKey=%{public}s useCreatedAt=%{public}s columns=%{public}d',
+      title,
+      items.length,
+      CategoryGalleryNavStore.items.length,
+      CategoryGalleryNavStore.expectedTotalCount,
+      CategoryGalleryNavStore.categoryKey,
+      useCreatedAtGrouping ? 'true' : 'false',
+      CategoryGalleryNavStore.columnsPerRow
+    );
     CategoryGalleryNavStore.version++;
     return uiCtx.getRouter().pushUrl({ url: 'pages/CategoryGallery' }).then((): boolean => {
       return true;
@@ -81,6 +99,15 @@ export class CategoryGalleryNavStore {
       return;
     }
     CategoryGalleryNavStore.items = CategoryGalleryNavStore.items.concat(items);
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'appendItems token=%{public}d append=%{public}d total=%{public}d expectedTotal=%{public}d',
+      token,
+      items.length,
+      CategoryGalleryNavStore.items.length,
+      CategoryGalleryNavStore.expectedTotalCount
+    );
     CategoryGalleryNavStore.version++;
   }
 
@@ -89,6 +116,14 @@ export class CategoryGalleryNavStore {
       return;
     }
     CategoryGalleryNavStore.items = items.slice();
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'replaceItems token=%{public}d total=%{public}d expectedTotal=%{public}d',
+      token,
+      CategoryGalleryNavStore.items.length,
+      CategoryGalleryNavStore.expectedTotalCount
+    );
     CategoryGalleryNavStore.version++;
   }
 

@@ -38,6 +38,7 @@ export interface GalleryAlbumVisibleLoadHost {
   flowDataSource: GalleryWaterFlowDataSource;
   bootLoading: boolean;
   orderedDays: TimelineDayModel[];
+  dayGlobalSlotStarts: number[];
   sections: GalleryAlbumDaySectionState[];
   visualPlaceholderMode: boolean;
   isDraggingOrFling: boolean;
@@ -65,6 +66,7 @@ export interface GalleryAlbumVisibleLoadHost {
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   isInScrollInteractiveLogWindow(): boolean;
   logScrollDebug(msg: string): void;
+  refreshRootPhotosScrollTitle(): void;
   rebuildFlow(): void;
   pumpLoad(singleBatch?: boolean): void;
   loadOneBatch(): Promise<number>;
@@ -158,6 +160,7 @@ export function galleryAlbumVisibleRefreshVisibleRangeIfAvailable(host: GalleryA
     host.listVisibleLastNodeIdx
   );
   galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
+  host.refreshRootPhotosScrollTitle();
   return true;
 }
 
@@ -227,6 +230,7 @@ export function galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host: Gallery
   const gEndExclusive = galleryAlbumVisibleGlobalSlotIndexAtDayStart(host, hi) + Math.max(0, dLast.itemCount);
   host.lastKnownGlobalPhotoSlotStart = gStart;
   host.lastKnownGlobalPhotoSlotEndExclusive = Math.max(gStart + 1, gEndExclusive);
+  host.refreshRootPhotosScrollTitle();
   return true;
 }
 
@@ -245,6 +249,7 @@ export function galleryAlbumVisiblePrimeRoughVisibleRangeForTimelineTarget(
   host.listVisibleLastNodeIdx = range.last;
   galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(host, range.first, range.last);
   galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
+  host.refreshRootPhotosScrollTitle();
   return range;
 }
 
@@ -253,21 +258,30 @@ export function galleryAlbumVisibleCountPhotoSlotsBeforeNode(
   nodeIdx: number
 ): number {
   const totalNodes = host.flowDataSource.totalCount();
-  const end = Math.max(0, Math.min(totalNodes, nodeIdx));
-  let acc = 0;
-  for (let i = 0; i < end; i++) {
-    const n = host.flowDataSource.getData(i);
-    if (n.kind === 'row') {
-      acc += n.rowSlotItems.length;
-    }
+  if (totalNodes <= 0) {
+    return 0;
   }
-  return acc;
+  const end = Math.max(0, Math.min(totalNodes, nodeIdx));
+  if (end <= 0) {
+    return 0;
+  }
+  if (end >= totalNodes) {
+    const lastNode = host.flowDataSource.getData(totalNodes - 1);
+    return lastNode.globalPhotoSlotStart + (lastNode.kind === 'row' ? lastNode.rowSlotItems.length : 0);
+  }
+  return host.flowDataSource.getData(end).globalPhotoSlotStart;
 }
 
 export function galleryAlbumVisibleGlobalSlotIndexAtDayStart(
   host: GalleryAlbumVisibleLoadHost,
   dayIdx: number
 ): number {
+  if (dayIdx <= 0) {
+    return 0;
+  }
+  if (dayIdx < host.dayGlobalSlotStarts.length) {
+    return Math.max(0, host.dayGlobalSlotStarts[dayIdx]);
+  }
   let acc = 0;
   const lim = Math.max(0, Math.min(dayIdx, host.orderedDays.length));
   for (let i = 0; i < lim; i++) {
@@ -641,6 +655,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   allowWhileInteracting: boolean = false
 ): void {
   galleryAlbumVisibleCancelScheduledRetry(host);
+  const interactiveVisiblePriority = allowWhileInteracting && aggressive;
   const now = Date.now();
   const throttleWindowMs = allowWhileInteracting ? 96 : 300;
   if (!forceImmediate && now - host.lastLoadVisibleAtMs < throttleWindowMs) {
@@ -650,8 +665,9 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     return;
   }
   host.lastLoadVisibleAtMs = now;
-  if (host.bootLoading || host.orderedDays.length === 0 || host.visualPlaceholderMode
-    || (!allowWhileInteracting && host.isDraggingOrFling)) {
+  if (host.bootLoading || host.orderedDays.length === 0
+    || (!interactiveVisiblePriority && host.visualPlaceholderMode)
+    || (!interactiveVisiblePriority && host.isDraggingOrFling)) {
     if (GALLERY_SCROLL_DEBUG_LOG) {
       host.logScrollDebug(
         `loadVisible skip: boot=${host.bootLoading ? 1 : 0}, days=${host.orderedDays.length}, `
@@ -675,7 +691,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     );
     galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
   }
-  if (allowWhileInteracting && !loadVisibleUsedScrollerRange) {
+  if (allowWhileInteracting && !loadVisibleUsedScrollerRange && !interactiveVisiblePriority) {
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug('loadVisible interactive skip: scroller visible range unavailable');
     }
