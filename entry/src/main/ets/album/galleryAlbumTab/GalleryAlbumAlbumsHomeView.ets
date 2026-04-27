@@ -1,7 +1,8 @@
 import { AiPersonItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import { FnInlineLoading, FnStateText } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { GalleryNetworkThumb, loadThumbPix, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const ALBUMS_HOME_SECTION_SIDE_PAD_VP: number = 14;
 const ALBUMS_HOME_MEDIA_GRID_GAP_VP: number = 10;
@@ -14,10 +15,12 @@ const ALBUMS_HOME_SHORTCUT_CARD_RADIUS_VP: number = 26;
 const ALBUMS_HOME_SMART_RING_GAP_VP: number = 6;
 const ALBUMS_HOME_SMART_GRID_GAP_VP: number = 4;
 const ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP: number = 10;
+const DOMAIN = 0xFF00;
+const TAG = 'GalleryDiag';
 
 @Component
 export struct GalleryAlbumAlbumsHomeView {
-  @Prop baseUrl: string = '';
+  @Prop @Watch('onBaseUrlChanged') baseUrl: string = '';
   @Prop contentInsetTopVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
   @Prop mediaLoading: boolean = false;
@@ -26,11 +29,11 @@ export struct GalleryAlbumAlbumsHomeView {
   @Prop mediaItems: MediaCategoryItem[] = [];
   @Prop personLoading: boolean = false;
   @Prop personError: string = '';
-  @Prop personItems: AiPersonItem[] = [];
+  @Prop @Watch('onPersonItemsChanged') personItems: AiPersonItem[] = [];
   @Prop smartLoading: boolean = false;
   @Prop smartError: string = '';
-  @Prop smartSceneItems: SmartCategoryItem[] = [];
-  @Prop smartInfoItems: SmartCategoryItem[] = [];
+  @Prop @Watch('onSmartSceneItemsChanged') smartSceneItems: SmartCategoryItem[] = [];
+  @Prop @Watch('onSmartInfoItemsChanged') smartInfoItems: SmartCategoryItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
 
@@ -49,14 +52,21 @@ export struct GalleryAlbumAlbumsHomeView {
   onOpenRecycleBin: () => void = () => {};
 
   @State private thumbLoadingPaused: boolean = false;
+  @State private previewRefreshSeed: number = 0;
+  @State private personPreviewPix: Array<PixelMap | undefined> = [];
+  @State private smartPreviewPix: Array<PixelMap | undefined> = [];
   private thumbResumeTimer: number = -1;
+  private previewRefreshTimer: number = -1;
+  private previewWarmupGen: number = 0;
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
+    this.queuePreviewRefresh();
   }
 
   aboutToDisappear(): void {
     this.clearThumbResumeTimer();
+    this.clearPreviewRefreshTimer();
     this.recycleThumbCache(true);
   }
 
@@ -72,6 +82,119 @@ export struct GalleryAlbumAlbumsHomeView {
       clearTimeout(this.thumbResumeTimer);
       this.thumbResumeTimer = -1;
     }
+  }
+
+  private clearPreviewRefreshTimer(): void {
+    if (this.previewRefreshTimer >= 0) {
+      clearTimeout(this.previewRefreshTimer);
+      this.previewRefreshTimer = -1;
+    }
+  }
+
+  private bumpPreviewRefreshSeed(): void {
+    this.previewRefreshSeed = (this.previewRefreshSeed + 1) % 1000000;
+  }
+
+  private queuePreviewRefresh(): void {
+    this.bumpPreviewRefreshSeed();
+    this.clearPreviewRefreshTimer();
+    this.personPreviewPix = [];
+    this.smartPreviewPix = [];
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'queuePreviewRefresh personCount=%{public}d smartSceneCount=%{public}d smartInfoCount=%{public}d firstPersonUri=%{public}s firstSmartUri=%{public}s',
+      this.personItems.length,
+      this.smartSceneItems.length,
+      this.smartInfoItems.length,
+      this.previewPersonFaceUri(this.previewPersonAt(0)),
+      this.previewSmartCoverUri(this.previewSmartAt(0))
+    );
+    this.previewRefreshTimer = setTimeout((): void => {
+      this.previewRefreshTimer = -1;
+      const warmupGen = ++this.previewWarmupGen;
+      void this.warmPreviewPix(warmupGen);
+    }, 220);
+  }
+
+  private async warmPreviewPix(gen: number): Promise<void> {
+    const personUris: string[] = [];
+    const smartUris: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      personUris.push(this.previewPersonFaceUri(this.previewPersonAt(i)));
+      smartUris.push(this.previewSmartCoverUri(this.previewSmartAt(i)));
+    }
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'warmPreviewPix start gen=%{public}d personUris=%{public}s|%{public}s|%{public}s|%{public}s smartUris=%{public}s|%{public}s|%{public}s|%{public}s',
+      gen,
+      personUris[0] ?? '',
+      personUris[1] ?? '',
+      personUris[2] ?? '',
+      personUris[3] ?? '',
+      smartUris[0] ?? '',
+      smartUris[1] ?? '',
+      smartUris[2] ?? '',
+      smartUris[3] ?? ''
+    );
+    const personPix = await Promise.all(personUris.map(async (uri: string): Promise<PixelMap | undefined> => {
+      if (uri.length <= 0) {
+        return undefined;
+      }
+      return await loadThumbPix(uri, false);
+    }));
+    const smartPix = await Promise.all(smartUris.map(async (uri: string): Promise<PixelMap | undefined> => {
+      if (uri.length <= 0) {
+        return undefined;
+      }
+      return await loadThumbPix(uri, false);
+    }));
+    if (gen !== this.previewWarmupGen) {
+      hilog.warn(DOMAIN, TAG, 'warmPreviewPix stale gen=%{public}d active=%{public}d', gen, this.previewWarmupGen);
+      return;
+    }
+    this.personPreviewPix = personPix;
+    this.smartPreviewPix = smartPix;
+    let personLoaded = 0;
+    let smartLoaded = 0;
+    for (let i = 0; i < personPix.length; i++) {
+      if (personPix[i] !== undefined) {
+        personLoaded++;
+      }
+    }
+    for (let i = 0; i < smartPix.length; i++) {
+      if (smartPix[i] !== undefined) {
+        smartLoaded++;
+      }
+    }
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'warmPreviewPix done gen=%{public}d personLoaded=%{public}d/%{public}d smartLoaded=%{public}d/%{public}d',
+      gen,
+      personLoaded,
+      personPix.length,
+      smartLoaded,
+      smartPix.length
+    );
+    this.bumpPreviewRefreshSeed();
+  }
+
+  private onBaseUrlChanged(): void {
+    this.queuePreviewRefresh();
+  }
+
+  private onPersonItemsChanged(): void {
+    this.queuePreviewRefresh();
+  }
+
+  private onSmartSceneItemsChanged(): void {
+    this.queuePreviewRefresh();
+  }
+
+  private onSmartInfoItemsChanged(): void {
+    this.queuePreviewRefresh();
   }
 
   private onThumbScrollActivity(): void {
@@ -138,6 +261,43 @@ export struct GalleryAlbumAlbumsHomeView {
       return '';
     }
     return nasUrl(this.baseUrl, this.getSmartCategoryCover(item));
+  }
+
+  private previewUriToken(uri: string): string {
+    if (uri.length <= 0) {
+      return 'empty';
+    }
+    let hash = 0;
+    for (let i = 0; i < uri.length; i++) {
+      hash = (hash * 131 + uri.charCodeAt(i)) % 2147483647;
+    }
+    return `${uri.length}_${hash}`;
+  }
+
+  private previewThumbId(kind: string, idx: number, uri: string): string {
+    return `${kind}_${idx}_${this.previewUriToken(uri)}_${this.previewRefreshSeed}`;
+  }
+
+  private previewPersonThumbId(item: AiPersonItem | undefined, idx: number): string {
+    return this.previewThumbId('album_person_preview', idx, this.previewPersonFaceUri(item));
+  }
+
+  private previewSmartThumbId(item: SmartCategoryItem | undefined, idx: number): string {
+    return this.previewThumbId('album_smart_preview', idx, this.previewSmartCoverUri(item));
+  }
+
+  private personPreviewPixAt(idx: number): PixelMap | undefined {
+    if (idx < 0 || idx >= this.personPreviewPix.length) {
+      return undefined;
+    }
+    return this.personPreviewPix[idx];
+  }
+
+  private smartPreviewPixAt(idx: number): PixelMap | undefined {
+    if (idx < 0 || idx >= this.smartPreviewPix.length) {
+      return undefined;
+    }
+    return this.smartPreviewPix[idx];
   }
 
   private personModuleSubtitle(): string {
@@ -228,97 +388,121 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   @Builder
-  private previewFace(item?: AiPersonItem) {
-    Stack({ alignContent: Alignment.Center }) {
-      if (this.previewPersonFaceUri(item).length > 0) {
-        GalleryNetworkThumb({
-          uri: this.previewPersonFaceUri(item),
-          isVideo: false,
-          isGif: false,
-          paused: this.thumbLoadingPaused
-        })
-          .width('100%')
-          .height('100%')
-          .borderRadius(999)
-          .clip(true)
-      } else {
-        Stack()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.gallery_material_surface_bg'))
-          .borderRadius(999)
-          .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      }
+  private previewFace(item: AiPersonItem | undefined, idx: number) {
+    if (this.personPreviewPixAt(idx) !== undefined) {
+      Image(this.personPreviewPixAt(idx) as PixelMap)
+        .id(this.previewPersonThumbId(item, idx))
+        .layoutWeight(1)
+        .width('100%')
+        .aspectRatio(1)
+        .objectFit(ImageFit.Cover)
+        .borderRadius(999)
+        .clip(true)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+        .draggable(false)
+    } else if (this.previewPersonFaceUri(item).length > 0) {
+      GalleryNetworkThumb({
+        uri: this.previewPersonFaceUri(item),
+        isVideo: false,
+        isGif: false,
+        paused: false,
+        debugLabel: `home_person_${idx}`
+      })
+        .id(this.previewPersonThumbId(item, idx))
+        .layoutWeight(1)
+        .width('100%')
+        .aspectRatio(1)
+        .borderRadius(999)
+        .clip(true)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    } else {
+      Stack()
+        .layoutWeight(1)
+        .width('100%')
+        .aspectRatio(1)
+        .borderRadius(999)
+        .clip(true)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
     }
-    .layoutWeight(1)
-    .height('100%')
   }
 
   @Builder
   private personModulePreview() {
     Column({ space: ALBUMS_HOME_SMART_RING_GAP_VP }) {
       Row({ space: ALBUMS_HOME_SMART_RING_GAP_VP }) {
-        this.previewFace(this.previewPersonAt(0))
-        this.previewFace(this.previewPersonAt(1))
+        this.previewFace(this.previewPersonAt(0), 0)
+        this.previewFace(this.previewPersonAt(1), 1)
       }
       .width('100%')
-      .layoutWeight(1)
       Row({ space: ALBUMS_HOME_SMART_RING_GAP_VP }) {
-        this.previewFace(this.previewPersonAt(2))
-        this.previewFace(this.previewPersonAt(3))
+        this.previewFace(this.previewPersonAt(2), 2)
+        this.previewFace(this.previewPersonAt(3), 3)
       }
       .width('100%')
-      .layoutWeight(1)
     }
     .width('100%')
-    .height('100%')
   }
 
   @Builder
-  private smartPreviewTile(item?: SmartCategoryItem) {
-    Stack({ alignContent: Alignment.Center }) {
-      if (this.previewSmartCoverUri(item).length > 0) {
-        GalleryNetworkThumb({
-          uri: this.previewSmartCoverUri(item),
-          isVideo: false,
-          isGif: false,
-          paused: this.thumbLoadingPaused
-        })
-          .width('100%')
-          .height('100%')
-          .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
-          .clip(true)
-      } else {
-        Stack()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.gallery_material_surface_bg'))
-          .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
-          .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      }
+  private smartPreviewTile(item: SmartCategoryItem | undefined, idx: number) {
+    if (this.smartPreviewPixAt(idx) !== undefined) {
+      Image(this.smartPreviewPixAt(idx) as PixelMap)
+        .id(this.previewSmartThumbId(item, idx))
+        .layoutWeight(1)
+        .width('100%')
+        .aspectRatio(1)
+        .objectFit(ImageFit.Cover)
+        .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
+        .clip(true)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+        .draggable(false)
+    } else if (this.previewSmartCoverUri(item).length > 0) {
+      GalleryNetworkThumb({
+        uri: this.previewSmartCoverUri(item),
+        isVideo: false,
+        isGif: false,
+        paused: false,
+        debugLabel: `home_smart_${idx}`
+      })
+        .id(this.previewSmartThumbId(item, idx))
+        .layoutWeight(1)
+        .width('100%')
+        .aspectRatio(1)
+        .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
+        .clip(true)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    } else {
+      Stack()
+        .layoutWeight(1)
+        .width('100%')
+        .aspectRatio(1)
+        .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
+        .clip(true)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
     }
-    .layoutWeight(1)
-    .height('100%')
   }
 
   @Builder
   private smartModulePreview() {
     Column({ space: ALBUMS_HOME_SMART_GRID_GAP_VP }) {
       Row({ space: ALBUMS_HOME_SMART_GRID_GAP_VP }) {
-        this.smartPreviewTile(this.previewSmartAt(0))
-        this.smartPreviewTile(this.previewSmartAt(1))
+        this.smartPreviewTile(this.previewSmartAt(0), 0)
+        this.smartPreviewTile(this.previewSmartAt(1), 1)
       }
       .width('100%')
-      .layoutWeight(1)
       Row({ space: ALBUMS_HOME_SMART_GRID_GAP_VP }) {
-        this.smartPreviewTile(this.previewSmartAt(2))
-        this.smartPreviewTile(this.previewSmartAt(3))
+        this.smartPreviewTile(this.previewSmartAt(2), 2)
+        this.smartPreviewTile(this.previewSmartAt(3), 3)
       }
       .width('100%')
-      .layoutWeight(1)
     }
     .width('100%')
-    .height('100%')
   }
 
   @Builder

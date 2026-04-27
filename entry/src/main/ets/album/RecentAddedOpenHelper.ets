@@ -7,11 +7,11 @@ import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { GALLERY_RECENT_DAY_MAX_ROUNDS } from './galleryAlbumTab/GalleryAlbumTabConstants';
 
 const DOMAIN = 0xFF00;
-const TAG = 'RecentAddedOpen';
+const TAG = 'GalleryDiag';
 const RECENT_ADDED_FETCH_PAGE_LIMIT = 32;
 const RECENT_ADDED_INITIAL_OPEN_ITEMS = 96;
-const RECENT_ADDED_BACKGROUND_APPEND_ITEMS = 96;
-const RECENT_ADDED_BACKGROUND_APPEND_DELAY_MS = 48;
+const RECENT_ADDED_BACKGROUND_APPEND_ITEMS = 192;
+const RECENT_ADDED_BACKGROUND_APPEND_DELAY_MS = 120;
 
 interface TimelineDayModel {
   year: number;
@@ -358,6 +358,17 @@ async function continueRecentAddedBackgroundLoad(
     if (token !== CategoryGalleryNavStore.currentToken()) {
       return;
     }
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'backgroundChunk token=%{public}d chunkItems=%{public}d done=%{public}s cursorDay=%{public}d cursorOffset=%{public}d seen=%{public}d',
+      token,
+      chunk.items.length,
+      chunk.done ? 'true' : 'false',
+      cursor.dayIndex,
+      cursor.dayOffset,
+      seen.size
+    );
     if (chunk.items.length > 0) {
       CategoryGalleryNavStore.appendItems(token, chunk.items);
     }
@@ -446,6 +457,16 @@ export async function openRecentAddedGallery(
       errorMessage: initialChunk.errorMessage.length > 0 ? initialChunk.errorMessage : '最近添加暂无可预览媒体'
     };
   }
+  hilog.warn(
+    DOMAIN,
+    TAG,
+    'openRecentAddedGallery initialChunk=%{public}d done=%{public}s cursorDay=%{public}d cursorOffset=%{public}d timelineDays=%{public}d',
+    initialChunk.items.length,
+    initialChunk.done ? 'true' : 'false',
+    cursor.dayIndex,
+    cursor.dayOffset,
+    timelineResult.days.length
+  );
   const opened = await CategoryGalleryNavStore.open(
     baseUrl,
     '最近添加',

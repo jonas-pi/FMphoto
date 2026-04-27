@@ -15,7 +15,7 @@ import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 
-const GALLERY_MAIN_LIST_CACHED_COUNT: number = 6;
+const GALLERY_MAIN_LIST_CACHED_COUNT: number = 3;
 
 @Component
 export struct GalleryAlbumMainModeView {
@@ -67,6 +67,8 @@ export struct GalleryAlbumMainModeView {
   onListScrollIndex: (firstIdx: number, lastIdx: number, centerIdx: number) => void =
     (_: number, __: number, ___: number) => {};
   onListDidScroll: (offset: number, scrollState: ScrollState) => void = (_: number, __: ScrollState) => {};
+  onListVisibleContentChange: (start: VisibleListContentInfo, end: VisibleListContentInfo) => void =
+    (_: VisibleListContentInfo, __: VisibleListContentInfo) => {};
   onRefreshOffsetChange: (offset: number) => void = (_: number) => {};
   onRefreshing: () => void = () => {};
   onBatchDownload: () => void = () => {};
@@ -152,6 +154,9 @@ export struct GalleryAlbumMainModeView {
     }
     .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)
     .onAreaChange((): void => {
+      if (!this.gallerySelectionMode && !this.gallerySlideGestureActive) {
+        return;
+      }
       const pid = this.itemIdOf(item);
       if (pid.length > 0) {
         this.recordGalleryThumbRectFromDom(pid, this.galleryThumbDomId(pid));
@@ -247,9 +252,6 @@ export struct GalleryAlbumMainModeView {
               }
               const longPressItem = all[fi];
               this.onGalleryThumbLongPress(longPressItem);
-              if (!this.gallerySelectionMode) {
-                return;
-              }
               if (this.gallerySlideGestureActive) {
                 return;
               }
@@ -297,9 +299,6 @@ export struct GalleryAlbumMainModeView {
         .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
           if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
             return GestureJudgeResult.CONTINUE;
-          }
-          if (!this.gallerySelectionMode) {
-            return GestureJudgeResult.REJECT;
           }
           return GestureJudgeResult.CONTINUE;
         })
@@ -374,6 +373,9 @@ export struct GalleryAlbumMainModeView {
               .enableScrollInteraction(this.galleryMainListScrollEnabled)
               .onScrollIndex(this.onListScrollIndex)
               .onDidScroll(this.onListDidScroll)
+              .onScrollVisibleContentChange((start: VisibleListContentInfo, end: VisibleListContentInfo): void => {
+                this.onListVisibleContentChange(start, end);
+              })
             }
             .width('100%')
             .height('100%')

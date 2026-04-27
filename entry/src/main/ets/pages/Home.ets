@@ -252,6 +252,10 @@ struct Home {
     return this.bottomNavIndex === index;
   }
 
+  private shouldShowGalleryDockSideButtons(): boolean {
+    return this.isGalleryShellVisible() && this.currentHomeSurface() === 'photos';
+  }
+
   private switchTab(target: number): void {
     if (target === this.bottomNavIndex) {
       return;
@@ -432,9 +436,25 @@ struct Home {
   }
 
   @Builder
+  private floatingDockNavCapsule() {
+    Row({ space: 8 }) {
+      this.floatingDockNavItem(0, '鐓х墖')
+      this.floatingDockNavItem(1, '鐩稿唽')
+      this.floatingDockNavItem(2, '鎴戠殑')
+    }
+    .height(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: 6, right: 6 })
+    .backgroundColor($r('app.color.immersive_tabbar_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .borderRadius(HOME_FLOATING_DOCK_CENTER_RADIUS_VP)
+    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
+  }
+
+  @Builder
   private floatingBottomDock() {
     Row({ space: HOME_FLOATING_DOCK_SIDE_GAP_VP }) {
-      if (this.isGalleryShellVisible()) {
+      if (this.shouldShowGalleryDockSideButtons()) {
         this.floatingDockSideButton(true)
       } else {
         Blank()
@@ -456,7 +476,7 @@ struct Home {
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
       .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
 
-      if (this.isGalleryShellVisible()) {
+      if (this.shouldShowGalleryDockSideButtons()) {
         this.floatingDockSideButton(false)
       } else {
         Blank()

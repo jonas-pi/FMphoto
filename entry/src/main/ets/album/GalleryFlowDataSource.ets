@@ -19,6 +19,7 @@ export class GalleryFlowNode {
   year: number = 0;
   month: number = 0;
   day: number = 0;
+  globalPhotoSlotStart: number = 0;
   /**
    * 'row' 节点：每槽 1~3 个，与 rowSlotFlatIndices 等长。
    * null 表示该槽仍为骨架（timeline 已知 itemCount 但尚未加载到该 offset）。

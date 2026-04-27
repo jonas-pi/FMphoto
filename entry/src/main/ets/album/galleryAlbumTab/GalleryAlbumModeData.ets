@@ -5,9 +5,133 @@ import {
   SmartCategoryItem
 } from '../../model/FnApiTypes';
 
-export function parseCategoryMedia(item: MediaCategoryItem): GalleryListItem[] {
+type LooseGalleryCoverRecord = Record<string, Object | string | number | undefined | null>;
+type LooseCategoryMediaEntry = GalleryListItem | object | null | undefined;
+
+function readFirstNonEmptyString(raw: LooseGalleryCoverRecord, keys: string[]): string {
+  for (let i = 0; i < keys.length; i++) {
+    const value = raw[keys[i]];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      const text = String(value).trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+  }
+  return '';
+}
+
+function readThumbnailBlockUrl(value: Object | string | number | undefined | null): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : '';
+  }
+  if (typeof value !== 'object' || value === null) {
+    return '';
+  }
+  const block = value as LooseGalleryCoverRecord;
+  const url = readFirstNonEmptyString(block, [
+    'mUrl',
+    'sUrl',
+    'xsUrl',
+    'xxsUrl',
+    'originalUrl',
+    'videoUrl',
+    'url',
+    'src'
+  ]);
+  return url;
+}
+
+function readNestedCoverUrl(raw: LooseGalleryCoverRecord, keys: string[]): string {
+  for (let i = 0; i < keys.length; i++) {
+    const nested = raw[keys[i]];
+    if (typeof nested !== 'object' || nested === null) {
+      continue;
+    }
+    const nestedObj = nested as LooseGalleryCoverRecord;
+    const direct = readFirstNonEmptyString(nestedObj, [
+      'cover',
+      'thumb',
+      'thumbnail',
+      'poster',
+      'avatarUrl',
+      'faceUrl',
+      'imageUrl',
+      'imgUrl',
+      'posterUrl',
+      'photoUrl',
+      'url',
+      'src',
+      'path'
+    ]);
+    if (direct.length > 0) {
+      return direct;
+    }
+    const blockUrl = readThumbnailBlockUrl(nestedObj['thumbnail']);
+    if (blockUrl.length > 0) {
+      return blockUrl;
+    }
+  }
+  return '';
+}
+
+function readNestedPhotoThumbStream(raw: LooseGalleryCoverRecord, keys: string[], mode: 's' | 'm' = 's'): string {
+  for (let i = 0; i < keys.length; i++) {
+    const nested = raw[keys[i]];
+    if (typeof nested !== 'object' || nested === null) {
+      continue;
+    }
+    const nestedObj = nested as LooseGalleryCoverRecord;
+    const id = readFirstNonEmptyString(nestedObj, ['photoId', 'id']);
+    const uuid = readFirstNonEmptyString(nestedObj, ['uuid', 'photoUUID', 'session']);
+    if (id.length > 0 && uuid.length > 0) {
+      return `/p/api/v1/stream/p/t/${id}/${mode}/${uuid}`;
+    }
+  }
+  return '';
+}
+
+function readNestedFaceStreamUrl(raw: LooseGalleryCoverRecord, keys: string[]): string {
+  for (let i = 0; i < keys.length; i++) {
+    const nested = raw[keys[i]];
+    if (typeof nested !== 'object' || nested === null) {
+      continue;
+    }
+    const nestedObj = nested as LooseGalleryCoverRecord;
+    const faceId = readFirstNonEmptyString(nestedObj, ['faceId', 'avatarId', 'posterId', 'coverId', 'id']);
+    if (faceId.length > 0) {
+      return `/p/api/v1/stream/face/${faceId}`;
+    }
+  }
+  return '';
+}
+
+function readCategoryMediaRaw(item: MediaCategoryItem): LooseCategoryMediaEntry[] | null {
   const raw = item.list ?? item.items;
   if (!Array.isArray(raw)) {
+    return null;
+  }
+  return raw as LooseCategoryMediaEntry[];
+}
+
+export function categoryLocalMediaCount(item: MediaCategoryItem): number {
+  const raw = readCategoryMediaRaw(item);
+  return raw === null ? 0 : raw.length;
+}
+
+export function parseCategoryMedia(item: MediaCategoryItem, limit: number = -1): GalleryListItem[] {
+  const raw = readCategoryMediaRaw(item);
+  if (raw === null) {
+    return [];
+  }
+  const maxCount = limit >= 0 ? Math.max(0, Math.floor(limit)) : -1;
+  if (maxCount === 0) {
     return [];
   }
   const out: GalleryListItem[] = [];
@@ -15,6 +139,9 @@ export function parseCategoryMedia(item: MediaCategoryItem): GalleryListItem[] {
     const it = raw[i];
     if (typeof it === 'object' && it !== null) {
       out.push(it as GalleryListItem);
+      if (maxCount >= 0 && out.length >= maxCount) {
+        break;
+      }
     }
   }
   return out;
@@ -93,13 +220,49 @@ export function smartCategoryCount(item: SmartCategoryItem): number {
 }
 
 export function smartCategoryCover(item: SmartCategoryItem): string {
-  const p = item.poster;
-  if (p === undefined || p === null) {
-    return '';
+  const raw = item as LooseGalleryCoverRecord;
+  const direct = readFirstNonEmptyString(raw, [
+    'cover',
+    'thumb',
+    'small_thumb',
+    'thumb_url',
+    'thumbnail',
+    'poster',
+    'posterUrl',
+    'imageUrl',
+    'imgUrl',
+    'photoUrl',
+    'url',
+    'src',
+    'path'
+  ]);
+  if (direct.length > 0) {
+    return direct;
   }
-  const id = p.photoId !== undefined ? String(p.photoId) : '';
-  const uuid = p.uuid !== undefined ? p.uuid : '';
+  const thumbBlockUrl = readThumbnailBlockUrl(raw['thumbnail']);
+  if (thumbBlockUrl.length > 0) {
+    return thumbBlockUrl;
+  }
+  const nestedPosterUrl = readNestedCoverUrl(raw, ['poster', 'coverInfo', 'coverPhoto']);
+  if (nestedPosterUrl.length > 0) {
+    return nestedPosterUrl;
+  }
+  const nestedPosterStream = readNestedPhotoThumbStream(raw, ['poster', 'coverInfo', 'coverPhoto']);
+  if (nestedPosterStream.length > 0) {
+    return nestedPosterStream;
+  }
+  const p = item.poster;
+  const posterRaw = p as LooseGalleryCoverRecord | undefined;
+  const id = p !== undefined && p !== null && p.photoId !== undefined ? String(p.photoId) : '';
+  const uuid = p !== undefined && p !== null && p.uuid !== undefined
+    ? p.uuid
+    : (posterRaw !== undefined ? readFirstNonEmptyString(posterRaw, ['photoUUID', 'session']) : '');
   if (id.length === 0 || uuid.length === 0) {
+    const topPhotoId = readFirstNonEmptyString(raw, ['photoId']);
+    const topUuid = readFirstNonEmptyString(raw, ['uuid', 'photoUUID', 'session']);
+    if (topPhotoId.length > 0 && topUuid.length > 0) {
+      return `/p/api/v1/stream/p/t/${topPhotoId}/s/${topUuid}`;
+    }
     return '';
   }
   return `/p/api/v1/stream/p/t/${id}/s/${uuid}`;
@@ -122,8 +285,42 @@ export function personName(item: AiPersonItem): string {
 }
 
 export function personFace(item: AiPersonItem): string {
-  if (item.faceUrl !== undefined && item.faceUrl.length > 0) {
-    return item.faceUrl;
+  const raw = item as LooseGalleryCoverRecord;
+  const direct = readFirstNonEmptyString(raw, [
+    'faceUrl',
+    'avatarUrl',
+    'cover',
+    'thumb',
+    'small_thumb',
+    'thumb_url',
+    'thumbnail',
+    'poster',
+    'posterUrl',
+    'imageUrl',
+    'imgUrl',
+    'photoUrl',
+    'url',
+    'src',
+    'path'
+  ]);
+  if (direct.length > 0) {
+    return direct;
+  }
+  const thumbBlockUrl = readThumbnailBlockUrl(raw['thumbnail']);
+  if (thumbBlockUrl.length > 0) {
+    return thumbBlockUrl;
+  }
+  const nestedFaceUrl = readNestedCoverUrl(raw, ['face', 'avatar', 'poster', 'coverInfo']);
+  if (nestedFaceUrl.length > 0) {
+    return nestedFaceUrl;
+  }
+  const nestedFaceThumb = readNestedPhotoThumbStream(raw, ['face', 'avatar', 'poster', 'coverInfo', 'coverPhoto']);
+  if (nestedFaceThumb.length > 0) {
+    return nestedFaceThumb;
+  }
+  const nestedFaceStream = readNestedFaceStreamUrl(raw, ['face', 'avatar', 'poster', 'coverInfo', 'coverPhoto']);
+  if (nestedFaceStream.length > 0) {
+    return nestedFaceStream;
   }
   const id = item.faceId ?? item.avatarId ?? item.posterId ?? item.coverId ?? item.id;
   if (id === undefined || id === null) {

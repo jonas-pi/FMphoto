@@ -572,7 +572,7 @@ struct RecycleBinPage {
             .width('100%')
             .layoutWeight(1)
             .cachedCount(3)
-            .padding({ top: this.contentInsetTopVp() })
+            .margin({ top: this.contentInsetTopVp() })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
             .divider({ strokeWidth: 0 })
