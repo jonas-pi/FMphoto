@@ -3,6 +3,7 @@ import {
   collectTimelineYearMarkers,
   collectTimelineYearMonths,
   findFlowRoughVisibleRangeForYearMonth,
+  findTimelineMonthRange,
   findFlowScrollIndexForYearMonth,
   getTimelineHighlightDay,
   getTimelineHighlightMonth,
@@ -61,6 +62,10 @@ export function galleryAlbumSyncListVisibleRoughToTimelineSliderTarget(host: Tim
   const ym = galleryAlbumResolveYearMonthByTimelineRatio(host, host.timelineSliderRatio);
   if (ym === null) {
     return;
+  }
+  const monthRange = findTimelineMonthRange(host.orderedDays, ym.year, ym.month);
+  if (monthRange !== null) {
+    host.dayIndex = monthRange.startIndex;
   }
   const range = findFlowRoughVisibleRangeForYearMonth(host.flowDataSource, ym.year, ym.month);
   if (range === null) {

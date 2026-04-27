@@ -16,6 +16,8 @@ import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 
 const GALLERY_MAIN_LIST_CACHED_COUNT: number = 3;
+const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
+const GALLERY_MAIN_TOUCH_SLOP_VP: number = 10;
 
 @Component
 export struct GalleryAlbumMainModeView {
@@ -29,10 +31,12 @@ export struct GalleryAlbumMainModeView {
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
   @Prop gallerySelectedIds: string[] = [];
+  @Prop showBatchActionBar: boolean = true;
   @Prop galleryBatchDownloading: boolean = false;
   @Prop galleryBatchDeleting: boolean = false;
   @Prop galleryMainListScrollEnabled: boolean = true;
   @Prop gallerySlideGestureActive: boolean = false;
+  @Prop galleryLongPressIgnoreClickUntil: number = 0;
   @Prop timelineSidebarDragging: boolean = false;
   @Prop isDraggingOrFling: boolean = false;
   @Prop sectionsLength: number = 0;
@@ -49,6 +53,14 @@ export struct GalleryAlbumMainModeView {
 
   scrollerRef: Scroller = new Scroller();
   flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
+  private galleryInitialSlidePending: boolean = false;
+  private galleryTouchDownActive: boolean = false;
+  private galleryTouchPendingLongPress: boolean = false;
+  private galleryTouchLongPressTimer: number = -1;
+  private galleryTouchStartX: number = 0;
+  private galleryTouchStartY: number = 0;
+  private galleryTouchLastX: number = 0;
+  private galleryTouchLastY: number = 0;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
   galleryThumbDomId: (photoId: string) => string = (_: string) => '';
@@ -58,12 +70,16 @@ export struct GalleryAlbumMainModeView {
   getFlatItems: () => GalleryListItem[] = () => [];
   endGallerySlideSelectGesture: () => void = () => {};
   readGestureFingerWindow: (ev: GestureEvent) => GalleryFingerWindowPoint | null = (_: GestureEvent) => null;
+  pickGalleryThumbFlatUnderPoint: (xPx: number, yPx: number) => number = (_: number, __: number) => -1;
   pickGalleryThumbFlatForRowOrCache: (node: GalleryFlowNode, xPx: number, yPx: number) => number =
     (_: GalleryFlowNode, __: number, ___: number) => -1;
   onGalleryThumbLongPress: (item: GalleryListItem) => void = (_: GalleryListItem) => {};
   beginGallerySlideSelectGesture: (ev: GestureEvent, item: GalleryListItem, anchorFlat: number) => void =
     (_: GestureEvent, __: GalleryListItem, ___: number) => {};
+  beginGallerySlideSelectGestureAtWindowPx: (item: GalleryListItem, anchorFlat: number, xPx: number, yPx: number) => void =
+    (_: GalleryListItem, __: number, ___: number, ____: number) => {};
   onGallerySlidePanUpdate: (ev: GestureEvent) => void = (_: GestureEvent) => {};
+  onGallerySlideTouchMoveWindow: (xPx: number, yPx: number) => void = (_: number, __: number) => {};
   onListScrollIndex: (firstIdx: number, lastIdx: number, centerIdx: number) => void =
     (_: number, __: number, ___: number) => {};
   onListDidScroll: (offset: number, scrollState: ScrollState) => void = (_: number, __: ScrollState) => {};
@@ -96,6 +112,113 @@ export struct GalleryAlbumMainModeView {
       return this.getUIContext().vp2px(value);
     } catch (_e) {
       return value;
+    }
+  }
+
+  private readTouchFingerWindow(ev: TouchEvent): GalleryFingerWindowPoint | null {
+    if (ev.touches === undefined || ev.touches.length < 1) {
+      return null;
+    }
+    const f0 = ev.touches[0];
+    const x = f0.windowX ?? f0.displayX ?? f0.x;
+    const y = f0.windowY ?? f0.displayY ?? f0.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
+  }
+
+  private armInitialGallerySlideGesture(ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void {
+    this.galleryInitialSlidePending = true;
+    this.beginGallerySlideSelectGesture(ev, item, anchorFlat);
+  }
+
+  private clearInitialGallerySlideGesture(): void {
+    this.galleryInitialSlidePending = false;
+  }
+
+  private clearGalleryTouchLongPressTimer(): void {
+    if (this.galleryTouchLongPressTimer >= 0) {
+      clearTimeout(this.galleryTouchLongPressTimer);
+      this.galleryTouchLongPressTimer = -1;
+    }
+  }
+
+  private resetGalleryTouchTracking(): void {
+    this.clearGalleryTouchLongPressTimer();
+    this.galleryTouchDownActive = false;
+    this.galleryTouchPendingLongPress = false;
+  }
+
+  private startGalleryTouchLongPress(pt: GalleryFingerWindowPoint): void {
+    if (this.gallerySelectionMode || this.gallerySlideGestureActive) {
+      return;
+    }
+    this.clearGalleryTouchLongPressTimer();
+    this.galleryTouchDownActive = true;
+    this.galleryTouchPendingLongPress = true;
+    this.galleryTouchStartX = pt.x;
+    this.galleryTouchStartY = pt.y;
+    this.galleryTouchLastX = pt.x;
+    this.galleryTouchLastY = pt.y;
+    this.galleryTouchLongPressTimer = setTimeout((): void => {
+      this.galleryTouchLongPressTimer = -1;
+      if (!this.galleryTouchDownActive || !this.galleryTouchPendingLongPress ||
+        this.gallerySelectionMode || this.gallerySlideGestureActive) {
+        return;
+      }
+      const all = this.getFlatItems();
+      const fi = this.pickGalleryThumbFlatUnderPoint(this.galleryTouchLastX, this.galleryTouchLastY);
+      if (fi < 0 || fi >= all.length) {
+        this.galleryTouchPendingLongPress = false;
+        return;
+      }
+      const item = all[fi];
+      this.onGalleryThumbLongPress(item);
+      this.beginGallerySlideSelectGestureAtWindowPx(item, fi, this.galleryTouchLastX, this.galleryTouchLastY);
+      this.galleryTouchPendingLongPress = false;
+    }, GALLERY_MAIN_TOUCH_LONG_PRESS_MS);
+  }
+
+  private onMainListTouchEvent(event: TouchEvent): void {
+    const pt = this.readTouchFingerWindow(event);
+    if (event.type === TouchType.Down) {
+      if (pt !== null) {
+        this.startGalleryTouchLongPress(pt);
+      } else {
+        this.resetGalleryTouchTracking();
+      }
+      return;
+    }
+    if (this.gallerySlideGestureActive) {
+      if (event.type === TouchType.Move) {
+        if (pt === null) {
+          return;
+        }
+        this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
+        return;
+      }
+      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.clearInitialGallerySlideGesture();
+        this.endGallerySlideSelectGesture();
+        this.resetGalleryTouchTracking();
+      }
+      return;
+    }
+    if (this.galleryTouchPendingLongPress && pt !== null && event.type === TouchType.Move) {
+      this.galleryTouchLastX = pt.x;
+      this.galleryTouchLastY = pt.y;
+      const dx = pt.x - this.galleryTouchStartX;
+      const dy = pt.y - this.galleryTouchStartY;
+      const slopPx = this.vpToPx(GALLERY_MAIN_TOUCH_SLOP_VP);
+      if ((dx * dx + dy * dy) > (slopPx * slopPx)) {
+        this.resetGalleryTouchTracking();
+      }
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.clearInitialGallerySlideGesture();
+      this.resetGalleryTouchTracking();
     }
   }
 
@@ -154,9 +277,6 @@ export struct GalleryAlbumMainModeView {
     }
     .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)
     .onAreaChange((): void => {
-      if (!this.gallerySelectionMode && !this.gallerySlideGestureActive) {
-        return;
-      }
       const pid = this.itemIdOf(item);
       if (pid.length > 0) {
         this.recordGalleryThumbRectFromDom(pid, this.galleryThumbDomId(pid));
@@ -232,43 +352,83 @@ export struct GalleryAlbumMainModeView {
         }
         .width('100%')
         .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+        .onTouch((event: TouchEvent): void => {
+          if (!this.gallerySlideGestureActive) {
+            if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.clearInitialGallerySlideGesture();
+            }
+            return;
+          }
+          if (event.type === TouchType.Move) {
+            const pt = this.readTouchFingerWindow(event);
+            if (pt === null) {
+              return;
+            }
+            this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
+          }
+        })
         .parallelGesture(GestureGroup(GestureMode.Parallel,
-          LongPressGesture({ repeat: false, duration: 420 })
-            .onAction((ev: GestureEvent): void => {
-              this.endGallerySlideSelectGesture();
-              const pt = this.readGestureFingerWindow(ev);
-              if (pt === null) {
-                return;
-              }
-              const xPx = this.vpToPx(pt.x);
-              const yPx = this.vpToPx(pt.y);
-              const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
-              if (fi < 0) {
-                return;
-              }
-              const all = this.getFlatItems();
-              if (fi >= all.length) {
-                return;
-              }
-              const longPressItem = all[fi];
-              this.onGalleryThumbLongPress(longPressItem);
-              if (this.gallerySlideGestureActive) {
-                return;
-              }
-              this.beginGallerySlideSelectGesture(ev, longPressItem, fi);
-            }),
+          GestureGroup(GestureMode.Sequence,
+            LongPressGesture({ repeat: false, duration: 420 })
+              .onAction((ev: GestureEvent): void => {
+                if (this.gallerySlideGestureActive) {
+                  return;
+                }
+                this.clearInitialGallerySlideGesture();
+                this.endGallerySlideSelectGesture();
+                const pt = this.readGestureFingerWindow(ev);
+                if (pt === null) {
+                  return;
+                }
+                const xPx = this.vpToPx(pt.x);
+                const yPx = this.vpToPx(pt.y);
+                const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
+                if (fi < 0) {
+                  return;
+                }
+                const all = this.getFlatItems();
+                if (fi >= all.length) {
+                  return;
+                }
+                const longPressItem = all[fi];
+                const wasSelectionMode = this.gallerySelectionMode;
+                this.onGalleryThumbLongPress(longPressItem);
+                if (!wasSelectionMode) {
+                  this.armInitialGallerySlideGesture(ev, longPressItem, fi);
+                }
+              }),
+            PanGesture({
+              fingers: 1,
+              direction: PanDirection.All,
+              distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
+            })
+              .onActionUpdate((ev: GestureEvent): void => {
+                if (!this.galleryInitialSlidePending || !this.gallerySlideGestureActive) {
+                  return;
+                }
+                this.onGallerySlidePanUpdate(ev);
+              })
+              .onActionEnd((): void => {
+                this.clearInitialGallerySlideGesture();
+                this.endGallerySlideSelectGesture();
+              })
+              .onActionCancel((): void => {
+                this.clearInitialGallerySlideGesture();
+                this.endGallerySlideSelectGesture();
+              })
+          ),
           PanGesture({
             fingers: 1,
-            direction: this.gallerySlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
-            distance: this.gallerySlideGestureActive ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
+            direction: PanDirection.Horizontal,
+            distance: this.gallerySelectionMode ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
               GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE
           })
             .onActionStart((ev: GestureEvent): void => {
               if (!this.gallerySelectionMode) {
                 return;
               }
-              if (this.gallerySlideGestureActive) {
-                this.endGallerySlideSelectGesture();
+              if (this.gallerySlideGestureActive || this.galleryInitialSlidePending) {
+                return;
               }
               const pt = this.readGestureFingerWindow(ev);
               if (pt === null) {
@@ -290,18 +450,14 @@ export struct GalleryAlbumMainModeView {
               this.onGallerySlidePanUpdate(ev);
             })
             .onActionEnd((): void => {
+              this.clearInitialGallerySlideGesture();
               this.endGallerySlideSelectGesture();
             })
             .onActionCancel((): void => {
+              this.clearInitialGallerySlideGesture();
               this.endGallerySlideSelectGesture();
             })
         ))
-        .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-          if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
-            return GestureJudgeResult.CONTINUE;
-          }
-          return GestureJudgeResult.CONTINUE;
-        })
       }
       .draggable(false)
     }
@@ -356,7 +512,7 @@ export struct GalleryAlbumMainModeView {
                         .textAlign(TextAlign.Center)
                         .padding(12)
                     }
-                    Blank().height((this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32) +
+                    Blank().height((this.showBatchActionBar && this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32) +
                       this.contentInsetBottomVp)
                   }
                   .width('100%')
@@ -371,6 +527,9 @@ export struct GalleryAlbumMainModeView {
               .scrollBarWidth(0)
               .divider({ strokeWidth: 0 })
               .enableScrollInteraction(this.galleryMainListScrollEnabled)
+              .onTouch((event: TouchEvent): void => {
+                this.onMainListTouchEvent(event);
+              })
               .onScrollIndex(this.onListScrollIndex)
               .onDidScroll(this.onListDidScroll)
               .onScrollVisibleContentChange((start: VisibleListContentInfo, end: VisibleListContentInfo): void => {
@@ -412,7 +571,7 @@ export struct GalleryAlbumMainModeView {
           .layoutWeight(1)
           .clip(false)
 
-          if (this.gallerySelectionMode && this.gallerySelectedCount > 0) {
+          if (this.showBatchActionBar && this.gallerySelectionMode && this.gallerySelectedCount > 0) {
             GalleryAlbumBatchActionBar({
               downloading: this.galleryBatchDownloading,
               deleting: this.galleryBatchDeleting,

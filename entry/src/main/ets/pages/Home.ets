@@ -6,7 +6,22 @@ import { AppSession } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
-import { FnImmersiveBackdrop, FnPrimaryButton } from '../common/FnUiCommon';
+import {
+  fnBottomDockBottomGap,
+  FnImmersiveBackdrop,
+  FnPrimaryButton,
+  FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
+  FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
+  FN_BOTTOM_DOCK_ICON_SIZE_VP,
+  FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
+  FN_BOTTOM_DOCK_INNER_SPACE_VP,
+  FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
+  FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
+  FN_BOTTOM_DOCK_LABEL_SIZE_VP,
+  FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+  FN_BOTTOM_DOCK_SIDE_GAP_VP,
+  FN_BOTTOM_DOCK_SIDE_PADDING_VP
+} from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -14,9 +29,7 @@ import {
   FN_PAGE_EXIT_DURATION,
   FN_TAB_ALBUM_ME_CURVE,
   FN_TAB_ALBUM_ME_IN_MS,
-  FN_TAB_ALBUM_ME_OUT_MS,
-  FN_TAB_SWITCH_CURVE,
-  FN_TAB_SWITCH_IN_DURATION
+  FN_TAB_ALBUM_ME_OUT_MS
 } from '../common/FnMotion';
 import {
   GALLERY_TOP_BAR_PAD_BOTTOM_VP,
@@ -26,16 +39,6 @@ import {
   GALLERY_TOP_BAR_ROW_HEIGHT_VP,
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../common/GalleryTopBarLayout';
-
-const HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP: number = 58;
-const HOME_FLOATING_DOCK_SIDE_GAP_VP: number = 12;
-const HOME_FLOATING_DOCK_CENTER_HEIGHT_VP: number = 58;
-const HOME_FLOATING_DOCK_BOTTOM_GAP_VP: number = 16;
-const HOME_FLOATING_DOCK_SIDE_PADDING_VP: number = 14;
-const HOME_FLOATING_DOCK_NAV_ITEM_RADIUS_VP: number = 18;
-const HOME_FLOATING_DOCK_NAV_ICON_SIZE_VP: number = 20;
-const HOME_FLOATING_DOCK_NAV_LABEL_SIZE_VP: number = 12;
-const HOME_FLOATING_DOCK_CENTER_RADIUS_VP: number = 29;
 
 @Component
 struct MePanel {
@@ -70,7 +73,7 @@ struct MePanel {
         bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
       })
 
-      Column({ space: 18 }) {
+      Column({ space: 0 }) {
         Column({ space: 10 }) {
           Text('FNOS 个人中心')
             .fontSize(20)
@@ -90,6 +93,7 @@ struct MePanel {
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
         .shadow({ radius: 24, color: '#14001A33', offsetX: 0, offsetY: 10 })
+        .visibility(Visibility.None)
 
         Column({ space: 12 }) {
           Text('当前状态')
@@ -112,6 +116,7 @@ struct MePanel {
         .borderRadius(24)
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
+        .visibility(Visibility.None)
 
         Button($r('app.string.logout'))
           .width('100%')
@@ -131,8 +136,8 @@ struct MePanel {
       }
       .width('100%')
       .layoutWeight(1)
+      .justifyContent(FlexAlign.Start)
       .padding({ left: 24, right: 24, top: 8, bottom: 24 })
-      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .height('100%')
@@ -153,6 +158,10 @@ struct Home {
   @State private isDarkTheme: boolean = false;
   @State private systemTopInsetVp: number = 0;
   @State private systemBottomInsetVp: number = 0;
+  @State private gallerySelectionDockActive: boolean = false;
+  private gallerySelectionDockDownloadAction: () => void = () => {};
+  private gallerySelectionDockDeleteAction: () => void = () => {};
+  private gallerySelectionDockTimer: number = -1;
 
   onBackPress(): boolean {
     if (this.bottomNavIndex !== 2 && galleryTryConsumeAlbumBack()) {
@@ -217,15 +226,14 @@ struct Home {
   }
 
   private bottomDockBottomGap(): number {
-    const liftedGap = HOME_FLOATING_DOCK_BOTTOM_GAP_VP + (HOME_FLOATING_DOCK_CENTER_HEIGHT_VP / 4);
-    return Math.max(liftedGap, this.systemBottomInsetVp + liftedGap);
+    return fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
   private dockReserveHeight(): number {
     if (!this.sessionOk || !this.shouldShowBottomDock()) {
       return 0;
     }
-    return Math.max(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP, HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP) +
+    return Math.max(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP, FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP) +
       this.bottomDockBottomGap() + 16;
   }
 
@@ -253,7 +261,32 @@ struct Home {
   }
 
   private shouldShowGalleryDockSideButtons(): boolean {
-    return this.isGalleryShellVisible() && this.currentHomeSurface() === 'photos';
+    return !this.gallerySelectionDockActive && this.isGalleryShellVisible() && this.currentHomeSurface() === 'photos';
+  }
+
+  private clearGallerySelectionDockTimer(): void {
+    if (this.gallerySelectionDockTimer >= 0) {
+      clearTimeout(this.gallerySelectionDockTimer);
+      this.gallerySelectionDockTimer = -1;
+    }
+  }
+
+  private onGallerySelectionDockStateChange(
+    active: boolean,
+    onDownload: () => void,
+    onDelete: () => void
+  ): void {
+    this.gallerySelectionDockDownloadAction = onDownload;
+    this.gallerySelectionDockDeleteAction = onDelete;
+    this.clearGallerySelectionDockTimer();
+    if (!active) {
+      this.gallerySelectionDockActive = false;
+      return;
+    }
+    this.gallerySelectionDockTimer = setTimeout((): void => {
+      this.gallerySelectionDockTimer = -1;
+      this.gallerySelectionDockActive = true;
+    }, 180);
   }
 
   private switchTab(target: number): void {
@@ -344,29 +377,29 @@ struct Home {
   private floatingDockAlbumGlyph(active: boolean) {
     Stack({ alignContent: Alignment.Center }) {
       Column()
-        .width(16)
-        .height(12)
+        .width(15)
+        .height(11)
         .borderRadius(4)
         .border({ width: 1.5, color: active ? $r('app.color.brand_primary') : $r('app.color.text_secondary') })
         .translate({ x: 3, y: -3 })
       Column()
-        .width(16)
-        .height(12)
+        .width(15)
+        .height(11)
         .borderRadius(4)
         .border({ width: 1.5, color: active ? $r('app.color.brand_primary') : $r('app.color.text_secondary') })
         .translate({ x: -3, y: 3 })
     }
-    .width(24)
-    .height(24)
+    .width(22)
+    .height(22)
   }
 
   @Builder
   private floatingDockNavItem(index: number, label: string) {
     Button() {
-      Column({ space: 6 }) {
+      Column({ space: 5 }) {
         if (index === 0) {
           SymbolGlyph($r('sys.symbol.picture'))
-            .fontSize(HOME_FLOATING_DOCK_NAV_ICON_SIZE_VP)
+            .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP)
             .fontColor([this.isDockNavItemSelected(index)
               ? $r('app.color.brand_primary')
               : $r('app.color.text_secondary')])
@@ -374,14 +407,14 @@ struct Home {
           this.floatingDockAlbumGlyph(this.isDockNavItemSelected(index))
         } else {
           SymbolGlyph($r('sys.symbol.person'))
-            .fontSize(HOME_FLOATING_DOCK_NAV_ICON_SIZE_VP)
+            .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP)
             .fontColor([this.isDockNavItemSelected(index)
               ? $r('app.color.brand_primary')
               : $r('app.color.text_secondary')])
         }
 
         Text(label)
-          .fontSize(HOME_FLOATING_DOCK_NAV_LABEL_SIZE_VP)
+          .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
           .fontWeight(this.isDockNavItemSelected(index) ? FontWeight.Medium : FontWeight.Normal)
           .fontColor(this.isDockNavItemSelected(index)
             ? $r('app.color.brand_primary')
@@ -393,8 +426,8 @@ struct Home {
       .alignItems(HorizontalAlign.Center)
     }
     .layoutWeight(1)
-    .height(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP - 10)
-    .borderRadius(HOME_FLOATING_DOCK_NAV_ITEM_RADIUS_VP)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(this.isDockNavItemSelected(index) ? $r('app.color.gallery_material_surface_bg') : Color.Transparent)
     .border(this.isDockNavItemSelected(index)
       ? { width: 1, color: $r('app.color.immersive_panel_border') }
@@ -403,10 +436,39 @@ struct Home {
       x: this.isDockNavItemSelected(index) ? 1 : 0.98,
       y: this.isDockNavItemSelected(index) ? 1 : 0.98
     })
-    .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     .onClick((): void => {
       this.switchTab(index);
     })
+  }
+
+  @Builder
+  private floatingDockSelectionActionItem(
+    icon: Resource,
+    label: string,
+    destructive: boolean,
+    action: () => void
+  ) {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      Column({ space: 5 }) {
+        SymbolGlyph(icon)
+          .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP)
+          .fontColor([destructive ? '#E11D48' : $r('app.color.brand_primary')])
+
+        Text(label)
+          .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(destructive ? '#E11D48' : $r('app.color.brand_primary'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
+    .backgroundColor(Color.Transparent)
+    .onClick(action)
   }
 
   @Builder
@@ -421,9 +483,9 @@ struct Home {
           .fontColor($r('app.color.text_primary'))
       }
     }
-    .width(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
-    .height(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
-    .borderRadius(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP / 2)
+    .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
     .backgroundColor($r('app.color.gallery_material_surface_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
@@ -442,37 +504,37 @@ struct Home {
       this.floatingDockNavItem(1, '鐩稿唽')
       this.floatingDockNavItem(2, '鎴戠殑')
     }
-    .height(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .padding({ left: 6, right: 6 })
     .backgroundColor($r('app.color.immersive_tabbar_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .borderRadius(HOME_FLOATING_DOCK_CENTER_RADIUS_VP)
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
     .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
   }
 
   @Builder
   private floatingBottomDock() {
-    Row({ space: HOME_FLOATING_DOCK_SIDE_GAP_VP }) {
+    Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
       if (this.shouldShowGalleryDockSideButtons()) {
         this.floatingDockSideButton(true)
       } else {
         Blank()
-          .width(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
-          .height(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
       }
 
-      Row({ space: 8 }) {
+      Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
         this.floatingDockNavItem(0, '照片')
         this.floatingDockNavItem(1, '相册')
         this.floatingDockNavItem(2, '我的')
       }
       .layoutWeight(1)
-      .height(HOME_FLOATING_DOCK_CENTER_HEIGHT_VP)
-      .padding({ left: 6, right: 6 })
+      .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+      .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
       .backgroundColor($r('app.color.immersive_tabbar_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .borderRadius(HOME_FLOATING_DOCK_CENTER_RADIUS_VP)
+      .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
       .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
 
@@ -480,12 +542,67 @@ struct Home {
         this.floatingDockSideButton(false)
       } else {
         Blank()
-          .width(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
-          .height(HOME_FLOATING_DOCK_SIDE_BUTTON_SIZE_VP)
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
       }
     }
     .width('100%')
-    .padding({ left: HOME_FLOATING_DOCK_SIDE_PADDING_VP, right: HOME_FLOATING_DOCK_SIDE_PADDING_VP })
+    .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .margin({ bottom: this.bottomDockBottomGap() })
+  }
+
+  @Builder
+  private renderBottomDock() {
+    Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+      if (this.shouldShowGalleryDockSideButtons()) {
+        this.floatingDockSideButton(true)
+      } else {
+        Blank()
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      }
+
+      Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+        if (this.gallerySelectionDockActive) {
+          this.floatingDockSelectionActionItem(
+            $r('sys.symbol.download'),
+            '下载',
+            false,
+            this.gallerySelectionDockDownloadAction
+          )
+          this.floatingDockSelectionActionItem(
+            $r('sys.symbol.trash'),
+            '移入回收站',
+            true,
+            this.gallerySelectionDockDeleteAction
+          )
+        } else {
+          this.floatingDockNavItem(0, '照片')
+          this.floatingDockNavItem(1, '相册')
+          this.floatingDockNavItem(2, '我的')
+        }
+      }
+      .layoutWeight(1)
+      .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+      .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+      .backgroundColor($r('app.color.immersive_tabbar_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
+
+      if (this.shouldShowGalleryDockSideButtons()) {
+        this.floatingDockSideButton(false)
+      } else {
+        Blank()
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      }
+    }
+    .width('100%')
+    .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
     .justifyContent(FlexAlign.Center)
     .alignItems(VerticalAlign.Center)
     .margin({ bottom: this.bottomDockBottomGap() })
@@ -544,6 +661,9 @@ struct Home {
                 homeSurface: this.currentHomeSurface(),
                 onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
                   this.albumSearchModeActive = hiddenBottomNav;
+                },
+                onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void): void => {
+                  this.onGallerySelectionDockStateChange(active, onDownload, onDelete);
                 }
               })
                 .width('100%')
@@ -567,7 +687,7 @@ struct Home {
             Blank()
               .layoutWeight(1)
               .hitTestBehavior(HitTestMode.None)
-            this.floatingBottomDock()
+            this.renderBottomDock()
           }
           .width('100%')
           .height('100%')

@@ -1,4 +1,5 @@
 import { GalleryListItem } from '../../model/FnApiTypes';
+import { FnListDataSource } from '../../common/FnListDataSource';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
@@ -10,6 +11,18 @@ const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
 const GALLERY_SEARCH_APPEND_PREFETCH_ROWS = 8;
 const GALLERY_SEARCH_LIST_CACHED_COUNT = 3;
 const GALLERY_SEARCH_THUMB_RESUME_DELAY_MS = 96;
+
+interface GallerySearchRowBlockCell {
+  flatIdx: number;
+  item?: GalleryListItem;
+}
+
+interface GallerySearchRowBlock {
+  key: string;
+  rowIdx: number;
+  rowStart: number;
+  cells: GallerySearchRowBlockCell[];
+}
 
 @Component
 export struct GalleryAlbumSearchModeView {
@@ -26,6 +39,7 @@ export struct GalleryAlbumSearchModeView {
   @Prop galleryBatchDeleting: boolean = false;
   @Prop galleryMainListScrollEnabled: boolean = true;
   @Prop gallerySlideGestureActive: boolean = false;
+  @Prop galleryLongPressIgnoreClickUntil: number = 0;
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
 
@@ -40,6 +54,7 @@ export struct GalleryAlbumSearchModeView {
     (_: GestureEvent, __: GalleryListItem, ___: number) => {};
   endGallerySlideSelectGesture: () => void = () => {};
   onGallerySlidePanUpdate: (ev: GestureEvent) => void = (_: GestureEvent) => {};
+  onGallerySlideTouchMoveWindow: (xPx: number, yPx: number) => void = (_: number, __: number) => {};
   ensureMainListScrollEnabled: () => void = () => {};
   clearSearchThumbHitBounds: () => void = () => {};
   onBatchDownload: () => void = () => {};
@@ -49,6 +64,9 @@ export struct GalleryAlbumSearchModeView {
   private searchAppendTimer: number = -1;
   private searchThumbResumeTimer: number = -1;
   private searchLastVisibleIndex: number = -1;
+  private searchRowBlocks: GallerySearchRowBlock[] = [];
+  private searchRowSource: FnListDataSource<GallerySearchRowBlock> = new FnListDataSource<GallerySearchRowBlock>();
+  private galleryInitialSlidePending: boolean = false;
 
   private currentRenderedCount(): number {
     return Math.min(this.renderedSearchCount, this.searchResults.length);
@@ -58,24 +76,17 @@ export struct GalleryAlbumSearchModeView {
     return this.currentRenderedCount() < this.searchResults.length;
   }
 
-  private searchVisibleCount(): number {
-    return this.currentRenderedCount();
+  private armInitialGallerySlideGesture(ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void {
+    this.galleryInitialSlidePending = true;
+    this.beginGallerySlideSelectGesture(ev, item, anchorFlat);
   }
 
-  private searchRowCount(): number {
-    return Math.ceil(this.searchVisibleCount() / 3);
+  private clearInitialGallerySlideGesture(): void {
+    this.galleryInitialSlidePending = false;
   }
 
   private currentRenderedRowCount(): number {
     return Math.ceil(this.currentRenderedCount() / 3);
-  }
-
-  private searchRowIndices(): number[] {
-    const rows: number[] = [];
-    for (let i = 0; i < this.searchRowCount(); i++) {
-      rows.push(i);
-    }
-    return rows;
   }
 
   private normalizeSearchKeyPart(value: string | number | undefined | null): string {
@@ -128,13 +139,69 @@ export struct GalleryAlbumSearchModeView {
     return `idx:${flatIndex}`;
   }
 
-  private searchRowStableKey(rowIdx: number): string {
-    const start = rowIdx * 3;
-    const keys: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      keys.push(this.searchItemStableKey(this.searchResults[start + i], start + i));
+  private buildSearchRowBlocks(): GallerySearchRowBlock[] {
+    const blocks: GallerySearchRowBlock[] = [];
+    const visibleCount = this.currentRenderedCount();
+    const rowCount = Math.ceil(visibleCount / 3);
+    for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
+      const rowStart = rowIdx * 3;
+      const cells: GallerySearchRowBlockCell[] = [];
+      const keys: string[] = [];
+      for (let col = 0; col < 3; col++) {
+        const flatIdx = rowStart + col;
+        if (flatIdx >= visibleCount) {
+          cells.push({ flatIdx: -1 });
+          keys.push(`empty_${rowIdx}_${col}`);
+          continue;
+        }
+        const item = this.searchResults[flatIdx];
+        cells.push({
+          flatIdx,
+          item
+        });
+        keys.push(this.searchItemStableKey(item, flatIdx));
+      }
+      blocks.push({
+        key: `srrow_${rowIdx}_${keys.join('__')}`,
+        rowIdx,
+        rowStart,
+        cells
+      });
     }
-    return `srrow_${rowIdx}_${keys.join('__')}`;
+    return blocks;
+  }
+
+  private rebuildSearchRowBlocks(): void {
+    this.searchRowBlocks = this.buildSearchRowBlocks();
+    this.searchRowSource.reloadAll(this.searchRowBlocks);
+  }
+
+  private searchCellAt(block: GallerySearchRowBlock, col: number): GallerySearchRowBlockCell | undefined {
+    if (col < 0 || col >= block.cells.length) {
+      return undefined;
+    }
+    return block.cells[col];
+  }
+
+  private searchCellHasItem(block: GallerySearchRowBlock, col: number): boolean {
+    const cell = this.searchCellAt(block, col);
+    return cell !== undefined && cell.item !== undefined && cell.flatIdx >= 0;
+  }
+
+  private searchCellItem(block: GallerySearchRowBlock, col: number): GalleryListItem {
+    return this.searchCellAt(block, col)?.item as GalleryListItem;
+  }
+
+  private searchCellFlatIdx(block: GallerySearchRowBlock, col: number): number {
+    return this.searchCellAt(block, col)?.flatIdx ?? -1;
+  }
+
+  private searchCellStableKey(block: GallerySearchRowBlock, col: number): string {
+    const cell = this.searchCellAt(block, col);
+    if (cell === undefined || cell.item === undefined || cell.flatIdx < 0) {
+      return `scell_${block.rowIdx}_${col}_empty`;
+    }
+    return `scell_${block.rowIdx}_${col}_${this.searchItemStableKey(cell.item, cell.flatIdx)}`;
   }
 
   private isItemSelected(item: GalleryListItem): boolean {
@@ -167,9 +234,11 @@ export struct GalleryAlbumSearchModeView {
     this.searchThumbLoadingPaused = false;
     if (this.loading) {
       this.renderedSearchCount = 0;
+      this.rebuildSearchRowBlocks();
       return;
     }
     this.renderedSearchCount = Math.min(this.searchResults.length, GALLERY_SEARCH_INITIAL_RENDER_COUNT);
+    this.rebuildSearchRowBlocks();
   }
 
   private onSearchResultsChanged(): void {
@@ -194,6 +263,8 @@ export struct GalleryAlbumSearchModeView {
     this.clearSearchAppendTimer();
     this.clearSearchThumbResumeTimer();
     this.searchThumbLoadingPaused = false;
+    this.searchRowBlocks = [];
+    this.searchRowSource.reloadAll([]);
     this.recycleThumbCache(true);
   }
 
@@ -201,6 +272,7 @@ export struct GalleryAlbumSearchModeView {
     const nextCount = Math.min(this.searchResults.length, Math.max(0, targetCount));
     if (nextCount > this.renderedSearchCount) {
       this.renderedSearchCount = nextCount;
+      this.rebuildSearchRowBlocks();
     }
   }
 
@@ -259,6 +331,19 @@ export struct GalleryAlbumSearchModeView {
     } catch (_e) {
       return value;
     }
+  }
+
+  private readTouchFingerWindow(ev: TouchEvent): GalleryFingerWindowPoint | null {
+    if (ev.touches === undefined || ev.touches.length < 1) {
+      return null;
+    }
+    const f0 = ev.touches[0];
+    const x = f0.windowX ?? f0.displayX ?? f0.x;
+    const y = f0.windowY ?? f0.displayY ?? f0.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
   }
 
   @Builder
@@ -320,11 +405,11 @@ export struct GalleryAlbumSearchModeView {
   }
 
   @Builder
-  private searchCellSlot(rowIdx: number, col: number) {
-    if (rowIdx * 3 + col >= this.searchVisibleCount()) {
+  private searchCellSlot(block: GallerySearchRowBlock, col: number) {
+    if (!this.searchCellHasItem(block, col)) {
       Blank().layoutWeight(1).aspectRatio(1)
     } else {
-      this.buildSearchGridThumbCell(this.searchResults[rowIdx * 3 + col], rowIdx * 3 + col);
+      this.buildSearchGridThumbCell(this.searchCellItem(block, col), this.searchCellFlatIdx(block, col));
     }
   }
 
@@ -355,49 +440,85 @@ export struct GalleryAlbumSearchModeView {
                   .height(this.contentInsetTopVp)
               }
             }
-            ForEach(this.searchRowIndices(), (rowIdx: number) => {
+            LazyForEach(this.searchRowSource, (block: GallerySearchRowBlock) => {
               ListItem() {
                 Row({ space: 2 }) {
-                  this.searchCellSlot(rowIdx, 0)
-                  this.searchCellSlot(rowIdx, 1)
-                  this.searchCellSlot(rowIdx, 2)
+                  ForEach(block.cells, (_cell: GallerySearchRowBlockCell, col: number) => {
+                    this.searchCellSlot(block, col)
+                  }, (_cell: GallerySearchRowBlockCell, col: number) => this.searchCellStableKey(block, col))
                 }
                 .width('100%')
                 .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+                .onTouch((event: TouchEvent): void => {
+                  if (!this.gallerySlideGestureActive) {
+                    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                      this.clearInitialGallerySlideGesture();
+                    }
+                    return;
+                  }
+                  if (event.type === TouchType.Move) {
+                    const pt = this.readTouchFingerWindow(event);
+                    if (pt === null) {
+                      return;
+                    }
+                    this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
+                  }
+                })
                 .parallelGesture(GestureGroup(GestureMode.Parallel,
-                  LongPressGesture({ repeat: false, duration: 420 })
-                    .onAction((ev: GestureEvent): void => {
-                      this.endGallerySlideSelectGesture();
-                      const pt = this.readGestureFingerWindow(ev);
-                      if (pt === null) {
-                        return;
-                      }
-                      const xPx = this.vpToPx(pt.x);
-                      const yPx = this.vpToPx(pt.y);
-                      const rowStart = rowIdx * 3;
-                      const fi = this.pickSearchThumbFlatForRow(rowStart, xPx, yPx);
-                      if (fi < 0 || fi >= this.searchResults.length) {
-                        return;
-                      }
-                      const longPressItem = this.searchResults[fi];
-                      this.onGalleryThumbLongPress(longPressItem);
-                      if (this.gallerySlideGestureActive) {
-                        return;
-                      }
-                      this.beginGallerySlideSelectGesture(ev, longPressItem, fi);
-                    }),
+                  GestureGroup(GestureMode.Sequence,
+                    LongPressGesture({ repeat: false, duration: 420 })
+                      .onAction((ev: GestureEvent): void => {
+                        this.clearInitialGallerySlideGesture();
+                        this.endGallerySlideSelectGesture();
+                        const pt = this.readGestureFingerWindow(ev);
+                        if (pt === null) {
+                          return;
+                        }
+                        const xPx = this.vpToPx(pt.x);
+                        const yPx = this.vpToPx(pt.y);
+                        const fi = this.pickSearchThumbFlatForRow(block.rowStart, xPx, yPx);
+                        if (fi < 0 || fi >= this.searchResults.length) {
+                          return;
+                        }
+                        const longPressItem = this.searchResults[fi];
+                        const wasSelectionMode = this.gallerySelectionMode;
+                        this.onGalleryThumbLongPress(longPressItem);
+                        if (!wasSelectionMode) {
+                          this.armInitialGallerySlideGesture(ev, longPressItem, fi);
+                        }
+                      }),
+                    PanGesture({
+                      fingers: 1,
+                      direction: PanDirection.All,
+                      distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
+                    })
+                      .onActionUpdate((ev: GestureEvent): void => {
+                        if (!this.galleryInitialSlidePending || !this.gallerySlideGestureActive) {
+                          return;
+                        }
+                        this.onGallerySlidePanUpdate(ev);
+                      })
+                      .onActionEnd((): void => {
+                        this.clearInitialGallerySlideGesture();
+                        this.endGallerySlideSelectGesture();
+                      })
+                      .onActionCancel((): void => {
+                        this.clearInitialGallerySlideGesture();
+                        this.endGallerySlideSelectGesture();
+                      })
+                  ),
                   PanGesture({
                     fingers: 1,
-                    direction: this.gallerySlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
-                    distance: this.gallerySlideGestureActive ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
+                    direction: PanDirection.Horizontal,
+                    distance: this.gallerySelectionMode ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
                       GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE
                   })
                     .onActionStart((ev: GestureEvent): void => {
                       if (!this.gallerySelectionMode) {
                         return;
                       }
-                      if (this.gallerySlideGestureActive) {
-                        this.endGallerySlideSelectGesture();
+                      if (this.gallerySlideGestureActive || this.galleryInitialSlidePending) {
+                        return;
                       }
                       const pt = this.readGestureFingerWindow(ev);
                       if (pt === null) {
@@ -405,8 +526,7 @@ export struct GalleryAlbumSearchModeView {
                       }
                       const xPx = this.vpToPx(pt.x);
                       const yPx = this.vpToPx(pt.y);
-                      const rowStart = rowIdx * 3;
-                      const fi = this.pickSearchThumbFlatForRow(rowStart, xPx, yPx);
+                      const fi = this.pickSearchThumbFlatForRow(block.rowStart, xPx, yPx);
                       if (fi < 0 || fi >= this.searchResults.length) {
                         return;
                       }
@@ -416,21 +536,17 @@ export struct GalleryAlbumSearchModeView {
                       this.onGallerySlidePanUpdate(ev);
                     })
                     .onActionEnd((): void => {
+                      this.clearInitialGallerySlideGesture();
                       this.endGallerySlideSelectGesture();
                     })
                     .onActionCancel((): void => {
+                      this.clearInitialGallerySlideGesture();
                       this.endGallerySlideSelectGesture();
                     })
                 ))
-                .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-                  if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
-                    return GestureJudgeResult.CONTINUE;
-                  }
-                  return GestureJudgeResult.CONTINUE;
-                })
               }
               .draggable(false)
-            }, (rowIdx: number) => this.searchRowStableKey(rowIdx))
+            }, (block: GallerySearchRowBlock) => block.key)
             ListItem() {
               Column() {
                 Blank()
@@ -470,6 +586,26 @@ export struct GalleryAlbumSearchModeView {
           .scrollBar(BarState.Auto)
           .divider({ strokeWidth: 0 })
           .enableScrollInteraction(this.galleryMainListScrollEnabled)
+          .onTouch((event: TouchEvent): void => {
+            if (!this.gallerySlideGestureActive) {
+              if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                this.clearInitialGallerySlideGesture();
+              }
+              return;
+            }
+            if (event.type === TouchType.Move) {
+              const pt = this.readTouchFingerWindow(event);
+              if (pt === null) {
+                return;
+              }
+              this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
+              return;
+            }
+            if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.clearInitialGallerySlideGesture();
+              this.endGallerySlideSelectGesture();
+            }
+          })
           .onScrollIndex((firstIdx: number, lastIdx: number, centerIdx: number): void => {
             this.onSearchScrollIndex(firstIdx, lastIdx, centerIdx);
           })

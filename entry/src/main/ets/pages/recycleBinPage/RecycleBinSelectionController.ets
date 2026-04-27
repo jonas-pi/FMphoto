@@ -429,6 +429,21 @@ export function recycleBinOnSlidePanUpdate(host: RecycleBinSelectionHost, ev: Ge
   recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
 }
 
+export function recycleBinOnSlideTouchMoveWindow(
+  host: RecycleBinSelectionHost,
+  xPx: number,
+  yPx: number
+): void {
+  if (!host.rbSlideGestureActive) {
+    return;
+  }
+  const hitFlat = recycleBinPickThumbFlatForSlidePointer(host, xPx, yPx);
+  if (hitFlat >= 0) {
+    host.rbSlideLastEndFlat = hitFlat;
+  }
+  recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
+}
+
 export function recycleBinOnThumbLongPress(
   host: RecycleBinSelectionHost,
   it: RecycleBinListItem,

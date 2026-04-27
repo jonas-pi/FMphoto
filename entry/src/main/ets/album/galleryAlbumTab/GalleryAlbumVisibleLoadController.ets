@@ -230,7 +230,6 @@ export function galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host: Gallery
   const gEndExclusive = galleryAlbumVisibleGlobalSlotIndexAtDayStart(host, hi) + Math.max(0, dLast.itemCount);
   host.lastKnownGlobalPhotoSlotStart = gStart;
   host.lastKnownGlobalPhotoSlotEndExclusive = Math.max(gStart + 1, gEndExclusive);
-  host.refreshRootPhotosScrollTitle();
   return true;
 }
 
@@ -249,7 +248,6 @@ export function galleryAlbumVisiblePrimeRoughVisibleRangeForTimelineTarget(
   host.listVisibleLastNodeIdx = range.last;
   galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(host, range.first, range.last);
   galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
-  host.refreshRootPhotosScrollTitle();
   return range;
 }
 

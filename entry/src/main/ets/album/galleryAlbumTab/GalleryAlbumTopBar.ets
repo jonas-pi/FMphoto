@@ -9,9 +9,9 @@ import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../commo
 
 const GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP: number = 8;
 const GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP: number = 6;
-const GALLERY_TOP_BAR_CONTROL_RADIUS_VP: number = 22;
-const GALLERY_TOP_BAR_ACTION_MIN_WIDTH_VP: number = 72;
-const GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP: number = 44;
+const GALLERY_TOP_BAR_CONTROL_RADIUS_VP: number = 20;
+const GALLERY_TOP_BAR_ACTION_MIN_WIDTH_VP: number = 62;
+const GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP: number = 40;
 
 export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number =
   GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP + GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP + GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP;
@@ -26,6 +26,7 @@ export struct GalleryAlbumTopBar {
   @Prop inPersonMode: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
+  @Prop moreMenuExpanded: boolean = false;
   @Prop searchQuery: string = '';
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
@@ -125,16 +126,16 @@ export struct GalleryAlbumTopBar {
   }
 
   @Builder
-  private floatingIconButton(symbol: Resource, action: () => void) {
+  private floatingIconButton(symbol: Resource, action: () => void, active: boolean = false) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
       SymbolGlyph(symbol)
-        .fontSize(18)
-        .fontColor([$r('app.color.icon_primary')])
+        .fontSize(17)
+        .fontColor([active ? Color.White : $r('app.color.icon_primary')])
     }
     .width(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
     .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
     .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundColor(active ? $r('app.color.brand_primary') : $r('app.color.gallery_material_surface_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
     .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
@@ -168,11 +169,11 @@ export struct GalleryAlbumTopBar {
           .backgroundColor($r('app.color.gallery_material_search_bg'))
           .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
           .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
-          .fontSize(14)
+          .fontSize(13)
           .fontColor($r('app.color.text_primary'))
           .caretColor($r('app.color.brand_primary'))
           .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-          .padding({ left: 14, right: 14 })
+          .padding({ left: 12, right: 12 })
           .onChange(this.onSearchQueryChange)
           .onSubmit(this.onSearchSubmit)
 
@@ -186,14 +187,14 @@ export struct GalleryAlbumTopBar {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Row({ space: 10 }) {
+        Row({ space: 8 }) {
           if (this.isAlbumsHomeSurface()) {
             this.floatingIconButton($r('sys.symbol.plus'), this.onStartUpload)
           } else {
             this.floatingPillButton('多选', this.onEnterSelection)
           }
           this.floatingIconButton($r('sys.symbol.magnifyingglass'), this.onOpenSearch)
-          this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu)
+          this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
         }
       } else {
         this.floatingPillButton('返回', this.onBackToGallery)
@@ -207,7 +208,7 @@ export struct GalleryAlbumTopBar {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu)
+        this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
       }
     }
     .width('100%')

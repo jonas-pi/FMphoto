@@ -301,7 +301,8 @@ function timelineGestureRunReleaseVisiblePass(
   host.flushPendingFlowRebuild();
   let refreshedByScroller = false;
   if (refreshVisibleRange) {
-    refreshedByScroller = host.forceRefreshVisibleRange();
+    // Timeline release must not physically nudge the list, or the page will visibly bounce.
+    refreshedByScroller = host.refreshVisibleRangeIfAvailable();
   }
   if (!refreshedByScroller && allowRoughFallback) {
     host.syncListVisibleRoughToTimelineSliderTarget();
@@ -311,7 +312,9 @@ function timelineGestureRunReleaseVisiblePass(
     return;
   }
   host.loadVisibleItemsInteractiveVisiblePriority();
-  host.refreshRootPhotosScrollTitle();
+  if (refreshedByScroller) {
+    host.refreshRootPhotosScrollTitle();
+  }
   timelineGestureLogScrollDebug(
     host,
     `timeline release ${passLabel}: scrollerRange=${refreshedByScroller ? 1 : 0}, roughFallback=${allowRoughFallback ? 1 : 0}`
@@ -381,7 +384,7 @@ function timelineGesturePreemptStaleRequestsForVisiblePriority(host: TimelineGes
   timelineGestureLogScrollDebug(host, 'timeline release: preempt stale requests for visible priority');
 }
 
-function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureControllerHost, ratio: number): void {
+function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureControllerHost): void {
   const releaseGen = host.timelineDragWatchdogGen;
   setTimeout((): void => {
     if (releaseGen !== host.timelineDragWatchdogGen) {
@@ -390,11 +393,19 @@ function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureCont
     if (host.timelineSidebarDragging) {
       return;
     }
-    host.seekTimelineListToDisplayRatio(ratio);
     timelineGesturePreemptStaleRequestsForVisiblePriority(host);
     host.timelineSeekInProgress = false;
     host.ignoreListFreezeUntilMs = Date.now() + 700;
     timelineGestureRefreshVisualPlaceholderMode(host);
+    host.flushPendingFlowRebuild();
+    const refreshedVisibleRange = host.refreshVisibleRangeIfAvailable();
+    if (!refreshedVisibleRange) {
+      host.syncListVisibleRoughToTimelineSliderTarget();
+    }
+    if (refreshedVisibleRange) {
+      host.refreshRootPhotosScrollTitle();
+    }
+    host.loadVisibleItemsInteractiveVisiblePriority();
     timelineGestureKickPostTimelineReleaseLoad(host);
     timelineGestureShowTimelineBar(host);
     const settledEpoch = host.pumpEpoch;
@@ -404,7 +415,7 @@ function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureCont
       }
       host.runMainListScrollSettledWork();
     }, 220);
-  }, 72);
+  }, 24);
 }
 
 export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHost): void {
@@ -421,5 +432,5 @@ export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHo
   if (ym !== null && !host.flowHasVisibleYearMonth(ym.year, ym.month)) {
     host.startTimelineSeekWatchdog(ym.year, ym.month);
   }
-  timelineGestureScheduleReleaseVisiblePriority(host, host.timelineSliderRatio);
+  timelineGestureScheduleReleaseVisiblePriority(host);
 }

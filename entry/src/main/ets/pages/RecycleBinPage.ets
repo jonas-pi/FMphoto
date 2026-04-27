@@ -10,6 +10,7 @@ import {
   nasUrl,
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
+import { FnListDataSource } from '../common/FnListDataSource';
 import { RecycleBinListItem } from '../model/FnApiTypes';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
@@ -35,20 +36,34 @@ import {
   recycleBinNumericIdOf,
   recycleBinOnCellClick,
   recycleBinOnSlidePanUpdate,
+  recycleBinOnSlideTouchMoveWindow,
   recycleBinOnThumbLongPress,
   recycleBinPickThumbFlatForRow,
   recycleBinReadGestureFingerWindow,
   recycleBinRecordThumbRect,
-  recycleBinRowIndexArray,
   recycleBinSlidePanDistance,
   recycleBinThumbRelOf,
   recycleBinToggleToolbarMode,
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
-import { RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
+import { RbFingerWindowPoint, RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
 
 const RECYCLE_BIN_CONTENT_INSET_TOP_VP: number = 68;
 const RECYCLE_BIN_COLUMNS_PER_ROW: number = 4;
+
+interface RecycleBinRowBlockCell {
+  flatIdx: number;
+  item?: RecycleBinListItem;
+  thumbRel: string;
+  numericId: number;
+}
+
+interface RecycleBinRowBlock {
+  key: string;
+  rowIdx: number;
+  rowStart: number;
+  cells: RecycleBinRowBlockCell[];
+}
 
 @Entry
 @Component
@@ -59,7 +74,7 @@ struct RecycleBinPage {
   @State private rbBatchDownloading: boolean = false;
   @State private rbBackgroundLoading: boolean = false;
   @State private error: string = '';
-  @State private items: RecycleBinListItem[] = [];
+  @State @Watch('onItemsChanged') private items: RecycleBinListItem[] = [];
   @State private selectionMode: boolean = false;
   @State private selectedIds: number[] = [];
   @State private rbSlideGestureActive: boolean = false;
@@ -78,6 +93,9 @@ struct RecycleBinPage {
   private rbSlideLastEndFlat: number = -1;
   private rbSlideLastAppliedEndFlat: number = -99999;
   private rbThumbResumeTimer: number = -1;
+  private rbRowBlocks: RecycleBinRowBlock[] = [];
+  private rbRowSource: FnListDataSource<RecycleBinRowBlock> = new FnListDataSource<RecycleBinRowBlock>();
+  private rbInitialSlidePending: boolean = false;
 
   onBackPress(): boolean {
     if (this.selectionMode) {
@@ -102,6 +120,15 @@ struct RecycleBinPage {
     } catch (_e) {
       return value;
     }
+  }
+
+  private armInitialRbSlideGesture(ev: GestureEvent, anchorFlat: number): void {
+    this.rbInitialSlidePending = true;
+    this.beginRbSlideSelectGesture(ev, anchorFlat);
+  }
+
+  private clearInitialRbSlideGesture(): void {
+    this.rbInitialSlidePending = false;
   }
 
   private contentInsetTopVp(): number {
@@ -142,6 +169,7 @@ struct RecycleBinPage {
   aboutToAppear(): void {
     this.applySystemBar();
     this.rbThumbLoadingPaused = false;
+    this.rebuildRowBlocks();
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
@@ -152,10 +180,16 @@ struct RecycleBinPage {
   aboutToDisappear(): void {
     this.clearRbThumbResumeTimer();
     this.recycleThumbCache(true);
+    this.rbRowBlocks = [];
+    this.rbRowSource.reloadAll([]);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
     }
+  }
+
+  onItemsChanged(): void {
+    this.rebuildRowBlocks();
   }
 
   private toast(msg: string): void {
@@ -200,6 +234,19 @@ struct RecycleBinPage {
     return recycleBinReadGestureFingerWindow(ev);
   }
 
+  private readTouchFingerWindow(ev: TouchEvent): RbFingerWindowPoint | null {
+    if (ev.touches === undefined || ev.touches.length < 1) {
+      return null;
+    }
+    const f0 = ev.touches[0];
+    const x = f0.windowX ?? f0.displayX ?? f0.x;
+    const y = f0.windowY ?? f0.displayY ?? f0.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
+  }
+
   private recordRbThumbRect(flatIdx: number): void {
     recycleBinRecordThumbRect(this.asSelectionHost(), flatIdx);
   }
@@ -220,6 +267,10 @@ struct RecycleBinPage {
     recycleBinOnSlidePanUpdate(this.asSelectionHost(), ev);
   }
 
+  private onRbSlideTouchMoveWindow(xPx: number, yPx: number): void {
+    recycleBinOnSlideTouchMoveWindow(this.asSelectionHost(), xPx, yPx);
+  }
+
   private onRbThumbLongPress(it: RecycleBinListItem, flatIdx: number): void {
     recycleBinOnThumbLongPress(this.asSelectionHost(), it, flatIdx);
   }
@@ -228,8 +279,90 @@ struct RecycleBinPage {
     recycleBinOnCellClick(this.asSelectionHost(), it, flatIdx);
   }
 
-  private rbRowIndexArray(): number[] {
-    return recycleBinRowIndexArray(this.items);
+  private buildRowBlocks(): RecycleBinRowBlock[] {
+    const blocks: RecycleBinRowBlock[] = [];
+    const rowCount = Math.ceil(this.items.length / RECYCLE_BIN_COLUMNS_PER_ROW);
+    for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
+      const rowStart = rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW;
+      const cells: RecycleBinRowBlockCell[] = [];
+      let cellSig = '';
+      for (let col = 0; col < RECYCLE_BIN_COLUMNS_PER_ROW; col++) {
+        const flatIdx = rowStart + col;
+        if (flatIdx >= this.items.length) {
+          cells.push({
+            flatIdx: -1,
+            thumbRel: '',
+            numericId: -1
+          });
+          cellSig += `_sk${col}`;
+          continue;
+        }
+        const item = this.items[flatIdx];
+        const numericId = this.numericIdOf(item);
+        cells.push({
+          flatIdx,
+          item,
+          thumbRel: this.thumbRelOf(item),
+          numericId
+        });
+        cellSig += numericId >= 0 ? `_id${numericId}` : `_idx${flatIdx}`;
+      }
+      blocks.push({
+        key: `rbrow_${rowIdx}${cellSig}`,
+        rowIdx,
+        rowStart,
+        cells
+      });
+    }
+    return blocks;
+  }
+
+  private rebuildRowBlocks(): void {
+    this.rbRowBlocks = this.buildRowBlocks();
+    this.rbRowSource.reloadAll(this.rbRowBlocks);
+  }
+
+  private rbCellAt(block: RecycleBinRowBlock, col: number): RecycleBinRowBlockCell | undefined {
+    if (col < 0 || col >= block.cells.length) {
+      return undefined;
+    }
+    return block.cells[col];
+  }
+
+  private rbCellHasItem(block: RecycleBinRowBlock, col: number): boolean {
+    const cell = this.rbCellAt(block, col);
+    return cell !== undefined && cell.item !== undefined && cell.flatIdx >= 0;
+  }
+
+  private rbCellItem(block: RecycleBinRowBlock, col: number): RecycleBinListItem {
+    return this.rbCellAt(block, col)?.item as RecycleBinListItem;
+  }
+
+  private rbCellFlatIdx(block: RecycleBinRowBlock, col: number): number {
+    return this.rbCellAt(block, col)?.flatIdx ?? -1;
+  }
+
+  private rbCellThumbRel(block: RecycleBinRowBlock, col: number): string {
+    return this.rbCellAt(block, col)?.thumbRel ?? '';
+  }
+
+  private rbCellNumericId(block: RecycleBinRowBlock, col: number): number {
+    return this.rbCellAt(block, col)?.numericId ?? -1;
+  }
+
+  private rbCellStableKey(block: RecycleBinRowBlock, col: number): string {
+    const cell = this.rbCellAt(block, col);
+    if (cell === undefined || cell.item === undefined || cell.flatIdx < 0) {
+      return `rbcell_${block.rowIdx}_${col}_empty`;
+    }
+    const photoUUID = cell.item.photoUUID !== undefined ? String(cell.item.photoUUID).trim() : '';
+    if (photoUUID.length > 0) {
+      return `rbcell_${block.rowIdx}_${col}_uuid_${photoUUID}`;
+    }
+    if (cell.numericId >= 0) {
+      return `rbcell_${block.rowIdx}_${col}_id_${cell.numericId}`;
+    }
+    return `rbcell_${block.rowIdx}_${col}_flat_${cell.flatIdx}`;
   }
 
   private async loadAll(): Promise<void> {
@@ -435,21 +568,17 @@ struct RecycleBinPage {
   }
 
   @Builder
-  private rbCellSlot(rowIdx: number, col: number) {
-    if (this.rbFlatIdx(rowIdx, col) >= this.items.length) {
+  private rbCellSlot(block: RecycleBinRowBlock, col: number) {
+    if (!this.rbCellHasItem(block, col)) {
       Blank().layoutWeight(1).aspectRatio(1)
     } else {
       this.thumbCell(
-        this.items[this.rbFlatIdx(rowIdx, col)],
-        this.rbFlatIdx(rowIdx, col),
-        this.thumbRelOf(this.items[this.rbFlatIdx(rowIdx, col)]),
-        this.numericIdOf(this.items[this.rbFlatIdx(rowIdx, col)])
+        this.rbCellItem(block, col),
+        this.rbCellFlatIdx(block, col),
+        this.rbCellThumbRel(block, col),
+        this.rbCellNumericId(block, col)
       )
     }
-  }
-
-  private rbFlatIdx(rowIdx: number, col: number): number {
-    return rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW + col;
   }
 
   build() {
@@ -481,58 +610,92 @@ struct RecycleBinPage {
         Stack() {
           Column() {
             List() {
-              ForEach(this.rbRowIndexArray(), (rowIdx: number) => {
+              LazyForEach(this.rbRowSource, (block: RecycleBinRowBlock) => {
                 ListItem() {
                   Row({ space: 2 }) {
-                    this.rbCellSlot(rowIdx, 0)
-                    this.rbCellSlot(rowIdx, 1)
-                    this.rbCellSlot(rowIdx, 2)
-                    this.rbCellSlot(rowIdx, 3)
+                    ForEach(block.cells, (_cell: RecycleBinRowBlockCell, col: number) => {
+                      this.rbCellSlot(block, col)
+                    }, (_cell: RecycleBinRowBlockCell, col: number) => this.rbCellStableKey(block, col))
                   }
                   .width('100%')
                   .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+                  .onTouch((event: TouchEvent): void => {
+                    if (!this.rbSlideGestureActive) {
+                      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                        this.clearInitialRbSlideGesture();
+                      }
+                      return;
+                    }
+                    if (event.type === TouchType.Move) {
+                      const pt = this.readTouchFingerWindow(event);
+                      if (pt === null) {
+                        return;
+                      }
+                      this.onRbSlideTouchMoveWindow(pt.x, pt.y);
+                    }
+                  })
                   .parallelGesture(GestureGroup(GestureMode.Parallel,
-                    LongPressGesture({ repeat: false, duration: 420 })
-                      .onAction((ev: GestureEvent): void => {
-                        this.endRbSlideSelectGesture();
-                        const rowStart = rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW;
-                        const pt = this.readGestureFingerWindow(ev);
-                        if (pt === null) {
-                          return;
-                        }
-                        const xPx = this.vpToPx(pt.x);
-                        const yPx = this.vpToPx(pt.y);
-                        const fi = this.pickRbThumbFlatForRow(rowStart, xPx, yPx);
-                        if (fi < 0 || fi >= this.items.length) {
-                          return;
-                        }
-                        const longPressItem = this.items[fi];
-                        this.onRbThumbLongPress(longPressItem, fi);
-                        if (!this.selectionMode || this.rbSlideGestureActive) {
-                          return;
-                        }
-                        this.beginRbSlideSelectGesture(ev, fi);
-                      }),
+                    GestureGroup(GestureMode.Sequence,
+                      LongPressGesture({ repeat: false, duration: 420 })
+                        .onAction((ev: GestureEvent): void => {
+                          this.clearInitialRbSlideGesture();
+                          this.endRbSlideSelectGesture();
+                          const pt = this.readGestureFingerWindow(ev);
+                          if (pt === null) {
+                            return;
+                          }
+                          const xPx = this.vpToPx(pt.x);
+                          const yPx = this.vpToPx(pt.y);
+                          const fi = this.pickRbThumbFlatForRow(block.rowStart, xPx, yPx);
+                          if (fi < 0 || fi >= this.items.length) {
+                            return;
+                          }
+                          const longPressItem = this.items[fi];
+                          const wasSelectionMode = this.selectionMode;
+                          this.onRbThumbLongPress(longPressItem, fi);
+                          if (!wasSelectionMode) {
+                            this.armInitialRbSlideGesture(ev, fi);
+                          }
+                        }),
+                      PanGesture({
+                        fingers: 1,
+                        direction: PanDirection.All,
+                        distance: recycleBinSlidePanDistance(true)
+                      })
+                        .onActionUpdate((ev: GestureEvent): void => {
+                          if (!this.rbInitialSlidePending || !this.rbSlideGestureActive) {
+                            return;
+                          }
+                          this.onRbSlidePanUpdate(ev);
+                        })
+                        .onActionEnd((): void => {
+                          this.clearInitialRbSlideGesture();
+                          this.endRbSlideSelectGesture();
+                        })
+                        .onActionCancel((): void => {
+                          this.clearInitialRbSlideGesture();
+                          this.endRbSlideSelectGesture();
+                        })
+                    ),
                     PanGesture({
                       fingers: 1,
-                      direction: this.rbSlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
-                      distance: recycleBinSlidePanDistance(this.rbSlideGestureActive)
+                      direction: PanDirection.Horizontal,
+                      distance: recycleBinSlidePanDistance(this.selectionMode)
                     })
                       .onActionStart((ev: GestureEvent): void => {
                         if (!this.selectionMode) {
                           return;
                         }
-                        if (this.rbSlideGestureActive) {
-                          this.endRbSlideSelectGesture();
+                        if (this.rbSlideGestureActive || this.rbInitialSlidePending) {
+                          return;
                         }
-                        const rowStart = rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW;
                         const pt = this.readGestureFingerWindow(ev);
                         if (pt === null) {
                           return;
                         }
                         const xPx = this.vpToPx(pt.x);
                         const yPx = this.vpToPx(pt.y);
-                        const fi = this.pickRbThumbFlatForRow(rowStart, xPx, yPx);
+                        const fi = this.pickRbThumbFlatForRow(block.rowStart, xPx, yPx);
                         if (fi < 0 || fi >= this.items.length) {
                           return;
                         }
@@ -542,24 +705,17 @@ struct RecycleBinPage {
                         this.onRbSlidePanUpdate(ev);
                       })
                       .onActionEnd((): void => {
+                        this.clearInitialRbSlideGesture();
                         this.endRbSlideSelectGesture();
                       })
                       .onActionCancel((): void => {
+                        this.clearInitialRbSlideGesture();
                         this.endRbSlideSelectGesture();
                       })
                   ))
-                  .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-                    if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
-                      return GestureJudgeResult.CONTINUE;
-                    }
-                    if (!this.selectionMode) {
-                      return GestureJudgeResult.REJECT;
-                    }
-                    return GestureJudgeResult.CONTINUE;
-                  })
                 }
                 .draggable(false)
-              }, (rowIdx: number) => `rbrow_${rowIdx}`)
+              }, (block: RecycleBinRowBlock) => block.key)
               ListItem() {
                 Column() {
                   Blank()
@@ -577,6 +733,26 @@ struct RecycleBinPage {
             .scrollBar(BarState.Auto)
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.rbScrollEnabled)
+            .onTouch((event: TouchEvent): void => {
+              if (!this.rbSlideGestureActive) {
+                if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                  this.clearInitialRbSlideGesture();
+                }
+                return;
+              }
+              if (event.type === TouchType.Move) {
+                const pt = this.readTouchFingerWindow(event);
+                if (pt === null) {
+                  return;
+                }
+                this.onRbSlideTouchMoveWindow(pt.x, pt.y);
+                return;
+              }
+              if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                this.clearInitialRbSlideGesture();
+                this.endRbSlideSelectGesture();
+              }
+            })
             .onDidScroll((_offset: number, scrollState: ScrollState): void => {
               this.onListScrollStateChange(scrollState);
             })

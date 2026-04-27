@@ -1,4 +1,14 @@
 import {
+  fnBottomDockBottomGap,
+  FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
+  FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
+  FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
+  FN_BOTTOM_DOCK_INNER_SPACE_VP,
+  FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
+  FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
+  FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+  FN_BOTTOM_DOCK_SIDE_GAP_VP,
+  FN_BOTTOM_DOCK_SIDE_PADDING_VP,
   FN_FLOATING_TOP_BOTTOM_GAP_VP,
   FN_FLOATING_TOP_CONTROL_RADIUS_VP,
   FN_FLOATING_TOP_CONTROL_SIZE_VP,
@@ -14,12 +24,8 @@ import {
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 
-const PREVIEW_CHROME_BOTTOM_RADIUS_VP: number = 28;
-const PREVIEW_CHROME_MARGIN_H_VP: number = 10;
-const PREVIEW_CHROME_BOTTOM_MARGIN_VP: number = 8;
-const PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP: number = 60;
-const PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP: number = 18;
-const PREVIEW_CHROME_BOTTOM_GAP_VP: number = 6;
+const PREVIEW_DOCK_ACTION_GAP_VP: number = 1;
+const PREVIEW_DOCK_INNER_PADDING_H_VP: number = FN_BOTTOM_DOCK_INNER_PADDING_H_VP;
 
 @Component
 export struct GalleryPreviewChrome {
@@ -55,10 +61,6 @@ export struct GalleryPreviewChrome {
     return this.darkMaterial ? '#A61A1A1E' : '#D9FFFFFF';
   }
 
-  private bottomShellBackground(): string {
-    return this.darkMaterial ? '#B31A1A1E' : '#E6FFFFFF';
-  }
-
   private surfaceBackground(): string {
     return this.darkMaterial ? '#2BFFFFFF' : '#F2FFFFFF';
   }
@@ -87,10 +89,6 @@ export struct GalleryPreviewChrome {
     return FN_FLOATING_TOP_MARGIN_VP + this.topSafeInsetVp;
   }
 
-  private bottomPad(): number {
-    return 8 + this.bottomSafeInsetVp;
-  }
-
   private normalizedDownloadProgress(): number {
     return Math.max(0, Math.min(100, this.downloadProgressPct));
   }
@@ -98,13 +96,13 @@ export struct GalleryPreviewChrome {
   @Builder
   private bottomAction(icon: Resource, label: string, loading: boolean, action: () => void, dimmed: boolean = false) {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Column({ space: 4 }) {
+      Column({ space: 3 }) {
         if (loading) {
-          LoadingProgress().width(24).height(24).color(this.fgColor)
+          LoadingProgress().width(22).height(22).color(this.fgColor)
         } else {
-          SymbolGlyph(icon).fontSize(24).fontColor([dimmed ? this.dimmedColor() : this.fgColor])
+          SymbolGlyph(icon).fontSize(22).fontColor([dimmed ? this.dimmedColor() : this.fgColor])
         }
-        Text(label).fontSize(11).fontColor(dimmed ? this.dimmedColor() : this.fgColor)
+        Text(label).fontSize(10).fontColor(dimmed ? this.dimmedColor() : this.fgColor)
       }
       .width('100%')
       .height('100%')
@@ -112,8 +110,8 @@ export struct GalleryPreviewChrome {
       .alignItems(HorizontalAlign.Center)
     }
     .layoutWeight(1)
-    .height(PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP)
-    .borderRadius(PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
     .enabled(!dimmed && this.toolbarVisible)
     .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
@@ -122,12 +120,12 @@ export struct GalleryPreviewChrome {
   @Builder
   private bottomDownloadAction() {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Column({ space: 4 }) {
+      Column({ space: 3 }) {
         if (this.downloading && this.downloadProgressKnown) {
           Stack({ alignContent: Alignment.Center }) {
             Progress({ value: this.normalizedDownloadProgress(), total: 100, type: ProgressType.Ring })
-              .width(24)
-              .height(24)
+              .width(22)
+              .height(22)
               .color(this.fgColor)
               .style({ strokeWidth: 2.4 })
             Text(`${Math.round(this.normalizedDownloadProgress())}`)
@@ -135,15 +133,15 @@ export struct GalleryPreviewChrome {
               .fontWeight(FontWeight.Medium)
               .fontColor(this.fgColor)
           }
-          .width(24)
-          .height(24)
+          .width(22)
+          .height(22)
         } else if (this.downloading) {
-          LoadingProgress().width(24).height(24).color(this.fgColor)
+          LoadingProgress().width(22).height(22).color(this.fgColor)
         } else {
-          SymbolGlyph($r('sys.symbol.download')).fontSize(24).fontColor([this.fgColor])
+          SymbolGlyph($r('sys.symbol.download')).fontSize(22).fontColor([this.fgColor])
         }
         Text(this.downloading ? (this.downloadProgressKnown ? `${Math.round(this.normalizedDownloadProgress())}%` : '\u4e0b\u8f7d\u4e2d') : '\u4e0b\u8f7d')
-          .fontSize(11)
+          .fontSize(10)
           .fontColor(this.fgColor)
       }
       .width('100%')
@@ -152,8 +150,8 @@ export struct GalleryPreviewChrome {
       .alignItems(HorizontalAlign.Center)
     }
     .layoutWeight(1)
-    .height(PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP)
-    .borderRadius(PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
     .enabled(this.toolbarVisible && !this.downloading)
     .onClick((!this.toolbarVisible || this.downloading) ? (): void => {} : this.onDownload)
@@ -162,15 +160,15 @@ export struct GalleryPreviewChrome {
   @Builder
   private bottomFavoriteAction() {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Column({ space: 4 }) {
+      Column({ space: 3 }) {
         if (this.favoriteToggling) {
-          LoadingProgress().width(24).height(24).color(this.fgColor)
+          LoadingProgress().width(22).height(22).color(this.fgColor)
         } else {
           SymbolGlyph(this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
-            .fontSize(24)
+            .fontSize(22)
             .fontColor([this.starFilled ? this.favoriteStarTint : this.fgColor])
         }
-        Text('\u6536\u85cf').fontSize(11).fontColor(this.fgColor)
+        Text('\u6536\u85cf').fontSize(10).fontColor(this.fgColor)
       }
       .width('100%')
       .height('100%')
@@ -178,8 +176,8 @@ export struct GalleryPreviewChrome {
       .alignItems(HorizontalAlign.Center)
     }
     .layoutWeight(1)
-    .height(PREVIEW_CHROME_BOTTOM_ACTION_HEIGHT_VP)
-    .borderRadius(PREVIEW_CHROME_BOTTOM_ACTION_RADIUS_VP)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
     .enabled(this.toolbarVisible)
     .onClick(!this.toolbarVisible ? (): void => {} : this.onFavorite)
@@ -188,7 +186,7 @@ export struct GalleryPreviewChrome {
   @Builder
   private topCircleAction(icon: Resource, action: () => void, selected: boolean = false) {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
-      SymbolGlyph(icon).fontSize(18).fontColor([selected ? Color.White : this.fgColor])
+      SymbolGlyph(icon).fontSize(17).fontColor([selected ? Color.White : this.fgColor])
     }
     .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
     .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
@@ -227,7 +225,7 @@ export struct GalleryPreviewChrome {
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
 
-        Row({ space: 8 }) {
+        Row({ space: 6 }) {
           if (this.showOriginalAction) {
             this.topCircleAction($r('sys.symbol.picture'), this.onLoadOriginal, this.originalShowing)
           }
@@ -252,33 +250,44 @@ export struct GalleryPreviewChrome {
         .layoutWeight(1)
         .hitTestBehavior(HitTestMode.None)
 
-      Row({ space: PREVIEW_CHROME_BOTTOM_GAP_VP }) {
-        this.bottomAction($r('sys.symbol.share'), '\u5206\u4eab', this.sharing, this.onShare)
-        this.bottomDownloadAction()
-        this.bottomFavoriteAction()
-        this.bottomAction($r('sys.symbol.trash'), '\u5220\u9664', this.deleting, this.onDelete)
+      Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+        Blank()
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+
+        Row({ space: PREVIEW_DOCK_ACTION_GAP_VP }) {
+          this.bottomAction($r('sys.symbol.share'), '\u5206\u4eab', this.sharing, this.onShare)
+          this.bottomDownloadAction()
+          this.bottomFavoriteAction()
+          this.bottomAction($r('sys.symbol.trash'), '\u5220\u9664', this.deleting, this.onDelete)
+        }
+        .layoutWeight(1)
+        .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+        .padding({ left: PREVIEW_DOCK_INNER_PADDING_H_VP, right: PREVIEW_DOCK_INNER_PADDING_H_VP })
+        .backgroundColor($r('app.color.immersive_tabbar_bg'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+        .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
+        .clip(true)
+        .onAreaChange((_old, area): void => {
+          const h = area.height as number;
+          if (h > 0) {
+            this.onBottomBarHeightChange(h);
+          }
+        })
+
+        Blank()
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
       }
       .width('100%')
-      .padding({ left: 8, right: 8, top: 8, bottom: this.bottomPad() })
-      .backgroundColor(this.bottomShellBackground())
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .borderRadius(PREVIEW_CHROME_BOTTOM_RADIUS_VP)
-      .border({ width: 1, color: this.shellBorder() })
-      .shadow({ radius: 18, color: this.shadowColor(), offsetX: 0, offsetY: 8 })
-      .margin({
-        left: PREVIEW_CHROME_MARGIN_H_VP,
-        right: PREVIEW_CHROME_MARGIN_H_VP,
-        bottom: PREVIEW_CHROME_BOTTOM_MARGIN_VP
-      })
-      .clip(true)
+      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
       .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
-      .onAreaChange((_old, area): void => {
-        const h = area.height as number;
-        if (h > 0) {
-          this.onBottomBarHeightChange(h);
-        }
-      })
     }
     .width('100%')
     .height('100%')

@@ -31,13 +31,15 @@ import { GalleryListItem } from '../model/FnApiTypes';
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
 // 放大状态下的拖拽增益：适当降低，减少单指拖动瞬时位移导致的卡顿
-const PAN_DRAG_GAIN = 1.25;
+const PAN_DRAG_GAIN = 1;
 // 轻度放大区间（刚超过 1x）改用更保守的拖拽参数，避免“刚放大一点就卡”
-const LIGHT_ZOOM_MAX_SCALE = 1.35;
-const PAN_DRAG_GAIN_LIGHT = 0.9;
-const PAN_UPDATE_MIN_INTERVAL_MS = 12;
-const PAN_UPDATE_MIN_INTERVAL_LIGHT_ZOOM_MS = 20;
+const PAN_UPDATE_MIN_INTERVAL_MS = 0;
 const PREVIEW_ZOOM_PAN_DISTANCE = 1;
+
+interface GalleryPreviewTouchPoint {
+  x: number;
+  y: number;
+}
 
 @Component
 export struct GalleryPreviewSlide {
@@ -94,6 +96,9 @@ export struct GalleryPreviewSlide {
   private pinchParticipationActive: boolean = false;
   private pinchGestureRecognizing: boolean = false;
   private deferredParentGestureResetTimer: number = 0;
+  private singleFingerPanActive: boolean = false;
+  private singleFingerPanLastX: number = 0;
+  private singleFingerPanLastY: number = 0;
 
   private isDark(): boolean { return this.isDarkTheme; }
   private spinnerColor(): ResourceColor { return this.isDarkTheme ? Color.White : Color.Black; }
@@ -174,6 +179,9 @@ export struct GalleryPreviewSlide {
     this.previewScale = 1;
     this.previewPanX = 0;
     this.previewPanY = 0;
+    this.singleFingerPanActive = false;
+    this.singleFingerPanLastX = 0;
+    this.singleFingerPanLastY = 0;
     this.pinchGestureRecognizing = false;
     this.pinchParticipationActive = false;
     this.scheduleDeferredParentGestureReset();
@@ -358,12 +366,22 @@ export struct GalleryPreviewSlide {
     this.onZoomLockChange(this.isImageZoomed());
   }
 
-  private maxPanX(): number { return this.previewScale > 1 ? this.viewW * (this.previewScale - 1) / 2 : 0; }
-  private maxPanY(): number { return this.previewScale > 1 ? this.viewH * (this.previewScale - 1) / 2 : 0; }
-  private isLightZoom(): boolean {
-    return this.previewScale > 1 + GALLERY_PREVIEW_ZOOM_EPS && this.previewScale <= LIGHT_ZOOM_MAX_SCALE;
+  private readTouchPointWindow(ev: TouchEvent): GalleryPreviewTouchPoint | null {
+    if (ev.touches === undefined || ev.touches.length < 1) {
+      return null;
+    }
+    const f0 = ev.touches[0];
+    const x = f0.windowX ?? f0.displayX ?? f0.x;
+    const y = f0.windowY ?? f0.displayY ?? f0.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    const pt: GalleryPreviewTouchPoint = { x, y };
+    return pt;
   }
 
+  private maxPanX(): number { return this.previewScale > 1 ? this.viewW * (this.previewScale - 1) / 2 : 0; }
+  private maxPanY(): number { return this.previewScale > 1 ? this.viewH * (this.previewScale - 1) / 2 : 0; }
   private clampToLimit(value: number, limit: number): number {
     if (limit <= 0) { return 0; }
     return Math.min(limit, Math.max(-limit, value));
@@ -417,6 +435,59 @@ export struct GalleryPreviewSlide {
     }
   }
 
+  private finishSingleFingerPan(): void {
+    if (!this.singleFingerPanActive) {
+      return;
+    }
+    this.singleFingerPanActive = false;
+    this.springBackIfNeeded();
+    this.onVerticalDragProgress(0);
+  }
+
+  private handleZoomedSingleFingerTouch(event: TouchEvent): void {
+    if (!this.isImageZoomed()) {
+      this.finishSingleFingerPan();
+      return;
+    }
+    if (event.touches === undefined || event.touches.length !== 1) {
+      this.finishSingleFingerPan();
+      return;
+    }
+    const pt = this.readTouchPointWindow(event);
+    if (pt === null) {
+      return;
+    }
+    if (event.type === TouchType.Down) {
+      this.singleFingerPanActive = true;
+      this.singleFingerPanLastX = pt.x;
+      this.singleFingerPanLastY = pt.y;
+      event.stopPropagation();
+      return;
+    }
+    if (event.type === TouchType.Move) {
+      if (!this.singleFingerPanActive) {
+        this.singleFingerPanActive = true;
+        this.singleFingerPanLastX = pt.x;
+        this.singleFingerPanLastY = pt.y;
+        event.stopPropagation();
+        return;
+      }
+      const dx = pt.x - this.singleFingerPanLastX;
+      const dy = pt.y - this.singleFingerPanLastY;
+      this.singleFingerPanLastX = pt.x;
+      this.singleFingerPanLastY = pt.y;
+      this.previewPanX = this.resist(this.previewPanX + dx * PAN_DRAG_GAIN, this.maxPanX());
+      this.previewPanY = this.resist(this.previewPanY + dy * PAN_DRAG_GAIN, this.maxPanY());
+      this.onVerticalDragProgress(0);
+      event.stopPropagation();
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      event.stopPropagation();
+      this.finishSingleFingerPan();
+    }
+  }
+
   // ── UI ───────────────────────────────────────────────────────────────────
 
   build() {
@@ -462,7 +533,7 @@ export struct GalleryPreviewSlide {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
         .priorityGesture(
-          PinchGesture({ fingers: 2, distance: 5 })
+          PinchGesture({ fingers: 2, distance: 1 })
             .onActionStart((): void => {
               this.pinchGestureRecognizing = true;
               this.pinchBaseScale = this.previewScale;
@@ -510,23 +581,16 @@ export struct GalleryPreviewSlide {
                 return;
               }
               const now = Date.now();
-              const minInterval = this.isLightZoom()
-                ? PAN_UPDATE_MIN_INTERVAL_LIGHT_ZOOM_MS
-                : PAN_UPDATE_MIN_INTERVAL_MS;
+              const minInterval = PAN_UPDATE_MIN_INTERVAL_MS;
               if (this.lastPanUpdateMs > 0 && now - this.lastPanUpdateMs < minInterval) {
                 return;
               }
               this.lastPanUpdateMs = now;
-              const gain = this.isLightZoom() ? PAN_DRAG_GAIN_LIGHT : PAN_DRAG_GAIN;
+              const gain = PAN_DRAG_GAIN * Math.max(1, this.previewScale);
               const nextX = this.panBaseX + event.offsetX * gain;
               const nextY = this.panBaseY + event.offsetY * gain;
-              if (this.isLightZoom()) {
-                this.previewPanX = this.clampToLimit(nextX, this.maxPanX());
-                this.previewPanY = this.clampToLimit(nextY, this.maxPanY());
-              } else {
-                this.previewPanX = this.resist(nextX, this.maxPanX());
-                this.previewPanY = this.resist(nextY, this.maxPanY());
-              }
+              this.previewPanX = this.resist(nextX, this.maxPanX());
+              this.previewPanY = this.resist(nextY, this.maxPanY());
               this.onVerticalDragProgress(0);
             })
             .onActionEnd((): void => {
