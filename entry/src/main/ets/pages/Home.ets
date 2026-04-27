@@ -23,13 +23,12 @@ import {
   FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../common/FnUiCommon';
 import {
+  FN_GLOBAL_TAB_SWITCH_CURVE,
+  FN_GLOBAL_TAB_SWITCH_DURATION,
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
   FN_PAGE_EXIT_CURVE,
-  FN_PAGE_EXIT_DURATION,
-  FN_TAB_ALBUM_ME_CURVE,
-  FN_TAB_ALBUM_ME_IN_MS,
-  FN_TAB_ALBUM_ME_OUT_MS
+  FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
   GALLERY_TOP_BAR_PAD_BOTTOM_VP,
@@ -151,9 +150,14 @@ struct Home {
   @State private sessionOk: boolean = false;
   @State private albumSearchModeActive: boolean = false;
   @State private bottomNavIndex: number = 0;
+  @State private gallerySurfaceIndex: number = 0;
   @State private albumReloadEpoch: number = 0;
   @State private pageShowSignal: number = 0;
-  @State private contentTranslateX: number = 0;
+  @State private rootContentWidthVp: number = 360;
+  @State private galleryShellTranslateX: number = 0;
+  @State private mePanelTranslateX: number = 360;
+  @State private galleryShellOpacity: number = 1;
+  @State private mePanelOpacity: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
   @State private systemTopInsetVp: number = 0;
@@ -165,6 +169,10 @@ struct Home {
 
   onBackPress(): boolean {
     if (this.bottomNavIndex !== 2 && galleryTryConsumeAlbumBack()) {
+      return true;
+    }
+    if (this.bottomNavIndex !== 0) {
+      this.switchTab(0);
       return true;
     }
     return false;
@@ -246,7 +254,25 @@ struct Home {
   }
 
   private currentHomeSurface(): string {
-    return this.bottomNavIndex === 1 ? 'albums' : 'photos';
+    return this.gallerySurfaceIndex === 1 ? 'albums' : 'photos';
+  }
+
+  private rootTabSlideWidthVp(): number {
+    return this.rootContentWidthVp > 0 ? this.rootContentWidthVp : 360;
+  }
+
+  private syncRootTabTransforms(): void {
+    const width = this.rootTabSlideWidthVp();
+    if (this.bottomNavIndex === 2) {
+      this.galleryShellTranslateX = -width;
+      this.mePanelTranslateX = 0;
+      this.mePanelOpacity = 1;
+      return;
+    }
+    this.galleryShellTranslateX = 0;
+    this.mePanelTranslateX = width;
+    this.galleryShellOpacity = 1;
+    this.mePanelOpacity = 1;
   }
 
   private toast(message: string): void {
@@ -289,32 +315,62 @@ struct Home {
     }, 180);
   }
 
+  private animateShellToMe(): void {
+    const width = this.rootTabSlideWidthVp();
+    this.bottomNavIndex = 2;
+    this.galleryShellOpacity = 1;
+    this.mePanelOpacity = 1;
+    this.getUIContext().animateTo(
+      { duration: FN_GLOBAL_TAB_SWITCH_DURATION, curve: FN_GLOBAL_TAB_SWITCH_CURVE },
+      (): void => {
+        this.galleryShellTranslateX = -width;
+        this.mePanelTranslateX = 0;
+        this.mePanelOpacity = 1;
+      }
+    );
+  }
+
+  private animateShellFromMe(target: number): void {
+    const width = this.rootTabSlideWidthVp();
+    this.bottomNavIndex = target;
+    this.galleryShellTranslateX = -width;
+    this.mePanelTranslateX = 0;
+    this.galleryShellOpacity = 1;
+    this.mePanelOpacity = 1;
+    this.getUIContext().animateTo(
+      { duration: FN_GLOBAL_TAB_SWITCH_DURATION, curve: FN_GLOBAL_TAB_SWITCH_CURVE },
+      (): void => {
+        this.galleryShellTranslateX = 0;
+        this.mePanelTranslateX = width;
+        this.galleryShellOpacity = 1;
+        this.mePanelOpacity = 1;
+      }
+    );
+  }
+
   private switchTab(target: number): void {
     if (target === this.bottomNavIndex) {
       return;
     }
-    const albumMeSwitch = target === 2 || this.bottomNavIndex === 2;
-    if (!albumMeSwitch) {
+    if (target === 0 || target === 1) {
+      this.gallerySurfaceIndex = target;
+    }
+    const rootSwitch = target === 2 || this.bottomNavIndex === 2;
+    if (!rootSwitch) {
       this.bottomNavIndex = target;
       return;
     }
-    const towardMe = target === 2;
-    const outPx = towardMe ? -22 : 22;
-    this.getUIContext().animateTo(
-      { duration: FN_TAB_ALBUM_ME_OUT_MS, curve: FN_TAB_ALBUM_ME_CURVE },
-      (): void => {
-        this.contentTranslateX = outPx;
+    if (target === 2) {
+      if (this.bottomNavIndex === 0 && this.gallerySurfaceIndex === 0) {
+        this.gallerySurfaceIndex = 1;
       }
-    );
-    setTimeout((): void => {
-      this.bottomNavIndex = target;
-      this.getUIContext().animateTo(
-        { duration: FN_TAB_ALBUM_ME_IN_MS, curve: FN_TAB_ALBUM_ME_CURVE },
-        (): void => {
-          this.contentTranslateX = 0;
-        }
-      );
-    }, Math.floor(FN_TAB_ALBUM_ME_OUT_MS * 0.55));
+      this.animateShellToMe();
+      return;
+    }
+    if (this.bottomNavIndex === 2 && target === 0 && this.gallerySurfaceIndex !== 0) {
+      this.gallerySurfaceIndex = 0;
+    }
+    this.animateShellFromMe(target);
   }
 
   aboutToAppear(): void {
@@ -327,6 +383,8 @@ struct Home {
       }
       this.galleryBaseUrl = fnWebViewBaseUrl(base);
       this.sessionOk = true;
+      this.gallerySurfaceIndex = this.bottomNavIndex === 1 ? 1 : 0;
+      this.syncRootTabTransforms();
       if (session.fnosLongToken.length === 0) {
         const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
         const client = AppSession.getClient();
@@ -347,6 +405,10 @@ struct Home {
         }
       }
     }
+  }
+
+  aboutToDisappear(): void {
+    this.clearGallerySelectionDockTimer();
   }
 
   @Builder
@@ -500,7 +562,7 @@ struct Home {
   @Builder
   private floatingDockNavCapsule() {
     Row({ space: 8 }) {
-      this.floatingDockNavItem(0, '鐓х墖')
+      this.floatingDockNavItem(0, '\u56fe\u5e93')
       this.floatingDockNavItem(1, '鐩稿唽')
       this.floatingDockNavItem(2, '鎴戠殑')
     }
@@ -525,7 +587,7 @@ struct Home {
       }
 
       Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
-        this.floatingDockNavItem(0, '照片')
+        this.floatingDockNavItem(0, '\u56fe\u5e93')
         this.floatingDockNavItem(1, '相册')
         this.floatingDockNavItem(2, '我的')
       }
@@ -579,7 +641,7 @@ struct Home {
             this.gallerySelectionDockDeleteAction
           )
         } else {
-          this.floatingDockNavItem(0, '照片')
+          this.floatingDockNavItem(0, '\u56fe\u5e93')
           this.floatingDockNavItem(1, '相册')
           this.floatingDockNavItem(2, '我的')
         }
@@ -650,34 +712,46 @@ struct Home {
       } else {
         Column() {
           Stack() {
-            if (this.isGalleryShellVisible()) {
-              GalleryAlbumTab({
-                baseUrl: this.galleryBaseUrl,
-                albumReloadEpoch: this.albumReloadEpoch,
-                pageShowSignal: this.pageShowSignal,
-                topSafeInsetVp: this.systemTopInsetVp,
-                bottomSafeInsetVp: this.systemBottomInsetVp,
-                floatingDockInsetBottomVp: this.dockReserveHeight(),
-                homeSurface: this.currentHomeSurface(),
-                onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
-                  this.albumSearchModeActive = hiddenBottomNav;
-                },
-                onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void): void => {
-                  this.onGallerySelectionDockStateChange(active, onDownload, onDelete);
-                }
-              })
-                .width('100%')
-                .height('100%')
-            } else {
-              MePanel({ topSafeInsetVp: this.systemTopInsetVp })
-                .width('100%')
-                .height('100%')
-            }
+            GalleryAlbumTab({
+              baseUrl: this.galleryBaseUrl,
+              albumReloadEpoch: this.albumReloadEpoch,
+              pageShowSignal: this.pageShowSignal,
+              topSafeInsetVp: this.systemTopInsetVp,
+              bottomSafeInsetVp: this.systemBottomInsetVp,
+              floatingDockInsetBottomVp: this.dockReserveHeight(),
+              homeSurface: this.currentHomeSurface(),
+              onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
+                this.albumSearchModeActive = hiddenBottomNav;
+              },
+              onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void): void => {
+                this.onGallerySelectionDockStateChange(active, onDownload, onDelete);
+              }
+            })
+              .width('100%')
+              .height('100%')
+              .translate({ x: this.galleryShellTranslateX, y: 0 })
+              .opacity(this.galleryShellOpacity)
+              .enabled(this.bottomNavIndex !== 2)
+              .hitTestBehavior(this.bottomNavIndex !== 2 ? HitTestMode.Default : HitTestMode.None)
+
+            MePanel({ topSafeInsetVp: this.systemTopInsetVp })
+              .width('100%')
+              .height('100%')
+              .padding({ bottom: this.dockReserveHeight() })
+              .translate({ x: this.mePanelTranslateX, y: 0 })
+              .opacity(this.mePanelOpacity)
+              .enabled(this.bottomNavIndex === 2)
+              .hitTestBehavior(this.bottomNavIndex === 2 ? HitTestMode.Default : HitTestMode.None)
           }
           .width('100%')
           .layoutWeight(1)
-          .padding({ bottom: this.isGalleryShellVisible() ? 0 : this.dockReserveHeight() })
-          .translate({ x: this.contentTranslateX, y: 0 })
+          .onAreaChange((_old, area): void => {
+            const width = area.width as number;
+            if (width > 0 && Math.abs(width - this.rootContentWidthVp) > 0.5) {
+              this.rootContentWidthVp = width;
+              this.syncRootTabTransforms();
+            }
+          })
         }
         .width('100%')
         .height('100%')

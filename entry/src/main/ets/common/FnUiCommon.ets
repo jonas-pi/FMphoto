@@ -23,6 +23,8 @@ export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
 export const FN_FLOATING_TOP_CONTROL_SIZE_VP: number = 40;
 export const FN_FLOATING_TOP_CONTROL_RADIUS_VP: number = FN_FLOATING_TOP_CONTROL_SIZE_VP / 2;
 export const FN_FLOATING_TOP_PILL_MIN_WIDTH_VP: number = 62;
+export const FN_FLOATING_TOP_META_FONT_VP: number = 11;
+export const FN_FLOATING_TOP_TITLE_STACK_GAP_VP: number = 1;
 export const FN_FLOATING_TOP_TOTAL_HEIGHT_VP: number =
   FN_FLOATING_TOP_MARGIN_VP + FN_FLOATING_TOP_CONTROL_SIZE_VP + FN_FLOATING_TOP_BOTTOM_GAP_VP;
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;
@@ -98,6 +100,7 @@ export struct FnFloatingTopCircleButton {
 @Component
 export struct FnTopBar {
   @Prop title: string = '';
+  @Prop subtitle: string = '';
   @Prop backText: string = '返回';
   @Prop rightText: string = '';
   @State private systemTopInsetVp: number = 0;
@@ -146,14 +149,27 @@ export struct FnTopBar {
       .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .justifyContent(FlexAlign.Start)
 
-      Text(this.title)
+      Column({ space: FN_FLOATING_TOP_TITLE_STACK_GAP_VP }) {
+        Text(this.title)
+          .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .fontColor($r('app.color.text_primary'))
+
+        Text(this.subtitle.length > 0 ? this.subtitle : ' ')
+          .fontSize(FN_FLOATING_TOP_META_FONT_VP)
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .fontColor($r('app.color.text_secondary'))
+          .opacity(this.subtitle.length > 0 ? 1 : 0)
+      }
         .layoutWeight(2)
-        .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
-        .fontWeight(FontWeight.Bold)
-        .textAlign(TextAlign.Center)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .fontColor($r('app.color.text_primary'))
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
 
       Row() {
         if (this.rightText.length > 0) {

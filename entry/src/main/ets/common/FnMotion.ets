@@ -8,9 +8,14 @@ export const FN_PAGE_EXIT_DURATION = 200;
 export const FN_PAGE_ENTER_CURVE = Curve.EaseOut;
 export const FN_PAGE_EXIT_CURVE = Curve.EaseIn;
 
-export const FN_TAB_SWITCH_OUT_DURATION = 140;
-export const FN_TAB_SWITCH_IN_DURATION = 200;
-export const FN_TAB_SWITCH_CURVE = Curve.EaseInOut;
+/** 全局 tab 切换动效：统一为普通左右滑动。 */
+export const FN_GLOBAL_TAB_SWITCH_DURATION = 220;
+export const FN_GLOBAL_TAB_SWITCH_CURVE = Curve.EaseInOut;
+export const FN_GLOBAL_TAB_SWITCH_OFFSET_VP = 24;
+
+export const FN_TAB_SWITCH_OUT_DURATION = FN_GLOBAL_TAB_SWITCH_DURATION;
+export const FN_TAB_SWITCH_IN_DURATION = FN_GLOBAL_TAB_SWITCH_DURATION;
+export const FN_TAB_SWITCH_CURVE = FN_GLOBAL_TAB_SWITCH_CURVE;
 
 /** 底部「相册 ↔ 我的」内容区滑入滑出（避免仅用 index 瞬切带来的割裂感） */
 export const FN_TAB_ALBUM_ME_OUT_MS = 200;

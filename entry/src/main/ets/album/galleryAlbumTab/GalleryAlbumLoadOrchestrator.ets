@@ -396,7 +396,9 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
       return -1;
     }
     host.exhausted = true;
-    host.footText = host.countGalleryListedItems() > 0 ? '已加载全部照片' : '未获取到照片';
+    host.footText = host.countGalleryListedItems() > 0
+      ? '\u5df2\u52a0\u8f7d\u5168\u90e8\u5a92\u4f53'
+      : '\u672a\u83b7\u53d6\u5230\u5a92\u4f53';
     return -1;
   }
 

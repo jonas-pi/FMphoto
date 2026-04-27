@@ -28,7 +28,6 @@ export struct GalleryAlbumPersonModeView {
 
   aboutToDisappear(): void {
     this.clearPersonThumbResumeTimer();
-    this.recycleThumbCache(true);
   }
 
   private recycleThumbCache(aggressive: boolean = false): void {
@@ -132,7 +131,7 @@ export struct GalleryAlbumPersonModeView {
     .width('100%')
     .layoutWeight(1)
     .opacity(this.modeSwitchOpacity)
-    .translate({ x: 0, y: this.modeSwitchOffsetY })
+    .translate({ x: this.modeSwitchOffsetY, y: 0 })
     .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
   }
 }

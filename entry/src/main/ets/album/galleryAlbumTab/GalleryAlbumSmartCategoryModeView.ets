@@ -26,7 +26,6 @@ export struct GalleryAlbumSmartCategoryModeView {
 
   aboutToDisappear(): void {
     this.clearSmartThumbResumeTimer();
-    this.recycleThumbCache(true);
   }
 
   private totalSmartItemCount(): number {
@@ -166,7 +165,7 @@ export struct GalleryAlbumSmartCategoryModeView {
     .width('100%')
     .layoutWeight(1)
     .opacity(this.modeSwitchOpacity)
-    .translate({ x: 0, y: this.modeSwitchOffsetY })
+    .translate({ x: this.modeSwitchOffsetY, y: 0 })
     .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
   }
 }

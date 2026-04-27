@@ -1,5 +1,10 @@
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
+import {
+  CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP,
+  categoryLocalMediaCount,
+  parseCategoryMedia
+} from '../album/galleryAlbumTab/GalleryAlbumModeData';
 import { GalleryListItem, MediaCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
@@ -16,6 +21,7 @@ struct MediaCategoryPage {
   @State private baseUrl: string = '';
   @State private loading: boolean = false;
   @State private opening: boolean = false;
+  @State private openingText: string = '打开中…';
   @State private error: string = '';
   @State private items: MediaCategoryItem[] = [];
   @State private thumbLoadingPaused: boolean = false;
@@ -105,21 +111,6 @@ struct MediaCategoryPage {
     return c !== undefined && Number.isFinite(Number(c)) ? Math.max(0, Math.floor(Number(c))) : 0;
   }
 
-  private parseMedia(item: MediaCategoryItem): GalleryListItem[] {
-    const raw = item.list ?? item.items;
-    if (!Array.isArray(raw)) {
-      return [];
-    }
-    const out: GalleryListItem[] = [];
-    for (let i = 0; i < raw.length; i++) {
-      const it = raw[i];
-      if (typeof it === 'object' && it !== null) {
-        out.push(it as GalleryListItem);
-      }
-    }
-    return out;
-  }
-
   private async loadData(): Promise<void> {
     this.loading = true;
     this.error = '';
@@ -162,10 +153,15 @@ struct MediaCategoryPage {
     this.opening = true;
     const title = this.titleOf(item);
     try {
-      const local = this.parseMedia(item);
       const categoryKey = item.key !== undefined ? item.key : '';
+      this.openingText = categoryKey === 'photo' ? '加载照片中…' : `打开${title}中…`;
+      const initialRenderCap = categoryKey === 'photo'
+        ? CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP
+        : -1;
+      const localMediaCount = categoryLocalMediaCount(item);
+      const local = parseCategoryMedia(item, initialRenderCap);
       const heroImageUri = nasUrl(this.baseUrl, this.coverOf(item));
-      const expectedTotalCount = Math.max(this.countOf(item), local.length);
+      const expectedTotalCount = Math.max(this.countOf(item), localMediaCount, local.length);
       if (local.length > 0) {
         const ok = await CategoryGalleryNavStore.open(
           this.baseUrl,
@@ -271,7 +267,7 @@ struct MediaCategoryPage {
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })
 
           if (this.opening) {
-            FnFullLoadingMask({ text: '打开中…' })
+            FnFullLoadingMask({ text: this.openingText })
           }
         }
         .layoutWeight(1)
