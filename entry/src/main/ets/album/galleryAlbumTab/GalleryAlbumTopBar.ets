@@ -12,6 +12,10 @@ const GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP: number = 6;
 const GALLERY_TOP_BAR_CONTROL_RADIUS_VP: number = 20;
 const GALLERY_TOP_BAR_ACTION_MIN_WIDTH_VP: number = 62;
 const GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP: number = 40;
+const GALLERY_TOP_BAR_SEARCH_GAP_VP: number = 10;
+const GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP: number = 15;
+const GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP: number = 4;
+const GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY: string = 'gallery_album_top_bar_search_input';
 
 export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number =
   GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP + GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP + GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP;
@@ -19,7 +23,7 @@ export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number =
 @Component
 export struct GalleryAlbumTopBar {
   @Prop homeSurface: string = 'photos';
-  @Prop rootSurfaceTitle: string = '照片';
+  @Prop rootSurfaceTitle: string = '图库';
   @Prop inSearchMode: boolean = false;
   @Prop inCategoryMode: boolean = false;
   @Prop inSmartCategoryMode: boolean = false;
@@ -43,6 +47,7 @@ export struct GalleryAlbumTopBar {
   @State private suppressSearchAutoFocus: boolean = true;
   private searchInputCtrl: TextInputController = new TextInputController();
   private suppressSearchFocusTimer: number = -1;
+  private searchFocusKickTimer: number = -1;
 
   private isAlbumsHomeSurface(): boolean {
     return this.homeSurface === 'albums';
@@ -89,6 +94,13 @@ export struct GalleryAlbumTopBar {
     }
   }
 
+  private clearSearchFocusKickTimer(): void {
+    if (this.searchFocusKickTimer >= 0) {
+      clearTimeout(this.searchFocusKickTimer);
+      this.searchFocusKickTimer = -1;
+    }
+  }
+
   private suppressSearchRestoreTemporarily(): void {
     this.blurSearchInput();
     this.suppressSearchAutoFocus = true;
@@ -103,12 +115,38 @@ export struct GalleryAlbumTopBar {
     this.suppressSearchRestoreTemporarily();
   }
 
+  private focusSearchInputSoon(): void {
+    this.clearSearchFocusKickTimer();
+    this.searchFocusKickTimer = setTimeout((): void => {
+      this.searchFocusKickTimer = -1;
+      this.suppressSearchAutoFocus = false;
+      this.getUIContext().getFocusController().requestFocus(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY);
+      try {
+        this.searchInputCtrl.caretPosition(this.searchQuery.length);
+      } catch (_e) {
+      }
+    }, 32);
+  }
+
+  private openSearchPanelWithAutoFocus(): void {
+    this.clearSuppressSearchFocusTimer();
+    this.suppressSearchAutoFocus = false;
+    this.onOpenSearch();
+    this.focusSearchInputSoon();
+  }
+
+  private leaveSearchMode(): void {
+    this.suppressSearchRestoreTemporarily();
+    this.onBackToGallery();
+  }
+
   aboutToAppear(): void {
     this.suppressSearchRestoreTemporarily();
   }
 
   aboutToDisappear(): void {
     this.clearSuppressSearchFocusTimer();
+    this.clearSearchFocusKickTimer();
   }
 
   @Builder
@@ -157,27 +195,43 @@ export struct GalleryAlbumTopBar {
 
         this.floatingPillButton('取消', this.onExitSelection)
       } else if (this.inSearchMode) {
-        this.floatingPillButton('返回', this.onBackToGallery)
+        this.floatingPillButton('返回', (): void => this.leaveSearchMode())
 
-        TextInput({ placeholder: 'AI 搜索照片...', text: this.searchQuery, controller: this.searchInputCtrl })
-          .layoutWeight(1)
-          .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-          .defaultFocus(false)
-          .enableKeyboardOnFocus(false)
-          .enabled(!this.suppressSearchAutoFocus)
-          .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-          .backgroundColor($r('app.color.gallery_material_search_bg'))
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
-          .fontSize(13)
-          .fontColor($r('app.color.text_primary'))
-          .caretColor($r('app.color.brand_primary'))
-          .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-          .padding({ left: 12, right: 12 })
-          .onChange(this.onSearchQueryChange)
-          .onSubmit(this.onSearchSubmit)
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
+            .fontColor([$r('app.color.gallery_material_search_placeholder')])
 
-        this.floatingIconButton($r('sys.symbol.magnifyingglass'), this.onSearchSubmit)
+          TextInput({ placeholder: 'AI 搜索图库...', text: this.searchQuery, controller: this.searchInputCtrl })
+            .layoutWeight(1)
+            .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
+            .height('100%')
+            .defaultFocus(!this.suppressSearchAutoFocus)
+            .enableKeyboardOnFocus(true)
+            .enabled(!this.suppressSearchAutoFocus)
+            .backgroundColor(Color.Transparent)
+            .fontSize(13)
+            .fontColor($r('app.color.text_primary'))
+            .caretColor($r('app.color.brand_primary'))
+            .placeholderColor($r('app.color.gallery_material_search_placeholder'))
+            .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
+            .enterKeyType(EnterKeyType.Search)
+            .onChange(this.onSearchQueryChange)
+            .onSubmit(this.onSearchSubmit)
+            .onAppear((): void => {
+              if (!this.suppressSearchAutoFocus) {
+                this.focusSearchInputSoon();
+              }
+            })
+        }
+        .layoutWeight(1)
+        .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+        .margin({ left: GALLERY_TOP_BAR_SEARCH_GAP_VP })
+        .padding({ left: 12, right: 12 })
+        .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+        .backgroundColor($r('app.color.gallery_material_search_bg'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
       } else if (this.isRootSurfaceMode()) {
         Text(this.rootSurfaceTitle)
           .layoutWeight(1)
@@ -193,7 +247,7 @@ export struct GalleryAlbumTopBar {
           } else {
             this.floatingPillButton('多选', this.onEnterSelection)
           }
-          this.floatingIconButton($r('sys.symbol.magnifyingglass'), this.onOpenSearch)
+          this.floatingIconButton($r('sys.symbol.magnifyingglass'), (): void => this.openSearchPanelWithAutoFocus())
           this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
         }
       } else {

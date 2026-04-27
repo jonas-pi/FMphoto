@@ -21,6 +21,7 @@ const TAG = 'GalleryDiag';
 @Component
 export struct GalleryAlbumAlbumsHomeView {
   @Prop @Watch('onBaseUrlChanged') baseUrl: string = '';
+  @Prop pageVisible: boolean = false;
   @Prop contentInsetTopVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
   @Prop mediaLoading: boolean = false;
@@ -52,7 +53,6 @@ export struct GalleryAlbumAlbumsHomeView {
   onOpenRecycleBin: () => void = () => {};
 
   @State private thumbLoadingPaused: boolean = false;
-  @State private previewRefreshSeed: number = 0;
   @State private personPreviewPix: Array<PixelMap | undefined> = [];
   @State private smartPreviewPix: Array<PixelMap | undefined> = [];
   private thumbResumeTimer: number = -1;
@@ -61,13 +61,14 @@ export struct GalleryAlbumAlbumsHomeView {
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
-    this.queuePreviewRefresh();
+    if (this.personPreviewPix.length <= 0 && this.smartPreviewPix.length <= 0) {
+      this.queuePreviewRefresh();
+    }
   }
 
   aboutToDisappear(): void {
     this.clearThumbResumeTimer();
     this.clearPreviewRefreshTimer();
-    this.recycleThumbCache(true);
   }
 
   private recycleThumbCache(aggressive: boolean = false): void {
@@ -91,15 +92,8 @@ export struct GalleryAlbumAlbumsHomeView {
     }
   }
 
-  private bumpPreviewRefreshSeed(): void {
-    this.previewRefreshSeed = (this.previewRefreshSeed + 1) % 1000000;
-  }
-
   private queuePreviewRefresh(): void {
-    this.bumpPreviewRefreshSeed();
     this.clearPreviewRefreshTimer();
-    this.personPreviewPix = [];
-    this.smartPreviewPix = [];
     hilog.warn(
       DOMAIN,
       TAG,
@@ -178,7 +172,6 @@ export struct GalleryAlbumAlbumsHomeView {
       smartLoaded,
       smartPix.length
     );
-    this.bumpPreviewRefreshSeed();
   }
 
   private onBaseUrlChanged(): void {
@@ -234,6 +227,55 @@ export struct GalleryAlbumAlbumsHomeView {
     return this.mediaItems[idx];
   }
 
+  @Builder
+  private mediaPlaceholderCell() {
+    Column({ space: 8 }) {
+      Stack()
+        .width('100%')
+        .aspectRatio(1)
+        .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+
+      Blank()
+        .width('56%')
+        .height(13)
+        .borderRadius(7)
+        .backgroundColor('#14001A33')
+
+      Blank()
+        .width('26%')
+        .height(11)
+        .borderRadius(6)
+        .backgroundColor('#10001A33')
+    }
+    .layoutWeight(1)
+    .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
+  }
+
+  @Builder
+  private mediaLoadingPlaceholder() {
+    Column({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
+      Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
+        this.mediaPlaceholderCell()
+        this.mediaPlaceholderCell()
+        this.mediaPlaceholderCell()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+
+      Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
+        this.mediaPlaceholderCell()
+        this.mediaPlaceholderCell()
+        this.mediaPlaceholderCell()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+    }
+    .width('100%')
+    .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP })
+  }
+
   private previewPersonAt(idx: number): AiPersonItem | undefined {
     if (idx < 0 || idx >= this.personItems.length || idx >= 4) {
       return undefined;
@@ -275,7 +317,7 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   private previewThumbId(kind: string, idx: number, uri: string): string {
-    return `${kind}_${idx}_${this.previewUriToken(uri)}_${this.previewRefreshSeed}`;
+    return `${kind}_${idx}_${this.previewUriToken(uri)}`;
   }
 
   private previewPersonThumbId(item: AiPersonItem | undefined, idx: number): string {
@@ -329,7 +371,7 @@ export struct GalleryAlbumAlbumsHomeView {
           uri: uri,
           isVideo: false,
           isGif: false,
-          paused: this.thumbLoadingPaused
+          paused: !this.pageVisible || this.thumbLoadingPaused
         })
           .width('100%')
           .aspectRatio(1)
@@ -701,6 +743,14 @@ export struct GalleryAlbumAlbumsHomeView {
 
       if (this.mediaLoading && this.mediaItems.length <= 0) {
         ListItem() {
+          Column() {
+            this.mediaLoadingPlaceholder()
+          }
+          .width('100%')
+          .padding({ top: 8 })
+        }
+      } else if (false && this.mediaLoading && this.mediaItems.length <= 0) {
+        ListItem() {
           FnInlineLoading({ text: '加载媒体分类中...' })
             .width('100%')
             .padding({ top: 28, bottom: 8 })
@@ -779,7 +829,7 @@ export struct GalleryAlbumAlbumsHomeView {
       this.onThumbScrollSettled();
     })
     .opacity(this.modeSwitchOpacity)
-    .translate({ x: 0, y: this.modeSwitchOffsetY })
+    .translate({ x: this.modeSwitchOffsetY, y: 0 })
     .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
   }
 }

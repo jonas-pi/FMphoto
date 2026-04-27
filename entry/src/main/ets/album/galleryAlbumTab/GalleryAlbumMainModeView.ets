@@ -1,4 +1,5 @@
 import { GalleryListItem } from '../../model/FnApiTypes';
+import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
 import {
   GalleryNetworkThumb,
@@ -27,6 +28,8 @@ export struct GalleryAlbumMainModeView {
   @Prop footText: string = '';
   @Prop contentInsetTopVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
+  @Prop modeSwitchOpacity: number = 1;
+  @Prop modeSwitchOffsetY: number = 0;
   @Prop galleryTimelineRefreshing: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
@@ -477,6 +480,9 @@ export struct GalleryAlbumMainModeView {
         }, (r: number) => `skr_${r}`)
       }
       .width('100%')
+      .opacity(this.modeSwitchOpacity)
+      .translate({ x: this.modeSwitchOffsetY, y: 0 })
+      .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     } else {
       Column() {
         if (this.loadError.length > 0) {
@@ -585,6 +591,9 @@ export struct GalleryAlbumMainModeView {
       }
       .width('100%')
       .layoutWeight(1)
+      .opacity(this.modeSwitchOpacity)
+      .translate({ x: this.modeSwitchOffsetY, y: 0 })
+      .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     }
   }
 }

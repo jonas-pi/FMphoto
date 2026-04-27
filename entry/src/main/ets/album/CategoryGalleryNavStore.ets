@@ -5,6 +5,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
+import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './galleryAlbumTab/GalleryAlbumModeData';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
@@ -42,9 +43,13 @@ export class CategoryGalleryNavStore {
       hilog.warn(DOMAIN, TAG, 'open skipped: empty items');
       return Promise.resolve(false);
     }
-    const shouldCapInitialItems = (meta?.categoryKey ?? '').length > 0 && items.length > CATEGORY_GALLERY_INITIAL_RENDER_CAP;
+    const categoryKey = meta?.categoryKey ?? '';
+    const initialRenderCap = categoryKey === 'photo'
+      ? CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP
+      : CATEGORY_GALLERY_INITIAL_RENDER_CAP;
+    const shouldCapInitialItems = categoryKey.length > 0 && items.length > initialRenderCap;
     const initialItems = shouldCapInitialItems
-      ? items.slice(0, CATEGORY_GALLERY_INITIAL_RENDER_CAP)
+      ? items.slice(0, initialRenderCap)
       : items.slice();
     CategoryGalleryNavStore.sessionToken++;
     CategoryGalleryNavStore.baseUrl = baseUrl;
@@ -57,7 +62,7 @@ export class CategoryGalleryNavStore {
       CategoryGalleryNavStore.items.length,
       meta?.expectedTotalCount !== undefined ? Math.max(0, Math.floor(meta.expectedTotalCount)) : items.length
     );
-    CategoryGalleryNavStore.categoryKey = meta?.categoryKey ?? '';
+    CategoryGalleryNavStore.categoryKey = categoryKey;
     CategoryGalleryNavStore.heroImageUri = meta?.heroImageUri ?? '';
     CategoryGalleryNavStore.columnsPerRow = meta?.columnsPerRow === 4 ? 4 : 3;
     hilog.warn(

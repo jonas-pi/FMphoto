@@ -1,5 +1,6 @@
 import { UIContext } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   AiPersonItem,
   GalleryListItem,
@@ -8,7 +9,7 @@ import {
   SmartCategoryItem
 } from '../../model/FnApiTypes';
 import { AppSession } from '../../auth/AppSession';
-import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION, FN_TAB_SWITCH_OUT_DURATION } from '../../common/FnMotion';
+import { FN_GLOBAL_TAB_SWITCH_OFFSET_VP, FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { CATEGORY_GALLERY_INITIAL_RENDER_CAP, CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
@@ -20,6 +21,7 @@ import {
   loadRecentAddedItems
 } from './GalleryAlbumModeLoaders';
 import {
+  CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP,
   categoryCount,
   categoryCover,
   categoryLocalMediaCount,
@@ -30,8 +32,6 @@ import {
 } from './GalleryAlbumModeData';
 import { nasUrl } from '../GalleryAlbumCommon';
 import { GALLERY_UPLOAD_RECHECK_MS } from './GalleryAlbumTabConstants';
-
-const CATEGORY_GALLERY_LARGE_INITIAL_RENDER_CAP = 120;
 
 export interface GalleryAlbumModeOrchestratorHost {
   getUIContext(): UIContext;
@@ -48,6 +48,7 @@ export interface GalleryAlbumModeOrchestratorHost {
   searchResults: GalleryListItem[];
   categoryLoading: boolean;
   categoryOpening: boolean;
+  categoryOpeningText: string;
   categoryError: string;
   categoryItems: MediaCategoryItem[];
   smartCategoryLoading: boolean;
@@ -81,23 +82,16 @@ function clearAllSubModeFlags(host: GalleryAlbumModeOrchestratorHost): void {
   host.inPersonMode = false;
 }
 
-export function galleryAlbumPlayModeSwitchMotion(host: GalleryAlbumModeOrchestratorHost): void {
+export function galleryAlbumPlayModeSwitchMotion(host: GalleryAlbumModeOrchestratorHost, direction: number = 1): void {
+  host.modeSwitchOpacity = 1;
+  host.modeSwitchOffsetY = FN_GLOBAL_TAB_SWITCH_OFFSET_VP * (direction >= 0 ? 1 : -1);
   host.getUIContext().animateTo(
-    { duration: FN_TAB_SWITCH_OUT_DURATION, curve: FN_TAB_SWITCH_CURVE },
+    { duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE },
     (): void => {
-      host.modeSwitchOpacity = 0.9;
-      host.modeSwitchOffsetY = 10;
+      host.modeSwitchOpacity = 1;
+      host.modeSwitchOffsetY = 0;
     }
   );
-  setTimeout((): void => {
-    host.getUIContext().animateTo(
-      { duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE },
-      (): void => {
-        host.modeSwitchOpacity = 1;
-        host.modeSwitchOffsetY = 0;
-      }
-    );
-  }, 90);
 }
 
 export async function galleryAlbumRunSearch(
@@ -109,7 +103,7 @@ export async function galleryAlbumRunSearch(
     return;
   }
   host.exitGallerySelection();
-  galleryAlbumPlayModeSwitchMotion(host);
+  galleryAlbumPlayModeSwitchMotion(host, 1);
   host.inSearchMode = true;
   host.inCategoryMode = false;
   host.inSmartCategoryMode = false;
@@ -192,7 +186,7 @@ export function galleryAlbumClearPerson(host: GalleryAlbumModeOrchestratorHost):
 
 export function galleryAlbumBackToMain(host: GalleryAlbumModeOrchestratorHost): void {
   host.exitGallerySelection();
-  galleryAlbumPlayModeSwitchMotion(host);
+  galleryAlbumPlayModeSwitchMotion(host, -1);
   galleryAlbumClearSearch(host);
   galleryAlbumClearCategory(host);
   galleryAlbumClearSmartCategory(host);
@@ -270,7 +264,7 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
 
 export async function galleryAlbumLoadMediaCategories(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
   host.exitGallerySelection();
-  galleryAlbumPlayModeSwitchMotion(host);
+  galleryAlbumPlayModeSwitchMotion(host, 1);
   clearAllSubModeFlags(host);
   host.inCategoryMode = true;
   host.categoryLoading = true;
@@ -290,7 +284,7 @@ export async function galleryAlbumLoadMediaCategories(host: GalleryAlbumModeOrch
 
 export async function galleryAlbumLoadSmartCategories(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
   host.exitGallerySelection();
-  galleryAlbumPlayModeSwitchMotion(host);
+  galleryAlbumPlayModeSwitchMotion(host, 1);
   clearAllSubModeFlags(host);
   host.inSmartCategoryMode = true;
   host.smartCategoryLoading = true;
@@ -352,7 +346,7 @@ export async function galleryAlbumEnrichPersonStats(
 
 export async function galleryAlbumLoadPersons(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
   host.exitGallerySelection();
-  galleryAlbumPlayModeSwitchMotion(host);
+  galleryAlbumPlayModeSwitchMotion(host, 1);
   host.personOpening = false;
   clearAllSubModeFlags(host);
   host.inPersonMode = true;
@@ -432,8 +426,9 @@ export async function galleryAlbumOpenCategory(
   const isActive = host.createNavigationGuard();
   const title = categoryTitle(cat);
   const categoryKey = cat.key !== undefined ? cat.key : '';
+  host.categoryOpeningText = categoryKey === 'photo' ? '加载照片中…' : `打开${title}中…`;
   const initialRenderCap = categoryKey === 'photo'
-    ? CATEGORY_GALLERY_LARGE_INITIAL_RENDER_CAP
+    ? CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP
     : CATEGORY_GALLERY_INITIAL_RENDER_CAP;
   const localMediaCount = categoryLocalMediaCount(cat);
   const local = parseCategoryMedia(
@@ -443,6 +438,16 @@ export async function galleryAlbumOpenCategory(
   const heroRel = categoryCover(cat);
   const heroImageUri = heroRel.length > 0 ? nasUrl(host.baseUrl, heroRel) : '';
   const expectedTotalCount = Math.max(categoryCount(cat), localMediaCount, local.length);
+  hilog.warn(
+    0xFF00,
+    'GalleryDiag',
+    'openCategory title=%{public}s key=%{public}s localMediaCount=%{public}d localInitial=%{public}d expectedTotal=%{public}d',
+    title,
+    categoryKey,
+    localMediaCount,
+    local.length,
+    expectedTotalCount
+  );
   try {
     if (local.length > 0) {
       if (!isActive()) {

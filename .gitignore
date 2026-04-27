@@ -4,6 +4,10 @@
 /.idea
 /.cursor
 /.cursorrules
+/.trae
+/.vscode
+*.code-workspace
+*.iml
 /参考文档
 **/build
 # 仅放行发布用未签名 HAP，其余 build 产物继续忽略，避免仓库膨胀
@@ -19,3 +23,10 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+/docs/huawei_ui_design_kit/
+/huawei_doc_*
+/ui_design_*
+/huawei_ui_design_kit.md
+/huawei_ui_design_page.html
+/harmonyos_guides_catalog.json
+/hmos_dp1.json

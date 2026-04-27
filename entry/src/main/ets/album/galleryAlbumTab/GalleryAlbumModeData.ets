@@ -8,6 +8,8 @@ import {
 type LooseGalleryCoverRecord = Record<string, Object | string | number | undefined | null>;
 type LooseCategoryMediaEntry = GalleryListItem | object | null | undefined;
 
+export const CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP = 120;
+
 function readFirstNonEmptyString(raw: LooseGalleryCoverRecord, keys: string[]): string {
   for (let i = 0; i < keys.length; i++) {
     const value = raw[keys[i]];

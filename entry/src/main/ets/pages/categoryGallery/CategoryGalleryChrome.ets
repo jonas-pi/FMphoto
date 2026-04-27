@@ -1,7 +1,9 @@
 import {
   FN_FLOATING_TOP_BOTTOM_GAP_VP,
   FN_FLOATING_TOP_CONTROL_SIZE_VP,
+  FN_FLOATING_TOP_META_FONT_VP,
   FN_FLOATING_TOP_MARGIN_VP,
+  FN_FLOATING_TOP_TITLE_STACK_GAP_VP,
   FnFloatingTopPillButton
 } from '../../common/FnUiCommon';
 import {
@@ -11,8 +13,6 @@ import {
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
-
-const CATEGORY_GALLERY_COUNT_ROW_HEIGHT_VP: number = 22;
 
 @Component
 export struct CategoryGalleryChrome {
@@ -57,7 +57,7 @@ export struct CategoryGalleryChrome {
         .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
         .justifyContent(FlexAlign.Start)
 
-        Row() {
+        Column({ space: FN_FLOATING_TOP_TITLE_STACK_GAP_VP }) {
           Text(this.titleText())
             .fontSize(this.selectionMode ? GALLERY_TOP_BAR_SUBTITLE_FONT_VP : GALLERY_TOP_BAR_TITLE_FONT_VP)
             .fontWeight(this.selectionMode ? FontWeight.Medium : FontWeight.Bold)
@@ -65,11 +65,20 @@ export struct CategoryGalleryChrome {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .fontColor($r('app.color.text_primary'))
+
+          if (!this.selectionMode) {
+            Text(this.countText())
+              .fontSize(FN_FLOATING_TOP_META_FONT_VP)
+              .fontColor($r('app.color.text_secondary'))
+              .textAlign(TextAlign.Center)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
         .layoutWeight(2)
         .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
         .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
+        .alignItems(HorizontalAlign.Center)
 
         Row() {
           FnFloatingTopPillButton({
@@ -85,14 +94,6 @@ export struct CategoryGalleryChrome {
       .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .alignItems(VerticalAlign.Center)
       .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
-
-      Text(this.countText())
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-        .textAlign(TextAlign.Center)
-        .width('100%')
-        .height(CATEGORY_GALLERY_COUNT_ROW_HEIGHT_VP)
-        .visibility(this.selectionMode ? Visibility.Hidden : Visibility.Visible)
     }
     .width('100%')
     .margin({
