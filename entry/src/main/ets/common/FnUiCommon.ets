@@ -20,11 +20,28 @@ import {
 
 export const FN_FLOATING_TOP_MARGIN_VP: number = 8;
 export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
-export const FN_FLOATING_TOP_CONTROL_SIZE_VP: number = 44;
+export const FN_FLOATING_TOP_CONTROL_SIZE_VP: number = 40;
 export const FN_FLOATING_TOP_CONTROL_RADIUS_VP: number = FN_FLOATING_TOP_CONTROL_SIZE_VP / 2;
-export const FN_FLOATING_TOP_PILL_MIN_WIDTH_VP: number = 72;
+export const FN_FLOATING_TOP_PILL_MIN_WIDTH_VP: number = 62;
 export const FN_FLOATING_TOP_TOTAL_HEIGHT_VP: number =
   FN_FLOATING_TOP_MARGIN_VP + FN_FLOATING_TOP_CONTROL_SIZE_VP + FN_FLOATING_TOP_BOTTOM_GAP_VP;
+export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;
+export const FN_BOTTOM_DOCK_SIDE_GAP_VP: number = 10;
+export const FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP: number = 54;
+export const FN_BOTTOM_DOCK_CENTER_HEIGHT_VP: number = 54;
+export const FN_BOTTOM_DOCK_CENTER_RADIUS_VP: number = 27;
+export const FN_BOTTOM_DOCK_ITEM_RADIUS_VP: number = 16;
+export const FN_BOTTOM_DOCK_ICON_SIZE_VP: number = 19;
+export const FN_BOTTOM_DOCK_LABEL_SIZE_VP: number = 11;
+export const FN_BOTTOM_DOCK_INNER_PADDING_H_VP: number = 5;
+export const FN_BOTTOM_DOCK_INNER_SPACE_VP: number = 6;
+export const FN_BOTTOM_DOCK_ITEM_HEIGHT_VP: number = FN_BOTTOM_DOCK_CENTER_HEIGHT_VP - 8;
+export const FN_BOTTOM_DOCK_BASE_GAP_VP: number = 16;
+
+export function fnBottomDockBottomGap(bottomSafeInsetVp: number): number {
+  const liftedGap = FN_BOTTOM_DOCK_BASE_GAP_VP + (FN_BOTTOM_DOCK_CENTER_HEIGHT_VP / 4);
+  return Math.max(liftedGap, bottomSafeInsetVp + liftedGap);
+}
 
 @Component
 export struct FnFloatingTopPillButton {
@@ -62,7 +79,7 @@ export struct FnFloatingTopCircleButton {
   build() {
     Button({ type: ButtonType.Circle, stateEffect: true }) {
       SymbolGlyph(this.symbol)
-        .fontSize(18)
+        .fontSize(17)
         .fontColor([this.active ? Color.White : this.fontColor])
     }
     .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)

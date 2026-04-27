@@ -17,6 +17,7 @@ import {
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { AppSession } from '../auth/AppSession';
+import { FnListDataSource } from '../common/FnListDataSource';
 import { FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -43,6 +44,7 @@ import {
   categoryGalleryItemIdOf,
   categoryGalleryOnCellClick,
   categoryGalleryOnSlidePanUpdate,
+  categoryGalleryOnSlideTouchMoveWindow,
   categoryGalleryOnThumbLongPress,
   categoryGalleryPickFlatForRow,
   categoryGalleryReadGestureFingerWindow,
@@ -54,11 +56,11 @@ import {
 } from './categoryGallery/CategoryGallerySelectionController';
 import {
   buildCategoryGalleryViewData,
+  CgFingerWindowPoint,
   CgThumbHitRect,
   DayGroup,
   RowModel
 } from './categoryGallery/CategoryGalleryTypes';
-import { CategoryGalleryListBlockDataSource } from './categoryGallery/CategoryGalleryListBlockDataSource';
 
 interface CategoryGalleryListBlock {
   key: string;
@@ -106,8 +108,8 @@ struct CategoryGallery {
 
   private cgLongPressIgnoreUntil: number = 0;
   private listBlocks: Array<CategoryGalleryListBlock> = [];
-  private listBlockSource: CategoryGalleryListBlockDataSource<CategoryGalleryListBlock> =
-    new CategoryGalleryListBlockDataSource<CategoryGalleryListBlock>();
+  private listBlockSource: FnListDataSource<CategoryGalleryListBlock> =
+    new FnListDataSource<CategoryGalleryListBlock>();
   private cgThumbHitBounds: Map<string, CgThumbHitRect> = new Map();
   private cgSlideRefX: number = 0;
   private cgSlideRefY: number = 0;
@@ -123,6 +125,7 @@ struct CategoryGallery {
   private cgDeferredBackgroundLoadTimer: number = -1;
   private cgDeferredSnapshotApplyTimer: number = -1;
   private cgLastSnapshotApplyAtMs: number = 0;
+  private cgInitialSlidePending: boolean = false;
 
   private recycleThumbCache(aggressive: boolean = false): void {
     const recentAddedAggressive = this.isRecentAddedStreamingMode() &&
@@ -264,6 +267,19 @@ struct CategoryGallery {
     return categoryGalleryReadGestureFingerWindow(ev);
   }
 
+  private readTouchFingerWindow(ev: TouchEvent): CgFingerWindowPoint | null {
+    if (ev.touches === undefined || ev.touches.length < 1) {
+      return null;
+    }
+    const f0 = ev.touches[0];
+    const x = f0.windowX ?? f0.displayX ?? f0.x;
+    const y = f0.windowY ?? f0.displayY ?? f0.y;
+    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
+  }
+
   private pickCgFlatForRow(rowStart: number, xPx: number, yPx: number): number {
     return categoryGalleryPickFlatForRow(this.asSelectionHost(), rowStart, xPx, yPx);
   }
@@ -278,6 +294,10 @@ struct CategoryGallery {
 
   private onCgSlidePanUpdate(ev: GestureEvent): void {
     categoryGalleryOnSlidePanUpdate(this.asSelectionHost(), ev);
+  }
+
+  private onCgSlideTouchMoveWindow(xPx: number, yPx: number): void {
+    categoryGalleryOnSlideTouchMoveWindow(this.asSelectionHost(), xPx, yPx);
   }
 
   private onCgThumbLongPress(item: GalleryListItem, flatIdx: number): void {
@@ -377,8 +397,23 @@ struct CategoryGallery {
       });
       for (let rowIdx = 0; rowIdx < group.rows.length; rowIdx++) {
         const row = group.rows[rowIdx];
+        const cellKeys: string[] = [];
+        const cols = this.columnsPerRow === 4 ? 4 : 3;
+        for (let col = 0; col < cols; col++) {
+          const item = this.rowCellAt(row, col);
+          if (item === undefined) {
+            cellKeys.push(`empty_${col}`);
+            continue;
+          }
+          const id = this.itemIdOf(item);
+          if (id.length > 0) {
+            cellKeys.push(`id_${id}`);
+            continue;
+          }
+          cellKeys.push(`flat_${this.flatPos(groupIdx, row.startIdx + col)}`);
+        }
         blocks.push({
-          key: `r_${group.sortKey}_${row.startIdx}`,
+          key: `r_${group.sortKey}_${row.startIdx}_${cellKeys.join('__')}`,
           isHeader: false,
           groupIdx: groupIdx,
           row: row
@@ -812,43 +847,80 @@ struct CategoryGallery {
       Row({ space: 2 }) {
         ForEach(this.rowColumnIndexes(), (col: number) => {
           this.dayRowCell(groupIdx, row, col)
-        }, (col: number) => `cg_col_${col}`)
+        }, (col: number) => this.rowCellStableKey(groupIdx, row, col))
       }
       .width('100%')
       .padding({ left: 2, right: 2, top: 1, bottom: 1 })
+      .onTouch((event: TouchEvent): void => {
+        if (!this.cgSlideGestureActive) {
+          if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+            this.clearInitialCgSlideGesture();
+          }
+          return;
+        }
+        if (event.type === TouchType.Move) {
+          const pt = this.readTouchFingerWindow(event);
+          if (pt === null) {
+            return;
+          }
+          this.onCgSlideTouchMoveWindow(pt.x, pt.y);
+        }
+      })
       .parallelGesture(GestureGroup(GestureMode.Parallel,
-        LongPressGesture({ repeat: false, duration: 420 })
-          .onAction((ev: GestureEvent): void => {
-            this.endCgSlideSelectGesture();
-            const rowStart = this.rowGlobalStartFlat(groupIdx, row);
-            const pt = this.readGestureFingerWindow(ev);
-            if (pt === null) {
-              return;
-            }
-            const xPx = this.vpToPx(pt.x);
-            const yPx = this.vpToPx(pt.y);
-            const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
-            if (fi < 0 || fi >= this.flatItems.length) {
-              return;
-            }
-            const longPressItem = this.flatItems[fi];
-            this.onCgThumbLongPress(longPressItem, fi);
-            if (!this.selectionMode || this.cgSlideGestureActive) {
-              return;
-            }
-            this.beginCgSlideSelectGesture(ev, fi);
-          }),
+        GestureGroup(GestureMode.Sequence,
+          LongPressGesture({ repeat: false, duration: 420 })
+            .onAction((ev: GestureEvent): void => {
+              this.clearInitialCgSlideGesture();
+              this.endCgSlideSelectGesture();
+              const rowStart = this.rowGlobalStartFlat(groupIdx, row);
+              const pt = this.readGestureFingerWindow(ev);
+              if (pt === null) {
+                return;
+              }
+              const xPx = this.vpToPx(pt.x);
+              const yPx = this.vpToPx(pt.y);
+              const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
+              if (fi < 0 || fi >= this.flatItems.length) {
+                return;
+              }
+              const longPressItem = this.flatItems[fi];
+              const wasSelectionMode = this.selectionMode;
+              this.onCgThumbLongPress(longPressItem, fi);
+              if (!wasSelectionMode) {
+                this.armInitialCgSlideGesture(ev, fi);
+              }
+            }),
+          PanGesture({
+            fingers: 1,
+            direction: PanDirection.All,
+            distance: categoryGallerySlidePanDistance(true)
+          })
+            .onActionUpdate((ev: GestureEvent): void => {
+              if (!this.cgInitialSlidePending || !this.cgSlideGestureActive) {
+                return;
+              }
+              this.onCgSlidePanUpdate(ev);
+            })
+            .onActionEnd((): void => {
+              this.clearInitialCgSlideGesture();
+              this.endCgSlideSelectGesture();
+            })
+            .onActionCancel((): void => {
+              this.clearInitialCgSlideGesture();
+              this.endCgSlideSelectGesture();
+            })
+        ),
         PanGesture({
           fingers: 1,
-          direction: this.cgSlideGestureActive ? PanDirection.All : PanDirection.Horizontal,
-          distance: categoryGallerySlidePanDistance(this.cgSlideGestureActive)
+          direction: PanDirection.Horizontal,
+          distance: categoryGallerySlidePanDistance(this.selectionMode)
         })
           .onActionStart((ev: GestureEvent): void => {
             if (!this.selectionMode) {
               return;
             }
-            if (this.cgSlideGestureActive) {
-              this.endCgSlideSelectGesture();
+            if (this.cgSlideGestureActive || this.cgInitialSlidePending) {
+              return;
             }
             const rowStart = this.rowGlobalStartFlat(groupIdx, row);
             const pt = this.readGestureFingerWindow(ev);
@@ -867,21 +939,14 @@ struct CategoryGallery {
             this.onCgSlidePanUpdate(ev);
           })
           .onActionEnd((): void => {
+            this.clearInitialCgSlideGesture();
             this.endCgSlideSelectGesture();
           })
           .onActionCancel((): void => {
+            this.clearInitialCgSlideGesture();
             this.endCgSlideSelectGesture();
           })
       ))
-      .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-        if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
-          return GestureJudgeResult.CONTINUE;
-        }
-        if (!this.selectionMode) {
-          return GestureJudgeResult.REJECT;
-        }
-        return GestureJudgeResult.CONTINUE;
-      })
     }
     .draggable(false)
     .margin({ bottom: 2 })
@@ -893,6 +958,27 @@ struct CategoryGallery {
 
   private rowCellAt(row: RowModel, col: number): GalleryListItem | undefined {
     return col >= 0 && col < row.cells.length ? row.cells[col] : undefined;
+  }
+
+  private armInitialCgSlideGesture(ev: GestureEvent, anchorFlat: number): void {
+    this.cgInitialSlidePending = true;
+    this.beginCgSlideSelectGesture(ev, anchorFlat);
+  }
+
+  private clearInitialCgSlideGesture(): void {
+    this.cgInitialSlidePending = false;
+  }
+
+  private rowCellStableKey(groupIdx: number, row: RowModel, col: number): string {
+    const item = this.rowCellAt(row, col);
+    if (item === undefined) {
+      return `cg_cell_${groupIdx}_${row.startIdx}_${col}_empty`;
+    }
+    const id = this.itemIdOf(item);
+    if (id.length > 0) {
+      return `cg_cell_${groupIdx}_${row.startIdx}_${col}_id_${id}`;
+    }
+    return `cg_cell_${groupIdx}_${row.startIdx}_${col}_flat_${this.flatPos(groupIdx, row.startIdx + col)}`;
   }
 
   @Builder
@@ -957,6 +1043,26 @@ struct CategoryGallery {
             .edgeEffect(EdgeEffect.Spring)
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.cgScrollEnabled)
+            .onTouch((event: TouchEvent): void => {
+              if (!this.cgSlideGestureActive) {
+                if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                  this.clearInitialCgSlideGesture();
+                }
+                return;
+              }
+              if (event.type === TouchType.Move) {
+                const pt = this.readTouchFingerWindow(event);
+                if (pt === null) {
+                  return;
+                }
+                this.onCgSlideTouchMoveWindow(pt.x, pt.y);
+                return;
+              }
+              if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                this.clearInitialCgSlideGesture();
+                this.endCgSlideSelectGesture();
+              }
+            })
             .onDidScroll((_offset: number, scrollState: ScrollState): void => {
               this.onListScrollStateChange(scrollState);
             })

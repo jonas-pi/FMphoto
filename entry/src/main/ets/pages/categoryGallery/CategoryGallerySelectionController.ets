@@ -395,6 +395,21 @@ export function categoryGalleryOnSlidePanUpdate(host: CategoryGallerySelectionHo
   categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
 }
 
+export function categoryGalleryOnSlideTouchMoveWindow(
+  host: CategoryGallerySelectionHost,
+  xPx: number,
+  yPx: number
+): void {
+  if (!host.cgSlideGestureActive) {
+    return;
+  }
+  const hitFlat = categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
+  if (hitFlat >= 0) {
+    host.cgSlideLastEndFlat = hitFlat;
+  }
+  categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
+}
+
 export function categoryGalleryOnThumbLongPress(
   host: CategoryGallerySelectionHost,
   item: GalleryListItem,

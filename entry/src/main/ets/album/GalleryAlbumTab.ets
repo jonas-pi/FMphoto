@@ -71,6 +71,7 @@ import {
   playGalleryPullRefreshThresholdHaptic
 } from './GallerySelectionHaptic';
 import { FnFullLoadingMask } from '../common/FnUiCommon';
+import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../common/GalleryTopBarLayout';
 import {
   GalleryAlbumTopBar,
   GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP
@@ -213,10 +214,12 @@ import {
   SelectionGestureControllerHost,
   selectionApplyGallerySlideRowRangeSelection,
   selectionBeginGallerySlideSelectGesture,
+  selectionBeginGallerySlideSelectGestureAtWindowPx,
   selectionEndGallerySlideSelectGesture,
   selectionHitGalleryThumbDomPx,
   selectionHitSearchThumbDomPx,
   selectionOnGallerySlidePanUpdate,
+  selectionOnGallerySlideTouchMoveWindow,
   selectionOnGalleryThumbLongPress,
   selectionOnGalleryThumbTap,
   selectionOnSearchThumbTap,
@@ -343,6 +346,8 @@ export struct GalleryAlbumTab {
   @Prop floatingDockInsetBottomVp: number = 0;
   @Prop @Watch('onHomeSurfaceChanged') homeSurface: string = 'photos';
   onSearchModeVisibilityChange: (hiddenBottomNav: boolean) => void = (_: boolean): void => {};
+  onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void) => void =
+    (_: boolean, __: () => void, ___: () => void): void => {};
   /** Home.onPageShow() 閫掑 鈫?瑙﹀彂鍒犻櫎鍚屾锛堝畨鍏ㄤ繚闅滐紝涓嶄緷璧栧瓙缁勪欢 onPageShow 浼犳挱锛?*/
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
 
@@ -352,6 +357,7 @@ export struct GalleryAlbumTab {
   @State private sections: GalleryAlbumDaySectionState[] = [];
   @State private rootPhotosScrollTitle: string = '照片';
   private rootPhotosScrolledUnderTopBar: boolean = false;
+  private rootPhotosTitlePreferListAnchorUntilMs: number = 0;
   private lastInteractiveVisibleRangeRefreshAtMs: number = 0;
   private albumsHomeSmartPrefetchGen: number = 0;
   private albumsHomePersonPrefetchGen: number = 0;
@@ -362,6 +368,7 @@ export struct GalleryAlbumTab {
   @State private searchResults: GalleryListItem[] = [];
   @State private searchLoading: boolean = false;
   @State private searchError: string = '';
+  @State private moreMenuExpanded: boolean = false;
   @State private inCategoryMode: boolean = false;
   @State private categoryLoading: boolean = false;
   @State private categoryOpening: boolean = false;
@@ -559,12 +566,39 @@ export struct GalleryAlbumTab {
     }
   }
 
+  private shouldUseHomeSelectionDock(): boolean {
+    return this.isRootPhotosSurfaceVisible() && this.gallerySelectionMode;
+  }
+
+  private notifySelectionDockStateChange(): void {
+    this.onSelectionDockStateChange(
+      this.shouldUseHomeSelectionDock(),
+      (): void => {
+        void galleryAlbumConfirmAndBatchDownload(this.asBatchActionHost());
+      },
+      (): void => {
+        void galleryAlbumConfirmAndBatchDelete(this.asBatchActionHost());
+      }
+    );
+  }
+
+  private dismissMoreMenu(): void {
+    if (!this.moreMenuExpanded) {
+      return;
+    }
+    this.moreMenuExpanded = false;
+  }
+
   private setGallerySelectionModeState(value: boolean): void {
     if (this.gallerySelectionMode === value) {
       return;
     }
     this.gallerySelectionMode = value;
+    if (value) {
+      this.dismissMoreMenu();
+    }
     this.notifyMainGallerySelectionVisualRefresh();
+    this.notifySelectionDockStateChange();
   }
 
   private setGallerySelectedIdsStateLocal(value: string[]): void {
@@ -1220,6 +1254,7 @@ export struct GalleryAlbumTab {
   }
 
   private endTimelineDrag(): void {
+    this.rootPhotosTitlePreferListAnchorUntilMs = Date.now() + 1400;
     this.timelineReleaseAwaitVisibleCallback = true;
     timelineGestureEndTimelineDrag(this.asTimelineGestureHost());
   }
@@ -1299,6 +1334,7 @@ export struct GalleryAlbumTab {
 
   private onSearchModeChanged(): void {
     this.onSearchModeVisibilityChange(this.inSearchMode);
+    this.notifySelectionDockStateChange();
   }
 
   private isPhotosHomeSurface(): boolean {
@@ -1427,21 +1463,38 @@ export struct GalleryAlbumTab {
     if (total <= 0) {
       return null;
     }
-    const titleFromGlobalSlots = this.resolveRootPhotosVisibleDayTitleFromGlobalSlots();
-    if (titleFromGlobalSlots !== null) {
-      return titleFromGlobalSlots;
-    }
     const scrollY = this.readMainGalleryScrollOffsetVp();
     const estimatedAnchor = Math.max(
       0,
       Math.min(this.estimateFirstVisibleNodeIndexFromScrollY(scrollY, total), total - 1)
     );
+    const preferListAnchor =
+      this.timelineSeekInProgress ||
+      this.timelineReleaseAwaitVisibleCallback ||
+      Date.now() <= this.rootPhotosTitlePreferListAnchorUntilMs;
+    const visibleAnchor = Math.max(0, Math.min(this.listVisibleFirstNodeIdx, total - 1));
+    if (preferListAnchor) {
+      const visibleTitle = this.resolveRootPhotosVisibleDayTitleNearAnchor(visibleAnchor, total);
+      if (visibleTitle !== null) {
+        return visibleTitle;
+      }
+      const estimatedTitle = this.resolveRootPhotosVisibleDayTitleNearAnchor(estimatedAnchor, total);
+      if (estimatedTitle !== null) {
+        return estimatedTitle;
+      }
+      if (this.timelineReleaseAwaitVisibleCallback) {
+        return null;
+      }
+    }
+    const visibleTitle = this.resolveRootPhotosVisibleDayTitleNearAnchor(visibleAnchor, total);
+    if (visibleTitle !== null) {
+      return visibleTitle;
+    }
     const estimatedTitle = this.resolveRootPhotosVisibleDayTitleNearAnchor(estimatedAnchor, total);
     if (estimatedTitle !== null) {
       return estimatedTitle;
     }
-    const visibleAnchor = Math.max(0, Math.min(this.listVisibleFirstNodeIdx, total - 1));
-    return this.resolveRootPhotosVisibleDayTitleNearAnchor(visibleAnchor, total);
+    return this.resolveRootPhotosVisibleDayTitleFromGlobalSlots();
   }
 
   private refreshRootPhotosScrollTitle(): void {
@@ -1471,6 +1524,9 @@ export struct GalleryAlbumTab {
 
   private maybeRefreshRootPhotosScrollTitleForThreshold(): void {
     if (!this.isPhotosHomeSurface() || !this.isRootPhotosSurfaceVisible()) {
+      return;
+    }
+    if (this.timelineReleaseAwaitVisibleCallback) {
       return;
     }
     const nextScrolledUnderTopBar = this.isRootPhotosContentScrolledUnderTopBar();
@@ -1619,6 +1675,10 @@ export struct GalleryAlbumTab {
   }
 
   private tryConsumeSurfaceBack(): boolean {
+    if (this.moreMenuExpanded) {
+      this.dismissMoreMenu();
+      return true;
+    }
     if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
       return false;
     }
@@ -1627,12 +1687,15 @@ export struct GalleryAlbumTab {
   }
 
   private onHomeSurfaceChanged(): void {
+    this.dismissMoreMenu();
     this.syncHomeSurface(true);
     this.refreshRootPhotosScrollTitle();
     this.ensureAlbumsHomeSupplementaryData();
+    this.notifySelectionDockStateChange();
   }
 
   private openSearchPanel(): void {
+    this.dismissMoreMenu();
     galleryAlbumExitSelection(this.asSelectionGestureHost());
     if (!this.inSearchMode) {
       galleryAlbumPlayModeSwitchMotion(this.asModeOrchestratorHost());
@@ -1646,39 +1709,8 @@ export struct GalleryAlbumTab {
     this.searchResults = [];
   }
 
-  private async showMoreMenu(): Promise<void> {
-    try {
-      const choice = await this.getUIContext().getPromptAction().showActionMenu({
-        title: this.isAlbumsHomeSurface() ? '相册更多' : '照片更多',
-        buttons: [
-          { text: '智能分类', color: '#007AFF' },
-          { text: '人物', color: '#007AFF' },
-          { text: '最近添加', color: '#007AFF' },
-          { text: '收藏', color: '#007AFF' },
-          { text: '回收站', color: '#007AFF' }
-        ]
-      });
-      switch (choice.index) {
-        case 0:
-          void galleryAlbumLoadSmartCategories(this.asModeOrchestratorHost());
-          return;
-        case 1:
-          void galleryAlbumLoadPersons(this.asModeOrchestratorHost());
-          return;
-        case 2:
-          void this.openRecentAdded();
-          return;
-        case 3:
-          void this.openCollectGallery();
-          return;
-        case 4:
-          this.openRecycleBinPage();
-          return;
-        default:
-          return;
-      }
-    } catch (_e) {
-    }
+  private showMoreMenu(): void {
+    this.moreMenuExpanded = !this.moreMenuExpanded;
   }
 
   private secondaryModeContentInsetTopVp(): number {
@@ -1712,6 +1744,7 @@ export struct GalleryAlbumTab {
 
   aboutToAppear(): void {
     this.onSearchModeVisibilityChange(this.inSearchMode);
+    this.notifySelectionDockStateChange();
     this.syncHomeSurface(false);
     this.refreshRootPhotosScrollTitle();
     this.ensureAlbumsHomeSupplementaryData();
@@ -1743,6 +1776,8 @@ export struct GalleryAlbumTab {
   /** 鍒囧埌鍏朵粬搴曢儴 Tab 鏃跺嵏杞斤細鎶婁富鏃堕棿绾垮揩鐓у啓鍏ュ唴瀛橈紝渚涗笅娆?aboutToAppear 鎭㈠ */
   aboutToDisappear(): void {
     this.onSearchModeVisibilityChange(false);
+    this.dismissMoreMenu();
+    this.onSelectionDockStateChange(false, (): void => {}, (): void => {});
     timelineGestureCancelListSettledTimer(this.asTimelineGestureHost());
     this.isDraggingOrFling = false;
     this.timelineReleaseAwaitVisibleCallback = false;
@@ -1814,6 +1849,7 @@ export struct GalleryAlbumTab {
         rootSurfaceTitle: this.currentHomeSurfaceTitle(),
         gallerySelectionMode: this.gallerySelectionMode,
         gallerySelectedCount: this.gallerySelectedIds.length,
+        moreMenuExpanded: this.moreMenuExpanded,
         searchQuery: this.searchQuery,
         topSafeInsetVp: this.topSafeInsetVp,
         pageShowSignal: this.pageShowSignal,
@@ -1839,7 +1875,7 @@ export struct GalleryAlbumTab {
           this.returnToHomeSurfaceRoot(true);
         },
         onShowMoreMenu: (): void => {
-          void this.showMoreMenu();
+          this.showMoreMenu();
         }
       })
 
@@ -1851,6 +1887,42 @@ export struct GalleryAlbumTab {
         .height('100%')
         .hitTestBehavior(HitTestMode.Transparent)
         .zIndex(1)
+
+        if (this.moreMenuExpanded) {
+          Stack({ alignContent: Alignment.TopEnd }) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(Color.Transparent)
+              .onClick((): void => {
+                this.dismissMoreMenu();
+              })
+
+            Column({ space: 10 }) {
+              Text(this.isAlbumsHomeSurface() ? '相册菜单' : '照片菜单')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+
+              Text('菜单内容暂时清空')
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+            .backgroundColor($r('app.color.gallery_material_surface_bg'))
+            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+            .borderRadius(22)
+            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+            .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
+            .margin({
+              top: this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP + 8,
+              right: GALLERY_TOP_BAR_PAD_RIGHT_VP
+            })
+          }
+          .width('100%')
+          .height('100%')
+          .zIndex(2)
+        }
 
         Column() {
       // 鈹€鈹€ 鎼滅储缁撴灉瑙嗗浘 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -1869,6 +1941,7 @@ export struct GalleryAlbumTab {
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
+          galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
           modeSwitchOpacity: this.modeSwitchOpacity,
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           itemIdOf: (item: GalleryListItem): string => galleryAlbumItemIdOf(item),
@@ -1887,6 +1960,8 @@ export struct GalleryAlbumTab {
           endGallerySlideSelectGesture: (): void => selectionEndGallerySlideSelectGesture(this.asSelectionGestureHost()),
           onGallerySlidePanUpdate: (ev: GestureEvent): void =>
             selectionOnGallerySlidePanUpdate(this.asSelectionGestureHost(), ev),
+          onGallerySlideTouchMoveWindow: (xPx: number, yPx: number): void =>
+            selectionOnGallerySlideTouchMoveWindow(this.asSelectionGestureHost(), xPx, yPx),
           ensureMainListScrollEnabled: (): void => {
             this.galleryMainListScrollEnabled = true;
           },
@@ -2023,10 +2098,12 @@ export struct GalleryAlbumTab {
           gallerySelectionMode: this.gallerySelectionMode,
           gallerySelectedCount: this.gallerySelectedIds.length,
           gallerySelectedIds: this.gallerySelectedIds,
+          showBatchActionBar: !this.shouldUseHomeSelectionDock(),
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
+          galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
           timelineSidebarDragging: this.timelineSidebarDragging,
           isDraggingOrFling: this.isDraggingOrFling,
           sectionsLength: this.sections.length,
@@ -2053,14 +2130,27 @@ export struct GalleryAlbumTab {
           endGallerySlideSelectGesture: (): void => selectionEndGallerySlideSelectGesture(this.asSelectionGestureHost()),
           readGestureFingerWindow: (ev: GestureEvent): GalleryFingerWindowPoint | null =>
             selectionReadGestureFingerWindow(this.asSelectionGestureHost(), ev),
+          pickGalleryThumbFlatUnderPoint: (xPx: number, yPx: number): number =>
+            selectionPickGalleryThumbFlatUnderPoint(this.asSelectionGestureHost(), xPx, yPx),
           pickGalleryThumbFlatForRowOrCache: (node: GalleryFlowNode, xPx: number, yPx: number): number =>
             selectionPickGalleryThumbFlatForRowOrCache(this.asSelectionGestureHost(), node, xPx, yPx),
           onGalleryThumbLongPress: (item: GalleryListItem): void =>
             selectionOnGalleryThumbLongPress(this.asSelectionGestureHost(), item),
           beginGallerySlideSelectGesture: (ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void =>
             selectionBeginGallerySlideSelectGesture(this.asSelectionGestureHost(), ev, item, anchorFlat),
+          beginGallerySlideSelectGestureAtWindowPx:
+            (item: GalleryListItem, anchorFlat: number, xPx: number, yPx: number): void =>
+              selectionBeginGallerySlideSelectGestureAtWindowPx(
+                this.asSelectionGestureHost(),
+                item,
+                anchorFlat,
+                xPx,
+                yPx
+              ),
           onGallerySlidePanUpdate: (ev: GestureEvent): void =>
             selectionOnGallerySlidePanUpdate(this.asSelectionGestureHost(), ev),
+          onGallerySlideTouchMoveWindow: (xPx: number, yPx: number): void =>
+            selectionOnGallerySlideTouchMoveWindow(this.asSelectionGestureHost(), xPx, yPx),
           onListScrollIndex: (firstIdx: number, lastIdx: number, _centerIdx: number): void => {
             this.applyListVisibleNodeRange(firstIdx, lastIdx);
             this.refreshRootPhotosScrollTitle();

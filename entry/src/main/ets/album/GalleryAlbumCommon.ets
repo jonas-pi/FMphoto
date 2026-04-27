@@ -10,8 +10,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
 export const GALLERY_PREVIEW_SCALE_MAX = 4;
-export const GALLERY_PREVIEW_ZOOM_EPS = 0.02;
-export const GALLERY_PREVIEW_SNAP_EPS = 0.12;
+export const GALLERY_PREVIEW_ZOOM_EPS = 0.0005;
+export const GALLERY_PREVIEW_SNAP_EPS = 0.001;
 export const GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP = 232;
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
