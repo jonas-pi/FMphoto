@@ -23,6 +23,7 @@ import {
   DAY_MAX_ROUNDS,
   EMPTY_PAGE_ADVANCE_THRESHOLD,
   GALLERY_BATCH_VERBOSE_LOG,
+  GALLERY_SCROLL_DEBUG_LOG,
   GALLERY_TAB_DOMAIN as DOMAIN,
   GALLERY_TAB_TAG as TAG,
   PUMP_UI_GAP_MS
@@ -37,6 +38,15 @@ import {
   TimelineDayModel
 } from './GalleryAlbumTabTypes';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
+
+const GALLERY_SCROLL_RELEASE_TRACE_TAG = '[scroll-release-visible]';
+
+function galleryAlbumReleaseTrace(msg: string): void {
+  if (!GALLERY_SCROLL_DEBUG_LOG) {
+    return;
+  }
+  hilog.info(DOMAIN, TAG, '[scroll-debug] %{public}s', `${GALLERY_SCROLL_RELEASE_TRACE_TAG} ${msg}`);
+}
 
 export interface GalleryAlbumLoadOrchestratorHost {
   getUIContext(): UIContext;
@@ -430,6 +440,10 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
   try {
     const st = fmtDayStart(day.year, day.month, day.day);
     const et = fmtDayEnd(day.year, day.month, day.day);
+    galleryAlbumReleaseTrace(
+      `loadOneBatch request: dayIndex=${host.dayIndex}, key=${key}, off=${off}, rounds=${rounds}, `
+      + `emptyRounds=${emptyRounds}, itemCount=${day.itemCount}`
+    );
     let res = await client.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
     if (gen !== host.loadGen || epoch !== host.pumpEpoch) {
       return -1;
@@ -463,6 +477,10 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     const total = res.data?.total;
     const newOff = off + list.length;
     host.dayOffsets.set(key, newOff);
+    galleryAlbumReleaseTrace(
+      `loadOneBatch response: dayIndex=${host.dayIndex}, key=${key}, got=${list.length}, `
+      + `newOff=${newOff}, itemCount=${day.itemCount}, total=${total !== undefined ? String(total) : 'n/a'}`
+    );
 
     if (list.length > 0) {
       host.upsertSection(day, list, newOff);
@@ -486,6 +504,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
         );
       }
       host.dayIndex++;
+      galleryAlbumReleaseTrace(`loadOneBatch short-page advance day: key=${key}, nextDayIndex=${host.dayIndex}`);
       return list.length;
     }
 
@@ -514,6 +533,18 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     }
 
     if (transientEmpty) {
+      const likelyTailEmptyAfterShortLeadPage = off > 0 && off < DATE_FEED_BATCH;
+      if (likelyTailEmptyAfterShortLeadPage) {
+        if (day.itemCount !== newOff) {
+          day.itemCount = newOff;
+          host.rebuildFlow();
+        }
+        host.dayRounds.set(key, rounds + 1);
+        host.dayIndex++;
+        galleryAlbumReleaseTrace(`loadOneBatch transient-empty advance day: key=${key}, nextDayIndex=${host.dayIndex}`);
+        return 0;
+      }
+      galleryAlbumReleaseTrace(`loadOneBatch transient-empty retry: key=${key}, off=${off}, newOff=${newOff}`);
       return -3;
     }
 
@@ -524,6 +555,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     );
     if (shouldAdvanceDay) {
       host.dayIndex++;
+      galleryAlbumReleaseTrace(`loadOneBatch advance day: key=${key}, nextDayIndex=${host.dayIndex}, reachEnd=${reachTimelineEnd ? 1 : 0}`);
     }
 
     return list.length;

@@ -53,10 +53,13 @@ export interface TimelineGestureControllerHost {
   timelineSidebarHighlightIndex: number;
   timelineIndicatorY: number;
   timelineSeekGen: number;
+  timelineSeekAnchorNodeIdx: number;
   listVisibleFirstNodeIdx: number;
   listVisibleLastNodeIdx: number;
   ignoreListFreezeUntilMs: number;
   pumpEpoch: number;
+  flowNodeIndexFromListIndex(index: number): number;
+  listIndexFromFlowNodeIndex(index: number): number;
   refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void;
   captureListScrollIndexAnchor(): void;
   refreshVisibleRangeIfAvailable(): boolean;
@@ -84,6 +87,8 @@ class TimelineReleaseVisiblePassPlan {
   label: string = '';
 }
 
+const GALLERY_SCROLL_RELEASE_TRACE_TAG = '[scroll-release-visible]';
+
 function scrollStateText(state: ScrollState): string {
   if (state === ScrollState.Idle) {
     return 'Idle';
@@ -102,6 +107,10 @@ export function timelineGestureLogScrollDebug(host: TimelineGestureControllerHos
     return;
   }
   hilog.info(DOMAIN, TAG, '[scroll-debug] %{public}s', msg);
+}
+
+function timelineGestureLogReleaseTrace(host: TimelineGestureControllerHost, msg: string): void {
+  timelineGestureLogScrollDebug(host, `${GALLERY_SCROLL_RELEASE_TRACE_TAG} ${msg}`);
 }
 
 export function timelineGestureIsInScrollInteractiveLogWindow(host: TimelineGestureControllerHost): boolean {
@@ -304,20 +313,28 @@ function timelineGestureRunReleaseVisiblePass(
     // Timeline release must not physically nudge the list, or the page will visibly bounce.
     refreshedByScroller = host.refreshVisibleRangeIfAvailable();
   }
+  timelineGestureLogReleaseTrace(
+    host,
+    `${passLabel}: refresh=${refreshVisibleRange ? 1 : 0}, scrollerRange=${refreshedByScroller ? 1 : 0}, `
+    + `roughFallback=${allowRoughFallback ? 1 : 0}, dayIndex=${host.dayIndex}, loadingMore=${host.loadingMore ? 1 : 0}, `
+    + `dragging=${host.timelineSidebarDragging ? 1 : 0}, seek=${host.timelineSeekInProgress ? 1 : 0}`
+  );
   if (!refreshedByScroller && allowRoughFallback) {
     host.syncListVisibleRoughToTimelineSliderTarget();
+    timelineGestureLogReleaseTrace(host, `${passLabel}: apply rough visible-range fallback`);
   }
   if (!refreshedByScroller && !allowRoughFallback) {
-    timelineGestureLogScrollDebug(host, `timeline release ${passLabel}: wait visible range`);
+    timelineGestureLogReleaseTrace(host, `${passLabel}: wait visible range callback`);
     return;
   }
   host.loadVisibleItemsInteractiveVisiblePriority();
   if (refreshedByScroller) {
     host.refreshRootPhotosScrollTitle();
   }
-  timelineGestureLogScrollDebug(
+  timelineGestureLogReleaseTrace(
     host,
-    `timeline release ${passLabel}: scrollerRange=${refreshedByScroller ? 1 : 0}, roughFallback=${allowRoughFallback ? 1 : 0}`
+    `${passLabel}: kick interactive visible-priority load, scrollerRange=${refreshedByScroller ? 1 : 0}, `
+    + `roughFallback=${allowRoughFallback ? 1 : 0}`
   );
 }
 
@@ -373,7 +390,6 @@ export function timelineGestureKickPostTimelineReleaseLoad(host: TimelineGesture
 function timelineGesturePreemptStaleRequestsForVisiblePriority(host: TimelineGestureControllerHost): void {
   timelineGestureCancelListSettledTimer(host);
   host.pumpEpoch++;
-  host.loadingMore = false;
   host.isDraggingOrFling = false;
   host.listKineticScrolling = false;
   host.visualPlaceholderMode = false;
@@ -381,7 +397,10 @@ function timelineGesturePreemptStaleRequestsForVisiblePriority(host: TimelineGes
   if (client !== null) {
     client.cancelPendingRequests();
   }
-  timelineGestureLogScrollDebug(host, 'timeline release: preempt stale requests for visible priority');
+  timelineGestureLogScrollDebug(
+    host,
+    `timeline release: preempt stale requests for visible priority (preserve inflight=${host.loadingMore ? 1 : 0})`
+  );
 }
 
 function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureControllerHost): void {
@@ -399,13 +418,20 @@ function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureCont
     timelineGestureRefreshVisualPlaceholderMode(host);
     host.flushPendingFlowRebuild();
     const refreshedVisibleRange = host.refreshVisibleRangeIfAvailable();
+    timelineGestureLogReleaseTrace(
+      host,
+      `releasePriority: scrollerRange=${refreshedVisibleRange ? 1 : 0}, dayIndex=${host.dayIndex}, `
+      + `loadingMore=${host.loadingMore ? 1 : 0}, exhausted=${host.exhausted ? 1 : 0}`
+    );
     if (!refreshedVisibleRange) {
       host.syncListVisibleRoughToTimelineSliderTarget();
+      timelineGestureLogReleaseTrace(host, 'releasePriority: apply rough visible-range fallback');
     }
     if (refreshedVisibleRange) {
       host.refreshRootPhotosScrollTitle();
     }
     host.loadVisibleItemsInteractiveVisiblePriority();
+    timelineGestureLogReleaseTrace(host, 'releasePriority: kick interactive visible-priority load');
     timelineGestureKickPostTimelineReleaseLoad(host);
     timelineGestureShowTimelineBar(host);
     const settledEpoch = host.pumpEpoch;
@@ -429,8 +455,13 @@ export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHo
   host.timelineSeekInProgress = true;
   host.seekTimelineListToDisplayRatio(host.timelineSliderRatio);
   const ym = host.resolveYearMonthByTimelineRatio(host.timelineSliderRatio);
-  if (ym !== null && !host.flowHasVisibleYearMonth(ym.year, ym.month)) {
+  if (ym !== null) {
     host.startTimelineSeekWatchdog(ym.year, ym.month);
   }
+  timelineGestureLogReleaseTrace(
+    host,
+    `endDrag: ratio=${host.timelineSliderRatio.toFixed(4)}, target=${ym === null ? 'none' : `${ym.year}-${ym.month}`}, `
+    + `visibleInFlow=${ym !== null && host.flowHasVisibleYearMonth(ym.year, ym.month) ? 1 : 0}`
+  );
   timelineGestureScheduleReleaseVisiblePriority(host);
 }

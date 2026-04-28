@@ -46,12 +46,19 @@ export function galleryAlbumTryScrollListToYearMonthIfVisible(
   year: number,
   month: number
 ): boolean {
-  const idx = findFlowScrollIndexForYearMonth(host.flowDataSource, year, month);
+  let idx = findFlowScrollIndexForYearMonth(host.flowDataSource, year, month);
+  if (idx < 0) {
+    const range = findFlowRoughVisibleRangeForYearMonth(host.flowDataSource, year, month);
+    if (range !== null) {
+      idx = range.first;
+    }
+  }
   if (idx < 0) {
     return false;
   }
   try {
-    host.scrollerRef.scrollToIndex(idx, false, ScrollAlign.START);
+    host.timelineSeekAnchorNodeIdx = idx;
+    host.scrollerRef.scrollToIndex(host.listIndexFromFlowNodeIndex(idx), false, ScrollAlign.START);
     return true;
   } catch (_e) {
     return false;
@@ -83,9 +90,11 @@ export function galleryAlbumScrollListByRatioEstimate(host: TimelineGestureContr
     return;
   }
   const clamped = Math.max(0, Math.min(1, ratio));
+  host.timelineSeekAnchorNodeIdx = Math.max(0, Math.min(total - 1, Math.floor(clamped * Math.max(0, total - 1))));
   if (clamped >= 0.995) {
     try {
-      host.scrollerRef.scrollToIndex(total - 1, false, ScrollAlign.END);
+      host.timelineSeekAnchorNodeIdx = total - 1;
+      host.scrollerRef.scrollToIndex(host.listIndexFromFlowNodeIndex(total - 1), false, ScrollAlign.END);
     } catch (_e) {
     }
     return;
@@ -132,8 +141,7 @@ export function galleryAlbumStartTimelineSeekWatchdog(
     if (Date.now() - started > 60_000) {
       return;
     }
-    if (galleryAlbumFlowHasVisibleYearMonth(host, targetYear, targetMonth)) {
-      galleryAlbumTryScrollListToYearMonthIfVisible(host, targetYear, targetMonth);
+    if (galleryAlbumTryScrollListToYearMonthIfVisible(host, targetYear, targetMonth)) {
       return;
     }
     if (!host.loadingMore && !host.exhausted) {
@@ -142,9 +150,9 @@ export function galleryAlbumStartTimelineSeekWatchdog(
     if (host.exhausted) {
       return;
     }
-    setTimeout(tick, 250);
+    setTimeout(tick, 120);
   };
-  setTimeout(tick, 250);
+  setTimeout(tick, 120);
 }
 
 export function galleryAlbumSyncTimelineSliderFromFirstIndex(
