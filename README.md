@@ -85,9 +85,9 @@
 
 开发并非易事，如您满意，请我喝瓶饮料吧！
 
-| 支付宝 | 微信支付 |
-| --- | --- |
-| <img src="./docs/sponsor/alipay.png" alt="支付宝赞助码" width="260" /> | <img src="./docs/sponsor/wechat.png" alt="微信赞助码" width="260" /> |
+| 支付宝 | 微信支付 | 爱发电 |
+| --- | --- | --- |
+| <img src="./docs/sponsor/alipay.png" alt="支付宝赞助码" width="260" /> | <img src="./docs/sponsor/wechat.png" alt="微信赞助码" width="260" /> | [前往爱发电赞助](https://ifdian.net/a/tronvorw) |
 
 ## 使用注意与风险
 
