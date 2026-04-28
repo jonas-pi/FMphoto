@@ -58,7 +58,10 @@ export function pickIndexedFlatForSlidePointer(
       const cached = getCachedRect(fi);
       if (cached !== undefined &&
         xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-        return fi;
+        if (testDomContainsPoint(fi, xPx, yPx)) {
+          recordThumbAfterDomHit(fi);
+          return fi;
+        }
       }
       if (domBudget <= 0) {
         continue;
@@ -79,7 +82,10 @@ export function pickIndexedFlatForSlidePointer(
     const cached = getCachedRect(fi);
     if (cached !== undefined &&
       xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-      return fi;
+      if (testDomContainsPoint(fi, xPx, yPx)) {
+        recordThumbAfterDomHit(fi);
+        return fi;
+      }
     }
     domBudget--;
     if (testDomContainsPoint(fi, xPx, yPx)) {

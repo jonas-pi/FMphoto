@@ -363,6 +363,9 @@ import {
   GALLERY_TIMELINE_RAIL_EXPANDED_VP,
   GALLERY_TIMELINE_RAIL_MIN_VP,
   GALLERY_TIMELINE_REFRESH_OFFSET_VP,
+  GALLERY_TIMELINE_SEEK_HANDOFF_MAX_DRIFT_NODES,
+  GALLERY_TIMELINE_SEEK_HANDOFF_MAX_SPAN_NODES,
+  GALLERY_TIMELINE_SEEK_HANDOFF_STABLE_HITS,
   GALLERY_TIMELINE_SCRUB_PILL_MIN_WIDTH_VP,
   GALLERY_TIMELINE_SCRUB_PILL_X_VP,
   GALLERY_TIMELINE_THUMB_VP,
@@ -492,6 +495,9 @@ export struct GalleryAlbumTab {
   private lastScrollDebugState: string = 'init';
   /** 鏈€杩戜竴娆′富鍒楄〃浜や簰鏃堕棿锛堢敤浜庨檺鍒舵车鏃ュ織浠呭湪浜や簰绐楀彛杈撳嚭锛?*/
   private lastMainListInteractMs: number = 0;
+  private lastMainListScrollOffsetVp: number = 0;
+  private lastMainListScrollOffsetHave: boolean = false;
+  private visibleLoadPreferBottomFirst: boolean = false;
   /** 鏃堕棿杞存嫋鍔ㄦ€?watchdog 瀹氭椂鍣?*/
   private timelineDragWatchdogTimer: number = -1;
   /** 鏃堕棿杞存嫋鍔ㄤ細璇濅唬娆★紙鐢ㄤ簬鍙栨秷鏃?watchdog 鍥炲啓锛?*/
@@ -550,7 +556,12 @@ export struct GalleryAlbumTab {
   private pumpEpoch: number = 0;
   /** 鏃堕棿杞存澗鎵嬪悗鐭獥鍐呭拷鐣ョ▼搴忓寲婊氬姩瀵瑰喕缁撴€佺殑鍥炲啓锛岄槻姝⑩€滃繀椤诲啀婊戜竴涓嬫墠鍔犺浇鈥?*/
   private ignoreListFreezeUntilMs: number = 0;
+  /** seek 鍚庤嫢拿涓嶅埌 scroller visible range锛屽湪鐭椂闂村唴缁х画淇濇寔 anchor 浼樺厛 */
+  private timelineSeekNoScrollerGuardUntilMs: number = 0;
   private timelineReleaseAwaitVisibleCallback: boolean = false;
+  private timelineSeekStableVisibleFirstNodeIdx: number = -1;
+  private timelineSeekStableVisibleLastNodeIdx: number = -1;
+  private timelineSeekStableVisibleHits: number = 0;
   /** 瑙嗚鍐荤粨鏈燂紙鎷栧姩/Fling锛夋敹鍒扮殑鏁版嵁鍙樻洿寤惰繜鍒拌В鍐诲悗鍐嶄竴娆℃€у埛鏂帮紝閬垮厤婊氬姩鏉′笉璺熸墜 */
   private pendingFlowRebuild: boolean = false;
   /** 閬垮厤婊氬姩鍋滄鍚庨噸澶嶈Е鍙戝悓涓€鐩爣鏃ョ殑鎶㈠崰鍔犺浇 */
@@ -674,6 +685,8 @@ export struct GalleryAlbumTab {
 
   private setGallerySelectedIdsStateLocal(value: string[]): void {
     this.gallerySelectedIds = value;
+    this.notifyMainGallerySelectionVisualRefresh();
+    this.notifySelectionDockStateChange();
   }
 
   private asSelectionGestureHost(): SelectionGestureControllerHost {
@@ -847,6 +860,8 @@ export struct GalleryAlbumTab {
       set listVisibleLastNodeIdx(value: number) { self.listVisibleLastNodeIdx = value; }
       get ignoreListFreezeUntilMs(): number { return self.ignoreListFreezeUntilMs; }
       set ignoreListFreezeUntilMs(value: number) { self.ignoreListFreezeUntilMs = value; }
+      get timelineSeekNoScrollerGuardUntilMs(): number { return self.timelineSeekNoScrollerGuardUntilMs; }
+      set timelineSeekNoScrollerGuardUntilMs(value: number) { self.timelineSeekNoScrollerGuardUntilMs = value; }
       get pumpEpoch(): number { return self.pumpEpoch; }
       set pumpEpoch(value: number) { self.pumpEpoch = value; }
       flowNodeIndexFromListIndex(index: number): number { return self.flowNodeIndexFromMainListIndex(index); }
@@ -862,6 +877,9 @@ export struct GalleryAlbumTab {
       }
       forceRefreshVisibleRange(): boolean {
         return galleryAlbumVisibleForceRefreshVisibleRange(self.asVisibleLoadHost());
+      }
+      tryHandOffTimelineSeekToListDriven(reason: string): boolean {
+        return self.tryHandOffTimelineSeekToListDrivenFromScroller(reason);
       }
       resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
         return galleryAlbumResolveYearMonthByTimelineRatio(this, ratio);
@@ -1063,6 +1081,9 @@ export struct GalleryAlbumTab {
         galleryAlbumUpsertSection(self.asVisibleLoadHost(), day, list, newOffset);
       }
       clearBootstrapDebounceTimer(): void { self.clearBootstrapDebounceTimer(); }
+      loadVisibleItemsImmediate(): void {
+        galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost());
+      }
     }
     return new LoadOrchestratorHostBridge();
   }
@@ -1088,6 +1109,12 @@ export struct GalleryAlbumTab {
       set isDraggingOrFling(value: boolean) { self.isDraggingOrFling = value; }
       get timelineSidebarDragging(): boolean { return self.timelineSidebarDragging; }
       set timelineSidebarDragging(value: boolean) { self.timelineSidebarDragging = value; }
+      get timelineSeekInProgress(): boolean { return self.timelineSeekInProgress; }
+      set timelineSeekInProgress(value: boolean) { self.timelineSeekInProgress = value; }
+      get ignoreListFreezeUntilMs(): number { return self.ignoreListFreezeUntilMs; }
+      set ignoreListFreezeUntilMs(value: number) { self.ignoreListFreezeUntilMs = value; }
+      get timelineSeekNoScrollerGuardUntilMs(): number { return self.timelineSeekNoScrollerGuardUntilMs; }
+      set timelineSeekNoScrollerGuardUntilMs(value: number) { self.timelineSeekNoScrollerGuardUntilMs = value; }
       get pendingFlowRebuild(): boolean { return self.pendingFlowRebuild; }
       set pendingFlowRebuild(value: boolean) { self.pendingFlowRebuild = value; }
       get lastLoadVisibleAtMs(): number { return self.lastLoadVisibleAtMs; }
@@ -1128,6 +1155,8 @@ export struct GalleryAlbumTab {
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
       get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
       set timelineSeekAnchorNodeIdx(value: number) { self.timelineSeekAnchorNodeIdx = value; }
+      get visibleLoadPreferBottomFirst(): boolean { return self.visibleLoadPreferBottomFirst; }
+      set visibleLoadPreferBottomFirst(value: boolean) { self.visibleLoadPreferBottomFirst = value; }
       get galleryGridColumns(): number { return self.currentGalleryGridColumns(); }
       set galleryGridColumns(_value: number) {}
       get rootModeContentWidthVp(): number { return self.rootModeContentWidthVp; }
@@ -1384,14 +1413,167 @@ export struct GalleryAlbumTab {
     galleryAlbumVisibleCaptureListScrollIndexAnchor(this.asVisibleLoadHost());
   }
 
+  private updateVisibleLoadPriorityFromScrollOffset(offsetVp: number): void {
+    if (!Number.isFinite(offsetVp)) {
+      return;
+    }
+    const next = Math.max(0, offsetVp);
+    if (this.lastMainListScrollOffsetHave) {
+      const delta = next - this.lastMainListScrollOffsetVp;
+      if (Math.abs(delta) >= 0.5) {
+        this.visibleLoadPreferBottomFirst = delta > 0;
+      }
+    }
+    this.lastMainListScrollOffsetVp = next;
+    this.lastMainListScrollOffsetHave = true;
+  }
+
+  private updateVisibleLoadPriorityFromVisibleRange(firstIdx: number, lastIdx: number): void {
+    const first = Math.floor(firstIdx);
+    const last = Math.floor(lastIdx);
+    const prevFirst = this.listVisibleFirstNodeIdx;
+    const prevLast = this.listVisibleLastNodeIdx;
+    if (first === prevFirst && last === prevLast) {
+      return;
+    }
+    const deltaFirst = first - prevFirst;
+    const deltaLast = last - prevLast;
+    const primary = Math.abs(deltaFirst) >= Math.abs(deltaLast) ? deltaFirst : deltaLast;
+    if (Math.abs(primary) >= 1) {
+      this.visibleLoadPreferBottomFirst = primary > 0;
+    }
+  }
+
+  private resetTimelineSeekStableVisibleState(): void {
+    this.timelineSeekStableVisibleFirstNodeIdx = -1;
+    this.timelineSeekStableVisibleLastNodeIdx = -1;
+    this.timelineSeekStableVisibleHits = 0;
+  }
+
+  private resolveTimelineSeekTargetNodeRange(): GalleryVisibleNodeRange | null {
+    const ym = galleryAlbumResolveYearMonthByTimelineRatio(this.asTimelineGestureHost(), this.timelineSliderRatio);
+    if (ym === null) {
+      return null;
+    }
+    return findFlowRoughVisibleRangeForYearMonth(this.flowDataSource, ym.year, ym.month);
+  }
+
+  private tryHandOffTimelineSeekToListDrivenFromCandidate(
+    firstIdx: number,
+    lastIdx: number,
+    source: string
+  ): boolean {
+    if (!this.timelineSeekInProgress) {
+      return false;
+    }
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return false;
+    }
+    const targetRange = this.resolveTimelineSeekTargetNodeRange();
+    if (targetRange === null) {
+      this.resetTimelineSeekStableVisibleState();
+      return false;
+    }
+    const first = Math.max(0, Math.min(Math.floor(firstIdx), total - 1));
+    const last = Math.max(first, Math.min(Math.floor(lastIdx), total - 1));
+    const span = last - first + 1;
+    const overlapsTarget = last >= targetRange.first && first <= targetRange.last;
+    if (!overlapsTarget || span > GALLERY_TIMELINE_SEEK_HANDOFF_MAX_SPAN_NODES) {
+      this.resetTimelineSeekStableVisibleState();
+      timelineGestureLogScrollDebug(
+        this.asTimelineGestureHost(),
+        `[timeline-seek] ignore unstable visible source: source=${source}, range=${first}~${last}, `
+        + `target=${targetRange.first}~${targetRange.last}, span=${span}`
+      );
+      return false;
+    }
+    const driftCap = Math.max(
+      GALLERY_TIMELINE_SEEK_HANDOFF_MAX_DRIFT_NODES,
+      Math.min(24, Math.ceil(span * 0.25))
+    );
+    let stableHits = 1;
+    if (this.timelineSeekStableVisibleHits > 0 &&
+      this.timelineSeekStableVisibleFirstNodeIdx >= 0 &&
+      this.timelineSeekStableVisibleLastNodeIdx >= 0 &&
+      Math.abs(first - this.timelineSeekStableVisibleFirstNodeIdx) <= driftCap &&
+      Math.abs(last - this.timelineSeekStableVisibleLastNodeIdx) <= driftCap) {
+      stableHits = this.timelineSeekStableVisibleHits + 1;
+    }
+    this.timelineSeekStableVisibleFirstNodeIdx = first;
+    this.timelineSeekStableVisibleLastNodeIdx = last;
+    this.timelineSeekStableVisibleHits = stableHits;
+    timelineGestureLogScrollDebug(
+      this.asTimelineGestureHost(),
+      `[timeline-seek] observe visible source: source=${source}, range=${first}~${last}, `
+      + `target=${targetRange.first}~${targetRange.last}, hits=${stableHits}/${GALLERY_TIMELINE_SEEK_HANDOFF_STABLE_HITS}`
+    );
+    if (stableHits < GALLERY_TIMELINE_SEEK_HANDOFF_STABLE_HITS) {
+      return false;
+    }
+    this.timelineSeekInProgress = false;
+    this.timelineReleaseAwaitVisibleCallback = false;
+    this.applyListVisibleNodeRange(first, last);
+    this.refreshRootPhotosScrollTitle();
+    this.resetTimelineSeekStableVisibleState();
+    timelineGestureLogScrollDebug(
+      this.asTimelineGestureHost(),
+      `[timeline-seek] handoff to list-driven: source=${source}, range=${first}~${last}`
+    );
+    return true;
+  }
+
+  private tryHandOffTimelineSeekToListDrivenFromScroller(reason: string): boolean {
+    if (!this.timelineSeekInProgress) {
+      return false;
+    }
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return false;
+    }
+    if (!galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(this.asVisibleLoadHost(), total)) {
+      return false;
+    }
+    return this.tryHandOffTimelineSeekToListDrivenFromCandidate(
+      this.listVisibleFirstNodeIdx,
+      this.listVisibleLastNodeIdx,
+      `${reason}/scroller`
+    );
+  }
+
   private applyListVisibleNodeRange(firstIdx: number, lastIdx: number): void {
     const total = this.flowDataSource.totalCount();
     if (total <= 0) {
       return;
     }
-    const first = Math.max(0, Math.min(Math.floor(firstIdx), total - 1));
-    const last = Math.max(first, Math.min(Math.floor(lastIdx), total - 1));
-    this.timelineSeekAnchorNodeIdx = first;
+    const rawFirst = Math.max(0, Math.min(Math.floor(firstIdx), total - 1));
+    const rawLast = Math.max(rawFirst, Math.min(Math.floor(lastIdx), total - 1));
+    let first = rawFirst;
+    let last = rawLast;
+    let preserveSeekAnchor = false;
+    const releaseFreezeActive =
+      !this.timelineSidebarDragging &&
+      !this.timelineSeekInProgress &&
+      Date.now() < this.ignoreListFreezeUntilMs;
+    if (releaseFreezeActive &&
+      Number.isFinite(this.timelineSeekAnchorNodeIdx) &&
+      this.timelineSeekAnchorNodeIdx >= 0) {
+      const anchor = Math.max(0, Math.min(Math.floor(this.timelineSeekAnchorNodeIdx), total - 1));
+      const guardBacktrack = Math.max(2, Math.floor(GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES / 8));
+      first = Math.max(0, anchor - guardBacktrack);
+      last = Math.max(first, Math.min(total - 1, anchor + GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES));
+      preserveSeekAnchor = true;
+      if (first !== rawFirst || last !== rawLast) {
+        timelineGestureLogScrollDebug(
+          this.asTimelineGestureHost(),
+          `[scroll-release-visible] guard callback range: raw=${rawFirst}~${rawLast}, anchor=${anchor}, `
+          + `apply=${first}~${last}`
+        );
+      }
+    }
+    if (!preserveSeekAnchor) {
+      this.timelineSeekAnchorNodeIdx = first;
+    }
     this.listVisibleFirstNodeIdx = first;
     this.listVisibleLastNodeIdx = last;
     this.refreshLastKnownGlobalSlotsFromListIndices(first, last);
@@ -1553,6 +1735,8 @@ export struct GalleryAlbumTab {
 
   private endTimelineDrag(): void {
     this.rootPhotosTitlePreferListAnchorUntilMs = Date.now() + 1400;
+    this.ignoreListFreezeUntilMs = 0;
+    this.resetTimelineSeekStableVisibleState();
     this.timelineReleaseAwaitVisibleCallback = true;
     timelineGestureLogScrollDebug(
       this.asTimelineGestureHost(),
@@ -2307,6 +2491,7 @@ export struct GalleryAlbumTab {
           onListDidScroll: (_offset: number, _scrollState: ScrollState): void => {
             this.maybeRefreshRootPhotosScrollTitleForThreshold();
             timelineGestureMaybeLogMainScrollTick(this.asTimelineGestureHost(), _offset, _scrollState);
+            this.updateVisibleLoadPriorityFromScrollOffset(_offset);
             const draggingOrFling = _scrollState === ScrollState.Scroll || _scrollState === ScrollState.Fling;
             const shouldFreezeByListScroll =
               draggingOrFling && !this.timelineSeekInProgress && Date.now() >= this.ignoreListFreezeUntilMs;
@@ -2353,12 +2538,14 @@ export struct GalleryAlbumTab {
                 stateChanged = true;
               }
               if (this.timelineReleaseAwaitVisibleCallback) {
-                timelineGestureLogScrollDebug(
-                  this.asTimelineGestureHost(),
-                  '[scroll-release-visible] onDidScroll Idle: release still awaiting callback, force immediate visible load'
-                );
-                this.timelineReleaseAwaitVisibleCallback = false;
-                galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
+                if (!this.tryHandOffTimelineSeekToListDrivenFromScroller('onDidScrollIdle')) {
+                  timelineGestureLogScrollDebug(
+                    this.asTimelineGestureHost(),
+                    '[scroll-release-visible] onDidScroll Idle: release still awaiting callback, force immediate visible load'
+                  );
+                  this.timelineReleaseAwaitVisibleCallback = false;
+                  galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
+                }
               }
               if (wasDraggingOrFling) {
                 timelineGestureScheduleMainListSettledWork(this.asTimelineGestureHost());
@@ -2386,8 +2573,33 @@ export struct GalleryAlbumTab {
             }
             const flowStartIdx = this.flowNodeIndexFromMainListIndex(start.index);
             const flowEndIdx = this.flowNodeIndexFromMainListIndex(end.index);
-            this.applyListVisibleNodeRange(flowStartIdx, flowEndIdx);
-            this.refreshRootPhotosScrollTitle();
+            this.updateVisibleLoadPriorityFromVisibleRange(flowStartIdx, flowEndIdx);
+            if (this.timelineSeekInProgress) {
+              const handedOff = this.tryHandOffTimelineSeekToListDrivenFromCandidate(
+                flowStartIdx,
+                flowEndIdx,
+                'onListVisibleContentChange'
+              );
+              if (this.timelineReleaseAwaitVisibleCallback) {
+                timelineGestureLogScrollDebug(
+                  this.asTimelineGestureHost(),
+                  `[scroll-release-visible] onVisibleContentChange: raw=${start.index}~${end.index}, `
+                  + `flow=${flowStartIdx}~${flowEndIdx}`
+                );
+                this.timelineReleaseAwaitVisibleCallback = false;
+              }
+              if (!handedOff) {
+                galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
+                return;
+              }
+            } else {
+              this.applyListVisibleNodeRange(flowStartIdx, flowEndIdx);
+              this.refreshRootPhotosScrollTitle();
+            }
+            const releaseFreezeActive =
+              !this.timelineSidebarDragging &&
+              !this.timelineSeekInProgress &&
+              Date.now() < this.ignoreListFreezeUntilMs;
             if (this.timelineReleaseAwaitVisibleCallback) {
               timelineGestureLogScrollDebug(
                 this.asTimelineGestureHost(),
@@ -2396,10 +2608,19 @@ export struct GalleryAlbumTab {
               );
               this.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
-            } else if (this.timelineSeekInProgress) {
-              galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, true, true);
             } else {
-              void galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
+              if (this.isDraggingOrFling || releaseFreezeActive) {
+                if (releaseFreezeActive) {
+                  timelineGestureLogScrollDebug(
+                    this.asTimelineGestureHost(),
+                    `[scroll-release-visible] onVisibleContentChange: release-freeze interactive priority, `
+                    + `raw=${start.index}~${end.index}, flow=${flowStartIdx}~${flowEndIdx}`
+                  );
+                }
+                galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, true, true);
+              } else {
+                galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, false);
+              }
             }
           },
           onRefreshOffsetChange: (offset: number): void => {

@@ -302,6 +302,25 @@ export function selectionHitGalleryThumbDomPx(
   }
 }
 
+function selectionCachedGalleryThumbHitValidPx(
+  host: SelectionGestureControllerHost,
+  photoId: string,
+  xPx: number,
+  yPx: number
+): boolean {
+  const cached = host.galleryThumbHitBounds.get(photoId);
+  if (cached === undefined ||
+    xPx < cached.left || xPx > cached.right || yPx < cached.top || yPx > cached.bottom) {
+    return false;
+  }
+  if (!selectionHitGalleryThumbDomPx(host, photoId, xPx, yPx)) {
+    host.galleryThumbHitBounds.delete(photoId);
+    return false;
+  }
+  host.recordGalleryThumbRectFromDom(photoId, host.galleryThumbDomId(photoId));
+  return true;
+}
+
 export function selectionPickGalleryThumbFlatUnderPoint(
   host: SelectionGestureControllerHost,
   xPx: number,
@@ -325,11 +344,7 @@ export function selectionPickGalleryThumbFlatUnderPoint(
       if (id.length === 0) {
         continue;
       }
-      const cached = host.galleryThumbHitBounds.get(id);
-      if (cached === undefined) {
-        continue;
-      }
-      if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+      if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
         return node.rowSlotFlatIndices[k];
       }
     }
@@ -386,9 +401,7 @@ export function selectionPickGalleryThumbFlatUnderPointForSlide(
         continue;
       }
       const flat = node.rowSlotFlatIndices[k];
-      const cached = host.galleryThumbHitBounds.get(id);
-      if (cached !== undefined &&
-        xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+      if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
         return flat;
       }
       if (domBudget <= 0) {
@@ -468,14 +481,11 @@ export function selectionPickGalleryThumbFlatForRowOrCache(
     if (id.length === 0) {
       continue;
     }
-    const cached = host.galleryThumbHitBounds.get(id);
-    if (cached !== undefined) {
-      if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-        return node.rowSlotFlatIndices[k];
-      }
-      continue;
+    if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
+      return node.rowSlotFlatIndices[k];
     }
     if (selectionHitGalleryThumbDomPx(host, id, xPx, yPx)) {
+      host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
       return node.rowSlotFlatIndices[k];
     }
   }
@@ -541,6 +551,26 @@ export function selectionHitSearchThumbDomPx(
   }
 }
 
+function selectionCachedSearchThumbHitValidPx(
+  host: SelectionGestureControllerHost,
+  flatIdx: number,
+  xPx: number,
+  yPx: number
+): boolean {
+  const key = `${flatIdx}`;
+  const cached = host.searchThumbHitBounds.get(key);
+  if (cached === undefined ||
+    xPx < cached.left || xPx > cached.right || yPx < cached.top || yPx > cached.bottom) {
+    return false;
+  }
+  if (!selectionHitSearchThumbDomPx(host, flatIdx, xPx, yPx)) {
+    host.searchThumbHitBounds.delete(key);
+    return false;
+  }
+  selectionRecordSearchThumbRect(host, flatIdx);
+  return true;
+}
+
 export function selectionPickSearchThumbFlatUnderPoint(
   host: SelectionGestureControllerHost,
   xPx: number,
@@ -551,11 +581,7 @@ export function selectionPickSearchThumbFlatUnderPoint(
     return -1;
   }
   for (let i = n - 1; i >= 0; i--) {
-    const cached = host.searchThumbHitBounds.get(`${i}`);
-    if (cached === undefined) {
-      continue;
-    }
-    if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
+    if (selectionCachedSearchThumbHitValidPx(host, i, xPx, yPx)) {
       return i;
     }
   }
@@ -578,14 +604,11 @@ export function selectionPickSearchThumbFlatForRow(
     if (fi >= n) {
       continue;
     }
-    const cached = host.searchThumbHitBounds.get(`${fi}`);
-    if (cached !== undefined) {
-      if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-        return fi;
-      }
-      continue;
+    if (selectionCachedSearchThumbHitValidPx(host, fi, xPx, yPx)) {
+      return fi;
     }
     if (selectionHitSearchThumbDomPx(host, fi, xPx, yPx)) {
+      selectionRecordSearchThumbRect(host, fi);
       return fi;
     }
   }

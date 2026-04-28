@@ -11,8 +11,7 @@ import {
 import {
   GalleryAlbumLoadOrchestratorHost,
   galleryAlbumBootstrap,
-  galleryAlbumOnTabVisibleAgain,
-  galleryAlbumPumpLoad
+  galleryAlbumOnTabVisibleAgain
 } from './GalleryAlbumLoadOrchestrator';
 import { galleryAlbumRebuildFlow } from './GalleryAlbumFlowLogic';
 import { GalleryAlbumVisibleLoadHost } from './GalleryAlbumVisibleLoadController';
@@ -86,7 +85,7 @@ function tryRestoreMainTimelineSnapshot(host: GalleryAlbumLifecycleHost): boolea
   host.loadGen++;
   galleryAlbumRebuildFlow(host.asVisibleLoadHost());
   setTimeout((): void => {
-    galleryAlbumPumpLoad(host.asLoadOrchestratorHost());
+    host.asTimelineGestureHost().loadVisibleItemsImmediate();
   }, 0);
   return true;
 }

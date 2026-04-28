@@ -9,7 +9,9 @@ import {
   GALLERY_TAB_TAG as TAG,
   GALLERY_TIMELINE_DRAG_WATCHDOG_MS,
   GALLERY_TIMELINE_EXPANDED_AUTO_HIDE_MS,
-  GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS
+  GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS,
+  GALLERY_TIMELINE_SEEK_NO_SCROLLER_GUARD_MS,
+  GALLERY_TIMELINE_SEEK_RELEASE_FREEZE_MS
 } from './GalleryAlbumTabConstants';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
 import {
@@ -57,6 +59,7 @@ export interface TimelineGestureControllerHost {
   listVisibleFirstNodeIdx: number;
   listVisibleLastNodeIdx: number;
   ignoreListFreezeUntilMs: number;
+  timelineSeekNoScrollerGuardUntilMs: number;
   pumpEpoch: number;
   flowNodeIndexFromListIndex(index: number): number;
   listIndexFromFlowNodeIndex(index: number): number;
@@ -64,6 +67,7 @@ export interface TimelineGestureControllerHost {
   captureListScrollIndexAnchor(): void;
   refreshVisibleRangeIfAvailable(): boolean;
   forceRefreshVisibleRange(): boolean;
+  tryHandOffTimelineSeekToListDriven(reason: string): boolean;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   flowHasVisibleYearMonth(year: number, month: number): boolean;
   startTimelineSeekWatchdog(year: number, month: number): void;
@@ -307,11 +311,18 @@ function timelineGestureRunReleaseVisiblePass(
   allowRoughFallback: boolean,
   passLabel: string
 ): void {
+  if (!host.timelineSeekInProgress) {
+    timelineGestureLogReleaseTrace(host, `${passLabel}: skip after list-driven handoff`);
+    return;
+  }
   host.flushPendingFlowRebuild();
   let refreshedByScroller = false;
   if (refreshVisibleRange) {
     // Timeline release must not physically nudge the list, or the page will visibly bounce.
     refreshedByScroller = host.refreshVisibleRangeIfAvailable();
+    if (refreshedByScroller) {
+      host.tryHandOffTimelineSeekToListDriven(passLabel);
+    }
   }
   timelineGestureLogReleaseTrace(
     host,
@@ -319,6 +330,10 @@ function timelineGestureRunReleaseVisiblePass(
     + `roughFallback=${allowRoughFallback ? 1 : 0}, dayIndex=${host.dayIndex}, loadingMore=${host.loadingMore ? 1 : 0}, `
     + `dragging=${host.timelineSidebarDragging ? 1 : 0}, seek=${host.timelineSeekInProgress ? 1 : 0}`
   );
+  if (!refreshedByScroller && allowRoughFallback && Date.now() < host.ignoreListFreezeUntilMs) {
+    timelineGestureLogReleaseTrace(host, `${passLabel}: defer rough visible-range fallback during release freeze`);
+    return;
+  }
   if (!refreshedByScroller && allowRoughFallback) {
     host.syncListVisibleRoughToTimelineSliderTarget();
     timelineGestureLogReleaseTrace(host, `${passLabel}: apply rough visible-range fallback`);
@@ -327,14 +342,18 @@ function timelineGestureRunReleaseVisiblePass(
     timelineGestureLogReleaseTrace(host, `${passLabel}: wait visible range callback`);
     return;
   }
-  host.loadVisibleItemsInteractiveVisiblePriority();
-  if (refreshedByScroller) {
+  if (host.timelineSeekInProgress) {
+    host.loadVisibleItemsInteractiveVisiblePriority();
+  } else {
+    host.loadVisibleItemsThrottled(true, false);
+  }
+  if (refreshedByScroller && !host.timelineSeekInProgress) {
     host.refreshRootPhotosScrollTitle();
   }
   timelineGestureLogReleaseTrace(
     host,
-    `${passLabel}: kick interactive visible-priority load, scrollerRange=${refreshedByScroller ? 1 : 0}, `
-    + `roughFallback=${allowRoughFallback ? 1 : 0}`
+    `${passLabel}: kick ${host.timelineSeekInProgress ? 'timeline-seek' : 'list-driven'} visible load, `
+    + `scrollerRange=${refreshedByScroller ? 1 : 0}, roughFallback=${allowRoughFallback ? 1 : 0}`
   );
 }
 
@@ -413,26 +432,32 @@ function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureCont
       return;
     }
     timelineGesturePreemptStaleRequestsForVisiblePriority(host);
-    host.timelineSeekInProgress = false;
-    host.ignoreListFreezeUntilMs = Date.now() + 700;
     timelineGestureRefreshVisualPlaceholderMode(host);
     host.flushPendingFlowRebuild();
     const refreshedVisibleRange = host.refreshVisibleRangeIfAvailable();
+    if (refreshedVisibleRange) {
+      host.tryHandOffTimelineSeekToListDriven('releasePriority');
+    }
     timelineGestureLogReleaseTrace(
       host,
       `releasePriority: scrollerRange=${refreshedVisibleRange ? 1 : 0}, dayIndex=${host.dayIndex}, `
       + `loadingMore=${host.loadingMore ? 1 : 0}, exhausted=${host.exhausted ? 1 : 0}`
     );
-    if (!refreshedVisibleRange) {
+    if (host.timelineSeekInProgress && !refreshedVisibleRange) {
       host.syncListVisibleRoughToTimelineSliderTarget();
       timelineGestureLogReleaseTrace(host, 'releasePriority: apply rough visible-range fallback');
     }
-    if (refreshedVisibleRange) {
+    if (refreshedVisibleRange && !host.timelineSeekInProgress) {
       host.refreshRootPhotosScrollTitle();
     }
-    host.loadVisibleItemsInteractiveVisiblePriority();
-    timelineGestureLogReleaseTrace(host, 'releasePriority: kick interactive visible-priority load');
-    timelineGestureKickPostTimelineReleaseLoad(host);
+    if (host.timelineSeekInProgress) {
+      host.loadVisibleItemsInteractiveVisiblePriority();
+      timelineGestureLogReleaseTrace(host, 'releasePriority: keep timeline-seek visible-priority load');
+      timelineGestureKickPostTimelineReleaseLoad(host);
+    } else {
+      host.loadVisibleItemsThrottled(true, false);
+      timelineGestureLogReleaseTrace(host, 'releasePriority: handoff complete, resume list-driven load');
+    }
     timelineGestureShowTimelineBar(host);
     const settledEpoch = host.pumpEpoch;
     setTimeout((): void => {
@@ -447,7 +472,8 @@ function timelineGestureScheduleReleaseVisiblePriority(host: TimelineGestureCont
 export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHost): void {
   timelineGestureCancelTimelineDragWatchdog(host);
   host.timelineDragWatchdogGen++;
-  host.ignoreListFreezeUntilMs = Date.now() + 900;
+  host.ignoreListFreezeUntilMs = Date.now() + GALLERY_TIMELINE_SEEK_RELEASE_FREEZE_MS;
+  host.timelineSeekNoScrollerGuardUntilMs = Date.now() + GALLERY_TIMELINE_SEEK_NO_SCROLLER_GUARD_MS;
   host.timelineSidebarDragging = false;
   host.timelinePressing = false;
   host.timelineLongPressExpanded = false;
