@@ -6,7 +6,7 @@ export function galleryAlbumOpenPreview(host: SelectionGestureControllerHost, fl
   if (flatIndex < 0) {
     return;
   }
-  GalleryPreviewNavStore.openPreview(host.baseUrl, host.flatItems(), flatIndex);
+  GalleryPreviewNavStore.openPreview(host.getUIContext(), host.baseUrl, host.flatItems(), flatIndex);
 }
 
 export function galleryAlbumResolveGalleryFlatIndexForOpenPreview(

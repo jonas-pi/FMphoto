@@ -806,5 +806,5 @@ export function selectionOnSearchThumbTap(
   if (flatIndex < 0 || flatIndex >= host.searchResults.length) {
     return;
   }
-  GalleryPreviewNavStore.openPreview(host.baseUrl, host.searchResults, flatIndex);
+  GalleryPreviewNavStore.openPreview(host.getUIContext(), host.baseUrl, host.searchResults, flatIndex);
 }

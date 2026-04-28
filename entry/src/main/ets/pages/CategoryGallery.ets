@@ -308,7 +308,7 @@ struct CategoryGallery {
     if (flatIdx < 0 || flatIdx >= this.flatItems.length) {
       return;
     }
-    GalleryPreviewNavStore.openPreview(this.baseUrl, this.flatItems, flatIdx);
+    GalleryPreviewNavStore.openPreview(this.getUIContext(), this.baseUrl, this.flatItems, flatIdx);
   }
 
   private onCgCellClick(item: GalleryListItem, flatIdx: number): void {
