@@ -5,10 +5,12 @@ import {
   GalleryNetworkThumb,
   GalleryStaticThumbPlaceholder,
   GalleryThumbSkeleton,
+  getThumbLoadTelemetry,
   isGifItem,
   isVideoItem,
   nasUrl,
-  pickThumb
+  pickThumbForGridDensity,
+  setThumbHighThroughputLevel
 } from '../GalleryAlbumCommon';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
@@ -19,6 +21,11 @@ import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 
 const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
 const GALLERY_MAIN_TOUCH_SLOP_VP: number = 10;
+const GALLERY_THUMB_THROUGHPUT_DROP_COOLDOWN_MS: number = 900;
+const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
+const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_MONTH: number = 360;
+const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_YEAR: number = 120;
+const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_MONTH: number = 160;
 
 @Component
 export struct GalleryAlbumMainModeView {
@@ -66,6 +73,8 @@ export struct GalleryAlbumMainModeView {
   private galleryTouchStartY: number = 0;
   private galleryTouchLastX: number = 0;
   private galleryTouchLastY: number = 0;
+  private thumbThroughputLevel: number = 0;
+  private thumbLastAdaptiveDropAtMs: number = 0;
   @State private granularityScale: number = 1;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
@@ -108,7 +117,50 @@ export struct GalleryAlbumMainModeView {
     return this.sectionsLength > 0 || this.orderedDaysLength > 0;
   }
 
+  private maxThumbThroughputLevelForMode(): number {
+    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
+      return 3;
+    }
+    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
+      return 2;
+    }
+    return 0;
+  }
+
+  private minThumbThroughputLevelForMode(): number {
+    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
+      return 2;
+    }
+    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
+      return 1;
+    }
+    return 0;
+  }
+
+  private resetThumbThroughputAdaptation(): void {
+    this.thumbThroughputLevel = this.maxThumbThroughputLevelForMode();
+    this.thumbLastAdaptiveDropAtMs = 0;
+  }
+
+  private applyThumbThroughputLevel(): void {
+    setThumbHighThroughputLevel(this.thumbThroughputLevel);
+  }
+
+  private syncThumbHighThroughputMode(): void {
+    this.resetThumbThroughputAdaptation();
+    this.applyThumbThroughputLevel();
+  }
+
+  aboutToAppear(): void {
+    this.syncThumbHighThroughputMode();
+  }
+
+  aboutToDisappear(): void {
+    setThumbHighThroughputLevel(0);
+  }
+
   private onViewGranularityChanged(): void {
+    this.syncThumbHighThroughputMode();
     this.granularityScale = 0.965;
     try {
       this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
@@ -117,6 +169,55 @@ export struct GalleryAlbumMainModeView {
     } catch (_e) {
       this.granularityScale = 1;
     }
+  }
+
+  private currentThumbPressureLoadMs(): number {
+    return this.viewGranularity === GalleryViewGranularity.YEAR
+      ? GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR
+      : GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_MONTH;
+  }
+
+  private currentThumbPressureQueueWaitMs(): number {
+    return this.viewGranularity === GalleryViewGranularity.YEAR
+      ? GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_YEAR
+      : GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_MONTH;
+  }
+
+  private maybeDropThumbThroughputForPressure(scrollState: ScrollState): void {
+    if (this.viewGranularity === GalleryViewGranularity.DAY) {
+      return;
+    }
+    if (scrollState === ScrollState.Idle || this.timelineSidebarDragging) {
+      return;
+    }
+    const now = Date.now();
+    if ((now - this.thumbLastAdaptiveDropAtMs) < GALLERY_THUMB_THROUGHPUT_DROP_COOLDOWN_MS) {
+      return;
+    }
+    const telemetry = getThumbLoadTelemetry();
+    if (telemetry.sampleCount < 4) {
+      return;
+    }
+    const queueThreshold = Math.max(3, Math.floor(telemetry.currentLimit / 3));
+    const saturated = telemetry.active >= Math.max(1, telemetry.currentLimit - 2);
+    const backlogHeavy = telemetry.queued >= queueThreshold;
+    const loaderSlow = telemetry.avgLoadMs >= this.currentThumbPressureLoadMs() ||
+      telemetry.avgQueueWaitMs >= this.currentThumbPressureQueueWaitMs();
+    if (
+      saturated &&
+      backlogHeavy &&
+      loaderSlow &&
+      this.thumbThroughputLevel > this.minThumbThroughputLevelForMode()
+    ) {
+      this.thumbThroughputLevel--;
+      this.thumbLastAdaptiveDropAtMs = now;
+      this.applyThumbThroughputLevel();
+    }
+  }
+
+  private handleListDidScroll(offset: number, scrollState: ScrollState): void {
+    this.maybeDropThumbThroughputForPressure(scrollState);
+    this.onListDidScroll(offset, scrollState);
   }
 
   private isItemSelected(item: GalleryListItem): boolean {
@@ -149,6 +250,20 @@ export struct GalleryAlbumMainModeView {
       return 8;
     }
     return 3;
+  }
+
+  private shouldTrackGalleryThumbRect(): boolean {
+    return this.gallerySelectionMode || this.gallerySlideGestureActive || this.galleryInitialSlidePending;
+  }
+
+  private currentThumbDensity(): 'day' | 'month' | 'year' {
+    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
+      return 'year';
+    }
+    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
+      return 'month';
+    }
+    return 'day';
   }
 
   private vpToPx(value: number): number {
@@ -270,10 +385,11 @@ export struct GalleryAlbumMainModeView {
   private buildGalleryTimelineThumbCell(item: GalleryListItem, flatIndex: number) {
     Stack({ alignContent: Alignment.TopEnd }) {
       GalleryNetworkThumb({
-        uri: nasUrl(this.baseUrl, pickThumb(item)),
+        uri: nasUrl(this.baseUrl, pickThumbForGridDensity(item, this.currentThumbDensity())),
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
-        paused: this.timelineSidebarDragging || this.isDraggingOrFling
+        paused: this.timelineSidebarDragging || this.isDraggingOrFling,
+        fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY
       })
         .width('100%')
         .aspectRatio(1)
@@ -321,6 +437,9 @@ export struct GalleryAlbumMainModeView {
     }
     .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)
     .onAreaChange((): void => {
+      if (!this.shouldTrackGalleryThumbRect()) {
+        return;
+      }
       const pid = this.itemIdOf(item);
       if (pid.length > 0) {
         this.recordGalleryThumbRectFromDom(pid, this.galleryThumbDomId(pid));
@@ -577,7 +696,9 @@ export struct GalleryAlbumMainModeView {
                 this.onMainListTouchEvent(event);
               })
               .onScrollIndex(this.onListScrollIndex)
-              .onDidScroll(this.onListDidScroll)
+              .onDidScroll((offset: number, scrollState: ScrollState): void => {
+                this.handleListDidScroll(offset, scrollState);
+              })
               .onScrollVisibleContentChange((start: VisibleListContentInfo, end: VisibleListContentInfo): void => {
                 this.onListVisibleContentChange(start, end);
               })

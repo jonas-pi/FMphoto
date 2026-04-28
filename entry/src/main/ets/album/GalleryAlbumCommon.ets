@@ -27,6 +27,15 @@ const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
 /** 原图下载智能超时：先短后长，兼顾小图响应与大图成功率 */
 const FULL_IMAGE_TIMEOUT_STEPS_MS: number[] = [12000, 25000, 45000];
 
+export interface GalleryThumbLoadTelemetry {
+  active: number;
+  queued: number;
+  currentLimit: number;
+  avgQueueWaitMs: number;
+  avgLoadMs: number;
+  sampleCount: number;
+}
+
 function fullImageTimeoutSteps(expectedBytes?: number): number[] {
   if (expectedBytes === undefined || expectedBytes <= 0) {
     return FULL_IMAGE_TIMEOUT_STEPS_MS;
@@ -57,23 +66,136 @@ function fullImageTimeoutSteps(expectedBytes?: number): number[] {
  * - 视频格与图片格共用同一路径，封面往往更大，并发过低时队列排长、体感「带宽没用满」。
  * - 过高会抬升瞬时内存与解码 CPU，低端机或弱网可改回 4～6。
  */
-const MAX_THUMB_CONCURRENT = 8;
+const BASE_MAX_THUMB_CONCURRENT = 8;
+const MONTH_MAX_THUMB_CONCURRENT = 16;
+const YEAR_MAX_THUMB_CONCURRENT = 20;
+const AGGRESSIVE_MAX_THUMB_CONCURRENT = 28;
+const THUMB_LOAD_EWMA_ALPHA = 0.24;
+const THUMB_PAINT_BATCH_DELAY_MS = 18;
+const THUMB_PAINT_BATCH_MAX = 8;
 let thumbLoadActive = 0;
 const thumbLoadWaiters: Array<() => void> = [];
 let thumbWakeCount = 0;
+let thumbHighThroughputDemand = 0;
+let thumbAvgQueueWaitMs = 0;
+let thumbAvgLoadMs = 0;
+let thumbLoadSampleCount = 0;
+const thumbPaintCommitQueue: Array<() => void> = [];
+let thumbPaintCommitTimer: number = -1;
 
 function thumbCacheKey(fullUrl: string, autoCropBlack: boolean): string {
   return `${autoCropBlack ? '1' : '0'}|${fullUrl}`;
 }
 
+function currentMaxThumbConcurrent(): number {
+  if (thumbHighThroughputDemand >= 3) {
+    return AGGRESSIVE_MAX_THUMB_CONCURRENT;
+  }
+  if (thumbHighThroughputDemand >= 2) {
+    return YEAR_MAX_THUMB_CONCURRENT;
+  }
+  if (thumbHighThroughputDemand >= 1) {
+    return MONTH_MAX_THUMB_CONCURRENT;
+  }
+  return BASE_MAX_THUMB_CONCURRENT;
+}
+
+function updateThumbEwma(current: number, next: number): number {
+  if (current <= 0) {
+    return next;
+  }
+  return current * (1 - THUMB_LOAD_EWMA_ALPHA) + next * THUMB_LOAD_EWMA_ALPHA;
+}
+
+function noteThumbLoadSample(queueWaitMs: number, loadMs: number): void {
+  thumbAvgQueueWaitMs = updateThumbEwma(thumbAvgQueueWaitMs, Math.max(0, queueWaitMs));
+  thumbAvgLoadMs = updateThumbEwma(thumbAvgLoadMs, Math.max(1, loadMs));
+  thumbLoadSampleCount++;
+}
+
+export function getThumbLoadTelemetry(): GalleryThumbLoadTelemetry {
+  const telemetry: GalleryThumbLoadTelemetry = {
+    active: thumbLoadActive,
+    queued: thumbLoadWaiters.length,
+    currentLimit: currentMaxThumbConcurrent(),
+    avgQueueWaitMs: thumbAvgQueueWaitMs,
+    avgLoadMs: thumbAvgLoadMs,
+    sampleCount: thumbLoadSampleCount
+  };
+  return telemetry;
+}
+
+function flushThumbPaintCommitQueue(): void {
+  if (thumbPaintCommitTimer >= 0) {
+    clearTimeout(thumbPaintCommitTimer);
+    thumbPaintCommitTimer = -1;
+  }
+  const batchCount = Math.min(THUMB_PAINT_BATCH_MAX, thumbPaintCommitQueue.length);
+  for (let i = 0; i < batchCount; i++) {
+    const next = thumbPaintCommitQueue.shift();
+    if (next !== undefined) {
+      next();
+    }
+  }
+  if (thumbPaintCommitQueue.length > 0) {
+    thumbPaintCommitTimer = setTimeout((): void => {
+      flushThumbPaintCommitQueue();
+    }, THUMB_PAINT_BATCH_DELAY_MS);
+  }
+}
+
+export function enqueueThumbPaintCommit(task: () => void): void {
+  thumbPaintCommitQueue.push(task);
+  if (thumbPaintCommitQueue.length >= THUMB_PAINT_BATCH_MAX) {
+    flushThumbPaintCommitQueue();
+    return;
+  }
+  if (thumbPaintCommitTimer < 0) {
+    thumbPaintCommitTimer = setTimeout((): void => {
+      flushThumbPaintCommitQueue();
+    }, THUMB_PAINT_BATCH_DELAY_MS);
+  }
+}
+
+function takeNextThumbWaiter(): (() => void) | undefined {
+  thumbWakeCount++;
+  return (thumbWakeCount % 4 === 0) ? thumbLoadWaiters.shift() : thumbLoadWaiters.pop();
+}
+
+function pumpThumbWaiters(): void {
+  while (thumbLoadWaiters.length > 0 && thumbLoadActive < currentMaxThumbConcurrent()) {
+    const next = takeNextThumbWaiter();
+    if (next === undefined) {
+      break;
+    }
+    thumbLoadActive++;
+    next();
+  }
+}
+
 function acquireThumbSlot(): Promise<void> {
-  if (thumbLoadActive < MAX_THUMB_CONCURRENT) {
+  if (thumbLoadActive < currentMaxThumbConcurrent()) {
     thumbLoadActive++;
     return Promise.resolve();
   }
   return new Promise<void>((resolve) => {
     thumbLoadWaiters.push(resolve);
   });
+}
+
+function updateThumbHighThroughputDemand(delta: number): void {
+  thumbHighThroughputDemand = Math.max(0, thumbHighThroughputDemand + delta);
+  pumpThumbWaiters();
+}
+
+export function setThumbHighThroughputMode(enabled: boolean): void {
+  thumbHighThroughputDemand = enabled ? 1 : 0;
+  pumpThumbWaiters();
+}
+
+export function setThumbHighThroughputLevel(level: number): void {
+  thumbHighThroughputDemand = Math.max(0, Math.floor(level));
+  pumpThumbWaiters();
 }
 
 /** 缓存淘汰或显式丢弃时释放原生像素缓冲，降低长列表滑动后的内存峰值 */
@@ -85,13 +207,10 @@ function releaseThumbPix(p: PixelMap): void {
 }
 
 function releaseThumbSlot(): void {
-  if (thumbLoadWaiters.length > 0) {
-    thumbWakeCount++;
-    const next = (thumbWakeCount % 4 === 0) ? thumbLoadWaiters.shift() : thumbLoadWaiters.pop();
-    if (next !== undefined) { next(); }
-  } else {
+  if (thumbLoadActive > 0) {
     thumbLoadActive--;
   }
+  pumpThumbWaiters();
 }
 
 /**
@@ -182,25 +301,75 @@ export function isGifItem(it: GalleryListItem): boolean {
   return itemFileExt(it) === 'gif';
 }
 
+function pickFirstThumbUrl(urls: Array<string | undefined>): string {
+  for (let i = 0; i < urls.length; i++) {
+    const value = urls[i];
+    if (value !== undefined && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
 export function pickThumb(it: GalleryListItem): string {
   const th = it.additional?.thumbnail;
-  if (th !== undefined) {
-    for (const u of [th.mUrl, th.sUrl, th.xsUrl, th.xxsUrl]) {
-      if (u !== undefined && u.trim().length > 0) {
-        return u.trim();
-      }
-    }
+  const fromAdditional = th !== undefined ? pickFirstThumbUrl([th.mUrl, th.sUrl, th.xsUrl, th.xxsUrl]) : '';
+  if (fromAdditional.length > 0) {
+    return fromAdditional;
   }
   const topTh = it.thumbnail;
   if (topTh !== undefined && typeof topTh === 'object') {
     const tb = topTh as GalleryThumbnailBlock;
-    for (const u of [tb.mUrl, tb.sUrl, tb.xsUrl, tb.xxsUrl]) {
-      if (u !== undefined && u.trim().length > 0) {
-        return u.trim();
-      }
+    const fromTopBlock = pickFirstThumbUrl([tb.mUrl, tb.sUrl, tb.xsUrl, tb.xxsUrl]);
+    if (fromTopBlock.length > 0) {
+      return fromTopBlock;
     }
   }
   for (const u of [it.thumb, it.small_thumb, it.thumb_url, it.cover, it.poster]) {
+    if (u !== undefined && u.trim().length > 0) {
+      return u.trim();
+    }
+  }
+  if (typeof topTh === 'string' && topTh.trim().length > 0) {
+    return topTh.trim();
+  }
+  for (const u of [it.url, it.src, it.path]) {
+    if (u !== undefined && u.trim().length > 0) {
+      return u.trim();
+    }
+  }
+  return '';
+}
+
+export function pickThumbForGridDensity(it: GalleryListItem, density: 'day' | 'month' | 'year'): string {
+  const topLevelPriorities = density === 'day'
+    ? [it.thumb, it.small_thumb, it.thumb_url, it.cover, it.poster]
+    : [it.small_thumb, it.thumb, it.thumb_url, it.cover, it.poster];
+  const th = it.additional?.thumbnail;
+  const fromAdditional = th !== undefined
+    ? density === 'year'
+      ? pickFirstThumbUrl([th.xsUrl, th.xxsUrl, th.sUrl, th.mUrl])
+      : density === 'month'
+        ? pickFirstThumbUrl([th.sUrl, th.xsUrl, th.xxsUrl, th.mUrl])
+        : pickFirstThumbUrl([th.mUrl, th.sUrl, th.xsUrl, th.xxsUrl])
+    : '';
+  if (fromAdditional.length > 0) {
+    return fromAdditional;
+  }
+  const topTh = it.thumbnail;
+  if (topTh !== undefined && typeof topTh === 'object') {
+    const tb = topTh as GalleryThumbnailBlock;
+    const fromTopBlock = density === 'year'
+      ? pickFirstThumbUrl([tb.xsUrl, tb.xxsUrl, tb.sUrl, tb.mUrl])
+      : density === 'month'
+        ? pickFirstThumbUrl([tb.sUrl, tb.xsUrl, tb.xxsUrl, tb.mUrl])
+        : pickFirstThumbUrl([tb.mUrl, tb.sUrl, tb.xsUrl, tb.xxsUrl]);
+    if (fromTopBlock.length > 0) {
+      return fromTopBlock;
+    }
+  }
+  for (let i = 0; i < topLevelPriorities.length; i++) {
+    const u = topLevelPriorities[i];
     if (u !== undefined && u.trim().length > 0) {
       return u.trim();
     }
@@ -355,7 +524,9 @@ export async function loadThumbPix(fullUrl: string, autoCropBlack: boolean = fal
   }
 
   // 等待并发槽位，避免大量同时下载解码导致卡顿
+  const queueWaitStartedAt = Date.now();
   await acquireThumbSlot();
+  const slotAcquiredAt = Date.now();
   try {
     // 二次检查：等待期间可能已由其他协程填充缓存
     const cached2 = thumbPixCache.get(key);
@@ -397,6 +568,7 @@ export async function loadThumbPix(fullUrl: string, autoCropBlack: boolean = fal
     thumbLoadFailAt.set(key, Date.now());
     return undefined;
   } finally {
+    noteThumbLoadSample(slotAcquiredAt - queueWaitStartedAt, Date.now() - slotAcquiredAt);
     releaseThumbSlot();
   }
 }
@@ -514,6 +686,7 @@ export struct GalleryNetworkThumb {
   @Prop isGif: boolean = false;
   /** true 时仅显示骨架占位，不发起真实图加载 */
   @Prop @Watch('onPausedChange') paused: boolean = false;
+  @Prop fadeInEnabled: boolean = true;
   @Prop debugLabel: string = '';
   @StorageProp('colorMode') private colorMode: number = 0;
   @State private pix: PixelMap | undefined = undefined;
@@ -558,6 +731,22 @@ export struct GalleryNetworkThumb {
     this.loadVersion++;
   }
 
+  private applyLoadedPix(pix: PixelMap, versionAtStart: number): void {
+    if (versionAtStart !== this.loadVersion) {
+      return;
+    }
+    this.pix = pix;
+    this.retryCount = 0;
+    this.logDebug('load-success');
+    if (!this.fadeInEnabled) {
+      this.pixAlpha = 1;
+      return;
+    }
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
+      this.pixAlpha = 1;
+    });
+  }
+
   private async loadPix(): Promise<void> {
     if (this.uri.length === 0 || this.loading) {
       return;
@@ -586,12 +775,13 @@ export struct GalleryNetworkThumb {
     }
     this.loading = false;
     if (pix !== undefined) {
-      this.pix = pix;
-      this.retryCount = 0;
-      this.logDebug('load-success');
-      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
-        this.pixAlpha = 1;
-      });
+      if (!this.fadeInEnabled) {
+        enqueueThumbPaintCommit((): void => {
+          this.applyLoadedPix(pix, versionAtStart);
+        });
+      } else {
+        this.applyLoadedPix(pix, versionAtStart);
+      }
     } else if (this.retryCount < 2) {
       this.retryCount++;
       this.logDebug(`load-retry-${this.retryCount}`);
