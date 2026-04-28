@@ -2,7 +2,7 @@ import { AppSession } from '../auth/AppSession';
 import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
-import { personFace as resolvePersonFace } from '../album/galleryAlbumTab/GalleryAlbumModeData';
+import { personFace as resolvePersonFace } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,

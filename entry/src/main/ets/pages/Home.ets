@@ -31,6 +31,11 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
+  GalleryViewGranularity,
+  galleryViewGranularityLabel,
+  nextGalleryViewGranularity
+} from '../album/galleryAlbumTab/GalleryAlbumGranularity';
+import {
   GALLERY_TOP_BAR_PAD_BOTTOM_VP,
   GALLERY_TOP_BAR_PAD_LEFT_VP,
   GALLERY_TOP_BAR_PAD_RIGHT_VP,
@@ -151,6 +156,7 @@ struct Home {
   @State private albumSearchModeActive: boolean = false;
   @State private bottomNavIndex: number = 0;
   @State private gallerySurfaceIndex: number = 0;
+  @State private galleryViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   @State private albumReloadEpoch: number = 0;
   @State private pageShowSignal: number = 0;
   @State private rootContentWidthVp: number = 360;
@@ -288,6 +294,14 @@ struct Home {
 
   private shouldShowGalleryDockSideButtons(): boolean {
     return !this.gallerySelectionDockActive && this.isGalleryShellVisible() && this.currentHomeSurface() === 'photos';
+  }
+
+  private currentGalleryGranularityLabel(): string {
+    return galleryViewGranularityLabel(this.galleryViewGranularity);
+  }
+
+  private toggleGalleryViewGranularity(): void {
+    this.galleryViewGranularity = nextGalleryViewGranularity(this.galleryViewGranularity);
   }
 
   private clearGallerySelectionDockTimer(): void {
@@ -539,8 +553,8 @@ struct Home {
       if (isLayoutButton) {
         this.floatingDockGridGlyph()
       } else {
-        Text('日')
-          .fontSize(24)
+        Text(this.currentGalleryGranularityLabel())
+          .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
       }
@@ -555,7 +569,11 @@ struct Home {
     .padding(0)
     .clip(true)
     .onClick((): void => {
-      this.toast(isLayoutButton ? '显示模式切换入口预留中' : '视图粒度切换入口预留中');
+      if (isLayoutButton) {
+        this.toast('\u663e\u793a\u6a21\u5f0f\u5207\u6362\u5165\u53e3\u9884\u7559\u4e2d');
+        return;
+      }
+      this.toggleGalleryViewGranularity();
     })
   }
 
@@ -720,6 +738,7 @@ struct Home {
               bottomSafeInsetVp: this.systemBottomInsetVp,
               floatingDockInsetBottomVp: this.dockReserveHeight(),
               homeSurface: this.currentHomeSurface(),
+              viewGranularity: this.galleryViewGranularity,
               onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
                 this.albumSearchModeActive = hiddenBottomNav;
               },
