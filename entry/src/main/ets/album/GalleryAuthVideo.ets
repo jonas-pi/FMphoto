@@ -122,6 +122,46 @@ export struct GalleryAuthVideo {
     return this.isDarkTheme ? Color.Black : Color.White;
   }
 
+  private controlChipBackground(): ResourceColor {
+    return $r('app.color.gallery_material_surface_bg');
+  }
+
+  private controlChipBorder(): ResourceColor {
+    return $r('app.color.immersive_panel_border');
+  }
+
+  private controlPanelBackground(): ResourceColor {
+    return $r('app.color.immersive_panel_bg');
+  }
+
+  private controlPrimaryTextColor(): ResourceColor {
+    return $r('app.color.button_secondary_fg');
+  }
+
+  private controlTimeTextColor(): ResourceColor {
+    return this.isDarkTheme ? '#DDFFFFFF' : '#C0162033';
+  }
+
+  private controlTrackColor(): ResourceColor {
+    return this.isDarkTheme ? '#44FFFFFF' : '#22000000';
+  }
+
+  private controlProgressFillColor(): ResourceColor {
+    return this.isDarkTheme ? '#FFFFFFFF' : $r('app.color.brand_primary');
+  }
+
+  private controlShadowColor(): string {
+    return this.isDarkTheme ? '#22000000' : '#14001A33';
+  }
+
+  private loadingIndicatorColor(): ResourceColor {
+    return this.isDarkTheme ? Color.White : $r('app.color.brand_primary');
+  }
+
+  private hintTextColor(): ResourceColor {
+    return this.isDarkTheme ? '#CCCCCC' : '#5B6675';
+  }
+
   onColorModeChanged(): void {
     this.isDarkTheme = this.colorMode === 1;
   }
@@ -930,7 +970,7 @@ export struct GalleryAuthVideo {
 
       if (this.videoLoading) {
         Column({ space: 12 }) {
-          LoadingProgress().width(48).height(48).color(Color.White)
+          LoadingProgress().width(48).height(48).color(this.loadingIndicatorColor())
         }
         .hitTestBehavior(HitTestMode.None)
       }
@@ -944,34 +984,34 @@ export struct GalleryAuthVideo {
               Button({ type: ButtonType.Circle, stateEffect: true }) {
                 SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
                   .fontSize(20)
-                  .fontColor([Color.White])
+                  .fontColor([this.controlPrimaryTextColor()])
               }
-              .width(40).height(40).backgroundColor('#D9333C48')
+              .width(40).height(40).backgroundColor(this.controlChipBackground())
               .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-              .border({ width: 1, color: '#26FFFFFF' })
-              .shadow({ radius: 14, color: '#22000000', offsetX: 0, offsetY: 6 })
+              .border({ width: 1, color: this.controlChipBorder() })
+              .shadow({ radius: 14, color: this.controlShadowColor(), offsetX: 0, offsetY: 6 })
               .onClick((): void => { void this.togglePlayPause(); })
 
               Button({ type: ButtonType.Capsule, stateEffect: true }) {
                 Text(this.longPressSpeeding ? '2.0x' : `${this.speedRate.toFixed(2)}x`)
                   .fontSize(13)
-                  .fontColor(Color.White)
+                  .fontColor(this.controlPrimaryTextColor())
               }
-              .height(36).backgroundColor('#D9333C48')
+              .height(36).backgroundColor(this.controlChipBackground())
               .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-              .border({ width: 1, color: '#26FFFFFF' })
-              .shadow({ radius: 12, color: '#22000000', offsetX: 0, offsetY: 5 })
+              .border({ width: 1, color: this.controlChipBorder() })
+              .shadow({ radius: 12, color: this.controlShadowColor(), offsetX: 0, offsetY: 5 })
               .onClick((): void => { void this.chooseSpeed(); })
 
               Button({ type: ButtonType.Capsule, stateEffect: true }) {
                 Text(this.currentQualityLabel())
                   .fontSize(13)
-                  .fontColor(Color.White)
+                  .fontColor(this.controlPrimaryTextColor())
               }
-              .height(36).backgroundColor('#D9333C48')
+              .height(36).backgroundColor(this.controlChipBackground())
               .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-              .border({ width: 1, color: '#26FFFFFF' })
-              .shadow({ radius: 12, color: '#22000000', offsetX: 0, offsetY: 5 })
+              .border({ width: 1, color: this.controlChipBorder() })
+              .shadow({ radius: 12, color: this.controlShadowColor(), offsetX: 0, offsetY: 5 })
               .onClick((): void => { void this.chooseQuality(); })
             }
             .width('100%')
@@ -980,18 +1020,18 @@ export struct GalleryAuthVideo {
             Row({ space: 8 }) {
               Text(this.fmtTime(this.currentMs))
                 .fontSize(11)
-                .fontColor('#DDFFFFFF')
+                .fontColor(this.controlTimeTextColor())
                 .width(44)
               Stack({ alignContent: Alignment.Start }) {
                 Row()
                   .width('100%')
                   .height(3)
-                  .backgroundColor('#44FFFFFF')
+                  .backgroundColor(this.controlTrackColor())
                   .borderRadius(2)
                 Row()
                   .width(`${Math.round(this.progressRatio() * 100)}%`)
                   .height(3)
-                  .backgroundColor('#FFFFFFFF')
+                  .backgroundColor(this.controlProgressFillColor())
                   .borderRadius(2)
               }
               .layoutWeight(1)
@@ -1049,15 +1089,15 @@ export struct GalleryAuthVideo {
 
               Text(this.fmtTime(this.durationMs))
                 .fontSize(11)
-                .fontColor('#DDFFFFFF')
+                .fontColor(this.controlTimeTextColor())
                 .width(44)
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
           }
           .width('100%')
-          .padding({ left: 12, right: 12, bottom: 18 + this.bottomPadding, top: 10 })
-          .backgroundColor('#33000000')
+          .padding({ left: 12, right: 12, bottom: 18 + this.bottomPadding, top: 12 })
+          .backgroundColor(this.controlPanelBackground())
         }
         .width('100%')
         .height('100%')
@@ -1069,7 +1109,7 @@ export struct GalleryAuthVideo {
         Column({ space: 14 }) {
           Text(this.hint)
             .fontSize(14)
-            .fontColor('#CCCCCC')
+            .fontColor(this.hintTextColor())
             .textAlign(TextAlign.Center)
           if (this.showPlaybackRetry) {
             Button({ type: ButtonType.Capsule, stateEffect: true }) {

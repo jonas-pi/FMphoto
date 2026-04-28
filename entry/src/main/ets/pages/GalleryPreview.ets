@@ -15,7 +15,7 @@ import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
-import { FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
+import { fnBottomDockBottomGap, FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PREVIEW_PAGE_ENTER_CURVE,
   FN_PREVIEW_PAGE_ENTER_DURATION,
@@ -206,6 +206,13 @@ struct GalleryPreview {
       return this.isDark() ? '#33FFFFFF' : '#22000000';
     }
     return this.isDark() ? '#33FFFFFF' : '#22000000';
+  }
+
+  private videoControlsBottomPadding(): number {
+    if (!this.toolbarVisible) {
+      return 0;
+    }
+    return this.bottomBarHeight + fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
   private toast(msg: string): void {
@@ -448,7 +455,7 @@ struct GalleryPreview {
               loadOriginalToken: this.loadOriginalToken,
               originalPreviewEnabled: idx === this.swiperIndex && this.originalPreviewEnabled,
               active: idx === this.swiperIndex,
-              videoBottomPadding: this.toolbarVisible ? this.bottomBarHeight : 0,
+              videoBottomPadding: this.videoControlsBottomPadding(),
               onZoomLockChange: (locked: boolean): void => {
                 this.runScopedTask((): void => {
                   this.previewZoomLocked = locked;
