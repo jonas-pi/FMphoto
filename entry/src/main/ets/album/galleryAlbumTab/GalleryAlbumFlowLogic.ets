@@ -50,15 +50,24 @@ export function galleryAlbumFlatItems(host: GalleryAlbumVisibleLoadHost): Galler
 }
 
 export function galleryAlbumGalleryFlowLazyKey(node: GalleryFlowNode): string {
-  if (node.kind !== 'row') {
-    return node.key;
-  }
+  return node.key;
+}
+
+function galleryAlbumBuildRowNodeKey(
+  mode: GalleryViewGranularity,
+  year: number,
+  month: number,
+  day: number,
+  row: number,
+  columns: number,
+  rowSlotItems: (GalleryListItem | null)[]
+): string {
   let slotSig = '';
-  for (let i = 0; i < node.rowSlotItems.length; i++) {
+  for (let i = 0; i < rowSlotItems.length; i++) {
     if (i > 0) {
       slotSig += 'x';
     }
-    const slot = node.rowSlotItems[i];
+    const slot = rowSlotItems[i];
     if (slot === null || slot === undefined) {
       slotSig += `sk${i}`;
       continue;
@@ -66,7 +75,7 @@ export function galleryAlbumGalleryFlowLazyKey(node: GalleryFlowNode): string {
     const id = galleryAlbumItemIdOf(slot);
     slotSig += id.length > 0 ? `id${id}` : `it${i}`;
   }
-  return `${node.key}_s${slotSig}`;
+  return `r_${mode}_${year}_${month}_${day}_row_${row}_c${columns}_s${slotSig}`;
 }
 
 function galleryAlbumFlowApproxRowHeightVp(host: GalleryAlbumVisibleLoadHost, columns: number): number {
@@ -156,7 +165,6 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
       for (let row = 0; row < totalRows; row++) {
         const rowNode = new GalleryFlowNode();
         rowNode.kind = 'row';
-        rowNode.key = `r_${mode}_${day.year}_${day.month}_${day.day}_row_${row}_c${columns}`;
         rowNode.year = day.year;
         rowNode.month = day.month;
         rowNode.day = day.day;
@@ -178,6 +186,15 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
             rowNode.rowSlotFlatIndices.push(-1);
           }
         }
+        rowNode.key = galleryAlbumBuildRowNodeKey(
+          mode,
+          day.year,
+          day.month,
+          day.day,
+          row,
+          columns,
+          rowNode.rowSlotItems
+        );
         nodes.push(rowNode);
       }
       flatLogical += totalCount;
@@ -225,7 +242,6 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
       for (let row = 0; row < totalRows; row++) {
         const rowNode = new GalleryFlowNode();
         rowNode.kind = 'row';
-        rowNode.key = `r_${mode}_${section.year}_${section.month}_${section.day}_row_${row}_c${columns}`;
         rowNode.year = section.year;
         rowNode.month = section.month;
         rowNode.day = section.day;
@@ -246,6 +262,15 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
             rowNode.rowSlotFlatIndices.push(-1);
           }
         }
+        rowNode.key = galleryAlbumBuildRowNodeKey(
+          mode,
+          section.year,
+          section.month,
+          section.day,
+          row,
+          columns,
+          rowNode.rowSlotItems
+        );
         nodes.push(rowNode);
       }
       flatLogical += totalCount;

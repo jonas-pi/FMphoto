@@ -29,7 +29,7 @@ export function galleryViewGranularityColumns(mode: GalleryViewGranularity): num
     return 8;
   }
   if (mode === GalleryViewGranularity.YEAR) {
-    return 17;
+    return 12;
   }
   return 3;
 }
