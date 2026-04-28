@@ -10,12 +10,14 @@ import {
   isVideoItem,
   nasUrl,
   pickThumbForGridDensity,
+  thumbDensityCacheRank,
+  thumbIdentityOfItem,
   setThumbHighThroughputLevel
 } from '../GalleryAlbumCommon';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
-import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
+import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 
@@ -26,6 +28,8 @@ const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_MONTH: number = 360;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_YEAR: number = 120;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_MONTH: number = 160;
+const GALLERY_GRANULARITY_SWITCH_DURATION_MS: number = 140;
+const GALLERY_GRANULARITY_SWITCH_START_OPACITY: number = 0.92;
 
 @Component
 export struct GalleryAlbumMainModeView {
@@ -75,7 +79,8 @@ export struct GalleryAlbumMainModeView {
   private galleryTouchLastY: number = 0;
   private thumbThroughputLevel: number = 0;
   private thumbLastAdaptiveDropAtMs: number = 0;
-  @State private granularityScale: number = 1;
+  private lastViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
+  @State private granularityOpacity: number = 1;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
   galleryThumbDomId: (photoId: string) => string = (_: string) => '';
@@ -151,8 +156,25 @@ export struct GalleryAlbumMainModeView {
     this.applyThumbThroughputLevel();
   }
 
+  private resetGranularityMotion(): void {
+    this.granularityOpacity = 1;
+  }
+
+  private playGranularitySwitchMotion(): void {
+    this.granularityOpacity = GALLERY_GRANULARITY_SWITCH_START_OPACITY;
+    try {
+      this.getUIContext().animateTo({ duration: GALLERY_GRANULARITY_SWITCH_DURATION_MS, curve: Curve.EaseOut }, (): void => {
+        this.resetGranularityMotion();
+      });
+    } catch (_e) {
+      this.resetGranularityMotion();
+    }
+  }
+
   aboutToAppear(): void {
     this.syncThumbHighThroughputMode();
+    this.lastViewGranularity = this.viewGranularity;
+    this.resetGranularityMotion();
   }
 
   aboutToDisappear(): void {
@@ -160,15 +182,9 @@ export struct GalleryAlbumMainModeView {
   }
 
   private onViewGranularityChanged(): void {
+    this.lastViewGranularity = this.viewGranularity;
     this.syncThumbHighThroughputMode();
-    this.granularityScale = 0.965;
-    try {
-      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
-        this.granularityScale = 1;
-      });
-    } catch (_e) {
-      this.granularityScale = 1;
-    }
+    this.playGranularitySwitchMotion();
   }
 
   private currentThumbPressureLoadMs(): number {
@@ -389,7 +405,9 @@ export struct GalleryAlbumMainModeView {
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
         paused: this.timelineSidebarDragging || this.isDraggingOrFling,
-        fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY
+        fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY,
+        cacheIdentity: thumbIdentityOfItem(item),
+        cacheRank: thumbDensityCacheRank(this.currentThumbDensity())
       })
         .width('100%')
         .aspectRatio(1)
@@ -638,8 +656,7 @@ export struct GalleryAlbumMainModeView {
         }, (r: number) => `skr_${r}`)
       }
       .width('100%')
-      .scale({ x: this.granularityScale, y: this.granularityScale })
-      .opacity(this.modeSwitchOpacity)
+      .opacity(this.modeSwitchOpacity * this.granularityOpacity)
       .translate({ x: this.modeSwitchOffsetY, y: 0 })
       .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     } else {
@@ -752,8 +769,7 @@ export struct GalleryAlbumMainModeView {
       }
       .width('100%')
       .layoutWeight(1)
-      .scale({ x: this.granularityScale, y: this.granularityScale })
-      .opacity(this.modeSwitchOpacity)
+      .opacity(this.modeSwitchOpacity * this.granularityOpacity)
       .translate({ x: this.modeSwitchOffsetY, y: 0 })
       .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
     }

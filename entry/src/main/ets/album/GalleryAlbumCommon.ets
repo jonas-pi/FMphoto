@@ -22,6 +22,7 @@ const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
 /** 缩略图全局缓存上限；HDR 缩略图单张占用大，过高易 OOM；配合 SDR 解码与 release 淘汰 */
 export const THUMB_CACHE_MAX = 192;
 const thumbPixCache = new Map<string, PixelMap>();
+const thumbPixIdentityCache = new Map<string, ThumbIdentityCacheEntry>();
 const thumbLoadFailAt = new Map<string, number>();
 const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
 /** 原图下载智能超时：先短后长，兼顾小图响应与大图成功率 */
@@ -34,6 +35,11 @@ export interface GalleryThumbLoadTelemetry {
   avgQueueWaitMs: number;
   avgLoadMs: number;
   sampleCount: number;
+}
+
+interface ThumbIdentityCacheEntry {
+  cacheKey: string;
+  rank: number;
 }
 
 function fullImageTimeoutSteps(expectedBytes?: number): number[] {
@@ -85,6 +91,44 @@ let thumbPaintCommitTimer: number = -1;
 
 function thumbCacheKey(fullUrl: string, autoCropBlack: boolean): string {
   return `${autoCropBlack ? '1' : '0'}|${fullUrl}`;
+}
+
+function dropThumbIdentityEntriesForCacheKey(cacheKey: string): void {
+  const staleKeys: string[] = [];
+  thumbPixIdentityCache.forEach((entry: ThumbIdentityCacheEntry, identity: string): void => {
+    if (entry.cacheKey === cacheKey) {
+      staleKeys.push(identity);
+    }
+  });
+  for (let i = 0; i < staleKeys.length; i++) {
+    thumbPixIdentityCache.delete(staleKeys[i]);
+  }
+}
+
+function evictThumbCacheEntry(cacheKey: string): void {
+  const old = thumbPixCache.get(cacheKey);
+  thumbPixCache.delete(cacheKey);
+  dropThumbIdentityEntriesForCacheKey(cacheKey);
+  if (old !== undefined) {
+    releaseThumbPix(old);
+  }
+}
+
+function rememberThumbIdentityCache(identity: string, cacheKey: string, rank: number): void {
+  if (identity.length <= 0 || rank <= 0) {
+    return;
+  }
+  if (!thumbPixCache.has(cacheKey)) {
+    return;
+  }
+  const existing = thumbPixIdentityCache.get(identity);
+  if (existing !== undefined) {
+    const existingPix = thumbPixCache.get(existing.cacheKey);
+    if (existingPix !== undefined && existing.rank > rank) {
+      return;
+    }
+  }
+  thumbPixIdentityCache.set(identity, { cacheKey, rank });
 }
 
 function currentMaxThumbConcurrent(): number {
@@ -225,6 +269,37 @@ export function getThumbPixCached(uri: string): PixelMap | undefined {
   return v;
 }
 
+export function getThumbPixCachedByIdentity(identity: string): PixelMap | undefined {
+  if (identity.length === 0) {
+    return undefined;
+  }
+  const entry = thumbPixIdentityCache.get(identity);
+  if (entry === undefined) {
+    return undefined;
+  }
+  const pix = thumbPixCache.get(entry.cacheKey);
+  if (pix === undefined) {
+    thumbPixIdentityCache.delete(identity);
+    return undefined;
+  }
+  return pix;
+}
+
+export function getThumbIdentityCacheRank(identity: string): number {
+  if (identity.length === 0) {
+    return 0;
+  }
+  const entry = thumbPixIdentityCache.get(identity);
+  if (entry === undefined) {
+    return 0;
+  }
+  if (!thumbPixCache.has(entry.cacheKey)) {
+    thumbPixIdentityCache.delete(identity);
+    return 0;
+  }
+  return entry.rank;
+}
+
 export function trimThumbPixCache(maxKeep: number): void {
   const keep = Math.max(0, Math.floor(maxKeep));
   while (thumbPixCache.size > keep) {
@@ -236,11 +311,7 @@ export function trimThumbPixCache(maxKeep: number): void {
     if (firstKey === undefined) {
       break;
     }
-    const old = thumbPixCache.get(firstKey);
-    thumbPixCache.delete(firstKey);
-    if (old !== undefined) {
-      releaseThumbPix(old);
-    }
+    evictThumbCacheEntry(firstKey);
   }
 }
 
@@ -385,6 +456,16 @@ export function pickThumbForGridDensity(it: GalleryListItem, density: 'day' | 'm
   return '';
 }
 
+export function thumbDensityCacheRank(density: 'day' | 'month' | 'year'): number {
+  if (density === 'day') {
+    return 3;
+  }
+  if (density === 'month') {
+    return 2;
+  }
+  return 1;
+}
+
 export function pickOriginal(it: GalleryListItem): string {
   if (it.originalUrl !== undefined && it.originalUrl.trim().length > 0) {
     return it.originalUrl.trim();
@@ -398,6 +479,30 @@ export function pickOriginal(it: GalleryListItem): string {
     if (orig !== undefined && orig.trim().length > 0) {
       return orig.trim();
     }
+  }
+  return '';
+}
+
+export function thumbIdentityOfItem(it: GalleryListItem): string {
+  const id = it.id !== undefined ? String(it.id).trim() : '';
+  if (id.length > 0) {
+    return `id:${id}`;
+  }
+  const photoUUID = it.photoUUID !== undefined ? String(it.photoUUID).trim() : '';
+  if (photoUUID.length > 0) {
+    return `uuid:${photoUUID}`;
+  }
+  const guid = it.guid !== undefined ? String(it.guid).trim() : '';
+  if (guid.length > 0) {
+    return `guid:${guid}`;
+  }
+  const orig = pickOriginal(it);
+  if (orig.length > 0) {
+    return `orig:${orig}`;
+  }
+  const thumb = pickThumb(it);
+  if (thumb.length > 0) {
+    return `thumb:${thumb}`;
   }
   return '';
 }
@@ -513,11 +618,19 @@ async function autoCropBlackBorders(pix: PixelMap): Promise<void> {
   } catch (_e) {}
 }
 
-export async function loadThumbPix(fullUrl: string, autoCropBlack: boolean = false): Promise<PixelMap | undefined> {
+export async function loadThumbPix(
+  fullUrl: string,
+  autoCropBlack: boolean = false,
+  cacheIdentity: string = '',
+  cacheRank: number = 0
+): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) { return undefined; }
   const key = thumbCacheKey(fullUrl, autoCropBlack);
   const cached = thumbPixCache.get(key);
-  if (cached !== undefined) { return cached; }
+  if (cached !== undefined) {
+    rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
+    return cached;
+  }
   const failAt = thumbLoadFailAt.get(key);
   if (failAt !== undefined && Date.now() - failAt < THUMB_FAIL_RETRY_COOLDOWN_MS) {
     return undefined;
@@ -530,7 +643,10 @@ export async function loadThumbPix(fullUrl: string, autoCropBlack: boolean = fal
   try {
     // 二次检查：等待期间可能已由其他协程填充缓存
     const cached2 = thumbPixCache.get(key);
-    if (cached2 !== undefined) { return cached2; }
+    if (cached2 !== undefined) {
+      rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
+      return cached2;
+    }
 
     const client = AppSession.getClient();
     if (client === null) { return undefined; }
@@ -554,14 +670,11 @@ export async function loadThumbPix(fullUrl: string, autoCropBlack: boolean = fal
         break;
       }
       if (firstKey !== undefined) {
-        const old = thumbPixCache.get(firstKey);
-        thumbPixCache.delete(firstKey);
-        if (old !== undefined) {
-          releaseThumbPix(old);
-        }
+        evictThumbCacheEntry(firstKey);
       }
     }
     thumbPixCache.set(key, pix);
+    rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
     thumbLoadFailAt.delete(key);
     return pix;
   } catch (_e) {
@@ -688,6 +801,8 @@ export struct GalleryNetworkThumb {
   @Prop @Watch('onPausedChange') paused: boolean = false;
   @Prop fadeInEnabled: boolean = true;
   @Prop debugLabel: string = '';
+  @Prop cacheIdentity: string = '';
+  @Prop cacheRank: number = 0;
   @StorageProp('colorMode') private colorMode: number = 0;
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
@@ -696,6 +811,7 @@ export struct GalleryNetworkThumb {
   private loadVersion: number = 0;
   /** 失败重试次数：用于弱网/短时请求失败后自动补偿加载 */
   private retryCount: number = 0;
+  private needsUpgradeAfterResume: boolean = false;
 
   private logDebug(message: string): void {
     if (this.debugLabel.length <= 0) {
@@ -711,12 +827,13 @@ export struct GalleryNetworkThumb {
     this.pixAlpha = 0;
     this.loading = false;
     this.retryCount = 0;
+    this.needsUpgradeAfterResume = false;
     void this.loadPix();
   }
 
   onPausedChange(): void {
     this.logDebug(this.paused ? 'paused' : 'resumed');
-    if (!this.paused && this.pix === undefined && !this.loading) {
+    if (!this.paused && !this.loading && (this.pix === undefined || this.needsUpgradeAfterResume)) {
       void this.loadPix();
     }
   }
@@ -737,6 +854,7 @@ export struct GalleryNetworkThumb {
     }
     this.pix = pix;
     this.retryCount = 0;
+    this.needsUpgradeAfterResume = false;
     this.logDebug('load-success');
     if (!this.fadeInEnabled) {
       this.pixAlpha = 1;
@@ -757,17 +875,33 @@ export struct GalleryNetworkThumb {
       this.pix = cached;
       this.pixAlpha = 1;
       this.retryCount = 0;
+      rememberThumbIdentityCache(this.cacheIdentity, cacheKey, this.cacheRank);
+      this.needsUpgradeAfterResume = false;
       this.logDebug('cache-hit');
       return;
     }
+    const reused = getThumbPixCachedByIdentity(this.cacheIdentity);
+    if (reused !== undefined) {
+      this.pix = reused;
+      this.pixAlpha = 1;
+      this.retryCount = 0;
+      const reusedRank = getThumbIdentityCacheRank(this.cacheIdentity);
+      if (reusedRank >= this.cacheRank) {
+        this.needsUpgradeAfterResume = false;
+        this.logDebug(`identity-hit-r${reusedRank}`);
+        return;
+      }
+      this.needsUpgradeAfterResume = true;
+      this.logDebug(`identity-hit-upgrade-r${reusedRank}->${this.cacheRank}`);
+    }
     if (this.paused) {
-      this.logDebug('load-skipped-paused');
+      this.logDebug(this.needsUpgradeAfterResume ? 'upgrade-deferred-paused' : 'load-skipped-paused');
       return;
     }
     this.logDebug('load-start');
     const versionAtStart = this.loadVersion;
     this.loading = true;
-    const pix = await loadThumbPix(this.uri, this.isVideo);
+    const pix = await loadThumbPix(this.uri, this.isVideo, this.cacheIdentity, this.cacheRank);
     if (versionAtStart !== this.loadVersion) {
       this.loading = false;
       this.logDebug('load-stale');
@@ -788,7 +922,7 @@ export struct GalleryNetworkThumb {
       const retryVersion = this.loadVersion;
       const delay = this.retryCount * 700;
       setTimeout((): void => {
-        if (retryVersion !== this.loadVersion || this.pix !== undefined) {
+        if (retryVersion !== this.loadVersion || (this.pix !== undefined && !this.needsUpgradeAfterResume)) {
           return;
         }
         void this.loadPix();

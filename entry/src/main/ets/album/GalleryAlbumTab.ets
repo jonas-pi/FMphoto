@@ -395,7 +395,12 @@ import {
   ymKey,
 } from './galleryAlbumTab/GalleryAlbumTabTypes';
 
-// 鈹€鈹€鈹€ 涓?Tab 缁勪欢 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+const GALLERY_GRANULARITY_HOST_SWITCH_DURATION_MS: number = 300;
+const GALLERY_GRANULARITY_HOST_SWITCH_EXIT_MS: number = 110;
+const GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP: number = 18;
+const GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY: number = 0.7;
+
+// ─── Tab 组件 ─────────────────────────────────────────────────────────────
 
 @Component
 export struct GalleryAlbumTab {
@@ -409,7 +414,7 @@ export struct GalleryAlbumTab {
   onSearchModeVisibilityChange: (hiddenBottomNav: boolean) => void = (_: boolean): void => {};
   onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void) => void =
     (_: boolean, __: () => void, ___: () => void): void => {};
-  /** Home.onPageShow() 閫掑 鈫?瑙﹀彂鍒犻櫎鍚屾锛堝畨鍏ㄤ繚闅滐紝涓嶄緷璧栧瓙缁勪欢 onPageShow 浼犳挱锛?*/
+  /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
 
   @State private bootLoading: boolean = false;
@@ -433,7 +438,7 @@ export struct GalleryAlbumTab {
   private rootSurfaceSwitchFrom: string = 'photos';
   private rootSurfaceSwitchTo: string = 'photos';
 
-  // 鈹€鈹€ 鎼滅储鐘舵€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── 搜索状态 ──────────────────────────────────────────────────────────────
   @State private searchQuery: string = '';
   @State @Watch('onSearchModeChanged') private inSearchMode: boolean = false;
   @State private searchResults: GalleryListItem[] = [];
@@ -455,124 +460,129 @@ export struct GalleryAlbumTab {
   @State private personLoading: boolean = false;
   @State private personOpening: boolean = false;
   @State private recentOpening: boolean = false;
-  /** 鎵撳紑銆屾敹钘忋€嶈仛鍚堝垪琛ㄦ椂鐨勫叏灞忛伄缃╋紙涓庢渶杩戞坊鍔犱竴鑷达級 */
+  /** 打开“收藏”聚合列表时的全屏遮罩，与“最近添加”保持一致。 */
   @State private collectOpening: boolean = false;
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
-  /** 涓婁紶鐘舵€?*/
+  /** 上传状态 */
   @State private uploading: boolean = false;
   @State private uploadText: string = '';
-  /** 涓诲浘搴撻暱鎸夊閫夛紙涓庣郴缁熸嫋鎷?涓浆绔欒В鑰︼細缂╃暐鍥惧凡 draggable(false)锛?*/
+  /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
   @State private gallerySelectionMode: boolean = false;
   @State private gallerySelectedIds: string[] = [];
   @State private galleryBatchDeleting: boolean = false;
   @State private galleryBatchDownloading: boolean = false;
   /**
-   * 涓绘椂闂寸嚎 List 鏄惁鍝嶅簲鎵嬫寚婊氬姩銆?
-   * 鍒掗€夋椂涓存椂鍏抽棴锛岄伩鍏?List 鎶㈣蛋 Pan锛汱azyForEach 琛?key 鍕块殢澶氶€夊垏鎹紝鍚﹀垯瀛愭爲閲嶅缓浼氫腑鏂綋鍓嶆寚涓嬫墜鍔裤€?
+   * 主时间线 List 是否响应手指滚动。
+   * 划选时会临时关闭，避免 List 抢走 Pan；LazyForEach 的 row key 也不能随多选切换，
+   * 否则子树重建会打断当前指下手势。
    */
   @State private galleryMainListScrollEnabled: boolean = true;
   /**
-   * 缁熶竴浜や簰鐘舵€佹満锛?
-   * - timelineSidebarDragging: 鏃堕棿杞存墜鍔胯繘琛屼腑
-   * - isDraggingOrFling: 涓诲垪琛ㄦ鍦ㄦ嫋鍔?鎯€э紙Scroll/Fling锛?
-   * - visualPlaceholderMode: 鍥剧墖鍔犺浇闂ㄦ帶锛堟椂闂磋酱鎷栧姩鎴栦富鍒楄〃鎷栧姩/鎯€ф椂涓?true锛?
+   * 统一交互状态机：
+   * - timelineSidebarDragging: 时间轴手势进行中
+   * - isDraggingOrFling: 主列表正在拖动或惯性滚动（Scroll/Fling）
+   * - visualPlaceholderMode: 图片加载门控；时间轴拖动或主列表拖动/惯性时为 true
    *
-   * 绾︽潫锛氫换浣曞浘鐗囪姹傚紑鍏抽兘鍙湅 visualPlaceholderMode锛岄伩鍏嶅鐘舵€佷簰鐩歌鐩栥€?
+   * 约束：任何图片请求开关都只看 visualPlaceholderMode，避免多状态互相覆盖。
    */
   @State private timelineSidebarDragging: boolean = false;
   @State private listKineticScrolling: boolean = false;
   @State private isDraggingOrFling: boolean = false;
   @State private visualPlaceholderMode: boolean = false;
-  /** 涓诲垪琛?Idle 鍚?settled 闃叉姈瀹氭椂鍣?id锛涘啀娆℃粴鍔ㄦ椂鍙栨秷 */
+  /** 主列表进入 Idle 后的 settled 防抖定时器 id，再次滚动时取消。 */
   private listSettledTimer: number = -1;
-  /** settled 闃叉姈浠ｆ锛岄伩鍏嶆棫瀹氭椂鍣ㄥ洖鍐?*/
+  /** settled 防抖代次，避免旧定时器回写。 */
   private listSettledGen: number = 0;
-  /** 婊氬姩鎺掗殰锛氫笂娆℃粴鍔ㄦ棩蹇楁椂闂存埑 */
+  /** 滚动排障：上次滚动日志时间戳。 */
   private lastScrollDebugLogMs: number = 0;
-  /** 婊氬姩鎺掗殰锛氫笂娆℃粴鍔ㄧ姸鎬佹枃鏈紙浠呯姸鎬佸彉鍖栨垨鑺傛祦鍒版湡鎵嶆墦鍗帮級 */
+  /** 滚动排障：上次滚动状态文本，仅在状态变化或节流到期时打印。 */
   private lastScrollDebugState: string = 'init';
-  /** 鏈€杩戜竴娆′富鍒楄〃浜や簰鏃堕棿锛堢敤浜庨檺鍒舵车鏃ュ織浠呭湪浜や簰绐楀彛杈撳嚭锛?*/
+  /** 最近一次主列表交互时间，用于限制泵日志只在交互窗口输出。 */
   private lastMainListInteractMs: number = 0;
   private lastMainListScrollOffsetVp: number = 0;
   private lastMainListScrollOffsetHave: boolean = false;
   private visibleLoadPreferBottomFirst: boolean = false;
-  /** 鏃堕棿杞存嫋鍔ㄦ€?watchdog 瀹氭椂鍣?*/
+  /** 时间轴拖动 watchdog 定时器。 */
   private timelineDragWatchdogTimer: number = -1;
-  /** 鏃堕棿杞存嫋鍔ㄤ細璇濅唬娆★紙鐢ㄤ簬鍙栨秷鏃?watchdog 鍥炲啓锛?*/
+  /** 时间轴拖动会话代次，用于取消旧 watchdog 回写。 */
   private timelineDragWatchdogGen: number = 0;
-  /** 婊氬姩鏃惰Е杈炬椂闂磋酱鏄鹃殣鐨勮妭娴佹椂闂存埑锛岄伩鍏嶆瘡甯ч噸缃?show/hide 瀹氭椂鍣?*/
+  /** 滚动时触达时间轴显隐的节流时间戳，避免每帧重置 show/hide 定时器。 */
   private lastTimelineBarTouchMs: number = 0;
-  /** 涓诲垪琛?-> 鏃堕棿杞存墜鏌勪綅缃悓姝ヨ妭娴佹椂闂存埑锛堥伩鍏?onScrollIndex 楂橀椹卞姩鎵嬫焺閲嶇粯锛?*/
+  /** 主列表到时间轴手柄位置同步的节流时间戳，避免 onScrollIndex 高频驱动手柄重绘。 */
   private lastTimelineHandleSyncMs: number = 0;
   private navigationGuardEpoch: number = 0;
-  /** 鏃堕棿杞存槸鍚︽樉绀猴紙婊氬姩涓?浜や簰涓樉寮忓彲瑙侊紝闈欐鍚庤嚜鍔ㄦ贰鍑猴級 */
+  /** 时间轴是否显示：滚动或交互中显式可见，静止后自动淡出。 */
   @State private timelineBarVisible: boolean = false;
-  /** 鏃堕棿杞存寜鍘嬫€侊細鎵嬫寚鍦ㄨ建閬撲笂锛堢敤浜庢樉闅愪笌瑙︽劅锛屼笉绛夊悓浜庛€屽睍寮€ scrub銆嶏級 */
+  /** 时间轴按压态：手指在轨道上，用于显隐与触感，不等同于“展开 scrub”。 */
   @State private timelinePressing: boolean = false;
-  /** 闀挎寜缁嗚建鍚庤繘鍏ュ畬鏁村睍寮€鎬侊紙骞存湀姘旀场銆佸勾浠藉埢搴︾瓑锛夛紱绾靛悜鎷栧姩涔熶細杩涘叆灞曞紑 */
+  /** 长按细轨后进入完整展开态（年月气泡、年份刻度等），纵向拖动也会进入展开。 */
   @State private timelineLongPressExpanded: boolean = false;
-  /** 婊戝潡姣斾緥 [0,1]锛?=鏈€鏂帮紝1=鏈€鏃?*/
+  /** 滑块比例 [0,1]；0 表示最新，1 表示最旧。 */
   @State private timelineSliderRatio: number = 0;
   /** 褰撳墠楂樹寒鏈堜唤鍦ㄦ椂闂磋酱骞存湀鍒楄〃涓殑涓嬫爣 */
   @State private timelineSidebarHighlightIndex: number = 0;
-  /** 鎸囩ず鏍囩鐨?Y 浣嶇疆锛坴p锛?*/
+  /** 指示标签的 Y 位置（vp）。 */
   @State private timelineIndicatorY: number = 12;
-  /** 鏃堕棿杞村彲鐢ㄨ建閬撻珮搴︼紙vp锛夛紝鐢?onAreaChange 瀹炴祴鍐欏叆 */
+  /** 时间轴可用轨道高度（vp），由 onAreaChange 实测写入。 */
   @State private timelineScrubTrackHeightVp: number = 500;
-  /** 鑷姩闅愯棌瀹氭椂鍣?*/
+  /** 自动隐藏定时器。 */
   private timelineHideTimer: number = -1;
-  /** seek 淇濇姢鏍囪锛氭澗鎵嬪悗鐭獥鍐呴樆鏂弽鍚戝悓姝?*/
+  /** seek 保护标记：松手后短窗内阻断反向同步。 */
   private timelineSeekInProgress: boolean = false;
   /** seek 鐩戣鍣ㄤ唬娆★細鏂版嫋鍔ㄥ彲鍙栨秷鏃т换鍔?*/
   private timelineSeekGen: number = 0;
   /** 鏃堕棿杞寸▼搴忓寲 seek 鐨勫垪琛ㄩ敋鐐癸紝release 鍚庢嫿涓嶅埌 visible callback 鏃剁敤浜庤繎浼煎彲瑙嗗尯 */
   private timelineSeekAnchorNodeIdx: number = -1;
-  /** 褰撳墠 List 鍙鑺傜偣鍖洪棿锛堢敱 onScrollIndex 鍥炰紶锛?*/
+  /** 当前 List 可见节点区间，由 onScrollIndex 回传。 */
   private listVisibleFirstNodeIdx: number = 0;
   private listVisibleLastNodeIdx: number = 0;
   /**
-   * onScrollIndex 鏈€杩戜竴娆″洖璋冩椂鐨?Scroller 绾靛悜鍋忕Щ涓庨绱㈠紩銆?
-   * LazyForEach + 鍏ㄩ噺楠ㄦ灦涓嬪垪琛ㄥ父銆屾粴鍔ㄤ簡寰堜箙鎵嶆洿鏂?first/last銆嶏紝鐢?(yNow - anchorY) 鍚戝墠鎺ㄨ繘鑺傜偣浠ヨ创鍚堢湡瀹炶鍙ｃ€?
+   * onScrollIndex 最近一次回调时的 Scroller 纵向偏移与首索引。
+   * LazyForEach + 全量骨架下，first/last 往往会明显滞后；这里用 (yNow - anchorY)
+   * 向前推进节点索引，使其更贴近真实视口。
    */
   private listScrollIndexAnchorYVp: number = 0;
   private listScrollIndexAnchorFirst: number = 0;
   private listScrollIndexAnchorHave: boolean = false;
   /**
-   * 鍏ㄦ椂闂寸嚎銆岀収鐗囨Ы浣嶃€嶄笅鏍囩紦瀛橈紙涓?countPhotoSlotsBeforeNode 涓€鑷达級锛?
-   * 鍙鍖哄彧鏈夋爣棰樿鏃?onScrollIndex 浼氬緱鍒?visEnd<=visStart锛屽鑷?loadVisible 姘歌繙涓嶈Е鍙戯紱
-   * 鐢ㄦ渶杩戜竴娆℃湁鏁堝彲瑙嗘Ы浣嶄綔涓烘澗鎵?闈欐鍚庣殑鍔犺浇閿氱偣銆?
+   * 全时间线“照片槽位”下标缓存，与 countPhotoSlotsBeforeNode 保持一致。
+   * 若可见区只有标题行，onScrollIndex 可能返回 visEnd <= visStart，导致 loadVisible 不触发；
+   * 这里使用最近一次有效可视槽位，作为松手静止后的加载锚点。
    */
   private lastKnownGlobalPhotoSlotStart: number = 0;
   private lastKnownGlobalPhotoSlotEndExclusive: number = 0;
-  /** 鍙鍖洪鍔犺浇缂撳啿锛堜互鈥滅収鐗囨Ы浣嶁€濊锛?*/
+  /** 可视区预加载缓冲，以“照片槽位”为单位。 */
   private readonly visiblePhotoBufferSlots: number = 12;
-  /** 鍙鍖洪┍鍔ㄥ姞杞借妭娴侊細閬垮厤 Idle 鎶栧姩鏃堕珮棰戣Е鍙?loadVisibleItems */
+  /** 可视区驱动加载节流，避免 Idle 抖动时高频触发 loadVisibleItems。 */
   private lastLoadVisibleAtMs: number = 0;
   private loadVisibleRetryTimer: number = -1;
   private loadVisibleRetryGen: number = 0;
   private visibleBandPumpRunIdSeq: number = 0;
   private visibleBandPumpActiveRunId: number = -1;
   private visibleBandPumpActiveEpoch: number = -1;
-  /** pump 浠ｆ锛氭柊婊氬姩寮€濮嬫椂閫掑锛屾棫 pump/鍥炶皟绔嬪嵆澶辨晥锛堟墦鏂苟鍙戦摼璺級 */
+  /** pump 代次：新滚动开始时递增，旧 pump/回调立即失效，用于打断并发链路。 */
   private pumpEpoch: number = 0;
-  /** 鏃堕棿杞存澗鎵嬪悗鐭獥鍐呭拷鐣ョ▼搴忓寲婊氬姩瀵瑰喕缁撴€佺殑鍥炲啓锛岄槻姝⑩€滃繀椤诲啀婊戜竴涓嬫墠鍔犺浇鈥?*/
+  /** 时间轴松手后短窗内忽略程序化滚动对冻结态的回写，防止“必须再滑一下才加载”。 */
   private ignoreListFreezeUntilMs: number = 0;
-  /** seek 鍚庤嫢拿涓嶅埌 scroller visible range锛屽湪鐭椂闂村唴缁х画淇濇寔 anchor 浼樺厛 */
+  /** seek 后若拿不到 scroller visible range，在短时间内继续保持 anchor 优先。 */
   private timelineSeekNoScrollerGuardUntilMs: number = 0;
   private timelineReleaseAwaitVisibleCallback: boolean = false;
   private timelineSeekStableVisibleFirstNodeIdx: number = -1;
   private timelineSeekStableVisibleLastNodeIdx: number = -1;
   private timelineSeekStableVisibleHits: number = 0;
-  /** 瑙嗚鍐荤粨鏈燂紙鎷栧姩/Fling锛夋敹鍒扮殑鏁版嵁鍙樻洿寤惰繜鍒拌В鍐诲悗鍐嶄竴娆℃€у埛鏂帮紝閬垮厤婊氬姩鏉′笉璺熸墜 */
+  /** 视觉冻结期收到的数据变更延迟到解冻后再一次性刷新，避免滚动条不跟手。 */
   private pendingFlowRebuild: boolean = false;
-  /** 閬垮厤婊氬姩鍋滄鍚庨噸澶嶈Е鍙戝悓涓€鐩爣鏃ョ殑鎶㈠崰鍔犺浇 */
+  /** 避免滚动停止后重复触发同一目标日的抢占加载。 */
   private lastVisibleLoadDayIdx: number = -1;
-  /** 妯″紡鍒囨崲鏃跺唴瀹瑰眰鍔ㄦ晥锛堟贰鍏?+ 杞诲井浣嶇Щ锛?*/
+  /** 模式切换时内容层动效：淡入加轻微位移。 */
   @State private modeSwitchOpacity: number = 1;
   @State private modeSwitchOffsetY: number = 0;
-  /** WaterFlow + LazyForEach 鏁版嵁婧愶紙涓?sections 鍚屾锛?*/
+  @State private renderedViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
+  private lastGranularityMotionMode: GalleryViewGranularity = GalleryViewGranularity.DAY;
+  private granularitySwitchTimer: number = -1;
+  /** WaterFlow + LazyForEach 数据源，与 sections 保持同步。 */
   private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
   private loadGen: number = 0;
@@ -584,57 +594,58 @@ export struct GalleryAlbumTab {
   private loadingMore: boolean = false;
   private exhausted: boolean = false;
   private dayOffsets: Map<string, number> = new Map<string, number>();
-  /** 姣忓ぉ宸茶姹傜殑鎵规鏁帮紙瀹夊叏涓婇檺锛岄槻姝?itemCount 涓嶅噯鏃舵棤闄愬惊鐜級 */
+  /** 每天已请求的批次数，作为安全上限，防止 itemCount 不准时无限循环。 */
   private dayRounds: Map<string, number> = new Map<string, number>();
-  /** 姣忓ぉ杩炵画绌洪〉璁℃暟锛堥槻姝㈠崟娆＄┖椤佃鍒囨棩锛?*/
+  /** 每天连续空页计数，防止单次空页误切日。 */
   private dayEmptyRounds: Map<string, number> = new Map<string, number>();
   private scrollerRef: Scroller = new Scroller();
-  /** 涓婃宸插鐞嗙殑鍒犻櫎鍚屾鐗堟湰鍙?*/
+  /** 上次已处理的删除同步版本号。 */
   private handledDeleteSyncVersion: number = 0;
-  /** 闀挎寜鍚庡湪姝ゆ椂闂存埑涔嬪墠蹇界暐鍗曞嚮锛岄伩鍏嶈杩涢瑙?*/
+  /** 长按后在此时间戳之前忽略单击，避免误进预览。 */
   private galleryLongPressIgnoreClickUntil: number = 0;
   /**
-   * 銆屽垝閫夋銆嶈繘琛屼腑锛氫负 true 鏃?onDidScroll 涓嶆竻绌哄懡涓紦瀛橈紱涓?Row 涓?Pan 鍒囦负鍏ㄥ悜浠ヨ法琛屽垝閫夈€?
-   * 涓?@State 浠ヤ究澶氶€夋€佷笅鍦ㄣ€屼粎妯悜 Pan / 鍏ㄥ悜 Pan銆嶉棿鍒囨崲锛堝榻愮郴缁熺浉鍐岋細绾垫粦鍒楄〃銆佹í婊戝垝閫夛級銆?
+   * “划选段”进行中时为 true。该状态下 onDidScroll 不清空命中缓存，
+   * 同时会把 Row 的 Pan 切为全向，以支持跨行划选。
    */
   @State private gallerySlideGestureActive: boolean = false;
-  /** 鍚勭缉鐣ュ浘鏈€杩戜竴娆″竷灞€鍦ㄧ獥鍙ｄ腑鐨勭煩褰紙浠呭綋鍓嶅彲瑙?鏇惧竷灞€椤规湁鍊硷紱鍒楄〃婊氬姩鏃朵細娓呯┖浠ラ槻鑴忕煩褰級 */
+  /** 各缩略图最近一次布局在窗口中的矩形；仅当前可见且已布局项有值，滚动时会清空以防脏矩形。 */
   private galleryThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
-  /** AI 鎼滅储缁撴灉鍒楄〃鍒掗€夊懡涓煩褰紙閿负鎵佸钩涓嬫爣瀛楃涓诧紝涓?`sg_${flat}` 瀵瑰簲锛?*/
+  /** AI 搜索结果列表的划选命中矩形，键为扁平下标字符串，与 `sg_${flat}` 对应。 */
   private searchThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
-  /** 婊戝姩杩為€夛細fingerList 涓嶅彲鐢ㄦ椂锛岀敤闀挎寜鍙傝€冪偣 + Pan offset 浼扮畻鎸囧皷浣嶇疆 */
+  /** 滑动连选时，fingerList 不可用则使用长按参考点加 Pan offset 估算指尖位置。 */
   private gallerySlideRefX: number = 0;
   private gallerySlideRefY: number = 0;
   private gallerySlideHasRef: boolean = false;
   /**
-   * 鍒掗€夐敋鐐癸細闀挎寜璧峰缂╃暐鍥惧湪鎵佸钩鍒楄〃涓殑涓嬫爣锛堜笌 flow row 鐨?rowSlotFlatIndices 涓€鑷达紝琛屼紭鍏?3 鍒椾竴琛岋級銆?
+   * 划选锚点：长按起始缩略图在扁平列表中的下标，与 rowSlotFlatIndices 保持对齐。
    */
   private gallerySlideAnchorFlat: number = -1;
   /**
-   * 杩涘叆鏈鍒掗€夊墠宸查€変腑鐨?id锛堜笉鍚悗缁粦鍔ㄤ复鏃舵墿閫夋椂鍙啀鏀剁缉鐨勯儴鍒嗛€氳繃銆屽尯闂村苟闆嗐€嶈绠楋級銆?
-   * 鍦?begin 鏃跺彇 snapshot锛屼繚璇佺缉鍥炴墜鎸囨椂鍙幓鎺夈€屽綋鍓?flat 鍖洪棿銆嶅唴銆佷笖涓嶅湪姝ら泦鍚堜腑鐨勯」銆?
+   * 进入本次划选前已选中的 id 快照。
+   * begin 时拍下快照，保证缩回手指时只移除当前 flat 区间内、且不在原集合中的项目。
    */
   private gallerySlideUnionBase: string[] = [];
   /**
-   * 褰撳墠鍒掗€夊尯闂寸粓鐐?flat锛涙寚灏栫煭鏆傜寮€缂╃暐鍥炬椂娌跨敤涓婁竴娆″懡涓紝閬垮厤閫変腑闂儊銆?
+   * 当前划选区间终点 flat。指尖短暂离开缩略图时沿用上一次命中，避免选中状态闪烁。
    */
   private gallerySlideLastEndFlat: number = -1;
-  /** 鍒掗€夋椂浠呭綋缁堢偣 flat 鍙樺寲鏃舵墠鎻愪氦 @State锛屽噺杞诲垪琛ㄦ暣琛ㄥ埛鏂板崱椤?*/
+  /** 划选时仅在终点 flat 变化时提交 @State，减少整表刷新卡顿。 */
   private gallerySlideLastAppliedEndFlat: number = -99999;
   private gallerySlideLastApplyMs: number = 0;
   private gallerySlidePendingEndFlat: number = -1;
-  /** 闃叉姈瀹氭椂鍣?id锛?0 琛ㄧず鏈寕璧凤級 */
+  /** 防抖定时器 id，小于 0 表示未挂起。 */
   private bootstrapDebounceTimer: number = -1;
-  /** 涓?GalleryTimelineRefreshStore.version 瀵归綈锛氭垚鍔?bootstrap 鏃堕棿杞村悗鏇存柊锛岄伩鍏嶉噸澶嶅叏閲忓埛 */
+  /** 与 GalleryTimelineRefreshStore.version 对齐；bootstrap 成功后更新，避免重复全量刷新。 */
   private lastBootstrapSatisfiedRefreshVersion: number = 0;
-  /** 鏃堕棿绾?List 涓嬫媺鍒锋柊锛氱郴缁?Refresh 鍔ㄦ晥缁戝畾 */
+  /** 时间线 List 下拉刷新，绑定系统 Refresh 动效。 */
   @State private galleryTimelineRefreshing: boolean = false;
   /**
-   * 鏃堕棿绾挎槸鍚﹀湪鍒楄〃椤剁锛圫croller 鍨傜洿鍋忕Щ鈮?锛夈€傞潪 @State锛岄伩鍏嶆粴鍔ㄦ椂鏁撮〉閲嶇粯锛?
-   * 鍦?onDidScroll / 涓嬫媺鍥炶皟鍓嶅悓姝ワ紝浠呯敤浜庡垽鏂槸鍚﹀厑璁歌Е鍙戝埛鏂般€?
+   * 时间线是否在列表顶端（Scroller 垂直偏移 <= 0）。
+   * 这里不做成 @State，避免滚动时整页重绘；在 onDidScroll / 下拉回调前同步，
+   * 仅用于判断是否允许触发刷新。
    */
   private galleryTimelineAtTopForPull: boolean = true;
-  /** 涓嬫媺鏈洖鍒伴《閮ㄩ檮杩戝墠涓嶉噸澶嶈Е鍙戙€屽凡杈鹃槇鍊笺€嶉渿鍔紝閬垮厤鏉ュ洖鎷栧姩杩炵画鎸?*/
+  /** 下拉未回到顶部附近前，不重复触发“已达阈值”震动，避免来回拖动连续触发。 */
   private galleryPullRefreshThresholdHapticDone: boolean = false;
 
   private isMainGalleryModeActive(): boolean {
@@ -1172,7 +1183,7 @@ export struct GalleryAlbumTab {
       set galleryGridColumns(_value: number) {}
       get rootModeContentWidthVp(): number { return self.rootModeContentWidthVp; }
       set rootModeContentWidthVp(value: number) { self.rootModeContentWidthVp = value; }
-      get viewGranularity(): GalleryViewGranularity { return self.viewGranularity; }
+      get viewGranularity(): GalleryViewGranularity { return self.renderedViewGranularity; }
       set viewGranularity(value: GalleryViewGranularity) { self.viewGranularity = value; }
       flowNodeIndexFromListIndex(index: number): number { return self.flowNodeIndexFromMainListIndex(index); }
       listIndexFromFlowNodeIndex(index: number): number { return self.mainListIndexFromFlowNodeIndex(index); }
@@ -1303,7 +1314,7 @@ export struct GalleryAlbumTab {
       set inSmartCategoryMode(value: boolean) { self.inSmartCategoryMode = value; }
       get inPersonMode(): boolean { return self.inPersonMode; }
       set inPersonMode(value: boolean) { self.inPersonMode = value; }
-      get viewGranularity(): GalleryViewGranularity { return self.viewGranularity; }
+      get viewGranularity(): GalleryViewGranularity { return self.renderedViewGranularity; }
       set viewGranularity(value: GalleryViewGranularity) { self.viewGranularity = value; }
       get rootPhotosScrollTitle(): string { return self.rootPhotosScrollTitle; }
       set rootPhotosScrollTitle(value: string) { self.rootPhotosScrollTitle = value; }
@@ -1402,19 +1413,20 @@ export struct GalleryAlbumTab {
     return new LifecycleHostBridge();
   }
 
-  // 鈹€鈹€ 鎵佸钩鍒楄〃锛堜緵璺宠浆鐙珛棰勮椤碉級 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  // ── 扁平列表（供跳转独立预览页） ────────────────────────────────────────
 
   private countPhotoSlotsBeforeNode(nodeIdx: number): number {
     return galleryAlbumVisibleCountPhotoSlotsBeforeNode(this.asVisibleLoadHost(), nodeIdx);
   }
 
-  /** orderedDays[0..dayIdx) 鐨勫叏灞€妲戒綅鍓嶇紑鍜?*/
+  /** orderedDays[0..dayIdx) 的全局槽位前缀和。 */
   private globalSlotIndexAtDayStart(dayIdx: number): number {
     return galleryAlbumVisibleGlobalSlotIndexAtDayStart(this.asVisibleLoadHost(), dayIdx);
   }
 
   /**
-   * 鏍规嵁 List 鍙鑺傜偣鍖洪棿鍒锋柊銆屽叏灞€鐓х墖妲戒綅銆嶇紦瀛橈紱鍙瀛樺湪 row 鍗冲啓鍏ワ紝渚?loadVisible 鍦?vis 閫€鍖栨椂浣跨敤銆?
+   * 根据 List 可见节点区间刷新“全局照片槽位”缓存；只要存在 row 就写入，
+   * 供 loadVisible 在 vis 退化时兜底使用。
    */
   private refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void {
     galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(this.asVisibleLoadHost(), firstIdx, lastIdx);
@@ -1626,10 +1638,10 @@ export struct GalleryAlbumTab {
     return galleryAlbumVisibleApproxGalleryFlowListNodeHeightVp(node);
   }
 
-  /** 鑷?anchorFirst 璧峰悜涓嬨€屽悆鎺夈€峝eltaVp 鍐呭浣嶇Щ鍚庯紝杩戜技鐨勯鍙鑺傜偣涓嬫爣 */
+  /** 自 anchorFirst 起向下“吃掉” deltaVp 内容位移后，估算首可见节点下标。 */
   /**
-   * 鐢?List 椤堕儴绱杩戜技楂樺害锛屼及绠?yVp 澶勫搴旂殑棣栦釜鑺傜偣涓嬫爣锛堜笌 Scroller.yOffset 鍚屽悜锛夈€?
-   * 浠呬綔 refine 涓嬬晫锛屾鏁板皝椤堕伩鍏嶈秴闀垮垪琛ㄥ崟娆?O(n)銆?
+   * 根据 List 顶部累计近似高度，估算 yVp 对应的首个节点下标（与 Scroller.yOffset 同向）。
+   * 仅作 refine 下界，步数设上限，避免超长列表单次 O(n)。
    */
   private estimateFirstVisibleNodeIndexFromScrollY(yVp: number, total: number): number {
     return galleryAlbumVisibleEstimateFirstVisibleNodeIndexFromScrollY(this.asVisibleLoadHost(), yVp, total);
@@ -1640,47 +1652,49 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 涓?consumeVerticalScrollDeltaAsNodeIndex 瀵圭О锛歽 鍑忓皬锛堝垪琛ㄥ唴瀹瑰悜涓婃粴銆佺湅杈冩柊涓€渚э級鏃讹紝
-   * 浠庨敋鐐硅妭鐐瑰悜涓婃秷璐?deltaVp 鐨勮繎浼奸珮搴︼紝寰楀埌鏇村皬鐨勯鍙鑺傜偣涓嬫爣銆?
+   * 与 consumeVerticalScrollDeltaAsNodeIndex 对称：当 y 减小（列表内容向上滚、看到较新的内容）时，
+   * 从锚点节点向上消耗 deltaVp 的近似高度，得到更小的首可见节点下标。
    */
   private consumeVerticalScrollDeltaAsNodeIndexBackward(startIdx: number, deltaVp: number): number {
     return galleryAlbumVisibleConsumeVerticalScrollDeltaAsNodeIndexBackward(this.asVisibleLoadHost(), startIdx, deltaVp);
   }
 
   /**
-   * 鐢?Scroller 绾靛悜鍋忕Щ鐩稿銆屼笂娆?onScrollIndex 閿氱偣銆嶇殑澧為噺锛屾妸澹扮О鐨?first/last 鍚戝墠鎺紝
-   * 缂撹В ArkUI List + LazyForEach 涓嬬储寮曞洖璋冩粸鍚庝簬鐪熷疄瑙嗗彛鐨勯棶棰樸€?
+   * 根据 Scroller 纵向偏移相对“上次 onScrollIndex 锚点”的增量，向前修正声称的 first/last，
+   * 缓解 ArkUI List + LazyForEach 下索引回调滞后于真实视口的问题。
    */
   private refineVisibleNodeIndicesAgainstScrollLag(claimedFirst: number, claimedLast: number): GalleryVisibleNodeRange {
     return galleryAlbumVisibleRefineVisibleNodeIndicesAgainstScrollLag(this.asVisibleLoadHost(), claimedFirst, claimedLast);
   }
 
-  /** 缁熻 [first,last] 鑺傜偣鍖洪棿鍐?row 閲屼粛涓洪鏋讹紙null锛夌殑鐓х墖妲戒綅鏁帮紝鐢ㄤ簬鎸夊睆鍐呭崰浣嶆墿灞曟媺鍙栬寖鍥?*/
+  /** 统计 [first,last] 节点区间内 row 中仍为骨架（null）的照片槽位数，用于按屏内占位扩展拉取范围。 */
   private countSkeletonPhotoSlotsInFlowNodeRange(first: number, last: number): number {
     return galleryAlbumVisibleCountSkeletonPhotoSlotsInFlowNodeRange(this.asVisibleLoadHost(), first, last);
   }
 
-  /** 涓嬫柟鍏ㄥ眬妲戒綅缂撳啿锛氫繚搴?+ 鎸夊綋鍓嶇獥鍙ｅ唴楠ㄦ灦妲戒綅鏁版斁澶э紙涓婇檺 cap锛?*/
+  /** 下方全局槽位缓冲：保底后再按当前窗口内骨架槽位数放大，上限受 cap 约束。 */
   private computeLoadVisibleBufferAfterSlots(aggressive: boolean, scanFirst: number, scanLast: number): number {
     return galleryAlbumVisibleComputeLoadVisibleBufferAfterSlots(this.asVisibleLoadHost(), aggressive, scanFirst, scanLast);
   }
 
   /**
-   * 婊氬姩闈欐鍚庢寜鍙鍖鸿Е鍙戔€滄棩绾т紭鍏堝姞杞解€濓細
-   * - 鑻?Scroller.getVisibleRange 鍙敤锛氫互杩斿洖鍖洪棿涓哄敮涓€鍙鑺傜偣绐楋紝**璺宠繃 refine**锛屽啀鏄犲皠鍒板叏灞€妲戒綅骞舵墿灞?buffer锛堜笌 RecyclerView 棣栨湯鍙椤归┍鍔ㄥ姞杞戒竴鑷达級锛?
-   * - 鍚﹀垯浠嶈蛋 refine + y 鍙嶆帹鍏滃簳锛?
-   * - 鍙嶆煡鐩爣鏃ワ紝鑻ュ綋鍓?dayIndex 钀藉悗鍒欏墠绉诲埌鐩爣鏃ュ苟鍚姩 pumpLoad銆?
+   * 滚动静止后按可视区触发“日级优先加载”：
+   * - 若 Scroller.getVisibleRange 可用，以返回区间作为唯一可见节点窗，跳过 refine；
+   *   再映射到全局槽位并扩展 buffer，与 RecyclerView 的首末可见项驱动加载一致。
+   * - 否则继续走 refine + y 反推兜底。
+   * - 反查目标日时，若当前 dayIndex 落后，则前移到目标日并启动 pumpLoad。
    *
-   * 娉ㄦ剰锛氱幇鏈?sections 缁撴瀯鏄€滃墠缂€杩炵画鐪熷疄鏁版嵁鈥濓紝涓嶈兘瀹夊叏璺?offset锛堜細鎵撲贡鏄犲皠锛夛紝
-   * 鍥犳姝ゅ浠呭仛鈥滄寜澶╂姠鍗犫€濊€屼笉鐩存帴鏀?dayOffsets 鍒颁腑闂撮〉銆?
+   * 注意：现有 sections 结构是“前缀连续真实数据”，不能安全跳 offset，否则会打乱映射；
+   * 因此这里只做“按天抢占”，不直接改 dayOffsets 到中间页。
    */
   private loadVisibleItemsThrottled(forceImmediate: boolean = false, aggressive: boolean = false): void {
     galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), forceImmediate, aggressive);
   }
 
   /**
-   * 璺ㄦ棩绐楀彛鍙兘杩滃ぇ浜?GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX锛涘崟娈靛彧娉靛墠 N 澶╀細鍦ㄥ睆涓婂舰鎴愩€岃浇涓€娈点€佺┖涓€娈点€嶆潯绾广€?
-   * 鎸夊浐瀹氬潡椤哄簭娉靛畬鏁翠釜 [loD, hiD]锛堝潡闂翠粛鍙?epoch / 浜や簰鎬?gate锛夈€?
+   * 跨日窗口可能远大于 GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX；
+   * 若单段只泵前 N 天，屏幕上会形成“载一段、空一段”的条纹，因此这里按固定块顺序泵完整个 [loD, hiD]，
+   * 块间仍受 epoch 和交互态 gate 约束。
    */
   private async pumpVisibleDayBandAllChunks(
     loD: number,
@@ -1693,7 +1707,8 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 鍙妲戒綅鍖洪棿璺ㄥ涓棩鍘嗘棩鏃讹紝瀵圭獥鍙ｅ唴娑夊強鐨勬瘡涓棩椤哄簭鍚勮姹備竴鎵癸紝骞跺湪杩涘叆璇ユ棩鍓嶆妸 offset 瀵归綈鍒颁笌 [startG,endG] 閲嶅彔鐨勮捣鐐广€?
+   * 可见槽位区间跨多个日历日时，对窗口内涉及的每个日顺序各请求一批，
+   * 并在进入该日前把 offset 对齐到与 [startG, endG] 重叠的起点。
    */
   private async pumpVisibleDayBandSequential(
     loDayIdx: number,
@@ -1714,8 +1729,8 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 鏃堕棿杞存澗鎵嬪悗鐨勪富鍔ㄦ仮澶嶏細涓嶄緷璧栫敤鎴峰啀婊戝姩锛岀洿鎺ユ媺璧峰彲瑙嗗尯鍔犺浇銆?
-   * 鍙岄樁娈佃Е鍙戠敤浜庤鐩栥€岀▼搴忓寲 seek 灏氭湭瀹屾垚鍙鍖哄洖浼犮€嶇獥鍙ｃ€?
+   * 时间轴松手后的主动恢复：不依赖用户再滑动，直接拉起可视区加载。
+   * 双阶段触发用于覆盖“程序化 seek 尚未完成可见区回传”的窗口。
    */
   private kickPostTimelineReleaseLoad(): void {
     timelineGestureKickPostTimelineReleaseLoad(this.asTimelineGestureHost());
@@ -1841,8 +1856,8 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 鏈€杩戞坊鍔狅細鎸?explore/recent_timeline 鍒嗘《鍚庨€愭棩鍒嗛〉鎷?recent_photos锛?
-   * 鑱氬悎涓哄钩閾哄垪琛ㄥ苟澶嶇敤 CategoryGallery 棰勮椤垫墦寮€銆?
+   * 最近添加：先按 explore/recent_timeline 分桶，再按日分页拉 recent_photos；
+   * 最终聚合为平铺列表，并复用 CategoryGallery 预览页打开。
    */
   private async openRecentAdded(): Promise<void> {
     if (this.recentOpening) {
@@ -1869,8 +1884,8 @@ export struct GalleryAlbumTab {
   }
 
   /**
-   * 鏀惰棌澶癸細GET gallery/timeline?is_collect=1 鍒嗘棩鍚庯紝鎸夋棩 GET getList锛坢ode=collect & is_collect=1锛夛紝
-   * 涓?Web /p/collect 鎶撳寘涓€鑷淬€?
+   * 收藏夹：先 GET gallery/timeline?is_collect=1 分日，
+   * 再按日 GET getList(mode=collect & is_collect=1)，与 Web /p/collect 抓包保持一致。
    */
   private async openCollectGallery(): Promise<void> {
     await galleryAlbumOpenCollectGallery(this.asModeOrchestratorHost());
@@ -2005,17 +2020,83 @@ export struct GalleryAlbumTab {
   }
 
   private currentGalleryGridColumns(): number {
-    return galleryViewGranularityColumns(this.viewGranularity);
+    return galleryViewGranularityColumns(this.renderedViewGranularity);
   }
 
-  private onViewGranularityChanged(): void {
+  private granularitySwitchDirection(nextMode: GalleryViewGranularity): number {
+    if (nextMode === this.lastGranularityMotionMode) {
+      return 0;
+    }
+    return nextMode > this.lastGranularityMotionMode ? 1 : -1;
+  }
+
+  private clearGranularitySwitchTimer(): void {
+    if (this.granularitySwitchTimer >= 0) {
+      clearTimeout(this.granularitySwitchTimer);
+      this.granularitySwitchTimer = -1;
+    }
+  }
+
+  private playGranularityHostExitMotion(direction: number): void {
+    if (direction === 0) {
+      this.modeSwitchOpacity = 1;
+      this.modeSwitchOffsetY = 0;
+      return;
+    }
+    try {
+      this.getUIContext().animateTo(
+        { duration: GALLERY_GRANULARITY_HOST_SWITCH_EXIT_MS, curve: Curve.EaseIn },
+        (): void => {
+          this.modeSwitchOpacity = GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY;
+          this.modeSwitchOffsetY = direction > 0 ? GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP : -GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP;
+        }
+      );
+    } catch (_e) {
+      this.modeSwitchOpacity = GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY;
+      this.modeSwitchOffsetY = direction > 0 ? GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP : -GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP;
+    }
+  }
+
+  private commitGranularitySwitch(direction: number): void {
+    this.granularitySwitchTimer = -1;
+    this.renderedViewGranularity = this.viewGranularity;
+    this.lastGranularityMotionMode = this.renderedViewGranularity;
     galleryAlbumRebuildFlow(this.asVisibleLoadHost());
     this.refreshRootPhotosScrollTitle();
+    if (direction === 0) {
+      this.modeSwitchOpacity = 1;
+      this.modeSwitchOffsetY = 0;
+      setTimeout((): void => {
+        void galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
+        galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
+        this.refreshRootPhotosScrollTitle();
+      }, 16);
+      return;
+    }
+    this.modeSwitchOpacity = GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY;
+    this.modeSwitchOffsetY = direction > 0 ? -GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP : GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP;
+    try {
+      this.getUIContext().animateTo(
+        { duration: GALLERY_GRANULARITY_HOST_SWITCH_DURATION_MS, curve: Curve.EaseOut },
+        (): void => {
+          this.modeSwitchOpacity = 1;
+          this.modeSwitchOffsetY = 0;
+        }
+      );
+    } catch (_e) {
+      this.modeSwitchOpacity = 1;
+      this.modeSwitchOffsetY = 0;
+    }
     setTimeout((): void => {
       void galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
       galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
       this.refreshRootPhotosScrollTitle();
     }, 16);
+  }
+
+  private onViewGranularityChanged(): void {
+    this.clearGranularitySwitchTimer();
+    this.commitGranularitySwitch(0);
   }
 
   private openSearchPanel(): void {
@@ -2059,10 +2140,16 @@ export struct GalleryAlbumTab {
   }
 
   aboutToAppear(): void {
+    this.clearGranularitySwitchTimer();
+    this.renderedViewGranularity = this.viewGranularity;
+    this.lastGranularityMotionMode = this.viewGranularity;
+    this.modeSwitchOpacity = 1;
+    this.modeSwitchOffsetY = 0;
     galleryAlbumAboutToAppear(this.asLifecycleHost());
   }
 
   aboutToDisappear(): void {
+    this.clearGranularitySwitchTimer();
     galleryAlbumAboutToDisappear(this.asLifecycleHost());
   }
 
@@ -2269,7 +2356,7 @@ export struct GalleryAlbumTab {
         }
 
         Stack({ alignContent: Alignment.TopStart }) {
-      // 鈹€鈹€ 鎼滅储缁撴灉瑙嗗浘 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+      // ── 搜索结果视图 ──────────────────────────────────────────────────────
       if (this.inSearchMode) {
         GalleryAlbumSearchModeView({
           baseUrl: this.baseUrl,
@@ -2435,11 +2522,11 @@ export struct GalleryAlbumTab {
         })
       }
 
-      // 鈹€鈹€ 鍥惧簱瑙嗗浘 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+      // ── 图库视图 ─────────────────────────────────────────────────────────
       if (this.shouldKeepRootPhotosMainMounted()) {
         GalleryAlbumMainModeView({
           baseUrl: this.baseUrl,
-          viewGranularity: this.viewGranularity,
+          viewGranularity: this.renderedViewGranularity,
           gridColumns: this.currentGalleryGridColumns(),
           contentInsetTopVp: this.mainGalleryContentInsetTopVp(),
           contentInsetBottomVp: this.currentBottomDockInsetVp(),

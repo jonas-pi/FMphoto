@@ -489,7 +489,7 @@ export function recycleBinOnCellClick(
   }
   const list = recycleBinGalleryListForPreview(host.items);
   const pIdx = recycleBinPreviewIndexForFlatIndex(host.items, flatIdx);
-  GalleryPreviewNavStore.openPreview(host.baseUrl, list, pIdx);
+  GalleryPreviewNavStore.openPreview(host.getUIContext(), host.baseUrl, list, pIdx);
 }
 
 export function recycleBinRowCount(items: RecycleBinListItem[]): number {

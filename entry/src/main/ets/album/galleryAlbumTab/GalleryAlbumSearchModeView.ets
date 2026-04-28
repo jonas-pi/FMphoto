@@ -4,7 +4,7 @@ import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnM
 import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
-import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
+import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 
 const GALLERY_SEARCH_INITIAL_RENDER_COUNT = 120;
 const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
