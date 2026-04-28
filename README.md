@@ -81,6 +81,14 @@
 本地构建产物路径一般为 `entry/build/default/outputs/default/entry-default-unsigned.hap`。  
 仓库已提供 GitHub Actions：当推送 `v*` 标签（如 `v1.2.3`）时，会自动将该 `.hap` 上传到对应 GitHub Release。
 
+## 赞助支持
+
+开发并非易事，如您满意，请我喝瓶饮料吧！
+
+| 支付宝 | 微信支付 |
+| --- | --- |
+| <img src="./docs/sponsor/alipay.png" alt="支付宝赞助码" width="260" /> | <img src="./docs/sponsor/wechat.png" alt="微信赞助码" width="260" /> |
+
 ## 使用注意与风险
 
 - **非官方客户端**：与飞牛官方软件无关联，不保证与 NAS 系统升级后仍完全兼容。
