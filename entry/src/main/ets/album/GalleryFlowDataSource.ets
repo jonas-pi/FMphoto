@@ -27,6 +27,8 @@ export class GalleryFlowNode {
   rowSlotItems: (GalleryListItem | null)[] = [];
   /** 与 rowSlotItems 对齐：已加载槽为 flatItems 下标；骨架槽为 -1 */
   rowSlotFlatIndices: number[] = [];
+  rowColumnCount: number = 3;
+  approxHeightVp: number = 0;
 }
 
 interface GalleryFlowDataChangeListener {

@@ -25,7 +25,7 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { GalleryAlbumBatchActionBar } from '../album/galleryAlbumTab/GalleryAlbumBatchActionBar';
+import { GalleryAlbumBatchActionBar } from '../album/GalleryAlbumBatchActionBar';
 import {
   categoryGalleryApplyDeleteSyncIfNeeded,
   categoryGalleryConfirmBatchDelete,

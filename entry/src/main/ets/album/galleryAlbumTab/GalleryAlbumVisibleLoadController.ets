@@ -32,6 +32,7 @@ import {
 } from './GalleryAlbumTabTypes';
 import { findFlowRoughVisibleRangeForYearMonth, findTimelineMonthRange } from './GalleryAlbumTimelineLogic';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
+import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 
 export interface GalleryAlbumVisibleLoadHost {
   scrollerRef: Scroller;
@@ -62,6 +63,9 @@ export interface GalleryAlbumVisibleLoadHost {
   loadVisibleRetryTimer: number;
   loadVisibleRetryGen: number;
   timelineSliderRatio: number;
+  galleryGridColumns: number;
+  rootModeContentWidthVp: number;
+  viewGranularity: GalleryViewGranularity;
   resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   isInScrollInteractiveLogWindow(): boolean;
@@ -435,6 +439,9 @@ export function galleryAlbumVisibleApproxGalleryFlowListNodeHeightVp(node: Galle
   if (node.kind === 'day') {
     return GALLERY_LIST_APPROX_DAY_NODE_VP;
   }
+  if (node.approxHeightVp > 0) {
+    return node.approxHeightVp;
+  }
   return GALLERY_LIST_APPROX_ROW_NODE_VP;
 }
 
@@ -634,6 +641,16 @@ export function galleryAlbumVisibleCountSkeletonPhotoSlotsInFlowNodeRange(
   return c;
 }
 
+function galleryAlbumVisibleBufferScale(host: GalleryAlbumVisibleLoadHost): number {
+  if (host.viewGranularity === GalleryViewGranularity.YEAR) {
+    return 5;
+  }
+  if (host.viewGranularity === GalleryViewGranularity.MONTH) {
+    return 3;
+  }
+  return 1;
+}
+
 export function galleryAlbumVisibleComputeLoadVisibleBufferAfterSlots(
   host: GalleryAlbumVisibleLoadHost,
   aggressive: boolean,
@@ -641,8 +658,13 @@ export function galleryAlbumVisibleComputeLoadVisibleBufferAfterSlots(
   scanLast: number
 ): number {
   const sk = galleryAlbumVisibleCountSkeletonPhotoSlotsInFlowNodeRange(host, scanFirst, scanLast);
-  const base = aggressive ? GALLERY_LOAD_VISIBLE_BUFFER_BASE_AGGRESSIVE : GALLERY_LOAD_VISIBLE_BUFFER_BASE_NON_AGGRESSIVE;
-  const extra = Math.min(GALLERY_LOAD_VISIBLE_BUFFER_AFTER_CAP, sk * GALLERY_LOAD_VISIBLE_SKELETON_SLOT_MULTIPLIER);
+  const scale = galleryAlbumVisibleBufferScale(host);
+  const base = (aggressive ? GALLERY_LOAD_VISIBLE_BUFFER_BASE_AGGRESSIVE : GALLERY_LOAD_VISIBLE_BUFFER_BASE_NON_AGGRESSIVE)
+    * scale;
+  const extra = Math.min(
+    GALLERY_LOAD_VISIBLE_BUFFER_AFTER_CAP * scale,
+    sk * GALLERY_LOAD_VISIBLE_SKELETON_SLOT_MULTIPLIER
+  );
   return Math.max(base, extra);
 }
 

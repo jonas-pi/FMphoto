@@ -3,6 +3,7 @@ import { GalleryFlowNode } from '../GalleryFlowDataSource';
 import { GalleryAlbumDaySectionModel, GalleryAlbumDaySectionState } from './GalleryAlbumState';
 import { dayKey, TimelineDayModel, ymKey } from './GalleryAlbumTabTypes';
 import { GalleryAlbumVisibleLoadHost } from './GalleryAlbumVisibleLoadController';
+import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 
 export function galleryAlbumItemIdOf(item: GalleryListItem): string {
   if (item.id === undefined || item.id === null) {
@@ -68,6 +69,35 @@ export function galleryAlbumGalleryFlowLazyKey(node: GalleryFlowNode): string {
   return `${node.key}_s${slotSig}`;
 }
 
+function galleryAlbumFlowApproxRowHeightVp(host: GalleryAlbumVisibleLoadHost, columns: number): number {
+  const cols = Math.max(1, columns);
+  const widthVp = Math.max(180, host.rootModeContentWidthVp);
+  const contentWidthVp = Math.max(12, widthVp - 4 - Math.max(0, cols - 1) * 2);
+  const cellVp = Math.max(12, contentWidthVp / cols);
+  return cellVp + 2;
+}
+
+function galleryAlbumFlowShouldShowMonthNode(
+  mode: GalleryViewGranularity,
+  year: number,
+  month: number,
+  prevYear: number,
+  prevMonth: number,
+  hasPrev: boolean
+): boolean {
+  if (!hasPrev) {
+    return true;
+  }
+  if (mode === GalleryViewGranularity.YEAR) {
+    return year !== prevYear;
+  }
+  return ymKey(year, month) !== ymKey(prevYear, prevMonth);
+}
+
+function galleryAlbumFlowShouldShowDayNode(mode: GalleryViewGranularity): boolean {
+  return mode === GalleryViewGranularity.DAY;
+}
+
 export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void {
   if (host.timelineSidebarDragging || host.isDraggingOrFling) {
     host.pendingFlowRebuild = true;
@@ -75,6 +105,9 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
   }
   const nodes: GalleryFlowNode[] = [];
   const secMap = new Map<string, GalleryAlbumDaySectionState>();
+  const mode = host.viewGranularity;
+  const columns = Math.max(1, host.galleryGridColumns);
+  const approxRowHeightVp = galleryAlbumFlowApproxRowHeightVp(host, columns);
   for (let i = 0; i < host.sections.length; i++) {
     const section = host.sections[i];
     secMap.set(dayKey(section.year, section.month, section.day), section);
@@ -86,40 +119,51 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
     for (let i = 0; i < host.orderedDays.length; i++) {
       const day = host.orderedDays[i];
       const prevDay = i > 0 ? host.orderedDays[i - 1] : undefined;
-      const showMonth = prevDay === undefined || ymKey(day.year, day.month) !== ymKey(prevDay.year, prevDay.month);
+      const showMonth = galleryAlbumFlowShouldShowMonthNode(
+        mode,
+        day.year,
+        day.month,
+        prevDay?.year ?? 0,
+        prevDay?.month ?? 0,
+        prevDay !== undefined
+      );
       if (showMonth) {
         const monthNode = new GalleryFlowNode();
         monthNode.kind = 'month';
-        monthNode.key = `m_${day.year}_${day.month}_od_${i}`;
+        monthNode.key = `m_${mode}_${day.year}_${day.month}_od_${i}`;
         monthNode.year = day.year;
         monthNode.month = day.month;
         monthNode.globalPhotoSlotStart = flatLoaded;
         nodes.push(monthNode);
       }
 
-      const dayNode = new GalleryFlowNode();
-      dayNode.kind = 'day';
-      dayNode.key = `d_${day.year}_${day.month}_${day.day}_od_${i}`;
-      dayNode.year = day.year;
-      dayNode.month = day.month;
-      dayNode.day = day.day;
-      dayNode.globalPhotoSlotStart = flatLoaded;
-      nodes.push(dayNode);
+      if (galleryAlbumFlowShouldShowDayNode(mode)) {
+        const dayNode = new GalleryFlowNode();
+        dayNode.kind = 'day';
+        dayNode.key = `d_${mode}_${day.year}_${day.month}_${day.day}_od_${i}`;
+        dayNode.year = day.year;
+        dayNode.month = day.month;
+        dayNode.day = day.day;
+        dayNode.globalPhotoSlotStart = flatLoaded;
+        nodes.push(dayNode);
+      }
 
       const section = secMap.get(dayKey(day.year, day.month, day.day));
       const totalCount = Math.max(0, day.itemCount);
-      const totalRows = Math.ceil(totalCount / 3);
+      const totalRows = Math.ceil(totalCount / columns);
       for (let row = 0; row < totalRows; row++) {
         const rowNode = new GalleryFlowNode();
         rowNode.kind = 'row';
-        rowNode.key = `r_${day.year}_${day.month}_${day.day}_row_${row}`;
+        rowNode.key = `r_${mode}_${day.year}_${day.month}_${day.day}_row_${row}_c${columns}`;
         rowNode.year = day.year;
         rowNode.month = day.month;
         rowNode.day = day.day;
         rowNode.globalPhotoSlotStart = flatLoaded;
+        rowNode.rowColumnCount = columns;
+        rowNode.approxHeightVp = approxRowHeightVp;
 
-        const rowStart = row * 3;
-        const totalInRow = Math.min(3, Math.max(0, totalCount - rowStart));
+        const rowStart = row * columns;
+        const totalInRow = Math.min(columns, Math.max(0, totalCount - rowStart));
         for (let k = 0; k < totalInRow; k++) {
           const localOff = rowStart + k;
           const item = section !== undefined ? section.slotByOffset.get(localOff) : undefined;
@@ -139,24 +183,33 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
     for (let i = 0; i < host.sections.length; i++) {
       const section = host.sections[i];
       const prev = i > 0 ? host.sections[i - 1] : undefined;
-      const showMonth = prev === undefined || ymKey(section.year, section.month) !== ymKey(prev.year, prev.month);
+      const showMonth = galleryAlbumFlowShouldShowMonthNode(
+        mode,
+        section.year,
+        section.month,
+        prev?.year ?? 0,
+        prev?.month ?? 0,
+        prev !== undefined
+      );
       if (showMonth) {
         const monthNode = new GalleryFlowNode();
         monthNode.kind = 'month';
-        monthNode.key = `m_${section.year}_${section.month}_i${i}`;
+        monthNode.key = `m_${mode}_${section.year}_${section.month}_i${i}`;
         monthNode.year = section.year;
         monthNode.month = section.month;
         monthNode.globalPhotoSlotStart = flatLoaded;
         nodes.push(monthNode);
       }
-      const dayNode = new GalleryFlowNode();
-      dayNode.kind = 'day';
-      dayNode.key = `d_${section.year}_${section.month}_${section.day}`;
-      dayNode.year = section.year;
-      dayNode.month = section.month;
-      dayNode.day = section.day;
-      dayNode.globalPhotoSlotStart = flatLoaded;
-      nodes.push(dayNode);
+      if (galleryAlbumFlowShouldShowDayNode(mode)) {
+        const dayNode = new GalleryFlowNode();
+        dayNode.kind = 'day';
+        dayNode.key = `d_${mode}_${section.year}_${section.month}_${section.day}`;
+        dayNode.year = section.year;
+        dayNode.month = section.month;
+        dayNode.day = section.day;
+        dayNode.globalPhotoSlotStart = flatLoaded;
+        nodes.push(dayNode);
+      }
 
       const keys = Array.from(section.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
       if (keys.length === 0) {
@@ -164,17 +217,19 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
       }
       const maxOff = keys[keys.length - 1];
       const totalCount = Math.max(maxOff + 1, section.itemCount > 0 ? section.itemCount : keys.length);
-      const totalRows = Math.ceil(totalCount / 3);
+      const totalRows = Math.ceil(totalCount / columns);
       for (let row = 0; row < totalRows; row++) {
         const rowNode = new GalleryFlowNode();
         rowNode.kind = 'row';
-        rowNode.key = `r_${section.year}_${section.month}_${section.day}_row_${row}`;
+        rowNode.key = `r_${mode}_${section.year}_${section.month}_${section.day}_row_${row}_c${columns}`;
         rowNode.year = section.year;
         rowNode.month = section.month;
         rowNode.day = section.day;
         rowNode.globalPhotoSlotStart = flatLoaded;
-        const rowStart = row * 3;
-        const totalInRow = Math.min(3, Math.max(0, totalCount - rowStart));
+        rowNode.rowColumnCount = columns;
+        rowNode.approxHeightVp = approxRowHeightVp;
+        const rowStart = row * columns;
+        const totalInRow = Math.min(columns, Math.max(0, totalCount - rowStart));
         for (let k = 0; k < totalInRow; k++) {
           const localOff = rowStart + k;
           const item = section.slotByOffset.get(localOff);

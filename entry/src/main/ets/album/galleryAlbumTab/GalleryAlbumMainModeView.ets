@@ -15,14 +15,16 @@ import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from './GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
+import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 
-const GALLERY_MAIN_LIST_CACHED_COUNT: number = 3;
 const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
 const GALLERY_MAIN_TOUCH_SLOP_VP: number = 10;
 
 @Component
 export struct GalleryAlbumMainModeView {
   @Prop baseUrl: string = '';
+  @Prop @Watch('onViewGranularityChanged') viewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
+  @Prop gridColumns: number = 3;
   @Prop bootLoading: boolean = false;
   @Prop loadError: string = '';
   @Prop footText: string = '';
@@ -64,6 +66,7 @@ export struct GalleryAlbumMainModeView {
   private galleryTouchStartY: number = 0;
   private galleryTouchLastX: number = 0;
   private galleryTouchLastY: number = 0;
+  @State private granularityScale: number = 1;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
   galleryThumbDomId: (photoId: string) => string = (_: string) => '';
@@ -105,9 +108,47 @@ export struct GalleryAlbumMainModeView {
     return this.sectionsLength > 0 || this.orderedDaysLength > 0;
   }
 
+  private onViewGranularityChanged(): void {
+    this.granularityScale = 0.965;
+    try {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, (): void => {
+        this.granularityScale = 1;
+      });
+    } catch (_e) {
+      this.granularityScale = 1;
+    }
+  }
+
   private isItemSelected(item: GalleryListItem): boolean {
     const id = this.itemIdOf(item);
     return id.length > 0 && this.gallerySelectedIds.indexOf(id) >= 0;
+  }
+
+  private rowTrailingBlankSlots(node: GalleryFlowNode): number[] {
+    const blanks: number[] = [];
+    const count = Math.max(0, node.rowColumnCount - node.rowSlotItems.length);
+    for (let i = 0; i < count; i++) {
+      blanks.push(i);
+    }
+    return blanks;
+  }
+
+  private loadingSkeletonColumns(): number[] {
+    const cols: number[] = [];
+    for (let i = 0; i < Math.max(1, this.gridColumns); i++) {
+      cols.push(i);
+    }
+    return cols;
+  }
+
+  private currentListCachedCount(): number {
+    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
+      return 14;
+    }
+    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
+      return 8;
+    }
+    return 3;
   }
 
   private vpToPx(value: number): number {
@@ -298,7 +339,9 @@ export struct GalleryAlbumMainModeView {
   private buildFlowNode(node: GalleryFlowNode) {
     if (node.kind === 'month') {
       ListItem() {
-        Text(`${node.year}年${node.month}月`)
+        Text(this.viewGranularity === GalleryViewGranularity.YEAR
+          ? `${node.year}年`
+          : `${node.year}年${node.month}月`)
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -345,13 +388,9 @@ export struct GalleryAlbumMainModeView {
             }
             return `sk_${node.key}_${k}`;
           })
-          if (node.rowSlotItems.length === 1) {
+          ForEach(this.rowTrailingBlankSlots(node), (blankIndex: number) => {
             Blank().layoutWeight(1)
-            Blank().layoutWeight(1)
-          }
-          if (node.rowSlotItems.length === 2) {
-            Blank().layoutWeight(1)
-          }
+          }, (blankIndex: number) => `bk_${node.key}_${blankIndex}`)
         }
         .width('100%')
         .padding({ left: 2, right: 2, top: 1, bottom: 1 })
@@ -471,7 +510,7 @@ export struct GalleryAlbumMainModeView {
       Column({ space: 8 }) {
         ForEach([0, 1, 2, 3], (row: number) => {
           Row({ space: 8 }) {
-            ForEach([0, 1, 2], (_: number) => {
+            ForEach(this.loadingSkeletonColumns(), (_: number) => {
               GalleryThumbSkeleton().layoutWeight(1)
             }, (n: number) => `sk_${row}_${n}`)
           }
@@ -480,6 +519,7 @@ export struct GalleryAlbumMainModeView {
         }, (r: number) => `skr_${r}`)
       }
       .width('100%')
+      .scale({ x: this.granularityScale, y: this.granularityScale })
       .opacity(this.modeSwitchOpacity)
       .translate({ x: this.modeSwitchOffsetY, y: 0 })
       .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
@@ -526,7 +566,7 @@ export struct GalleryAlbumMainModeView {
               }
               .width('100%')
               .height('100%')
-              .cachedCount(GALLERY_MAIN_LIST_CACHED_COUNT)
+              .cachedCount(this.currentListCachedCount())
               .edgeEffect(EdgeEffect.Spring)
               .scrollBar(BarState.Off)
               .scrollBarColor(Color.Transparent)
@@ -591,6 +631,7 @@ export struct GalleryAlbumMainModeView {
       }
       .width('100%')
       .layoutWeight(1)
+      .scale({ x: this.granularityScale, y: this.granularityScale })
       .opacity(this.modeSwitchOpacity)
       .translate({ x: this.modeSwitchOffsetY, y: 0 })
       .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })

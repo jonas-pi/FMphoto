@@ -5,7 +5,7 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
-import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './galleryAlbumTab/GalleryAlbumModeData';
+import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './GalleryAlbumEntityData';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';

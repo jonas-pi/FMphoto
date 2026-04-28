@@ -20,7 +20,7 @@ const GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP = 42;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
 
 /** 缩略图全局缓存上限；HDR 缩略图单张占用大，过高易 OOM；配合 SDR 解码与 release 淘汰 */
-export const THUMB_CACHE_MAX = 96;
+export const THUMB_CACHE_MAX = 192;
 const thumbPixCache = new Map<string, PixelMap>();
 const thumbLoadFailAt = new Map<string, number>();
 const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;

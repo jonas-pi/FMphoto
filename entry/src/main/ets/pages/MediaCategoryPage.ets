@@ -4,7 +4,7 @@ import {
   CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP,
   categoryLocalMediaCount,
   parseCategoryMedia
-} from '../album/galleryAlbumTab/GalleryAlbumModeData';
+} from '../album/GalleryAlbumEntityData';
 import { GalleryListItem, MediaCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
