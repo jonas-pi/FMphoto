@@ -63,9 +63,12 @@ export interface GalleryAlbumVisibleLoadHost {
   loadVisibleRetryTimer: number;
   loadVisibleRetryGen: number;
   timelineSliderRatio: number;
+  timelineSeekAnchorNodeIdx: number;
   galleryGridColumns: number;
   rootModeContentWidthVp: number;
   viewGranularity: GalleryViewGranularity;
+  flowNodeIndexFromListIndex(index: number): number;
+  listIndexFromFlowNodeIndex(index: number): number;
   resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null;
   resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null;
   isInScrollInteractiveLogWindow(): boolean;
@@ -74,6 +77,63 @@ export interface GalleryAlbumVisibleLoadHost {
   rebuildFlow(): void;
   pumpLoad(singleBatch?: boolean): void;
   loadOneBatch(): Promise<number>;
+}
+
+const GALLERY_SCROLL_RELEASE_TRACE_TAG = '[scroll-release-visible]';
+
+function galleryAlbumVisibleTrace(host: GalleryAlbumVisibleLoadHost, msg: string): void {
+  if (!GALLERY_SCROLL_DEBUG_LOG) {
+    return;
+  }
+  host.logScrollDebug(`${GALLERY_SCROLL_RELEASE_TRACE_TAG} ${msg}`);
+}
+
+function galleryAlbumVisibleNodeRangeHasYearMonth(
+  host: GalleryAlbumVisibleLoadHost,
+  firstIdx: number,
+  lastIdx: number,
+  year: number,
+  month: number
+): boolean {
+  const total = host.flowDataSource.totalCount();
+  if (total <= 0) {
+    return false;
+  }
+  const first = Math.max(0, Math.min(total - 1, firstIdx));
+  const last = Math.max(first, Math.min(total - 1, lastIdx));
+  for (let i = first; i <= last; i++) {
+    const node = host.flowDataSource.getData(i);
+    if (node.year === year && node.month === month) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function galleryAlbumVisibleRangeFromSeekAnchor(host: GalleryAlbumVisibleLoadHost): GalleryVisibleNodeRange | null {
+  const total = host.flowDataSource.totalCount();
+  if (total <= 0 || !Number.isFinite(host.timelineSeekAnchorNodeIdx) || host.timelineSeekAnchorNodeIdx < 0) {
+    return null;
+  }
+  const anchor = Math.max(0, Math.min(total - 1, host.timelineSeekAnchorNodeIdx));
+  return {
+    first: anchor,
+    last: Math.min(total - 1, Math.max(anchor, anchor + 56))
+  };
+}
+
+function galleryAlbumVisibleResolvedSlotStartMatchesTargetYearMonth(
+  host: GalleryAlbumVisibleLoadHost,
+  slotStart: number,
+  year: number,
+  month: number
+): boolean {
+  const hit = host.resolveDayByGlobalIndex(slotStart);
+  if (hit === null || hit.dayIdx < 0 || hit.dayIdx >= host.orderedDays.length) {
+    return false;
+  }
+  const day = host.orderedDays[hit.dayIdx];
+  return day.year === year && day.month === month;
 }
 
 function galleryAlbumVisibleCancelScheduledRetry(
@@ -139,11 +199,13 @@ export function galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(
     if (typeof st !== 'number' || typeof en !== 'number' || !Number.isFinite(st) || !Number.isFinite(en)) {
       return false;
     }
-    const first = Math.max(0, Math.min(total - 1, Math.floor(st)));
-    const last = Math.max(first, Math.min(total - 1, Math.floor(en)));
+    const rawFirst = Math.floor(st);
+    const rawLast = Math.floor(en);
+    const first = Math.max(0, Math.min(total - 1, host.flowNodeIndexFromListIndex(rawFirst)));
+    const last = Math.max(first, Math.min(total - 1, host.flowNodeIndexFromListIndex(rawLast)));
     host.listVisibleFirstNodeIdx = first;
     host.listVisibleLastNodeIdx = last;
-    host.logScrollDebug(`forceRefresh visible range by API: ${first} ~ ${last}`);
+    host.logScrollDebug(`forceRefresh visible range by API: raw=${rawFirst}~${rawLast}, flow=${first}~${last}`);
     return true;
   } catch (_e) {
     return false;
@@ -274,6 +336,22 @@ export function galleryAlbumVisibleCountPhotoSlotsBeforeNode(
   return host.flowDataSource.getData(end).globalPhotoSlotStart;
 }
 
+export function galleryAlbumVisibleAdjustFirstVisibleNodeForLeadingRow(
+  host: GalleryAlbumVisibleLoadHost,
+  firstIdx: number
+): number {
+  const totalNodes = host.flowDataSource.totalCount();
+  if (totalNodes <= 0) {
+    return 0;
+  }
+  const first = Math.max(0, Math.min(totalNodes - 1, firstIdx));
+  if (first <= 0) {
+    return first;
+  }
+  const prevNode = host.flowDataSource.getData(first - 1);
+  return prevNode.kind === 'row' ? first - 1 : first;
+}
+
 export function galleryAlbumVisibleGlobalSlotIndexAtDayStart(
   host: GalleryAlbumVisibleLoadHost,
   dayIdx: number
@@ -379,7 +457,8 @@ export function galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
   }
   const first = Math.max(0, Math.min(totalNodes - 1, firstIdx));
   const last = Math.max(first, Math.min(totalNodes - 1, lastIdx));
-  let visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, first);
+  const firstForSlotStart = galleryAlbumVisibleAdjustFirstVisibleNodeForLeadingRow(host, first);
+  let visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, firstForSlotStart);
   let visEndExclusive = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, last + 1);
   if (visEndExclusive <= visStart) {
     let rowIdx = -1;
@@ -711,6 +790,23 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     );
     galleryAlbumVisibleCaptureListScrollIndexAnchor(host);
   }
+  let aggressiveScrollerRangeMissedTarget = false;
+  const aggressiveTargetYm = aggressive ? host.resolveYearMonthByTimelineRatio(host.timelineSliderRatio) : null;
+  if (aggressive && loadVisibleUsedScrollerRange && aggressiveTargetYm !== null &&
+    !galleryAlbumVisibleNodeRangeHasYearMonth(
+      host,
+      host.listVisibleFirstNodeIdx,
+      host.listVisibleLastNodeIdx,
+      aggressiveTargetYm.year,
+      aggressiveTargetYm.month
+    )) {
+    aggressiveScrollerRangeMissedTarget = true;
+    galleryAlbumVisibleTrace(
+      host,
+      `loadVisible aggressive mismatch: scrollerRange=${host.listVisibleFirstNodeIdx}~${host.listVisibleLastNodeIdx}, `
+      + `target=${aggressiveTargetYm.year}-${aggressiveTargetYm.month}`
+    );
+  }
   if (allowWhileInteracting && !loadVisibleUsedScrollerRange && !interactiveVisiblePriority) {
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug('loadVisible interactive skip: scroller visible range unavailable');
@@ -723,25 +819,67 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   let visEndExclusive = 0;
   let aggressiveRoughVisibleRange: GalleryVisibleNodeRange | null = null;
   let usedAggressiveTimelineAnchor = false;
-  if (aggressive && !loadVisibleUsedScrollerRange) {
-    aggressiveRoughVisibleRange = galleryAlbumVisiblePrimeRoughVisibleRangeForTimelineTarget(host);
+  let aggressiveUsedSeekAnchorRange = false;
+  if (aggressive && (!loadVisibleUsedScrollerRange || aggressiveScrollerRangeMissedTarget)) {
+    aggressiveRoughVisibleRange = galleryAlbumVisibleRangeFromSeekAnchor(host);
+    if (aggressiveRoughVisibleRange !== null) {
+      aggressiveUsedSeekAnchorRange = true;
+      galleryAlbumVisibleTrace(
+        host,
+        `loadVisible aggressive use seek anchor range: ${aggressiveRoughVisibleRange.first}~${aggressiveRoughVisibleRange.last}, `
+        + `anchor=${host.timelineSeekAnchorNodeIdx}, fallbackFromScroller=${aggressiveScrollerRangeMissedTarget ? 1 : 0}`
+      );
+    } else {
+      aggressiveRoughVisibleRange = galleryAlbumVisiblePrimeRoughVisibleRangeForTimelineTarget(host);
+      if (aggressiveRoughVisibleRange !== null) {
+        galleryAlbumVisibleTrace(
+          host,
+          `loadVisible aggressive use rough target range: ${aggressiveRoughVisibleRange.first}~${aggressiveRoughVisibleRange.last}, `
+          + `fallbackFromScroller=${aggressiveScrollerRangeMissedTarget ? 1 : 0}`
+        );
+      }
+    }
   }
   if (aggressiveRoughVisibleRange !== null) {
     refFirst = aggressiveRoughVisibleRange.first;
     refLast = aggressiveRoughVisibleRange.last;
-    visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, refFirst);
+    visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(
+      host,
+      galleryAlbumVisibleAdjustFirstVisibleNodeForLeadingRow(host, refFirst)
+    );
     visEndExclusive = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, refLast + 1);
     if (visEndExclusive <= visStart &&
       host.lastKnownGlobalPhotoSlotEndExclusive > host.lastKnownGlobalPhotoSlotStart) {
       visStart = host.lastKnownGlobalPhotoSlotStart;
       visEndExclusive = host.lastKnownGlobalPhotoSlotEndExclusive;
     }
+    if (aggressiveTargetYm !== null && visEndExclusive > visStart &&
+      !galleryAlbumVisibleResolvedSlotStartMatchesTargetYearMonth(
+        host,
+        visStart,
+        aggressiveTargetYm.year,
+        aggressiveTargetYm.month
+      ) &&
+      galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host)) {
+      visStart = host.lastKnownGlobalPhotoSlotStart;
+      visEndExclusive = host.lastKnownGlobalPhotoSlotEndExclusive;
+      usedAggressiveTimelineAnchor = visEndExclusive > visStart;
+      galleryAlbumVisibleTrace(
+        host,
+        `loadVisible aggressive slot fallback: nodeRange ${refFirst}~${refLast} mapped to wrong month, `
+        + `target=${aggressiveTargetYm.year}-${aggressiveTargetYm.month}, slotAnchor=${visStart}~${visEndExclusive}`
+      );
+    }
   } else if (aggressive && galleryAlbumVisibleAlignPumpToTimelineSliderTarget(host)) {
     visStart = host.lastKnownGlobalPhotoSlotStart;
     visEndExclusive = host.lastKnownGlobalPhotoSlotEndExclusive;
     usedAggressiveTimelineAnchor = visEndExclusive > visStart;
+    if (usedAggressiveTimelineAnchor) {
+      galleryAlbumVisibleTrace(host, `loadVisible aggressive use slot anchor: ${visStart}~${visEndExclusive}`);
+    }
   }
-  if (!usedAggressiveTimelineAnchor) {
+  const usingAggressiveFallbackRange = aggressiveRoughVisibleRange !== null || usedAggressiveTimelineAnchor;
+  if (!usingAggressiveFallbackRange) {
     let refinedFirst: number;
     let refinedLast: number;
     if (loadVisibleUsedScrollerRange) {
@@ -760,7 +898,10 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     const lastNode = Math.max(firstNode, Math.min(totalNodes - 1, refinedLast));
     refFirst = firstNode;
     refLast = lastNode;
-    visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, firstNode);
+    visStart = galleryAlbumVisibleCountPhotoSlotsBeforeNode(
+      host,
+      galleryAlbumVisibleAdjustFirstVisibleNodeForLeadingRow(host, firstNode)
+    );
     visEndExclusive = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, lastNode + 1);
     if (visEndExclusive <= visStart) {
       if (host.lastKnownGlobalPhotoSlotEndExclusive > host.lastKnownGlobalPhotoSlotStart) {
@@ -798,7 +939,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   }
   let bufferScanFirst = refFirst;
   let bufferScanLast = refLast;
-  if (!usedAggressiveTimelineAnchor) {
+  if (!usingAggressiveFallbackRange) {
     if (loadVisibleUsedScrollerRange) {
       bufferScanFirst = Math.max(0, refFirst - GALLERY_LOAD_VISIBLE_SCROLLER_RANGE_PAD_NODES);
       bufferScanLast = Math.min(totalNodes - 1, refLast + GALLERY_LOAD_VISIBLE_SCROLLER_RANGE_PAD_NODES);
@@ -812,7 +953,8 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       } catch (_e2) {
         yVis = 0;
       }
-      const estNode = galleryAlbumVisibleEstimateFirstVisibleNodeIndexFromScrollY(host, yVis, totalNodes);
+      const estNodeRaw = galleryAlbumVisibleEstimateFirstVisibleNodeIndexFromScrollY(host, yVis, totalNodes);
+      const estNode = estNodeRaw + GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES < refFirst ? refFirst : estNodeRaw;
       if (estNode < refFirst) {
         const visLo = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, estNode);
         if (visLo < visStart) {
@@ -848,12 +990,22 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   if (endHit === null) {
     return;
   }
+  galleryAlbumVisibleTrace(
+    host,
+    `loadVisible resolved range: nodes=${refFirst}~${refLast}, slots=${start}~${end}, `
+    + `startDay=${startHit.dayIdx}/${startHit.dayOffset}, endDay=${endHit.dayIdx}/${endHit.dayOffset}, `
+    + `viaSeekAnchor=${aggressiveUsedSeekAnchorRange ? 1 : 0}, scrollerRange=${loadVisibleUsedScrollerRange ? 1 : 0}`
+  );
   if (host.loadingMore) {
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug(
         `loadVisible defer while inflight: start=${start}, end=${end}, day=${startHit.dayIdx}, aggressive=${aggressive ? 1 : 0}`
       );
     }
+    galleryAlbumVisibleTrace(
+      host,
+      `loadVisible defer inflight: day=${startHit.dayIdx}, dayOffset=${startHit.dayOffset}, aggressive=${aggressive ? 1 : 0}`
+    );
     galleryAlbumVisibleScheduleRetryAfterInflight(host, aggressive);
     return;
   }
@@ -861,6 +1013,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     const nextIdx = startHit.dayIdx;
     host.dayIndex = nextIdx;
     host.lastVisibleLoadDayIdx = nextIdx;
+    galleryAlbumVisibleTrace(host, `loadVisible jump dayIndex -> ${nextIdx}`);
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug(`loadVisible jump dayIndex -> ${nextIdx} (target=${startHit.dayIdx}, start=${start}, end=${end})`);
     }
@@ -880,6 +1033,11 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       Math.max(0, startHit.dayOffset),
       overlapEndExclusive
     );
+    galleryAlbumVisibleTrace(
+      host,
+      `loadVisible align day offset: day=${host.dayIndex}, prev=${curOff}, next=${alignedStart}, `
+      + `need=${startHit.dayOffset}~${overlapEndExclusive}`
+    );
     if (curOff !== alignedStart && host.isInScrollInteractiveLogWindow()) {
       const action = alignedStart < curOff ? 'rewind' : 'align';
       host.logScrollDebug(
@@ -893,6 +1051,11 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   const spanDays = hiD - loD;
 
   if (!host.exhausted) {
+    galleryAlbumVisibleTrace(
+      host,
+      `loadVisible trigger visible-band pump: loDay=${loD}, hiDay=${hiD}, spanDays=${spanDays}, `
+      + `start=${start}, end=${end}`
+    );
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug(
         `loadVisible trigger visible-band pump: `
@@ -972,6 +1135,11 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       localNeed + 1,
       Math.min(Math.max(0, day.itemCount), Math.max(0, Math.min(endG + 1, g1) - g0))
     );
+    galleryAlbumVisibleTrace(
+      host,
+      `visible-band day ${d}: key=${dayKey(day.year, day.month, day.day)}, global=${g0}~${g1}, `
+      + `need=${localNeed}~${overlapEndExclusive}`
+    );
     const maxRoundsForRange = Math.max(1, Math.ceil(Math.max(1, overlapEndExclusive - localNeed) / DATE_FEED_BATCH) + 2);
     let rounds = 0;
     while (rounds < maxRoundsForRange) {
@@ -982,6 +1150,11 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, nextGap, overlapEndExclusive);
       const key = dayKey(day.year, day.month, day.day);
       const prevOffset = host.dayOffsets.get(key) ?? 0;
+      galleryAlbumVisibleTrace(
+        host,
+        `visible-band request: day=${d}, key=${key}, nextGap=${nextGap}, prevOffset=${prevOffset}, `
+        + `need=${localNeed}~${overlapEndExclusive}`
+      );
 
       host.dayIndex = d;
       host.lastVisibleLoadDayIdx = d;
@@ -1012,6 +1185,11 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
 
       rounds++;
       const nextGapAfter = galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
+      galleryAlbumVisibleTrace(
+        host,
+        `visible-band result: day=${d}, key=${key}, added=${added}, nextOffset=${host.dayOffsets.get(key) ?? prevOffset}, `
+        + `nextGapAfter=${nextGapAfter}, round=${rounds}/${maxRoundsForRange}`
+      );
       if (nextGapAfter < 0) {
         break;
       }

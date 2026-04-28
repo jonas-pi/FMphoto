@@ -521,6 +521,8 @@ export struct GalleryAlbumTab {
   private timelineSeekInProgress: boolean = false;
   /** seek 鐩戣鍣ㄤ唬娆★細鏂版嫋鍔ㄥ彲鍙栨秷鏃т换鍔?*/
   private timelineSeekGen: number = 0;
+  /** 鏃堕棿杞寸▼搴忓寲 seek 鐨勫垪琛ㄩ敋鐐癸紝release 鍚庢嫿涓嶅埌 visible callback 鏃剁敤浜庤繎浼煎彲瑙嗗尯 */
+  private timelineSeekAnchorNodeIdx: number = -1;
   /** 褰撳墠 List 鍙鑺傜偣鍖洪棿锛堢敱 onScrollIndex 鍥炰紶锛?*/
   private listVisibleFirstNodeIdx: number = 0;
   private listVisibleLastNodeIdx: number = 0;
@@ -837,6 +839,8 @@ export struct GalleryAlbumTab {
       set timelineIndicatorY(value: number) { self.timelineIndicatorY = value; }
       get timelineSeekGen(): number { return self.timelineSeekGen; }
       set timelineSeekGen(value: number) { self.timelineSeekGen = value; }
+      get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
+      set timelineSeekAnchorNodeIdx(value: number) { self.timelineSeekAnchorNodeIdx = value; }
       get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
       set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
       get listVisibleLastNodeIdx(): number { return self.listVisibleLastNodeIdx; }
@@ -845,6 +849,8 @@ export struct GalleryAlbumTab {
       set ignoreListFreezeUntilMs(value: number) { self.ignoreListFreezeUntilMs = value; }
       get pumpEpoch(): number { return self.pumpEpoch; }
       set pumpEpoch(value: number) { self.pumpEpoch = value; }
+      flowNodeIndexFromListIndex(index: number): number { return self.flowNodeIndexFromMainListIndex(index); }
+      listIndexFromFlowNodeIndex(index: number): number { return self.mainListIndexFromFlowNodeIndex(index); }
       refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void {
         galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(self.asVisibleLoadHost(), firstIdx, lastIdx);
       }
@@ -1120,12 +1126,16 @@ export struct GalleryAlbumTab {
       set loadVisibleRetryGen(value: number) { self.loadVisibleRetryGen = value; }
       get timelineSliderRatio(): number { return self.timelineSliderRatio; }
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
+      get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
+      set timelineSeekAnchorNodeIdx(value: number) { self.timelineSeekAnchorNodeIdx = value; }
       get galleryGridColumns(): number { return self.currentGalleryGridColumns(); }
       set galleryGridColumns(_value: number) {}
       get rootModeContentWidthVp(): number { return self.rootModeContentWidthVp; }
       set rootModeContentWidthVp(value: number) { self.rootModeContentWidthVp = value; }
       get viewGranularity(): GalleryViewGranularity { return self.viewGranularity; }
       set viewGranularity(value: GalleryViewGranularity) { self.viewGranularity = value; }
+      flowNodeIndexFromListIndex(index: number): number { return self.flowNodeIndexFromMainListIndex(index); }
+      listIndexFromFlowNodeIndex(index: number): number { return self.mainListIndexFromFlowNodeIndex(index); }
       resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null {
         return self.resolveDayByGlobalIndexFast(globalIndex);
       }
@@ -1381,6 +1391,7 @@ export struct GalleryAlbumTab {
     }
     const first = Math.max(0, Math.min(Math.floor(firstIdx), total - 1));
     const last = Math.max(first, Math.min(Math.floor(lastIdx), total - 1));
+    this.timelineSeekAnchorNodeIdx = first;
     this.listVisibleFirstNodeIdx = first;
     this.listVisibleLastNodeIdx = last;
     this.refreshLastKnownGlobalSlotsFromListIndices(first, last);
@@ -1543,6 +1554,10 @@ export struct GalleryAlbumTab {
   private endTimelineDrag(): void {
     this.rootPhotosTitlePreferListAnchorUntilMs = Date.now() + 1400;
     this.timelineReleaseAwaitVisibleCallback = true;
+    timelineGestureLogScrollDebug(
+      this.asTimelineGestureHost(),
+      '[scroll-release-visible] endTimelineDrag: await visible callback = 1'
+    );
     timelineGestureEndTimelineDrag(this.asTimelineGestureHost());
   }
 
@@ -1791,6 +1806,18 @@ export struct GalleryAlbumTab {
 
   private mainGalleryContentInsetTopVp(): number {
     return galleryAlbumMainGalleryContentInsetTopVp(this.asRootSurfaceHost());
+  }
+
+  private mainListLeadingInsetItemCount(): number {
+    return this.mainGalleryContentInsetTopVp() > 0 ? 1 : 0;
+  }
+
+  private flowNodeIndexFromMainListIndex(index: number): number {
+    return Math.floor(index) - this.mainListLeadingInsetItemCount();
+  }
+
+  private mainListIndexFromFlowNodeIndex(index: number): number {
+    return Math.max(0, Math.floor(index) + this.mainListLeadingInsetItemCount());
   }
 
   private currentBottomDockInsetVp(): number {
@@ -2253,9 +2280,15 @@ export struct GalleryAlbumTab {
           onGallerySlideTouchMoveWindow: (xPx: number, yPx: number): void =>
             selectionOnGallerySlideTouchMoveWindow(this.asSelectionGestureHost(), xPx, yPx),
           onListScrollIndex: (firstIdx: number, lastIdx: number, _centerIdx: number): void => {
-            this.applyListVisibleNodeRange(firstIdx, lastIdx);
+            const flowFirstIdx = this.flowNodeIndexFromMainListIndex(firstIdx);
+            const flowLastIdx = this.flowNodeIndexFromMainListIndex(lastIdx);
+            this.applyListVisibleNodeRange(flowFirstIdx, flowLastIdx);
             this.refreshRootPhotosScrollTitle();
             if (this.timelineReleaseAwaitVisibleCallback && !this.timelineSidebarDragging) {
+              timelineGestureLogScrollDebug(
+                this.asTimelineGestureHost(),
+                `[scroll-release-visible] onScrollIndex: raw=${firstIdx}~${lastIdx}, flow=${flowFirstIdx}~${flowLastIdx}`
+              );
               this.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
             }
@@ -2264,7 +2297,7 @@ export struct GalleryAlbumTab {
             }
             timelineGestureSyncTimelineHandleFromListThrottled(
               this.asTimelineGestureHost(),
-              firstIdx,
+              Math.max(0, flowFirstIdx),
               (idx: number): void => {
                 galleryAlbumSyncTimelineSliderFromFirstIndex(this.asTimelineGestureHost(), idx);
               }
@@ -2320,6 +2353,10 @@ export struct GalleryAlbumTab {
                 stateChanged = true;
               }
               if (this.timelineReleaseAwaitVisibleCallback) {
+                timelineGestureLogScrollDebug(
+                  this.asTimelineGestureHost(),
+                  '[scroll-release-visible] onDidScroll Idle: release still awaiting callback, force immediate visible load'
+                );
                 this.timelineReleaseAwaitVisibleCallback = false;
                 galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
               }
@@ -2347,9 +2384,16 @@ export struct GalleryAlbumTab {
             if (start.index < 0 || end.index < 0) {
               return;
             }
-            this.applyListVisibleNodeRange(start.index, end.index);
+            const flowStartIdx = this.flowNodeIndexFromMainListIndex(start.index);
+            const flowEndIdx = this.flowNodeIndexFromMainListIndex(end.index);
+            this.applyListVisibleNodeRange(flowStartIdx, flowEndIdx);
             this.refreshRootPhotosScrollTitle();
             if (this.timelineReleaseAwaitVisibleCallback) {
+              timelineGestureLogScrollDebug(
+                this.asTimelineGestureHost(),
+                `[scroll-release-visible] onVisibleContentChange: raw=${start.index}~${end.index}, `
+                + `flow=${flowStartIdx}~${flowEndIdx}`
+              );
               this.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
             } else if (this.timelineSeekInProgress) {
