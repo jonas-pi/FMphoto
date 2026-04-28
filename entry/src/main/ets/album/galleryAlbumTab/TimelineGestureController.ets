@@ -56,6 +56,7 @@ export interface TimelineGestureControllerHost {
   timelineIndicatorY: number;
   timelineSeekGen: number;
   timelineSeekAnchorNodeIdx: number;
+  visibleLoadPreferBottomFirst: boolean;
   listVisibleFirstNodeIdx: number;
   listVisibleLastNodeIdx: number;
   ignoreListFreezeUntilMs: number;
@@ -479,7 +480,23 @@ export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHo
   host.timelineLongPressExpanded = false;
   timelineGestureRefreshVisualPlaceholderMode(host);
   host.timelineSeekInProgress = true;
+  const total = host.flowDataSource.totalCount();
+  const prevFirst = Math.max(0, Math.min(total - 1, host.listVisibleFirstNodeIdx));
+  const prevLast = Math.max(prevFirst, Math.min(total - 1, host.listVisibleLastNodeIdx));
+  const prevAnchor = total > 0 ? Math.max(0, Math.min(total - 1, Math.floor((prevFirst + prevLast) / 2))) : -1;
   host.seekTimelineListToDisplayRatio(host.timelineSliderRatio);
+  if (total > 0 && prevAnchor >= 0 &&
+    Number.isFinite(host.timelineSeekAnchorNodeIdx) && host.timelineSeekAnchorNodeIdx >= 0) {
+    const targetAnchor = Math.max(0, Math.min(total - 1, Math.floor(host.timelineSeekAnchorNodeIdx)));
+    if (Math.abs(targetAnchor - prevAnchor) >= 1) {
+      host.visibleLoadPreferBottomFirst = targetAnchor > prevAnchor;
+      timelineGestureLogReleaseTrace(
+        host,
+        `endDrag: seed visible priority -> ${host.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}, `
+        + `prevAnchor=${prevAnchor}, targetAnchor=${targetAnchor}`
+      );
+    }
+  }
   const ym = host.resolveYearMonthByTimelineRatio(host.timelineSliderRatio);
   if (ym !== null) {
     host.startTimelineSeekWatchdog(ym.year, ym.month);

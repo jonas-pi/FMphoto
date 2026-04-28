@@ -65,6 +65,9 @@ export interface GalleryAlbumVisibleLoadHost {
   loadGen: number;
   loadVisibleRetryTimer: number;
   loadVisibleRetryGen: number;
+  visibleBandPumpRunIdSeq: number;
+  visibleBandPumpActiveRunId: number;
+  visibleBandPumpActiveEpoch: number;
   timelineSliderRatio: number;
   timelineSeekAnchorNodeIdx: number;
   visibleLoadPreferBottomFirst: boolean;
@@ -90,6 +93,45 @@ function galleryAlbumVisibleTrace(host: GalleryAlbumVisibleLoadHost, msg: string
     return;
   }
   host.logScrollDebug(`${GALLERY_SCROLL_RELEASE_TRACE_TAG} ${msg}`);
+}
+
+function galleryAlbumVisibleHasActiveBandPumpForEpoch(
+  host: GalleryAlbumVisibleLoadHost,
+  epoch: number
+): boolean {
+  return host.visibleBandPumpActiveRunId >= 0 && host.visibleBandPumpActiveEpoch === epoch;
+}
+
+function galleryAlbumVisibleCurrentBandPumpMatches(
+  host: GalleryAlbumVisibleLoadHost,
+  epoch: number,
+  runId: number
+): boolean {
+  return runId >= 0
+    && host.visibleBandPumpActiveRunId === runId
+    && host.visibleBandPumpActiveEpoch === epoch;
+}
+
+function galleryAlbumVisibleStartBandPump(
+  host: GalleryAlbumVisibleLoadHost,
+  epoch: number
+): number {
+  const nextRunId = host.visibleBandPumpRunIdSeq + 1;
+  host.visibleBandPumpRunIdSeq = nextRunId;
+  host.visibleBandPumpActiveRunId = nextRunId;
+  host.visibleBandPumpActiveEpoch = epoch;
+  return nextRunId;
+}
+
+function galleryAlbumVisibleFinishBandPump(
+  host: GalleryAlbumVisibleLoadHost,
+  runId: number
+): void {
+  if (host.visibleBandPumpActiveRunId !== runId) {
+    return;
+  }
+  host.visibleBandPumpActiveRunId = -1;
+  host.visibleBandPumpActiveEpoch = -1;
 }
 
 function galleryAlbumVisibleNodeRangeHasYearMonth(
@@ -176,7 +218,7 @@ function galleryAlbumVisibleScheduleRetryAfterInflight(
     if (host.timelineSidebarDragging || host.isDraggingOrFling || host.visualPlaceholderMode) {
       return;
     }
-    if (host.loadingMore) {
+    if (host.loadingMore || galleryAlbumVisibleHasActiveBandPumpForEpoch(host, epoch)) {
       galleryAlbumVisibleScheduleRetryAfterInflight(host, aggressive, delayMs);
       return;
     }
@@ -1069,7 +1111,25 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       );
     }
   }
-  const start = aggressive ? Math.max(0, visStart) : Math.max(0, visStart - backwardBufferSlots);
+  let start = aggressive ? Math.max(0, visStart) : Math.max(0, visStart - backwardBufferSlots);
+  if (!aggressive &&
+    !usingAggressiveFallbackRange &&
+    !loadVisibleUsedScrollerRange &&
+    host.lastKnownGlobalPhotoSlotEndExclusive > host.lastKnownGlobalPhotoSlotStart) {
+    const noScrollerLocalBackCap = Math.max(
+      backwardBufferSlots,
+      GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES * galleryAlbumVisibleBufferScale(host)
+    );
+    const localMinStart = Math.max(0, host.lastKnownGlobalPhotoSlotStart - noScrollerLocalBackCap);
+    if (start < localMinStart && visEndExclusive >= host.lastKnownGlobalPhotoSlotStart) {
+      galleryAlbumVisibleTrace(
+        host,
+        `loadVisible clamp no-scroller local start: raw=${start}, clamp=${localMinStart}, `
+        + `anchorSlots=${host.lastKnownGlobalPhotoSlotStart}~${host.lastKnownGlobalPhotoSlotEndExclusive}`
+      );
+      start = localMinStart;
+    }
+  }
   const end = Math.max(start, visEndExclusive - 1 + bufferSlots);
   const startHit = host.resolveDayByGlobalIndex(start);
   if (startHit === null) {
@@ -1160,7 +1220,17 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       );
     }
     const epochBand = host.pumpEpoch;
-    void galleryAlbumVisiblePumpVisibleDayBandAllChunks(host, loD, hiD, start, end, epochBand);
+    if (galleryAlbumVisibleHasActiveBandPumpForEpoch(host, epochBand)) {
+      galleryAlbumVisibleTrace(
+        host,
+        `loadVisible coalesce active visible-band pump: epoch=${epochBand}, `
+        + `priority=${host.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
+      );
+      galleryAlbumVisibleScheduleRetryAfterInflight(host, aggressive, PUMP_UI_GAP_MS);
+      return;
+    }
+    const runId = galleryAlbumVisibleStartBandPump(host, epochBand);
+    void galleryAlbumVisiblePumpVisibleDayBandAllChunks(host, loD, hiD, start, end, epochBand, runId);
   }
 }
 
@@ -1170,35 +1240,52 @@ export async function galleryAlbumVisiblePumpVisibleDayBandAllChunks(
   hiD: number,
   startG: number,
   endG: number,
-  epoch: number
+  epoch: number,
+  runId: number = -1
 ): Promise<void> {
+  let ownerRunId = runId;
+  if (ownerRunId < 0) {
+    if (galleryAlbumVisibleHasActiveBandPumpForEpoch(host, epoch)) {
+      return;
+    }
+    ownerRunId = galleryAlbumVisibleStartBandPump(host, epoch);
+  }
+  if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)) {
+    return;
+  }
   let curLo = Math.max(0, loD);
   const hiCap = Math.max(curLo, Math.min(hiD, host.orderedDays.length - 1));
-  if (host.visibleLoadPreferBottomFirst) {
-    let curHi = hiCap;
-    while (curHi >= curLo) {
-      if (epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
+  try {
+    if (host.visibleLoadPreferBottomFirst) {
+      let curHi = hiCap;
+      while (curHi >= curLo) {
+        if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)
+          || epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
+          return;
+        }
+        if (host.visualPlaceholderMode || host.isDraggingOrFling) {
+          return;
+        }
+        const loChunk = Math.max(curLo, curHi - GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX + 1);
+        await galleryAlbumVisiblePumpVisibleDayBandSequential(host, loChunk, curHi, startG, endG, epoch, true, ownerRunId);
+        curHi = loChunk - 1;
+      }
+      return;
+    }
+    while (curLo <= hiCap) {
+      if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)
+        || epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
         return;
       }
       if (host.visualPlaceholderMode || host.isDraggingOrFling) {
         return;
       }
-      const loChunk = Math.max(curLo, curHi - GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX + 1);
-      await galleryAlbumVisiblePumpVisibleDayBandSequential(host, loChunk, curHi, startG, endG, epoch, true);
-      curHi = loChunk - 1;
+      const hiChunk = Math.min(hiCap, curLo + GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX - 1);
+      await galleryAlbumVisiblePumpVisibleDayBandSequential(host, curLo, hiChunk, startG, endG, epoch, false, ownerRunId);
+      curLo = hiChunk + 1;
     }
-    return;
-  }
-  while (curLo <= hiCap) {
-    if (epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
-      return;
-    }
-    if (host.visualPlaceholderMode || host.isDraggingOrFling) {
-      return;
-    }
-    const hiChunk = Math.min(hiCap, curLo + GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX - 1);
-    await galleryAlbumVisiblePumpVisibleDayBandSequential(host, curLo, hiChunk, startG, endG, epoch, false);
-    curLo = hiChunk + 1;
+  } finally {
+    galleryAlbumVisibleFinishBandPump(host, ownerRunId);
   }
 }
 
@@ -1209,8 +1296,13 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
   startG: number,
   endG: number,
   epoch: number,
-  preferBottomFirst: boolean = false
+  preferBottomFirst: boolean = false,
+  runId: number = -1
 ): Promise<void> {
+  const ownerRunId = runId >= 0 ? runId : host.visibleBandPumpActiveRunId;
+  if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)) {
+    return;
+  }
   if (host.visualPlaceholderMode || host.isDraggingOrFling) {
     return;
   }
@@ -1220,7 +1312,8 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
   for (let d = preferBottomFirst ? hi : lo;
     preferBottomFirst ? d >= lo : d <= hi;
     d += step) {
-    if (epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
+    if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)
+      || epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
       return;
     }
     if (host.visualPlaceholderMode || host.isDraggingOrFling) {
@@ -1230,7 +1323,8 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
     while (host.loadingMore && waitGuard < 120) {
       await new Promise<void>((resolve) => setTimeout(resolve, 30));
       waitGuard++;
-      if (epoch !== host.pumpEpoch) {
+      if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)
+        || epoch !== host.pumpEpoch) {
         return;
       }
     }
@@ -1265,7 +1359,13 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       if (nextGap < 0) {
         break;
       }
-      galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, nextGap, overlapEndExclusive, preferBottomFirst);
+      galleryAlbumVisibleAlignDayOffsetToLoadedGap(
+        host,
+        d,
+        preferBottomFirst ? localNeed : nextGap,
+        overlapEndExclusive,
+        preferBottomFirst
+      );
       const key = dayKey(day.year, day.month, day.day);
       const prevOffset = host.dayOffsets.get(key) ?? 0;
       galleryAlbumVisibleTrace(
@@ -1286,7 +1386,8 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
         host.loadingMore = false;
       }
 
-      if (epoch !== host.pumpEpoch || gen !== host.loadGen) {
+      if (!galleryAlbumVisibleCurrentBandPumpMatches(host, epoch, ownerRunId)
+        || epoch !== host.pumpEpoch || gen !== host.loadGen) {
         return;
       }
       if (added === -1) {

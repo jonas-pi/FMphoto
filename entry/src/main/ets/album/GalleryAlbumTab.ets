@@ -552,6 +552,9 @@ export struct GalleryAlbumTab {
   private lastLoadVisibleAtMs: number = 0;
   private loadVisibleRetryTimer: number = -1;
   private loadVisibleRetryGen: number = 0;
+  private visibleBandPumpRunIdSeq: number = 0;
+  private visibleBandPumpActiveRunId: number = -1;
+  private visibleBandPumpActiveEpoch: number = -1;
   /** pump 浠ｆ锛氭柊婊氬姩寮€濮嬫椂閫掑锛屾棫 pump/鍥炶皟绔嬪嵆澶辨晥锛堟墦鏂苟鍙戦摼璺級 */
   private pumpEpoch: number = 0;
   /** 鏃堕棿杞存澗鎵嬪悗鐭獥鍐呭拷鐣ョ▼搴忓寲婊氬姩瀵瑰喕缁撴€佺殑鍥炲啓锛岄槻姝⑩€滃繀椤诲啀婊戜竴涓嬫墠鍔犺浇鈥?*/
@@ -854,6 +857,8 @@ export struct GalleryAlbumTab {
       set timelineSeekGen(value: number) { self.timelineSeekGen = value; }
       get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
       set timelineSeekAnchorNodeIdx(value: number) { self.timelineSeekAnchorNodeIdx = value; }
+      get visibleLoadPreferBottomFirst(): boolean { return self.visibleLoadPreferBottomFirst; }
+      set visibleLoadPreferBottomFirst(value: boolean) { self.visibleLoadPreferBottomFirst = value; }
       get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
       set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
       get listVisibleLastNodeIdx(): number { return self.listVisibleLastNodeIdx; }
@@ -1151,6 +1156,12 @@ export struct GalleryAlbumTab {
       set loadVisibleRetryTimer(value: number) { self.loadVisibleRetryTimer = value; }
       get loadVisibleRetryGen(): number { return self.loadVisibleRetryGen; }
       set loadVisibleRetryGen(value: number) { self.loadVisibleRetryGen = value; }
+      get visibleBandPumpRunIdSeq(): number { return self.visibleBandPumpRunIdSeq; }
+      set visibleBandPumpRunIdSeq(value: number) { self.visibleBandPumpRunIdSeq = value; }
+      get visibleBandPumpActiveRunId(): number { return self.visibleBandPumpActiveRunId; }
+      set visibleBandPumpActiveRunId(value: number) { self.visibleBandPumpActiveRunId = value; }
+      get visibleBandPumpActiveEpoch(): number { return self.visibleBandPumpActiveEpoch; }
+      set visibleBandPumpActiveEpoch(value: number) { self.visibleBandPumpActiveEpoch = value; }
       get timelineSliderRatio(): number { return self.timelineSliderRatio; }
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
       get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
@@ -1413,8 +1424,16 @@ export struct GalleryAlbumTab {
     galleryAlbumVisibleCaptureListScrollIndexAnchor(this.asVisibleLoadHost());
   }
 
+  private shouldPreserveVisibleLoadPriorityDuringTimelineRelease(): boolean {
+    return this.timelineSeekInProgress ||
+      (!this.timelineSidebarDragging && Date.now() < this.ignoreListFreezeUntilMs);
+  }
+
   private updateVisibleLoadPriorityFromScrollOffset(offsetVp: number): void {
     if (!Number.isFinite(offsetVp)) {
+      return;
+    }
+    if (this.shouldPreserveVisibleLoadPriorityDuringTimelineRelease()) {
       return;
     }
     const next = Math.max(0, offsetVp);
@@ -1433,6 +1452,9 @@ export struct GalleryAlbumTab {
     const last = Math.floor(lastIdx);
     const prevFirst = this.listVisibleFirstNodeIdx;
     const prevLast = this.listVisibleLastNodeIdx;
+    if (this.shouldPreserveVisibleLoadPriorityDuringTimelineRelease()) {
+      return;
+    }
     if (first === prevFirst && last === prevLast) {
       return;
     }
@@ -1568,6 +1590,26 @@ export struct GalleryAlbumTab {
           this.asTimelineGestureHost(),
           `[scroll-release-visible] guard callback range: raw=${rawFirst}~${rawLast}, anchor=${anchor}, `
           + `apply=${first}~${last}`
+        );
+      }
+    } else {
+      const rawSpan = rawLast - rawFirst + 1;
+      const maxReasonableSpan = Math.max(
+        GALLERY_TIMELINE_SEEK_HANDOFF_MAX_SPAN_NODES,
+        GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES * 5
+      );
+      if (rawSpan > maxReasonableSpan) {
+        if (this.visibleLoadPreferBottomFirst) {
+          first = Math.max(0, rawLast - maxReasonableSpan + 1);
+          last = rawLast;
+        } else {
+          first = rawFirst;
+          last = Math.min(total - 1, rawFirst + maxReasonableSpan - 1);
+        }
+        timelineGestureLogScrollDebug(
+          this.asTimelineGestureHost(),
+          `[scroll-release-visible] clamp implausible visible range: raw=${rawFirst}~${rawLast}, `
+          + `apply=${first}~${last}, priority=${this.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
         );
       }
     }
@@ -2592,6 +2634,13 @@ export struct GalleryAlbumTab {
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
                 return;
               }
+              timelineGestureLogScrollDebug(
+                this.asTimelineGestureHost(),
+                `[scroll-release-visible] onVisibleContentChange: handoff complete, force immediate list-driven load, `
+                + `raw=${start.index}~${end.index}, flow=${flowStartIdx}~${flowEndIdx}`
+              );
+              galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
+              return;
             } else {
               this.applyListVisibleNodeRange(flowStartIdx, flowEndIdx);
               this.refreshRootPhotosScrollTitle();
