@@ -114,6 +114,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
   }
 
   let flatLoaded = 0;
+  let flatLogical = 0;
 
   if (host.orderedDays.length > 0) {
     for (let i = 0; i < host.orderedDays.length; i++) {
@@ -133,7 +134,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         monthNode.key = `m_${mode}_${day.year}_${day.month}_od_${i}`;
         monthNode.year = day.year;
         monthNode.month = day.month;
-        monthNode.globalPhotoSlotStart = flatLoaded;
+        monthNode.globalPhotoSlotStart = flatLogical;
         nodes.push(monthNode);
       }
 
@@ -144,12 +145,13 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         dayNode.year = day.year;
         dayNode.month = day.month;
         dayNode.day = day.day;
-        dayNode.globalPhotoSlotStart = flatLoaded;
+        dayNode.globalPhotoSlotStart = flatLogical;
         nodes.push(dayNode);
       }
 
       const section = secMap.get(dayKey(day.year, day.month, day.day));
       const totalCount = Math.max(0, day.itemCount);
+      const dayGlobalStart = flatLogical;
       const totalRows = Math.ceil(totalCount / columns);
       for (let row = 0; row < totalRows; row++) {
         const rowNode = new GalleryFlowNode();
@@ -158,7 +160,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         rowNode.year = day.year;
         rowNode.month = day.month;
         rowNode.day = day.day;
-        rowNode.globalPhotoSlotStart = flatLoaded;
+        rowNode.globalPhotoSlotStart = dayGlobalStart + row * columns;
         rowNode.rowColumnCount = columns;
         rowNode.approxHeightVp = approxRowHeightVp;
 
@@ -178,6 +180,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         }
         nodes.push(rowNode);
       }
+      flatLogical += totalCount;
     }
   } else {
     for (let i = 0; i < host.sections.length; i++) {
@@ -197,7 +200,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         monthNode.key = `m_${mode}_${section.year}_${section.month}_i${i}`;
         monthNode.year = section.year;
         monthNode.month = section.month;
-        monthNode.globalPhotoSlotStart = flatLoaded;
+        monthNode.globalPhotoSlotStart = flatLogical;
         nodes.push(monthNode);
       }
       if (galleryAlbumFlowShouldShowDayNode(mode)) {
@@ -207,7 +210,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         dayNode.year = section.year;
         dayNode.month = section.month;
         dayNode.day = section.day;
-        dayNode.globalPhotoSlotStart = flatLoaded;
+        dayNode.globalPhotoSlotStart = flatLogical;
         nodes.push(dayNode);
       }
 
@@ -217,6 +220,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
       }
       const maxOff = keys[keys.length - 1];
       const totalCount = Math.max(maxOff + 1, section.itemCount > 0 ? section.itemCount : keys.length);
+      const dayGlobalStart = flatLogical;
       const totalRows = Math.ceil(totalCount / columns);
       for (let row = 0; row < totalRows; row++) {
         const rowNode = new GalleryFlowNode();
@@ -225,7 +229,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         rowNode.year = section.year;
         rowNode.month = section.month;
         rowNode.day = section.day;
-        rowNode.globalPhotoSlotStart = flatLoaded;
+        rowNode.globalPhotoSlotStart = dayGlobalStart + row * columns;
         rowNode.rowColumnCount = columns;
         rowNode.approxHeightVp = approxRowHeightVp;
         const rowStart = row * columns;
@@ -244,6 +248,7 @@ export function galleryAlbumRebuildFlow(host: GalleryAlbumVisibleLoadHost): void
         }
         nodes.push(rowNode);
       }
+      flatLogical += totalCount;
     }
   }
 

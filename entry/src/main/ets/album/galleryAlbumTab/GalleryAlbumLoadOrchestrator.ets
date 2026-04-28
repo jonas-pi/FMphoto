@@ -94,6 +94,7 @@ export interface GalleryAlbumLoadOrchestratorHost {
   countGalleryListedItems(): number;
   upsertSection(day: TimelineDayModel, list: GalleryListItem[], newOffset: number): void;
   clearBootstrapDebounceTimer(): void;
+  loadVisibleItemsImmediate(): void;
 }
 
 export function galleryAlbumMarkTimelineRefreshCaughtUp(host: GalleryAlbumLoadOrchestratorHost): void {
@@ -330,7 +331,44 @@ export async function galleryAlbumBootstrap(
   host.orderedDays = cells;
   host.bootLoading = false;
   galleryAlbumMarkTimelineRefreshCaughtUp(host);
-  galleryAlbumPumpLoad(host);
+  // Cold bootstrap only seeds the first visible slice. Let visible-band loading
+  // continue on demand instead of background-prefetching the whole timeline.
+  host.loadingMore = true;
+  let added = 0;
+  try {
+    added = await galleryAlbumLoadOneBatch(host);
+  } finally {
+    host.loadingMore = false;
+  }
+  if (gen !== host.loadGen) {
+    return;
+  }
+  if (added === -2) {
+    const retryGen = host.loadGen;
+    setTimeout((): void => {
+      if (retryGen !== host.loadGen || host.exhausted || host.loadingMore) {
+        return;
+      }
+      void galleryAlbumBootstrap(host, false);
+    }, 3000);
+    return;
+  }
+  if (added === -3) {
+    const retryGen = host.loadGen;
+    setTimeout((): void => {
+      if (retryGen !== host.loadGen || host.exhausted || host.loadingMore) {
+        return;
+      }
+      void galleryAlbumBootstrap(host, false);
+    }, 500);
+    return;
+  }
+  setTimeout((): void => {
+    if (gen !== host.loadGen || host.bootLoading) {
+      return;
+    }
+    host.loadVisibleItemsImmediate();
+  }, 0);
 }
 
 export function galleryAlbumPumpLoad(

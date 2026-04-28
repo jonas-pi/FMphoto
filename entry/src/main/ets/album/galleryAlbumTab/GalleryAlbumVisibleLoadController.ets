@@ -44,6 +44,9 @@ export interface GalleryAlbumVisibleLoadHost {
   visualPlaceholderMode: boolean;
   isDraggingOrFling: boolean;
   timelineSidebarDragging: boolean;
+  timelineSeekInProgress: boolean;
+  ignoreListFreezeUntilMs: number;
+  timelineSeekNoScrollerGuardUntilMs: number;
   pendingFlowRebuild: boolean;
   lastLoadVisibleAtMs: number;
   loadingMore: boolean;
@@ -64,6 +67,7 @@ export interface GalleryAlbumVisibleLoadHost {
   loadVisibleRetryGen: number;
   timelineSliderRatio: number;
   timelineSeekAnchorNodeIdx: number;
+  visibleLoadPreferBottomFirst: boolean;
   galleryGridColumns: number;
   rootModeContentWidthVp: number;
   viewGranularity: GalleryViewGranularity;
@@ -271,7 +275,12 @@ export function galleryAlbumVisibleFlushPendingFlowRebuild(host: GalleryAlbumVis
       return;
     }
     host.lastLoadVisibleAtMs = 0;
-    galleryAlbumVisibleLoadVisibleItemsThrottled(host, true, false);
+    galleryAlbumVisibleLoadVisibleItemsThrottled(
+      host,
+      true,
+      host.timelineSeekInProgress || Date.now() < host.ignoreListFreezeUntilMs,
+      host.timelineSeekInProgress || Date.now() < host.ignoreListFreezeUntilMs
+    );
   }, 16);
 }
 
@@ -414,11 +423,39 @@ export function galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(
   return -1;
 }
 
+export function galleryAlbumVisibleFindLatestMissingDayOffsetInRange(
+  host: GalleryAlbumVisibleLoadHost,
+  dayIdx: number,
+  startOffsetInclusive: number,
+  endOffsetExclusive: number
+): number {
+  if (dayIdx < 0 || dayIdx >= host.orderedDays.length) {
+    return -1;
+  }
+  const total = Math.max(0, host.orderedDays[dayIdx].itemCount);
+  if (total <= 0) {
+    return -1;
+  }
+  const start = Math.max(0, Math.min(total - 1, startOffsetInclusive));
+  const end = Math.max(start + 1, Math.min(total, endOffsetExclusive));
+  const section = galleryAlbumVisibleFindSectionForDayIndex(host, dayIdx);
+  if (section === null) {
+    return end - 1;
+  }
+  for (let off = end - 1; off >= start; off--) {
+    if (section.slotByOffset.get(off) === undefined) {
+      return off;
+    }
+  }
+  return -1;
+}
+
 export function galleryAlbumVisibleAlignDayOffsetToLoadedGap(
   host: GalleryAlbumVisibleLoadHost,
   dayIdx: number,
   neededStartOffsetInclusive: number,
-  neededEndOffsetExclusive: number
+  neededEndOffsetExclusive: number,
+  preferBottomFirst: boolean = false
 ): number {
   if (dayIdx < 0 || dayIdx >= host.orderedDays.length) {
     return 0;
@@ -432,6 +469,17 @@ export function galleryAlbumVisibleAlignDayOffsetToLoadedGap(
   const end = Math.max(start + 1, Math.min(total, neededEndOffsetExclusive));
   const key = dayKey(day.year, day.month, day.day);
   const current = Math.max(0, Math.min(total, host.dayOffsets.get(key) ?? 0));
+  if (preferBottomFirst) {
+    const latestGap = galleryAlbumVisibleFindLatestMissingDayOffsetInRange(host, dayIdx, start, end);
+    if (latestGap < 0) {
+      return current;
+    }
+    const target = Math.max(start, latestGap - DATE_FEED_BATCH + 1);
+    if (target !== current) {
+      host.dayOffsets.set(key, target);
+    }
+    return target;
+  }
   if (start > current) {
     host.dayOffsets.set(key, start);
     return start;
@@ -754,8 +802,22 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   allowWhileInteracting: boolean = false
 ): void {
   galleryAlbumVisibleCancelScheduledRetry(host);
-  const interactiveVisiblePriority = allowWhileInteracting && aggressive;
   const now = Date.now();
+  const releaseFreezeActive =
+    !host.timelineSidebarDragging &&
+    !host.timelineSeekInProgress &&
+    now < host.ignoreListFreezeUntilMs;
+  if ((host.timelineSeekInProgress || releaseFreezeActive) && !aggressive) {
+    aggressive = true;
+    allowWhileInteracting = true;
+    if (host.isInScrollInteractiveLogWindow()) {
+      const reason = host.timelineSeekInProgress
+        ? 'seek'
+        : 'release freeze';
+      host.logScrollDebug(`loadVisible upgrade to aggressive during ${reason}`);
+    }
+  }
+  const interactiveVisiblePriority = allowWhileInteracting && aggressive;
   const throttleWindowMs = allowWhileInteracting ? 96 : 300;
   if (!forceImmediate && now - host.lastLoadVisibleAtMs < throttleWindowMs) {
     if (host.isInScrollInteractiveLogWindow()) {
@@ -783,6 +845,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
   let loadVisibleUsedScrollerRange = false;
   if (galleryAlbumVisibleTryApplyScrollerVisibleRangeIfAvailable(host, totalNodes)) {
     loadVisibleUsedScrollerRange = true;
+    host.timelineSeekNoScrollerGuardUntilMs = 0;
     galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(
       host,
       host.listVisibleFirstNodeIdx,
@@ -812,6 +875,17 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       host.logScrollDebug('loadVisible interactive skip: scroller visible range unavailable');
     }
     return;
+  }
+  const noScrollerGuardActive =
+    !loadVisibleUsedScrollerRange &&
+    !host.timelineSeekInProgress &&
+    now < host.timelineSeekNoScrollerGuardUntilMs;
+  if (noScrollerGuardActive && !aggressive) {
+    aggressive = true;
+    allowWhileInteracting = true;
+    if (host.isInScrollInteractiveLogWindow()) {
+      host.logScrollDebug('loadVisible upgrade to aggressive during post-seek no-scroller guard');
+    }
   }
   let refFirst = Math.max(0, Math.min(totalNodes - 1, host.listVisibleFirstNodeIdx));
   let refLast = Math.max(refFirst, Math.min(totalNodes - 1, host.listVisibleLastNodeIdx));
@@ -954,7 +1028,14 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
         yVis = 0;
       }
       const estNodeRaw = galleryAlbumVisibleEstimateFirstVisibleNodeIndexFromScrollY(host, yVis, totalNodes);
-      const estNode = estNodeRaw + GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES < refFirst ? refFirst : estNodeRaw;
+      const estNodeLoose = estNodeRaw + GALLERY_REFINE_EST_ADV_MAX_DRIFT_NODES < refFirst ? refFirst : estNodeRaw;
+      // After timeline scrubs, scrollY-based estimation can lag far behind the actual visible
+      // node window. Keep fallback rewind to a few screens so visible pumping stays local.
+      const fallbackBacktrackCapNodes = Math.max(
+        GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES * 3,
+        (refLast - refFirst + 1) * 2
+      );
+      const estNode = Math.max(0, Math.max(refFirst - fallbackBacktrackCapNodes, estNodeLoose));
       if (estNode < refFirst) {
         const visLo = galleryAlbumVisibleCountPhotoSlotsBeforeNode(host, estNode);
         if (visLo < visStart) {
@@ -974,7 +1055,21 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     bufferScanFirst,
     bufferScanLast
   );
-  const start = aggressive ? Math.max(0, visStart) : Math.max(0, visStart - bufferSlots);
+  let backwardBufferSlots = bufferSlots;
+  if (!aggressive && !usingAggressiveFallbackRange && !loadVisibleUsedScrollerRange) {
+    const noScrollerBackCap = Math.max(
+      24,
+      GALLERY_LOAD_VISIBLE_BUFFER_BASE_AGGRESSIVE * galleryAlbumVisibleBufferScale(host) * 2
+    );
+    if (backwardBufferSlots > noScrollerBackCap) {
+      backwardBufferSlots = noScrollerBackCap;
+      galleryAlbumVisibleTrace(
+        host,
+        `loadVisible cap backward buffer without scroller range: raw=${bufferSlots}, cap=${backwardBufferSlots}`
+      );
+    }
+  }
+  const start = aggressive ? Math.max(0, visStart) : Math.max(0, visStart - backwardBufferSlots);
   const end = Math.max(start, visEndExclusive - 1 + bufferSlots);
   const startHit = host.resolveDayByGlobalIndex(start);
   if (startHit === null) {
@@ -1031,7 +1126,8 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       host,
       host.dayIndex,
       Math.max(0, startHit.dayOffset),
-      overlapEndExclusive
+      overlapEndExclusive,
+      host.visibleLoadPreferBottomFirst
     );
     galleryAlbumVisibleTrace(
       host,
@@ -1054,12 +1150,13 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
     galleryAlbumVisibleTrace(
       host,
       `loadVisible trigger visible-band pump: loDay=${loD}, hiDay=${hiD}, spanDays=${spanDays}, `
-      + `start=${start}, end=${end}`
+      + `start=${start}, end=${end}, priority=${host.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
     );
     if (host.isInScrollInteractiveLogWindow()) {
       host.logScrollDebug(
         `loadVisible trigger visible-band pump: `
-        + `dayIndex=${host.dayIndex}, start=${start}, end=${end}, spanDays=${spanDays}`
+        + `dayIndex=${host.dayIndex}, start=${start}, end=${end}, spanDays=${spanDays}, `
+        + `priority=${host.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
       );
     }
     const epochBand = host.pumpEpoch;
@@ -1077,6 +1174,21 @@ export async function galleryAlbumVisiblePumpVisibleDayBandAllChunks(
 ): Promise<void> {
   let curLo = Math.max(0, loD);
   const hiCap = Math.max(curLo, Math.min(hiD, host.orderedDays.length - 1));
+  if (host.visibleLoadPreferBottomFirst) {
+    let curHi = hiCap;
+    while (curHi >= curLo) {
+      if (epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
+        return;
+      }
+      if (host.visualPlaceholderMode || host.isDraggingOrFling) {
+        return;
+      }
+      const loChunk = Math.max(curLo, curHi - GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX + 1);
+      await galleryAlbumVisiblePumpVisibleDayBandSequential(host, loChunk, curHi, startG, endG, epoch, true);
+      curHi = loChunk - 1;
+    }
+    return;
+  }
   while (curLo <= hiCap) {
     if (epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
       return;
@@ -1085,7 +1197,7 @@ export async function galleryAlbumVisiblePumpVisibleDayBandAllChunks(
       return;
     }
     const hiChunk = Math.min(hiCap, curLo + GALLERY_LOAD_VISIBLE_MULTI_DAY_CHAIN_MAX - 1);
-    await galleryAlbumVisiblePumpVisibleDayBandSequential(host, curLo, hiChunk, startG, endG, epoch);
+    await galleryAlbumVisiblePumpVisibleDayBandSequential(host, curLo, hiChunk, startG, endG, epoch, false);
     curLo = hiChunk + 1;
   }
 }
@@ -1096,14 +1208,18 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
   hiDayIdx: number,
   startG: number,
   endG: number,
-  epoch: number
+  epoch: number,
+  preferBottomFirst: boolean = false
 ): Promise<void> {
   if (host.visualPlaceholderMode || host.isDraggingOrFling) {
     return;
   }
   const lo = Math.max(0, loDayIdx);
   const hi = Math.max(lo, Math.min(hiDayIdx, host.orderedDays.length - 1));
-  for (let d = lo; d <= hi; d++) {
+  const step = preferBottomFirst ? -1 : 1;
+  for (let d = preferBottomFirst ? hi : lo;
+    preferBottomFirst ? d >= lo : d <= hi;
+    d += step) {
     if (epoch !== host.pumpEpoch || host.exhausted || host.bootLoading) {
       return;
     }
@@ -1143,17 +1259,19 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
     const maxRoundsForRange = Math.max(1, Math.ceil(Math.max(1, overlapEndExclusive - localNeed) / DATE_FEED_BATCH) + 2);
     let rounds = 0;
     while (rounds < maxRoundsForRange) {
-      const nextGap = galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
+      const nextGap = preferBottomFirst
+        ? galleryAlbumVisibleFindLatestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive)
+        : galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
       if (nextGap < 0) {
         break;
       }
-      galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, nextGap, overlapEndExclusive);
+      galleryAlbumVisibleAlignDayOffsetToLoadedGap(host, d, nextGap, overlapEndExclusive, preferBottomFirst);
       const key = dayKey(day.year, day.month, day.day);
       const prevOffset = host.dayOffsets.get(key) ?? 0;
       galleryAlbumVisibleTrace(
         host,
         `visible-band request: day=${d}, key=${key}, nextGap=${nextGap}, prevOffset=${prevOffset}, `
-        + `need=${localNeed}~${overlapEndExclusive}`
+        + `need=${localNeed}~${overlapEndExclusive}, priority=${preferBottomFirst ? 'bottom-first' : 'top-first'}`
       );
 
       host.dayIndex = d;
@@ -1184,7 +1302,9 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       }
 
       rounds++;
-      const nextGapAfter = galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
+      const nextGapAfter = preferBottomFirst
+        ? galleryAlbumVisibleFindLatestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive)
+        : galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
       galleryAlbumVisibleTrace(
         host,
         `visible-band result: day=${d}, key=${key}, added=${added}, nextOffset=${host.dayOffsets.get(key) ?? prevOffset}, `
@@ -1201,7 +1321,10 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       await new Promise<void>((resolve) => setTimeout(resolve, added > 0 ? PUMP_UI_GAP_MS : 2));
     }
 
-    if (galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive) >= 0) {
+    const remainGap = preferBottomFirst
+      ? galleryAlbumVisibleFindLatestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive)
+      : galleryAlbumVisibleFindEarliestMissingDayOffsetInRange(host, d, localNeed, overlapEndExclusive);
+    if (remainGap >= 0) {
       galleryAlbumVisibleScheduleRetryAfterInflight(host, true, PUMP_UI_GAP_MS);
       return;
     }
