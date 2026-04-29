@@ -333,7 +333,7 @@ struct Home {
   }
 
   private dockMaterialBackgroundColor(): ResourceColor {
-    return $r('sys.color.ohos_id_color_bottom_tab_bg_blur');
+    return $r('app.color.gallery_material_surface_bg');
   }
 
   private dockMaterialBorderColor(): ResourceColor {
@@ -679,11 +679,16 @@ struct Home {
     .barPosition(BarPosition.End)
     .barFloatingStyle({
       barBottomMargin: 0,
+      gradientMask: {
+        maskColor: Color.Transparent,
+        maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP
+      },
+      lightColor: $r('app.color.gallery_material_surface_bg'),
       systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
     })
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
-    .barBackgroundColor(Color.Transparent)
+    .barBackgroundColor($r('app.color.gallery_material_surface_bg'))
     .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
     .blurStrategy(BlurStrategy.ADAPTIVE)
     .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
