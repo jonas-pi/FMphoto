@@ -5,13 +5,13 @@ import {
 } from '../common/GalleryButtonStyles';
 import {
   fnHdsBottomDockActionTabStyle,
-  fnHdsImmersiveSystemMaterialEffect,
+  fnHdsImmersiveTabsFloatingStyle,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
-  FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
-  FN_BOTTOM_DOCK_SIDE_GAP_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../common/FnUiCommon';
+
+const GALLERY_BATCH_ACTION_DOCK_WIDTH_VP: number = 228;
 
 @Component
 export struct GalleryAlbumBatchActionBar {
@@ -65,22 +65,18 @@ export struct GalleryAlbumBatchActionBar {
         this.actionColor(this.deleting, true)
       ))
     }
-    .width('100%')
-    .layoutWeight(1)
+    .width(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP)
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
-    .barFloatingStyle({
-      barBottomMargin: 0,
-      gradientMask: {
-        maskColor: Color.Transparent,
-        maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP
-      },
-      lightColor: $r('app.color.gallery_material_surface_bg'),
-      systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
-    })
+    .barWidth(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP)
+    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
+      GALLERY_BATCH_ACTION_DOCK_WIDTH_VP,
+      $r('app.color.gallery_material_surface_bg')
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .barBackgroundColor(Color.Transparent)
@@ -97,16 +93,8 @@ export struct GalleryAlbumBatchActionBar {
   }
 
   build() {
-    Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
-      Blank()
-        .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-        .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-
+    Row() {
       this.batchHdsTabs()
-
-      Blank()
-        .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-        .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     }
     .width('100%')
     .padding({

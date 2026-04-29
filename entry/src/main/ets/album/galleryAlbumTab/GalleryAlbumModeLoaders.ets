@@ -330,3 +330,43 @@ export async function loadCollectGalleryItems(
     error: merged.length > 0 ? '' : '收藏暂无可预览媒体'
   };
 }
+
+export async function loadFirstCollectGalleryItem(
+  client: FnHttpClient,
+  shouldContinue?: () => boolean
+): Promise<SpecialCollectionLoadResult> {
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return { items: [], error: '' };
+  }
+  const tl = await client.getCollectGalleryTimeline();
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return { items: [], error: '' };
+  }
+  if (!tl.success || tl.data === undefined) {
+    return { items: [], error: tl.message ?? '收藏时间轴加载失败' };
+  }
+  const days = collectTimelineDays(tl.data.list ?? []);
+  if (days.length === 0) {
+    return { items: [], error: '暂无收藏' };
+  }
+  for (let i = 0; i < days.length; i++) {
+    if (shouldContinue !== undefined && !shouldContinue()) {
+      return { items: [], error: '' };
+    }
+    const day = days[i];
+    const st = fmtDayStart(day.year, day.month, day.day);
+    const et = fmtDayEnd(day.year, day.month, day.day);
+    const one = await client.getCollectGalleryList(st, et, 1, 0);
+    if (shouldContinue !== undefined && !shouldContinue()) {
+      return { items: [], error: '' };
+    }
+    if (!one.success || one.data === undefined) {
+      continue;
+    }
+    const list = listFromData(one.data);
+    if (list.length > 0) {
+      return { items: [list[0]], error: '' };
+    }
+  }
+  return { items: [], error: '收藏暂无可预览媒体' };
+}

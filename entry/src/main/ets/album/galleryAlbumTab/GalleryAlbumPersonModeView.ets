@@ -66,14 +66,14 @@ export struct GalleryAlbumPersonModeView {
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .padding({ top: 40 })
+        .padding({ top: this.contentInsetTopVp + 40 })
       } else if (this.error.length > 0) {
         Text(this.error)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
           .textAlign(TextAlign.Center)
-          .padding({ top: 40, left: 24, right: 24 })
+          .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         Grid() {
           ForEach(this.items, (item: AiPersonItem, idx: number) => {
@@ -118,13 +118,14 @@ export struct GalleryAlbumPersonModeView {
         .padding({
           left: 12,
           right: 12,
-          top: this.contentInsetTopVp + 8,
+          top: 8,
           bottom: this.contentInsetBottomVp + 12
         })
+        .margin({ top: this.contentInsetTopVp })
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         if (this.opening) {
-          FnFullLoadingMask({ text: '加载人物媒体中…' })
+          FnFullLoadingMask({ text: '加载人物媒体中…', topOffsetVp: this.contentInsetTopVp })
         }
       }
     }

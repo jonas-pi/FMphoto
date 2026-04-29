@@ -51,6 +51,7 @@ export struct GalleryAlbumTopBar {
   onShowMoreMenu: () => void = () => {};
 
   @State private suppressSearchAutoFocus: boolean = true;
+  @State private searchSubmitted: boolean = false;
   @State private searchFieldWidthVp: number = 0;
   private searchInputCtrl: TextInputController = new TextInputController();
   private suppressSearchFocusTimer: number = -1;
@@ -112,8 +113,18 @@ export struct GalleryAlbumTopBar {
     return this.searchFieldWidthVp > 1 ? this.searchFieldWidthVp : '100%';
   }
 
+  private shouldAutoFocusSearchInput(): boolean {
+    return this.inSearchMode && !this.suppressSearchAutoFocus && !this.searchSubmitted;
+  }
+
+  private onSearchTextChange(value: string): void {
+    this.searchSubmitted = false;
+    this.onSearchQueryChange(value);
+  }
+
   private suppressSearchRestoreTemporarily(): void {
     this.blurSearchInput();
+    this.searchSubmitted = false;
     this.suppressSearchAutoFocus = true;
     this.clearSuppressSearchFocusTimer();
     this.suppressSearchFocusTimer = setTimeout((): void => {
@@ -124,6 +135,11 @@ export struct GalleryAlbumTopBar {
 
   private onPageShowSignal(): void {
     if (this.inSearchMode) {
+      if (this.searchSubmitted) {
+        this.clearSearchFocusKickTimer();
+        this.blurSearchInput();
+        return;
+      }
       this.activateSearchAutoFocus(96);
       return;
     }
@@ -131,7 +147,7 @@ export struct GalleryAlbumTopBar {
   }
 
   private focusSearchInputOnce(): void {
-    if (!this.inSearchMode) {
+    if (!this.shouldAutoFocusSearchInput()) {
       return;
     }
     this.suppressSearchAutoFocus = false;
@@ -150,13 +166,14 @@ export struct GalleryAlbumTopBar {
     this.searchFocusKickTimer = setTimeout((): void => {
       this.searchFocusKickTimer = -1;
       this.focusSearchInputOnce();
-      if (this.inSearchMode && retryCount < 2) {
+      if (this.shouldAutoFocusSearchInput() && retryCount < 2) {
         this.focusSearchInputSoon(96, retryCount + 1);
       }
     }, delayMs);
   }
 
   private activateSearchAutoFocus(delayMs: number = 48): void {
+    this.searchSubmitted = false;
     this.clearSuppressSearchFocusTimer();
     this.suppressSearchAutoFocus = false;
     this.focusSearchInputSoon(delayMs);
@@ -178,6 +195,13 @@ export struct GalleryAlbumTopBar {
   private leaveSearchMode(): void {
     this.suppressSearchRestoreTemporarily();
     this.onBackToGallery();
+  }
+
+  private submitSearchAndReleaseFocus(): void {
+    this.searchSubmitted = true;
+    this.clearSearchFocusKickTimer();
+    this.blurSearchInput();
+    this.onSearchSubmit();
   }
 
   aboutToAppear(): void {
@@ -270,7 +294,7 @@ export struct GalleryAlbumTopBar {
               .layoutWeight(1)
               .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
               .height('100%')
-              .defaultFocus(!this.suppressSearchAutoFocus)
+              .defaultFocus(this.shouldAutoFocusSearchInput())
               .enableKeyboardOnFocus(true)
               .enabled(!this.suppressSearchAutoFocus)
               .backgroundColor(Color.Transparent)
@@ -280,10 +304,14 @@ export struct GalleryAlbumTopBar {
               .placeholderColor($r('app.color.gallery_material_search_placeholder'))
               .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
               .enterKeyType(EnterKeyType.Search)
-              .onChange(this.onSearchQueryChange)
-              .onSubmit(this.onSearchSubmit)
+              .onChange((value: string): void => {
+                this.onSearchTextChange(value);
+              })
+              .onSubmit((): void => {
+                this.submitSearchAndReleaseFocus();
+              })
               .onAppear((): void => {
-                if (!this.suppressSearchAutoFocus) {
+                if (this.shouldAutoFocusSearchInput()) {
                   this.focusSearchInputSoon(48);
                 }
               })

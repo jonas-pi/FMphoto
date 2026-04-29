@@ -15,7 +15,12 @@ import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
-import { fnBottomDockBottomGap, FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
+import {
+  FN_FLOATING_TOP_TOTAL_HEIGHT_VP,
+  fnBottomDockBottomGap,
+  FnFullLoadingMask,
+  FnStateText
+} from '../common/FnUiCommon';
 import {
   FN_PREVIEW_PAGE_ENTER_CURVE,
   FN_PREVIEW_PAGE_ENTER_DURATION,
@@ -533,7 +538,10 @@ struct GalleryPreview {
           void this.refreshCollectStateFromGetOne(nextId);
         })
       } else {
-        FnStateText({ text: '暂无预览' })
+        FnStateText({
+          text: '暂无预览',
+          topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
+        })
       }
 
       GalleryPreviewChrome({
@@ -585,7 +593,10 @@ struct GalleryPreview {
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
       if (this.personOpening) {
-        FnFullLoadingMask({ text: '加载人物媒体中…' })
+        FnFullLoadingMask({
+          text: '加载人物媒体中…',
+          topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
+        })
       }
     }
     .width('100%')

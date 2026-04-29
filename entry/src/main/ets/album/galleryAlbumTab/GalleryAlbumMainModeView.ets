@@ -652,7 +652,7 @@ export struct GalleryAlbumMainModeView {
             }, (n: number) => `sk_${row}_${n}`)
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: row === 0 ? 24 : 0 })
+          .padding({ left: 16, right: 16, top: row === 0 ? this.contentInsetTopVp + 24 : 0 })
         }, (r: number) => `skr_${r}`)
       }
       .width('100%')

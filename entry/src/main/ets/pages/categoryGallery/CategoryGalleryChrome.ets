@@ -1,7 +1,6 @@
 import {
   FN_FLOATING_TOP_BOTTOM_GAP_VP,
   FN_FLOATING_TOP_CONTROL_SIZE_VP,
-  FN_FLOATING_TOP_META_FONT_VP,
   FN_FLOATING_TOP_MARGIN_VP,
   FN_FLOATING_TOP_TITLE_STACK_GAP_VP,
   FnFloatingTopPillButton
@@ -68,7 +67,7 @@ export struct CategoryGalleryChrome {
 
           if (!this.selectionMode) {
             Text(this.countText())
-              .fontSize(FN_FLOATING_TOP_META_FONT_VP)
+              .fontSize(11)
               .fontColor($r('app.color.text_secondary'))
               .textAlign(TextAlign.Center)
               .maxLines(1)

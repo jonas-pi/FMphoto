@@ -88,24 +88,19 @@ function galleryPreviewStarFilledFromHost(host: GalleryPreviewActionsHost): bool
   );
 }
 
+function galleryPreviewCurrentCategoryGalleryIsCollect(): boolean {
+  if (CategoryGalleryNavStore.sourceKind === 'collect') {
+    return true;
+  }
+  return CategoryGalleryNavStore.title === '\u6536\u85cf' &&
+    CategoryGalleryNavStore.categoryKey.length === 0 &&
+    !CategoryGalleryNavStore.useCreatedAtGrouping;
+}
+
 function galleryPreviewRemoveIdFromCategoryGalleryNavStore(photoId: string): void {
   const id = photoId.trim();
-  if (id.length === 0 || CategoryGalleryNavStore.items.length === 0) {
-    return;
-  }
-  const kept: GalleryListItem[] = [];
-  let hit = false;
-  for (let i = 0; i < CategoryGalleryNavStore.items.length; i++) {
-    const it = CategoryGalleryNavStore.items[i];
-    const nid = it.id !== undefined && it.id !== null ? String(it.id).trim() : '';
-    if (nid === id) {
-      hit = true;
-      continue;
-    }
-    kept.push(it);
-  }
-  if (hit) {
-    CategoryGalleryNavStore.items = kept;
+  if (id.length > 0) {
+    CategoryGalleryNavStore.removeItemById(id);
   }
 }
 
@@ -267,6 +262,9 @@ export async function galleryPreviewToggleFavorite(host: GalleryPreviewActionsHo
         item.isCollect = 0;
         host.previewItems[idx] = item;
         GalleryPreviewNavStore.items = host.previewItems.slice();
+      }
+      if (galleryPreviewCurrentCategoryGalleryIsCollect()) {
+        galleryPreviewRemoveIdFromCategoryGalleryNavStore(id);
       }
       GalleryTimelineRefreshStore.bump();
       host.toast('已取消收藏');

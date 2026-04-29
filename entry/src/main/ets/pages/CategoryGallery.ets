@@ -168,6 +168,16 @@ struct CategoryGallery {
     return CategoryGalleryNavStore.useCreatedAtGrouping && CategoryGalleryNavStore.categoryKey.length === 0;
   }
 
+  private emptyStateText(): string {
+    if (CategoryGalleryNavStore.sourceKind === 'collect') {
+      return '收藏夹为空';
+    }
+    if (CategoryGalleryNavStore.sourceKind === 'recent') {
+      return '最近添加为空';
+    }
+    return '暂无媒体';
+  }
+
   private syncSystemAvoidArea(win: window.Window): void {
     try {
       const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
@@ -197,6 +207,7 @@ struct CategoryGallery {
 
   onPageShow(): void {
     this.applyDeleteSyncIfNeeded();
+    this.syncFromNavStore();
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBar();
   }
@@ -998,7 +1009,10 @@ struct CategoryGallery {
       Column() {
 
       if (this.groups.length === 0) {
-        FnStateText({ text: '暂无媒体' }).layoutWeight(1)
+        FnStateText({
+          text: this.emptyStateText(),
+          topOffsetVp: this.contentInsetTopVp()
+        }).layoutWeight(1)
       } else {
         Stack() {
           Column() {
@@ -1098,7 +1112,10 @@ struct CategoryGallery {
           .height('100%')
 
           if (this.cgBatchDeleting || this.cgBatchDownloading) {
-            FnFullLoadingMask({ text: this.cgBatchDeleting ? '移入回收站中…' : '下载中…' })
+            FnFullLoadingMask({
+              text: this.cgBatchDeleting ? '移入回收站中…' : '下载中…',
+              topOffsetVp: this.contentInsetTopVp()
+            })
           }
         }
         .layoutWeight(1)

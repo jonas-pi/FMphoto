@@ -423,6 +423,36 @@ export async function loadAllRecentAddedItems(
   };
 }
 
+export async function loadFirstRecentAddedItem(
+  client: FnHttpClient,
+  shouldContinue?: () => boolean
+): Promise<RecentAddedLoadResult> {
+  const timelineResult = await fetchRecentTimelineDays(client, shouldContinue);
+  if (timelineResult.errorMessage.length > 0 || timelineResult.days.length === 0) {
+    return { items: [], errorMessage: timelineResult.errorMessage };
+  }
+  for (let i = 0; i < timelineResult.days.length; i++) {
+    if (shouldContinue !== undefined && !shouldContinue()) {
+      return { items: [], errorMessage: '' };
+    }
+    const day = timelineResult.days[i];
+    const st = fmtDayStart(day.year, day.month, day.day);
+    const et = fmtDayEnd(day.year, day.month, day.day);
+    const one = await client.getRecentPhotos(st, et, 1, 0, 'recent');
+    if (shouldContinue !== undefined && !shouldContinue()) {
+      return { items: [], errorMessage: '' };
+    }
+    if (!one.success || one.data === undefined) {
+      continue;
+    }
+    const list = listFromData(one.data);
+    if (list.length > 0) {
+      return { items: [list[0]], errorMessage: '' };
+    }
+  }
+  return { items: [], errorMessage: '最近添加暂无可预览媒体' };
+}
+
 export async function openRecentAddedGallery(
   baseUrl: string,
   uiCtx: UIContext,
@@ -473,7 +503,7 @@ export async function openRecentAddedGallery(
     initialChunk.items,
     uiCtx,
     true,
-    { columnsPerRow: 4 }
+    { columnsPerRow: 4, sourceKind: 'recent' }
   );
   if (!opened) {
     return { ok: false, errorMessage: '打开最近添加失败' };

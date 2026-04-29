@@ -521,7 +521,7 @@ export async function galleryAlbumOpenRecentAdded(host: GalleryAlbumModeOrchestr
       result.items,
       host.getUIContext(),
       false,
-      { columnsPerRow: 4 }
+      { columnsPerRow: 4, sourceKind: 'recent' }
     );
   } finally {
     host.recentOpening = false;
@@ -554,7 +554,14 @@ export async function galleryAlbumOpenCollectGallery(host: GalleryAlbumModeOrche
       }
       return;
     }
-    CategoryGalleryNavStore.open(host.baseUrl, '收藏', result.items, host.getUIContext());
+    CategoryGalleryNavStore.open(
+      host.baseUrl,
+      '收藏',
+      result.items,
+      host.getUIContext(),
+      false,
+      { sourceKind: 'collect' }
+    );
   } finally {
     host.collectOpening = false;
   }

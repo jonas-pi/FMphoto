@@ -16,6 +16,7 @@ export interface CategoryGalleryOpenMeta {
   categoryKey?: string;
   heroImageUri?: string;
   columnsPerRow?: number;
+  sourceKind?: string;
 }
 
 export class CategoryGalleryNavStore {
@@ -30,6 +31,7 @@ export class CategoryGalleryNavStore {
   static categoryKey: string = '';
   static heroImageUri: string = '';
   static columnsPerRow: number = 3;
+  static sourceKind: string = '';
 
   static open(
     baseUrl: string,
@@ -65,6 +67,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.categoryKey = categoryKey;
     CategoryGalleryNavStore.heroImageUri = meta?.heroImageUri ?? '';
     CategoryGalleryNavStore.columnsPerRow = meta?.columnsPerRow === 4 ? 4 : 3;
+    CategoryGalleryNavStore.sourceKind = meta?.sourceKind ?? '';
     hilog.warn(
       DOMAIN,
       TAG,
@@ -132,6 +135,46 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.version++;
   }
 
+  static removeItemById(idText: string): boolean {
+    const id = idText.trim();
+    if (id.length === 0 || CategoryGalleryNavStore.items.length === 0) {
+      return false;
+    }
+    const kept: GalleryListItem[] = [];
+    let hit = false;
+    for (let i = 0; i < CategoryGalleryNavStore.items.length; i++) {
+      const it = CategoryGalleryNavStore.items[i];
+      const nid = it.id !== undefined && it.id !== null ? String(it.id).trim() : '';
+      if (nid === id) {
+        hit = true;
+        continue;
+      }
+      kept.push(it);
+    }
+    if (!hit) {
+      return false;
+    }
+    CategoryGalleryNavStore.items = kept;
+    const nextExpected = Math.max(0, CategoryGalleryNavStore.expectedTotalCount - 1);
+    CategoryGalleryNavStore.expectedTotalCount = Math.max(kept.length, nextExpected);
+    if (kept.length === 0) {
+      CategoryGalleryNavStore.expectedTotalCount = 0;
+      CategoryGalleryNavStore.backgroundLoading = false;
+    }
+    CategoryGalleryNavStore.heroImageUri = '';
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'removeItemById id=%{public}s total=%{public}d expectedTotal=%{public}d source=%{public}s',
+      id,
+      CategoryGalleryNavStore.items.length,
+      CategoryGalleryNavStore.expectedTotalCount,
+      CategoryGalleryNavStore.sourceKind
+    );
+    CategoryGalleryNavStore.version++;
+    return true;
+  }
+
   static clear(): void {
     CategoryGalleryNavStore.sessionToken++;
     CategoryGalleryNavStore.items = [];
@@ -143,6 +186,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.categoryKey = '';
     CategoryGalleryNavStore.heroImageUri = '';
     CategoryGalleryNavStore.columnsPerRow = 3;
+    CategoryGalleryNavStore.sourceKind = '';
     CategoryGalleryNavStore.version++;
   }
 }
