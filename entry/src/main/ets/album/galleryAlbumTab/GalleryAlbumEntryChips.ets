@@ -1,14 +1,12 @@
 import {
   GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_LEFT_VP,
   GALLERY_HOME_CATEGORY_ENTRY_ROW_PAD_RIGHT_VP,
-  GALLERY_HOME_NAV_CHIP_PAD_H_VP,
   GALLERY_HOME_NAV_CHIP_RADIUS_VP
 } from '../../common/GalleryButtonStyles';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 import {
   fnImmersiveBackgroundEffect,
-  fnImmersivePointLightSourceEffect,
-  fnImmersiveTouchPressed,
+  FnHdsPillButton,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 
@@ -25,7 +23,6 @@ export const GALLERY_HOME_ENTRY_STRIP_TOTAL_HEIGHT_VP: number =
 @Component
 export struct GalleryAlbumEntryChips {
   @Prop hidden: boolean = false;
-  @State private pressedChip: string = '';
 
   onOpenMediaCategory: () => void = () => {};
   onOpenSmartCategory: () => void = () => {};
@@ -34,51 +31,17 @@ export struct GalleryAlbumEntryChips {
   onOpenCollect: () => void = () => {};
   onOpenRecycleBin: () => void = () => {};
 
-  private syncPressed(label: string, event: TouchEvent): void {
-    const pressed = fnImmersiveTouchPressed(event);
-    if (pressed === undefined) {
-      return;
-    }
-    if (pressed) {
-      this.pressedChip = label;
-    } else if (this.pressedChip === label) {
-      this.pressedChip = '';
-    }
-  }
-
   @Builder
   private chip(label: string, action: () => void) {
-    Button({ type: ButtonType.Capsule, stateEffect: false }) {
-      Column() {
-        Text(label)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .textAlign(TextAlign.Center)
-          .fontSize(GALLERY_HOME_ENTRY_CHIP_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-    .width(GALLERY_HOME_ENTRY_CHIP_WIDTH_VP)
-    .height(GALLERY_HOME_ENTRY_CHIP_HEIGHT_VP)
-    .padding({ left: GALLERY_HOME_NAV_CHIP_PAD_H_VP, right: GALLERY_HOME_NAV_CHIP_PAD_H_VP, top: 0, bottom: 0 })
-    .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
-    .backgroundColor($r('app.color.button_secondary_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .backgroundEffect(fnImmersiveBackgroundEffect())
-    .linearGradient(fnLiquidGlassGradient(false, this.pressedChip === label))
-    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-    .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedChip === label))
-    .shadow({ radius: 10, color: '#12001A33', offsetX: 0, offsetY: 4 })
-    .clip(true)
-    .onTouch((event: TouchEvent): void => {
-      this.syncPressed(label, event);
+    FnHdsPillButton({
+      text: label,
+      widthValue: GALLERY_HOME_ENTRY_CHIP_WIDTH_VP,
+      heightValue: GALLERY_HOME_ENTRY_CHIP_HEIGHT_VP,
+      radiusValue: GALLERY_HOME_NAV_CHIP_RADIUS_VP,
+      fontSizeValue: GALLERY_HOME_ENTRY_CHIP_FONT_VP,
+      fontColorValue: $r('app.color.text_primary'),
+      action: action
     })
-    .onClick(action)
   }
 
   build() {

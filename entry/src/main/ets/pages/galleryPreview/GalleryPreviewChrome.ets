@@ -1,15 +1,11 @@
+import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   fnBottomDockBottomGap,
+  fnHdsBottomDockActionTabStyle,
+  fnHdsImmersiveSystemMaterialEffect,
   fnImmersiveBackgroundEffect,
-  fnImmersivePointLightSourceEffect,
-  fnImmersiveTouchPressed,
-  fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
-  FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
-  FN_BOTTOM_DOCK_INNER_SPACE_VP,
-  FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
-  FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_GAP_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
@@ -26,9 +22,6 @@ import {
   GALLERY_TOP_BAR_SUBTITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
-
-const PREVIEW_DOCK_ACTION_GAP_VP: number = 1;
-const PREVIEW_DOCK_INNER_PADDING_H_VP: number = FN_BOTTOM_DOCK_INNER_PADDING_H_VP;
 
 @Component
 export struct GalleryPreviewChrome {
@@ -59,19 +52,6 @@ export struct GalleryPreviewChrome {
   onFavorite: () => void = () => {};
   onDelete: () => void = () => {};
   onBottomBarHeightChange: (height: number) => void = (_: number) => {};
-  @State private pressedKey: string = '';
-
-  private syncPressed(key: string, event: TouchEvent): void {
-    const pressed = fnImmersiveTouchPressed(event);
-    if (pressed === undefined) {
-      return;
-    }
-    if (pressed) {
-      this.pressedKey = key;
-    } else if (this.pressedKey === key) {
-      this.pressedKey = '';
-    }
-  }
 
   private shellBackground(): string {
     return '#00000000';
@@ -97,109 +77,129 @@ export struct GalleryPreviewChrome {
     return Math.max(0, Math.min(100, this.downloadProgressPct));
   }
 
-  @Builder
-  private bottomAction(icon: Resource, label: string, loading: boolean, action: () => void, dimmed: boolean = false) {
-    Button({ type: ButtonType.Normal, stateEffect: false }) {
-      Column({ space: 3 }) {
-        if (loading) {
-          LoadingProgress().width(22).height(22).color(this.fgColor)
-        } else {
-          SymbolGlyph(icon).fontSize(22).fontColor([dimmed ? this.dimmedColor() : this.fgColor])
-        }
-        Text(label).fontSize(10).fontColor(dimmed ? this.dimmedColor() : this.fgColor)
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
+  private previewDownloadLabel(): ResourceStr {
+    if (!this.downloading) {
+      return '\u4e0b\u8f7d';
     }
-    .layoutWeight(1)
-    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
-    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
-    .backgroundColor(Color.Transparent)
-    .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedKey === `bottom-${label}`))
-    .clip(true)
-    .enabled(!dimmed && this.toolbarVisible)
-    .onTouch((event: TouchEvent): void => {
-      this.syncPressed(`bottom-${label}`, event);
-    })
-    .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
+    if (this.downloadProgressKnown) {
+      return `${Math.round(this.normalizedDownloadProgress())}%`;
+    }
+    return '\u4e0b\u8f7d\u4e2d';
+  }
+
+  private previewActionColor(busy: boolean = false, color?: ResourceColor): ResourceColor {
+    return busy ? this.dimmedColor() : (color ?? this.fgColor);
+  }
+
+  private onPreviewHdsAction(index: number): void {
+    if (!this.toolbarVisible) {
+      return;
+    }
+    if (index === 0) {
+      if (!this.sharing) {
+        this.onShare();
+      }
+      return;
+    }
+    if (index === 1) {
+      if (!this.downloading) {
+        this.onDownload();
+      }
+      return;
+    }
+    if (index === 2) {
+      if (!this.favoriteToggling) {
+        this.onFavorite();
+      }
+      return;
+    }
+    if (!this.deleting) {
+      this.onDelete();
+    }
   }
 
   @Builder
-  private bottomDownloadAction() {
-    Button({ type: ButtonType.Normal, stateEffect: false }) {
-      Column({ space: 3 }) {
-        if (this.downloading && this.downloadProgressKnown) {
-          Stack({ alignContent: Alignment.Center }) {
-            Progress({ value: this.normalizedDownloadProgress(), total: 100, type: ProgressType.Ring })
-              .width(22)
-              .height(22)
-              .color(this.fgColor)
-              .style({ strokeWidth: 2.4 })
-            Text(`${Math.round(this.normalizedDownloadProgress())}`)
-              .fontSize(8)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.fgColor)
-          }
-          .width(22)
-          .height(22)
-        } else if (this.downloading) {
-          LoadingProgress().width(22).height(22).color(this.fgColor)
-        } else {
-          SymbolGlyph($r('sys.symbol.download')).fontSize(22).fontColor([this.fgColor])
-        }
-        Text(this.downloading ? (this.downloadProgressKnown ? `${Math.round(this.normalizedDownloadProgress())}%` : '\u4e0b\u8f7d\u4e2d') : '\u4e0b\u8f7d')
-          .fontSize(10)
-          .fontColor(this.fgColor)
+  private previewBottomHdsTabs() {
+    HdsTabs({ index: 0 }) {
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
       }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-    .layoutWeight(1)
-    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
-    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
-    .backgroundColor(Color.Transparent)
-    .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedKey === 'bottom-download'))
-    .clip(true)
-    .enabled(this.toolbarVisible && !this.downloading)
-    .onTouch((event: TouchEvent): void => {
-      this.syncPressed('bottom-download', event);
-    })
-    .onClick((!this.toolbarVisible || this.downloading) ? (): void => {} : this.onDownload)
-  }
+      .tabBar(fnHdsBottomDockActionTabStyle(
+        $r('sys.symbol.share'),
+        this.sharing ? '\u5206\u4eab\u4e2d' : '\u5206\u4eab',
+        this.previewActionColor(this.sharing)
+      ))
 
-  @Builder
-  private bottomFavoriteAction() {
-    Button({ type: ButtonType.Normal, stateEffect: false }) {
-      Column({ space: 3 }) {
-        if (this.favoriteToggling) {
-          LoadingProgress().width(22).height(22).color(this.fgColor)
-        } else {
-          SymbolGlyph(this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
-            .fontSize(22)
-            .fontColor([this.starFilled ? this.favoriteStarTint : this.fgColor])
-        }
-        Text('\u6536\u85cf').fontSize(10).fontColor(this.fgColor)
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
       }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
+      .tabBar(fnHdsBottomDockActionTabStyle(
+        $r('sys.symbol.download'),
+        this.previewDownloadLabel(),
+        this.previewActionColor(this.downloading)
+      ))
+
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(fnHdsBottomDockActionTabStyle(
+        this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
+        '\u6536\u85cf',
+        this.previewActionColor(this.favoriteToggling, this.starFilled ? this.favoriteStarTint : this.fgColor)
+      ))
+
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(fnHdsBottomDockActionTabStyle(
+        $r('sys.symbol.trash'),
+        this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+        this.previewActionColor(this.deleting)
+      ))
     }
+    .width('100%')
     .layoutWeight(1)
-    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
-    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
-    .backgroundColor(Color.Transparent)
-    .visualEffect(fnImmersivePointLightSourceEffect(this.starFilled, this.pressedKey === 'bottom-favorite'))
-    .clip(true)
-    .enabled(this.toolbarVisible)
-    .onTouch((event: TouchEvent): void => {
-      this.syncPressed('bottom-favorite', event);
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .barOverlap(true)
+    .vertical(false)
+    .barPosition(BarPosition.End)
+    .barFloatingStyle({
+      barBottomMargin: 0,
+      gradientMask: {
+        maskColor: Color.Transparent,
+        maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP
+      },
+      lightColor: $r('app.color.gallery_material_surface_bg'),
+      systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
     })
-    .onClick(!this.toolbarVisible ? (): void => {} : this.onFavorite)
+    .scrollable(false)
+    .divider({ mode: DividerMode.NONE })
+    .barBackgroundColor(Color.Transparent)
+    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
+    .blurStrategy(BlurStrategy.ADAPTIVE)
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .clip(true)
+    .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
+      return false;
+    })
+    .onTabBarClick((index: number): void => {
+      this.onPreviewHdsAction(index);
+    })
+    .onAreaChange((_old, area): void => {
+      const h = area.height as number;
+      if (h > 0) {
+        this.onBottomBarHeightChange(h);
+      }
+    })
   }
 
   @Builder
@@ -289,29 +289,7 @@ export struct GalleryPreviewChrome {
           .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
           .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
 
-        Row({ space: PREVIEW_DOCK_ACTION_GAP_VP }) {
-          this.bottomAction($r('sys.symbol.share'), '\u5206\u4eab', this.sharing, this.onShare)
-          this.bottomDownloadAction()
-          this.bottomFavoriteAction()
-          this.bottomAction($r('sys.symbol.trash'), '\u5220\u9664', this.deleting, this.onDelete)
-        }
-        .layoutWeight(1)
-        .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
-        .padding({ left: PREVIEW_DOCK_INNER_PADDING_H_VP, right: PREVIEW_DOCK_INNER_PADDING_H_VP })
-        .backgroundColor($r('app.color.immersive_tabbar_bg'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .backgroundEffect(fnImmersiveBackgroundEffect(true))
-        .linearGradient(fnLiquidGlassGradient(true))
-        .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-        .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
-        .clip(true)
-        .onAreaChange((_old, area): void => {
-          const h = area.height as number;
-          if (h > 0) {
-            this.onBottomBarHeightChange(h);
-          }
-        })
+        this.previewBottomHdsTabs()
 
         Blank()
           .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)

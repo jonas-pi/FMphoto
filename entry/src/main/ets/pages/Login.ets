@@ -322,12 +322,14 @@ struct Login {
             .width('100%')
         }
 
-        FnPrimaryButton({ text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action') })
+        FnPrimaryButton({
+          text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action'),
+          action: (): void => {
+            void this.onLoginClick();
+          }
+        })
           .width('100%')
           .enabled(!this.loading)
-          .onClick((): void => {
-            void this.onLoginClick();
-          })
 
         Text($r('app.string.fnid_hint'))
           .fontSize(13)

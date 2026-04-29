@@ -1,8 +1,6 @@
 import {
   fnImmersiveBackgroundEffect,
-  fnImmersivePointLightSourceEffect,
-  fnImmersiveTouchPressed,
-  fnLiquidGlassGradient,
+  FnHdsSymbolButton,
   FnInlineLoading,
   FnStateText
 } from '../../common/FnUiCommon';
@@ -27,7 +25,6 @@ export struct GalleryPreviewDetailsSheet {
   onPersonClick: (p: PersonInPhotoItem) => void = (_: PersonInPhotoItem) => {};
   onFolderClick: () => void = () => {};
   onClose: () => void = () => {};
-  @State private closePressed: boolean = false;
 
   @Builder
   private headerRow() {
@@ -40,29 +37,15 @@ export struct GalleryPreviewDetailsSheet {
       Blank()
         .layoutWeight(1)
 
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
-        SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(16)
-          .fontColor([this.isDark ? '#FFF2F2F7' : '#FF1C1C1E'])
-      }
-      .width(32)
-      .height(32)
-      .borderRadius(16)
-      .backgroundColor(this.isDark ? '#30374466' : '#D9FFFFFF')
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .backgroundEffect(fnImmersiveBackgroundEffect(false, this.isDark ? '#30374466' : '#D9FFFFFF'))
-      .linearGradient(fnLiquidGlassGradient(false, this.closePressed))
-      .border({ width: 1, color: this.isDark ? '#26FFFFFF' : '#24FFFFFF' })
-      .visualEffect(fnImmersivePointLightSourceEffect(false, this.closePressed))
-      .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
-      .clip(true)
-      .onTouch((event: TouchEvent): void => {
-        const pressed = fnImmersiveTouchPressed(event);
-        if (pressed !== undefined) {
-          this.closePressed = pressed;
-        }
+      FnHdsSymbolButton({
+        symbol: $r('sys.symbol.xmark'),
+        widthValue: 32,
+        heightValue: 32,
+        radiusValue: 16,
+        fontSizeValue: 16,
+        fontColorValue: this.isDark ? '#FFF2F2F7' : '#FF1C1C1E',
+        action: this.onClose
       })
-      .onClick(this.onClose)
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)

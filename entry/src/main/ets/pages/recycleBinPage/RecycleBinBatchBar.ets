@@ -1,86 +1,119 @@
+import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
-  GALLERY_BATCH_ACTION_HEIGHT_VP,
   GALLERY_BATCH_BAR_PAD_BOTTOM_VP,
-  GALLERY_BATCH_BAR_PAD_LEFT_VP,
-  GALLERY_BATCH_BAR_PAD_RIGHT_VP,
-  GALLERY_BATCH_BAR_PAD_TOP_VP,
-  GALLERY_BATCH_BAR_SPACE_VP
+  GALLERY_BATCH_BAR_PAD_TOP_VP
 } from '../../common/GalleryButtonStyles';
 import {
-  fnImmersiveBackgroundEffect,
-  fnImmersivePointLightSourceEffect,
-  fnImmersiveTouchPressed,
-  fnLiquidGlassGradient
+  fnHdsBottomDockActionTabStyle,
+  fnHdsImmersiveSystemMaterialEffect,
+  FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
+  FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
+  FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+  FN_BOTTOM_DOCK_SIDE_GAP_VP,
+  FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../../common/FnUiCommon';
 
 @Component
 export struct RecycleBinBatchBar {
   @Prop downloading: boolean = false;
   @Prop restoring: boolean = false;
-  @State private pressedKey: string = '';
 
   onDownload: () => void = () => {};
   onRestore: () => void = () => {};
 
-  private syncPressed(key: string, event: TouchEvent): void {
-    const pressed = fnImmersiveTouchPressed(event);
-    if (pressed === undefined) {
+  private actionColor(busy: boolean): ResourceColor {
+    return busy ? $r('app.color.text_secondary') : $r('app.color.brand_primary');
+  }
+
+  private onBatchHdsAction(index: number): void {
+    if (index === 0) {
+      if (!this.downloading) {
+        this.onDownload();
+      }
       return;
     }
-    if (pressed) {
-      this.pressedKey = key;
-    } else if (this.pressedKey === key) {
-      this.pressedKey = '';
+    if (!this.restoring) {
+      this.onRestore();
     }
   }
 
-  build() {
-    Row({ space: GALLERY_BATCH_BAR_SPACE_VP }) {
-      Button($r('app.string.gallery_batch_download'), { type: ButtonType.Capsule, stateEffect: false })
-        .layoutWeight(1)
-        .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
-        .fontColor($r('app.color.button_secondary_fg'))
-        .backgroundColor($r('app.color.button_secondary_bg'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .backgroundEffect(fnImmersiveBackgroundEffect())
-        .linearGradient(fnLiquidGlassGradient(false, this.pressedKey === 'download'))
-        .borderRadius(GALLERY_BATCH_ACTION_HEIGHT_VP / 2)
-        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-        .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedKey === 'download'))
-        .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-        .clip(true)
-        .enabled(!this.downloading)
-        .onTouch((event: TouchEvent): void => {
-          this.syncPressed('download', event);
-        })
-        .onClick(this.onDownload)
+  @Builder
+  private batchHdsTabs() {
+    HdsTabs({ index: 0 }) {
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(fnHdsBottomDockActionTabStyle(
+        $r('sys.symbol.download'),
+        $r('app.string.gallery_batch_download'),
+        this.actionColor(this.downloading)
+      ))
 
-      Button('还原', { type: ButtonType.Capsule, stateEffect: false })
-        .layoutWeight(1)
-        .height(GALLERY_BATCH_ACTION_HEIGHT_VP)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.brand_primary'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .backgroundEffect(fnImmersiveBackgroundEffect(true))
-        .linearGradient(fnLiquidGlassGradient(true, this.pressedKey === 'restore'))
-        .borderRadius(GALLERY_BATCH_ACTION_HEIGHT_VP / 2)
-        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-        .visualEffect(fnImmersivePointLightSourceEffect(true, this.pressedKey === 'restore'))
-        .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
-        .clip(true)
-        .enabled(!this.restoring)
-        .onTouch((event: TouchEvent): void => {
-          this.syncPressed('restore', event);
-        })
-        .onClick(this.onRestore)
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(fnHdsBottomDockActionTabStyle(
+        $r('sys.symbol.arrow_counterclockwise'),
+        '\u8fd8\u539f',
+        this.actionColor(this.restoring)
+      ))
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .barOverlap(true)
+    .vertical(false)
+    .barPosition(BarPosition.End)
+    .barFloatingStyle({
+      barBottomMargin: 0,
+      gradientMask: {
+        maskColor: Color.Transparent,
+        maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP
+      },
+      lightColor: $r('app.color.gallery_material_surface_bg'),
+      systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
+    })
+    .scrollable(false)
+    .divider({ mode: DividerMode.NONE })
+    .barBackgroundColor(Color.Transparent)
+    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
+    .blurStrategy(BlurStrategy.ADAPTIVE)
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .clip(true)
+    .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
+      return false;
+    })
+    .onTabBarClick((index: number): void => {
+      this.onBatchHdsAction(index);
+    })
+  }
+
+  build() {
+    Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+      Blank()
+        .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+
+      this.batchHdsTabs()
+
+      Blank()
+        .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     }
     .width('100%')
     .padding({
-      left: GALLERY_BATCH_BAR_PAD_LEFT_VP,
-      right: GALLERY_BATCH_BAR_PAD_RIGHT_VP,
+      left: FN_BOTTOM_DOCK_SIDE_PADDING_VP,
+      right: FN_BOTTOM_DOCK_SIDE_PADDING_VP,
       top: GALLERY_BATCH_BAR_PAD_TOP_VP,
       bottom: GALLERY_BATCH_BAR_PAD_BOTTOM_VP
     })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
     .backgroundColor(Color.Transparent)
   }
 }
