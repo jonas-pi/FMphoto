@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
+import { SymbolGlyphModifier, window } from '@kit.ArkUI';
+import { BlurStrategy, DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
 import { AppSession } from '../auth/AppSession';
@@ -8,6 +9,11 @@ import { SessionPreferences } from '../auth/SessionPreferences';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
   fnBottomDockBottomGap,
+  fnHdsImmersiveSystemMaterialEffect,
+  fnImmersiveBackgroundEffect,
+  fnImmersivePointLightSourceEffect,
+  fnImmersiveTouchPressed,
+  fnLiquidGlassGradient,
   FnImmersiveBackdrop,
   FnPrimaryButton,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
@@ -47,6 +53,7 @@ import {
 @Component
 struct MePanel {
   @Prop topSafeInsetVp: number = 0;
+  @State private logoutPressed: boolean = false;
 
   build() {
     Column() {
@@ -93,10 +100,13 @@ struct MePanel {
         .padding(18)
         .backgroundColor($r('app.color.immersive_panel_bg'))
         .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect())
+        .linearGradient(fnLiquidGlassGradient())
         .borderRadius(24)
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
         .shadow({ radius: 24, color: '#14001A33', offsetX: 0, offsetY: 10 })
+        .clip(true)
         .visibility(Visibility.None)
 
         Column({ space: 12 }) {
@@ -122,13 +132,25 @@ struct MePanel {
         .borderColor($r('app.color.immersive_panel_border'))
         .visibility(Visibility.None)
 
-        Button($r('app.string.logout'))
+        Button($r('app.string.logout'), { stateEffect: false })
           .width('100%')
           .height($r('app.float.button_height'))
           .backgroundColor('#E11D48')
+          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+          .backgroundEffect(fnImmersiveBackgroundEffect(true, '#33E11D48'))
+          .linearGradient(fnLiquidGlassGradient(true, this.logoutPressed))
           .fontColor(Color.White)
           .borderRadius($r('app.float.radius_medium'))
+          .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+          .visualEffect(fnImmersivePointLightSourceEffect(true, this.logoutPressed))
           .shadow({ radius: 18, color: '#40E11D48', offsetX: 0, offsetY: 8 })
+          .clip(true)
+          .onTouch((event: TouchEvent): void => {
+            const pressed = fnImmersiveTouchPressed(event);
+            if (pressed !== undefined) {
+              this.logoutPressed = pressed;
+            }
+          })
           .onClick((): void => {
             const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
             void SessionPreferences.clearSession(ctx).then(() => {
@@ -169,9 +191,11 @@ struct Home {
   @State private systemTopInsetVp: number = 0;
   @State private systemBottomInsetVp: number = 0;
   @State private gallerySelectionDockActive: boolean = false;
+  @State private immersivePressedKey: string = '';
   private gallerySelectionDockDownloadAction: () => void = () => {};
   private gallerySelectionDockDeleteAction: () => void = () => {};
   private gallerySelectionDockTimer: number = -1;
+  private bottomTabsController: HdsTabsController = new HdsTabsController();
 
   onBackPress(): boolean {
     if (this.bottomNavIndex !== 2 && galleryTryConsumeAlbumBack()) {
@@ -243,6 +267,22 @@ struct Home {
     return fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
+  private syncImmersivePressed(key: string, event: TouchEvent): void {
+    const pressed = fnImmersiveTouchPressed(event);
+    if (pressed === undefined) {
+      return;
+    }
+    if (pressed) {
+      this.immersivePressedKey = key;
+    } else if (this.immersivePressedKey === key) {
+      this.immersivePressedKey = '';
+    }
+  }
+
+  private isImmersivePressed(key: string): boolean {
+    return this.immersivePressedKey === key;
+  }
+
   private dockReserveHeight(): number {
     if (!this.sessionOk || !this.shouldShowBottomDock()) {
       return 0;
@@ -290,6 +330,61 @@ struct Home {
 
   private isDockNavItemSelected(index: number): boolean {
     return this.bottomNavIndex === index;
+  }
+
+  private dockMaterialBackgroundColor(): ResourceColor {
+    return $r('sys.color.ohos_id_color_bottom_tab_bg_blur');
+  }
+
+  private dockMaterialBorderColor(): ResourceColor {
+    return this.isDarkTheme ? '#32FFFFFF' : '#46FFFFFF';
+  }
+
+  private dockMaterialShadowColor(): ResourceColor {
+    return this.isDarkTheme ? '#52000000' : '#22001A33';
+  }
+
+  private syncBottomTabsController(index: number): void {
+    try {
+      this.bottomTabsController.changeIndex(index);
+    } catch (_e) {
+    }
+  }
+
+  private hdsBottomTabSymbol(icon: Resource, selectedIcon: Resource): TabBarSymbol {
+    return {
+      normal: new SymbolGlyphModifier(icon)
+        .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+        .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
+        .fontColor([
+          $r('sys.color.ohos_id_color_bottom_tab_icon_off'),
+          $r('sys.color.ohos_id_color_bottom_tab_icon_auxcolor_off02')
+        ]),
+      selected: new SymbolGlyphModifier(selectedIcon)
+        .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+        .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
+        .fontColor([
+          $r('sys.color.ohos_id_color_activated'),
+          $r('sys.color.ohos_id_color_primary_contrary')
+        ])
+    };
+  }
+
+  private hdsBottomTabStyle(icon: Resource, selectedIcon: Resource, label: string): BottomTabBarStyle {
+    return new BottomTabBarStyle(this.hdsBottomTabSymbol(icon, selectedIcon), label)
+      .labelStyle({
+        font: { size: FN_BOTTOM_DOCK_LABEL_SIZE_VP, weight: FontWeight.Medium },
+        selectedColor: $r('sys.color.ohos_id_color_bottom_tab_text_on'),
+        unselectedColor: $r('sys.color.ohos_id_color_bottom_tab_text_off')
+      })
+      .iconStyle({
+        selectedColor: $r('sys.color.ohos_id_color_activated'),
+        unselectedColor: $r('sys.color.ohos_id_color_bottom_tab_icon_off')
+      })
+      .padding({ left: 0, right: 0, top: 3, bottom: 2 })
+      .layoutMode(LayoutMode.VERTICAL)
+      .verticalAlign(VerticalAlign.Center)
+      .symmetricExtensible(true);
   }
 
   private shouldShowGalleryDockSideButtons(): boolean {
@@ -362,7 +457,7 @@ struct Home {
     );
   }
 
-  private switchTab(target: number): void {
+  private switchTab(target: number, fromHdsTabs: boolean = false): void {
     if (target === this.bottomNavIndex) {
       return;
     }
@@ -372,6 +467,9 @@ struct Home {
     const rootSwitch = target === 2 || this.bottomNavIndex === 2;
     if (!rootSwitch) {
       this.bottomNavIndex = target;
+      if (!fromHdsTabs) {
+        this.syncBottomTabsController(target);
+      }
       return;
     }
     if (target === 2) {
@@ -379,12 +477,18 @@ struct Home {
         this.gallerySurfaceIndex = 1;
       }
       this.animateShellToMe();
+      if (!fromHdsTabs) {
+        this.syncBottomTabsController(target);
+      }
       return;
     }
     if (this.bottomNavIndex === 2 && target === 0 && this.gallerySurfaceIndex !== 0) {
       this.gallerySurfaceIndex = 0;
     }
     this.animateShellFromMe(target);
+    if (!fromHdsTabs) {
+      this.syncBottomTabsController(target);
+    }
   }
 
   aboutToAppear(): void {
@@ -471,7 +575,7 @@ struct Home {
 
   @Builder
   private floatingDockNavItem(index: number, label: string) {
-    Button() {
+    Button({ stateEffect: false }) {
       Column({ space: 5 }) {
         if (index === 0) {
           SymbolGlyph($r('sys.symbol.picture'))
@@ -505,16 +609,111 @@ struct Home {
     .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
     .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(this.isDockNavItemSelected(index) ? $r('app.color.gallery_material_surface_bg') : Color.Transparent)
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .backgroundEffect(fnImmersiveBackgroundEffect(this.isDockNavItemSelected(index)))
+    .linearGradient(fnLiquidGlassGradient(
+      this.isDockNavItemSelected(index),
+      this.isImmersivePressed(`dock-nav-${index}`)
+    ))
     .border(this.isDockNavItemSelected(index)
       ? { width: 1, color: $r('app.color.immersive_panel_border') }
       : { width: 0, color: Color.Transparent })
+    .visualEffect(fnImmersivePointLightSourceEffect(
+      this.isDockNavItemSelected(index),
+      this.isImmersivePressed(`dock-nav-${index}`)
+    ))
+    .clip(true)
     .scale({
       x: this.isDockNavItemSelected(index) ? 1 : 0.98,
       y: this.isDockNavItemSelected(index) ? 1 : 0.98
     })
+    .onTouch((event: TouchEvent): void => {
+      this.syncImmersivePressed(`dock-nav-${index}`, event);
+    })
     .onClick((): void => {
       this.switchTab(index);
     })
+  }
+
+  @Builder
+  private floatingDockHdsTabs() {
+    HdsTabs({ controller: this.bottomTabsController, index: this.bottomNavIndex }) {
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(this.hdsBottomTabStyle(
+        $r('sys.symbol.picture'),
+        $r('sys.symbol.picture_fill'),
+        '图库'
+      ))
+
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(this.hdsBottomTabStyle(
+        $r('sys.symbol.rectangle_stack'),
+        $r('sys.symbol.square_stack_3d_fill'),
+        '相册'
+      ))
+
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(this.hdsBottomTabStyle(
+        $r('sys.symbol.person'),
+        $r('sys.symbol.person_fill'),
+        '我的'
+      ))
+    }
+    .width('100%')
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .barOverlap(true)
+    .vertical(false)
+    .barPosition(BarPosition.End)
+    .barFloatingStyle({
+      barBottomMargin: 0,
+      systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
+    })
+    .scrollable(false)
+    .divider({ mode: DividerMode.NONE })
+    .barBackgroundColor(Color.Transparent)
+    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
+    .blurStrategy(BlurStrategy.ADAPTIVE)
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .clip(true)
+    .onChange((index: number): void => {
+      this.switchTab(index, true);
+    })
+  }
+
+  @Builder
+  private floatingDockHdsTabsCapsule() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+        .backgroundColor(this.dockMaterialBackgroundColor())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect(true))
+        .linearGradient(fnLiquidGlassGradient(true))
+        .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+        .border({ width: 1, color: this.dockMaterialBorderColor() })
+        .clip(true)
+
+      this.floatingDockHdsTabs()
+    }
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .shadow({ radius: 30, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 10 })
+    .clip(true)
   }
 
   @Builder
@@ -524,7 +723,7 @@ struct Home {
     destructive: boolean,
     action: () => void
   ) {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
+    Button({ type: ButtonType.Normal, stateEffect: false }) {
       Column({ space: 5 }) {
         SymbolGlyph(icon)
           .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP)
@@ -544,12 +743,17 @@ struct Home {
     .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
     .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
+    .visualEffect(fnImmersivePointLightSourceEffect(false, this.isImmersivePressed(`dock-action-${label}`)))
+    .clip(true)
+    .onTouch((event: TouchEvent): void => {
+      this.syncImmersivePressed(`dock-action-${label}`, event);
+    })
     .onClick(action)
   }
 
   @Builder
   private floatingDockSideButton(isLayoutButton: boolean) {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
       if (isLayoutButton) {
         this.floatingDockGridGlyph()
       } else {
@@ -562,12 +766,18 @@ struct Home {
     .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundColor(this.dockMaterialBackgroundColor())
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-    .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
+    .backgroundEffect(fnImmersiveBackgroundEffect())
+    .linearGradient(fnLiquidGlassGradient(false, this.isImmersivePressed(isLayoutButton ? 'dock-side-layout' : 'dock-side-view')))
+    .border({ width: 1, color: this.dockMaterialBorderColor() })
+    .visualEffect(fnImmersivePointLightSourceEffect(false, this.isImmersivePressed(isLayoutButton ? 'dock-side-layout' : 'dock-side-view')))
+    .shadow({ radius: 24, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 9 })
     .padding(0)
     .clip(true)
+    .onTouch((event: TouchEvent): void => {
+      this.syncImmersivePressed(isLayoutButton ? 'dock-side-layout' : 'dock-side-view', event);
+    })
     .onClick((): void => {
       if (isLayoutButton) {
         this.toast('\u663e\u793a\u6a21\u5f0f\u5207\u6362\u5165\u53e3\u9884\u7559\u4e2d');
@@ -588,9 +798,12 @@ struct Home {
     .padding({ left: 6, right: 6 })
     .backgroundColor($r('app.color.immersive_tabbar_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .backgroundEffect(fnImmersiveBackgroundEffect(true))
+    .linearGradient(fnLiquidGlassGradient(true))
     .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
     .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
+    .clip(true)
   }
 
   @Builder
@@ -614,9 +827,12 @@ struct Home {
       .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
       .backgroundColor($r('app.color.immersive_tabbar_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect(true))
+      .linearGradient(fnLiquidGlassGradient(true))
       .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
       .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
+      .clip(true)
 
       if (this.shouldShowGalleryDockSideButtons()) {
         this.floatingDockSideButton(false)
@@ -644,8 +860,8 @@ struct Home {
           .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
       }
 
-      Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
-        if (this.gallerySelectionDockActive) {
+      if (this.gallerySelectionDockActive) {
+        Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
           this.floatingDockSelectionActionItem(
             $r('sys.symbol.download'),
             '下载',
@@ -658,20 +874,21 @@ struct Home {
             true,
             this.gallerySelectionDockDeleteAction
           )
-        } else {
-          this.floatingDockNavItem(0, '\u56fe\u5e93')
-          this.floatingDockNavItem(1, '相册')
-          this.floatingDockNavItem(2, '我的')
         }
+        .layoutWeight(1)
+        .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+        .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+        .backgroundColor(this.dockMaterialBackgroundColor())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect(true))
+        .linearGradient(fnLiquidGlassGradient(true))
+        .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+        .border({ width: 1, color: this.dockMaterialBorderColor() })
+        .shadow({ radius: 30, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 10 })
+        .clip(true)
+      } else {
+        this.floatingDockHdsTabsCapsule()
       }
-      .layoutWeight(1)
-      .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
-      .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
-      .backgroundColor($r('app.color.immersive_tabbar_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })
 
       if (this.shouldShowGalleryDockSideButtons()) {
         this.floatingDockSideButton(false)
@@ -718,10 +935,13 @@ struct Home {
           .padding(24)
           .backgroundColor($r('app.color.immersive_panel_bg'))
           .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+          .backgroundEffect(fnImmersiveBackgroundEffect())
+          .linearGradient(fnLiquidGlassGradient())
           .borderRadius(28)
           .borderWidth(1)
           .borderColor($r('app.color.immersive_panel_border'))
           .shadow({ radius: 24, color: '#16002B55', offsetX: 0, offsetY: 10 })
+          .clip(true)
         }
         .width('100%')
         .height('100%')

@@ -1,5 +1,9 @@
 import {
   fnBottomDockBottomGap,
+  fnImmersiveBackgroundEffect,
+  fnImmersivePointLightSourceEffect,
+  fnImmersiveTouchPressed,
+  fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
   FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
@@ -13,13 +17,12 @@ import {
   FN_FLOATING_TOP_CONTROL_RADIUS_VP,
   FN_FLOATING_TOP_CONTROL_SIZE_VP,
   FN_FLOATING_TOP_MARGIN_VP,
+  FnFloatingTopCircleButton,
   FnFloatingTopPillButton
 } from '../../common/FnUiCommon';
 import {
-  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
   GALLERY_TOP_BAR_PAD_LEFT_VP,
   GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_PAD_TOP_VP,
   GALLERY_TOP_BAR_SUBTITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
@@ -56,21 +59,26 @@ export struct GalleryPreviewChrome {
   onFavorite: () => void = () => {};
   onDelete: () => void = () => {};
   onBottomBarHeightChange: (height: number) => void = (_: number) => {};
+  @State private pressedKey: string = '';
 
-  private shellBackground(): string {
-    return this.darkMaterial ? '#A61A1A1E' : '#D9FFFFFF';
+  private syncPressed(key: string, event: TouchEvent): void {
+    const pressed = fnImmersiveTouchPressed(event);
+    if (pressed === undefined) {
+      return;
+    }
+    if (pressed) {
+      this.pressedKey = key;
+    } else if (this.pressedKey === key) {
+      this.pressedKey = '';
+    }
   }
 
-  private surfaceBackground(): string {
-    return this.darkMaterial ? '#2BFFFFFF' : '#F2FFFFFF';
+  private shellBackground(): string {
+    return '#00000000';
   }
 
   private shellBorder(): string {
     return this.darkMaterial ? '#24FFFFFF' : '#14001A33';
-  }
-
-  private surfaceBorder(): string {
-    return this.darkMaterial ? '#1FFFFFFF' : '#14001A33';
   }
 
   private shadowColor(): string {
@@ -79,10 +87,6 @@ export struct GalleryPreviewChrome {
 
   private dimmedColor(): ResourceColor {
     return this.darkMaterial ? '#80FFFFFF' : '#805B6675';
-  }
-
-  private selectedSurfaceBackground(): ResourceColor {
-    return $r('app.color.brand_primary');
   }
 
   private topMargin(): number {
@@ -95,7 +99,7 @@ export struct GalleryPreviewChrome {
 
   @Builder
   private bottomAction(icon: Resource, label: string, loading: boolean, action: () => void, dimmed: boolean = false) {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
+    Button({ type: ButtonType.Normal, stateEffect: false }) {
       Column({ space: 3 }) {
         if (loading) {
           LoadingProgress().width(22).height(22).color(this.fgColor)
@@ -113,13 +117,18 @@ export struct GalleryPreviewChrome {
     .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
     .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
+    .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedKey === `bottom-${label}`))
+    .clip(true)
     .enabled(!dimmed && this.toolbarVisible)
+    .onTouch((event: TouchEvent): void => {
+      this.syncPressed(`bottom-${label}`, event);
+    })
     .onClick((dimmed || !this.toolbarVisible) ? (): void => {} : action)
   }
 
   @Builder
   private bottomDownloadAction() {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
+    Button({ type: ButtonType.Normal, stateEffect: false }) {
       Column({ space: 3 }) {
         if (this.downloading && this.downloadProgressKnown) {
           Stack({ alignContent: Alignment.Center }) {
@@ -153,13 +162,18 @@ export struct GalleryPreviewChrome {
     .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
     .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
+    .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedKey === 'bottom-download'))
+    .clip(true)
     .enabled(this.toolbarVisible && !this.downloading)
+    .onTouch((event: TouchEvent): void => {
+      this.syncPressed('bottom-download', event);
+    })
     .onClick((!this.toolbarVisible || this.downloading) ? (): void => {} : this.onDownload)
   }
 
   @Builder
   private bottomFavoriteAction() {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
+    Button({ type: ButtonType.Normal, stateEffect: false }) {
       Column({ space: 3 }) {
         if (this.favoriteToggling) {
           LoadingProgress().width(22).height(22).color(this.fgColor)
@@ -179,23 +193,22 @@ export struct GalleryPreviewChrome {
     .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
     .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
     .backgroundColor(Color.Transparent)
+    .visualEffect(fnImmersivePointLightSourceEffect(this.starFilled, this.pressedKey === 'bottom-favorite'))
+    .clip(true)
     .enabled(this.toolbarVisible)
+    .onTouch((event: TouchEvent): void => {
+      this.syncPressed('bottom-favorite', event);
+    })
     .onClick(!this.toolbarVisible ? (): void => {} : this.onFavorite)
   }
 
   @Builder
   private topCircleAction(icon: Resource, action: () => void, selected: boolean = false) {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      SymbolGlyph(icon).fontSize(17).fontColor([selected ? Color.White : this.fgColor])
-    }
-    .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-    .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-    .borderRadius(FN_FLOATING_TOP_CONTROL_RADIUS_VP)
-    .backgroundColor(selected ? this.selectedSurfaceBackground() : this.surfaceBackground())
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .border({ width: 1, color: this.surfaceBorder() })
-    .shadow({ radius: 10, color: this.shadowColor(), offsetX: 0, offsetY: 4 })
-    .onClick(action)
+    FnFloatingTopCircleButton({
+      symbol: icon,
+      active: selected,
+      action: action
+    })
   }
 
   build() {
@@ -203,7 +216,7 @@ export struct GalleryPreviewChrome {
       Row() {
         Row() {
           FnFloatingTopPillButton({
-            text: '返回',
+            text: '\u8fd4\u56de',
             action: this.onBack
           })
         }
@@ -212,24 +225,42 @@ export struct GalleryPreviewChrome {
         .justifyContent(FlexAlign.Start)
 
         Row() {
-          Text(this.titleText)
-            .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.fgColor)
-            .textAlign(TextAlign.Center)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.titleText.length > 0) {
+            Row() {
+              Text(this.titleText)
+                .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.fgColor)
+                .textAlign(TextAlign.Center)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+            .constraintSize({ minWidth: 96, maxWidth: 180 })
+            .padding({ left: 16, right: 16 })
+            .justifyContent(FlexAlign.Center)
+            .alignItems(VerticalAlign.Center)
+            .backgroundColor(this.shellBackground())
+            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+            .backgroundEffect(fnImmersiveBackgroundEffect(true, this.shellBackground()))
+            .borderRadius(FN_FLOATING_TOP_CONTROL_RADIUS_VP)
+            .border({ width: 1, color: this.shellBorder() })
+            .shadow({ radius: 12, color: this.shadowColor(), offsetX: 0, offsetY: 5 })
+            .clip(true)
+          }
         }
         .layoutWeight(2)
         .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
 
-        Row({ space: 6 }) {
-          if (this.showOriginalAction) {
-            this.topCircleAction($r('sys.symbol.picture'), this.onLoadOriginal, this.originalShowing)
+        Row() {
+          Row({ space: 8 }) {
+            if (this.showOriginalAction) {
+              this.topCircleAction($r('sys.symbol.picture'), this.onLoadOriginal, this.originalShowing)
+            }
+            this.topCircleAction($r('sys.symbol.more'), this.onOpenDetails)
           }
-          this.topCircleAction($r('sys.symbol.more'), this.onOpenDetails)
         }
         .layoutWeight(1)
         .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
@@ -238,7 +269,10 @@ export struct GalleryPreviewChrome {
       .width('100%')
       .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .alignItems(VerticalAlign.Center)
-      .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
+      .padding({
+        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
+        right: GALLERY_TOP_BAR_PAD_RIGHT_VP
+      })
       .margin({
         top: this.topMargin(),
         bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
@@ -266,6 +300,8 @@ export struct GalleryPreviewChrome {
         .padding({ left: PREVIEW_DOCK_INNER_PADDING_H_VP, right: PREVIEW_DOCK_INNER_PADDING_H_VP })
         .backgroundColor($r('app.color.immersive_tabbar_bg'))
         .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect(true))
+        .linearGradient(fnLiquidGlassGradient(true))
         .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
         .border({ width: 1, color: $r('app.color.immersive_panel_border') })
         .shadow({ radius: 30, color: '#16002B55', offsetX: 0, offsetY: 10 })

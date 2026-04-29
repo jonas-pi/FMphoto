@@ -5,6 +5,12 @@ import {
   GALLERY_HOME_NAV_CHIP_RADIUS_VP
 } from '../../common/GalleryButtonStyles';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+import {
+  fnImmersiveBackgroundEffect,
+  fnImmersivePointLightSourceEffect,
+  fnImmersiveTouchPressed,
+  fnLiquidGlassGradient
+} from '../../common/FnUiCommon';
 
 const GALLERY_HOME_ENTRY_CHIP_HEIGHT_VP: number = 30;
 const GALLERY_HOME_ENTRY_CHIP_FONT_VP: number = 12;
@@ -19,6 +25,7 @@ export const GALLERY_HOME_ENTRY_STRIP_TOTAL_HEIGHT_VP: number =
 @Component
 export struct GalleryAlbumEntryChips {
   @Prop hidden: boolean = false;
+  @State private pressedChip: string = '';
 
   onOpenMediaCategory: () => void = () => {};
   onOpenSmartCategory: () => void = () => {};
@@ -27,9 +34,21 @@ export struct GalleryAlbumEntryChips {
   onOpenCollect: () => void = () => {};
   onOpenRecycleBin: () => void = () => {};
 
+  private syncPressed(label: string, event: TouchEvent): void {
+    const pressed = fnImmersiveTouchPressed(event);
+    if (pressed === undefined) {
+      return;
+    }
+    if (pressed) {
+      this.pressedChip = label;
+    } else if (this.pressedChip === label) {
+      this.pressedChip = '';
+    }
+  }
+
   @Builder
   private chip(label: string, action: () => void) {
-    Button({ type: ButtonType.Capsule, stateEffect: true }) {
+    Button({ type: ButtonType.Capsule, stateEffect: false }) {
       Column() {
         Text(label)
           .maxLines(1)
@@ -50,8 +69,15 @@ export struct GalleryAlbumEntryChips {
     .borderRadius(GALLERY_HOME_NAV_CHIP_RADIUS_VP)
     .backgroundColor($r('app.color.button_secondary_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .backgroundEffect(fnImmersiveBackgroundEffect())
+    .linearGradient(fnLiquidGlassGradient(false, this.pressedChip === label))
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressedChip === label))
     .shadow({ radius: 10, color: '#12001A33', offsetX: 0, offsetY: 4 })
+    .clip(true)
+    .onTouch((event: TouchEvent): void => {
+      this.syncPressed(label, event);
+    })
     .onClick(action)
   }
 
@@ -84,6 +110,8 @@ export struct GalleryAlbumEntryChips {
       })
       .backgroundColor($r('app.color.gallery_material_shell_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect())
+      .linearGradient(fnLiquidGlassGradient())
       .borderRadius(GALLERY_HOME_ENTRY_STRIP_RADIUS_VP)
       .border({ width: 1, color: $r('app.color.gallery_material_shell_border') })
       .shadow({ radius: 16, color: '#12001A33', offsetX: 0, offsetY: 6 })

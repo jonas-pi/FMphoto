@@ -19,6 +19,7 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { FnFloatingTopPillButton } from '../common/FnUiCommon';
 
 @Entry
 @Component
@@ -86,17 +87,12 @@ struct Settings {
     Column({ space: 16 }) {
       Row() {
         Row() {
-          Button($r('app.string.cancel'), { type: ButtonType.Capsule, stateEffect: true })
-            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-            .backgroundColor($r('app.color.button_secondary_bg'))
-            .fontColor($r('app.color.button_secondary_fg'))
-            .borderWidth(1)
-            .borderColor($r('app.color.immersive_panel_border'))
-            .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-            .onClick((): void => {
+          FnFloatingTopPillButton({
+            text: $r('app.string.cancel'),
+            action: (): void => {
               this.getUIContext().getRouter().back();
-            })
+            }
+          })
         }
         .layoutWeight(1)
         .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
@@ -112,21 +108,17 @@ struct Settings {
           .fontColor($r('app.color.text_primary'))
 
         Row() {
-          Button($r('app.string.save'), { type: ButtonType.Capsule, stateEffect: true })
-            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-            .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-            .backgroundColor($r('app.color.button_primary_bg'))
-            .fontColor($r('app.color.button_primary_fg'))
-            .borderWidth(1)
-            .borderColor($r('app.color.immersive_panel_border'))
-            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
-            .onClick((): void => {
+          FnFloatingTopPillButton({
+            text: $r('app.string.save'),
+            prominent: true,
+            action: (): void => {
               const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
               AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
               void AppSession.persist(ctx).then(() => {
                 this.getUIContext().getRouter().back();
               });
-            })
+            }
+          })
         }
         .layoutWeight(1)
         .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)

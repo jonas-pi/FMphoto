@@ -6,6 +6,12 @@ import {
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+import {
+  fnImmersiveBackgroundEffect,
+  fnLiquidGlassGradient,
+  FnFloatingTopCircleButton,
+  FnFloatingTopPillButton
+} from '../../common/FnUiCommon';
 
 const GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP: number = 8;
 const GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP: number = 6;
@@ -151,35 +157,12 @@ export struct GalleryAlbumTopBar {
 
   @Builder
   private floatingPillButton(text: string, action: () => void) {
-    Button(text, { type: ButtonType.Capsule, stateEffect: true })
-      .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-      .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-      .constraintSize({ minWidth: GALLERY_TOP_BAR_ACTION_MIN_WIDTH_VP })
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .fontColor($r('app.color.button_secondary_fg'))
-      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-      .onClick(action)
+    FnFloatingTopPillButton({ text: text, action: action })
   }
 
   @Builder
   private floatingIconButton(symbol: Resource, action: () => void, active: boolean = false) {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      SymbolGlyph(symbol)
-        .fontSize(17)
-        .fontColor([active ? Color.White : $r('app.color.icon_primary')])
-    }
-    .width(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-    .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-    .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-    .backgroundColor(active ? $r('app.color.brand_primary') : $r('app.color.gallery_material_surface_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-    .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
-    .padding(0)
-    .clip(true)
-    .onClick(action)
+    FnFloatingTopCircleButton({ symbol: symbol, active: active, action: action })
   }
 
   build() {
@@ -231,7 +214,10 @@ export struct GalleryAlbumTopBar {
         .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
         .backgroundColor($r('app.color.gallery_material_search_bg'))
         .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect())
+        .linearGradient(fnLiquidGlassGradient())
         .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
+        .clip(true)
       } else if (this.isRootSurfaceMode()) {
         Text(this.rootSurfaceTitle)
           .layoutWeight(1)

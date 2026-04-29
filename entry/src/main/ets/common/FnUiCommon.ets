@@ -7,6 +7,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { hdsEffect, hdsMaterial, SystemMaterialParams } from '@kit.UIDesignKit';
 
 import {
   GALLERY_TOP_BAR_BUTTON_FONT_VP,
@@ -45,26 +46,109 @@ export function fnBottomDockBottomGap(bottomSafeInsetVp: number): number {
   return Math.max(liftedGap, bottomSafeInsetVp + liftedGap);
 }
 
+export function fnImmersiveBackgroundEffect(strong: boolean = false, color?: ResourceColor): BackgroundEffectOptions {
+  return {
+    radius: strong ? 32 : 26,
+    saturation: strong ? 1.32 : 1.22,
+    brightness: strong ? 1.1 : 1.06,
+    color: color ?? (strong ? $r('app.color.immersive_panel_strong_bg') : $r('app.color.immersive_panel_bg')),
+    adaptiveColor: AdaptiveColor.DEFAULT
+  };
+}
+
+export function fnHdsImmersiveSystemMaterialEffect(): SystemMaterialParams {
+  let materialType: hdsMaterial.MaterialType = hdsMaterial.MaterialType.IMMERSIVE;
+  let materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.EXQUISITE;
+  try {
+    const materialTypes: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes();
+    if (materialTypes.indexOf(hdsMaterial.MaterialType.IMMERSIVE) < 0) {
+      materialType = hdsMaterial.MaterialType.ADAPTIVE;
+      materialLevel = hdsMaterial.MaterialLevel.SMOOTH;
+    }
+  } catch (_e) {
+    materialType = hdsMaterial.MaterialType.ADAPTIVE;
+    materialLevel = hdsMaterial.MaterialLevel.ADAPTIVE;
+  }
+  return { materialType: materialType, materialLevel: materialLevel };
+}
+
+export function fnLiquidGlassGradient(strong: boolean = false, pressed: boolean = false): LinearGradientOptions {
+  return {
+    angle: pressed ? 118 : 132,
+    colors: [
+      [strong ? '#B8FFFFFF' : '#82FFFFFF', 0.00],
+      [pressed ? '#58FFFFFF' : (strong ? '#3DFFFFFF' : '#26FFFFFF'), 0.22],
+      ['#12FFFFFF', 0.46],
+      [pressed ? '#34FFFFFF' : '#18FFFFFF', 0.72],
+      ['#00FFFFFF', 1.00]
+    ]
+  };
+}
+
+export function fnImmersivePointLightSourceEffect(strong: boolean = false, pressed: boolean = false): VisualEffect {
+  return new hdsEffect.HdsEffectBuilder()
+    .pointLight({
+      sourceType: pressed
+        ? hdsEffect.PointLightSourceType.BRIGHT
+        : hdsEffect.PointLightSourceType.NONE,
+      illuminatedType: pressed
+        ? hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER
+        : hdsEffect.PointLightIlluminatedType.NONE,
+      options: {
+        color: Color.White,
+        intensity: strong ? 14 : 10,
+        height: strong ? 180 : 140,
+        bloom: strong ? 0.32 : 0.22
+      }
+    })
+    .pressShadow(pressed
+      ? (strong ? hdsEffect.PressShadowType.BLEND_GRADIENT : hdsEffect.PressShadowType.BLEND_WHITE)
+      : hdsEffect.PressShadowType.NONE)
+    .buildEffect();
+}
+
+export function fnImmersiveTouchPressed(event: TouchEvent): boolean | undefined {
+  if (event.type === TouchType.Down) {
+    return true;
+  }
+  if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+    return false;
+  }
+  return undefined;
+}
+
 @Component
 export struct FnFloatingTopPillButton {
   @Prop text: ResourceStr = '';
   @Prop prominent: boolean = false;
   action: () => void = () => {};
+  @State private pressed: boolean = false;
 
   build() {
-    Button(this.text, { type: ButtonType.Capsule, stateEffect: true })
+    Button(this.text, { type: ButtonType.Capsule, stateEffect: false })
       .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
       .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
       .constraintSize({ minWidth: FN_FLOATING_TOP_PILL_MIN_WIDTH_VP })
       .backgroundColor(this.prominent ? $r('app.color.button_primary_bg') : $r('app.color.gallery_material_surface_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect(this.prominent))
+      .linearGradient(fnLiquidGlassGradient(this.prominent, this.pressed))
       .fontColor(this.prominent ? $r('app.color.button_primary_fg') : $r('app.color.button_secondary_fg'))
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .borderRadius(FN_FLOATING_TOP_CONTROL_RADIUS_VP)
+      .visualEffect(fnImmersivePointLightSourceEffect(this.prominent, this.pressed))
       .shadow({
         radius: this.prominent ? 18 : 14,
         color: this.prominent ? '#334A8BFF' : '#14001A33',
         offsetX: 0,
         offsetY: this.prominent ? 8 : 6
+      })
+      .clip(true)
+      .onTouch((event: TouchEvent): void => {
+        const pressed = fnImmersiveTouchPressed(event);
+        if (pressed !== undefined) {
+          this.pressed = pressed;
+        }
       })
       .onClick(this.action)
   }
@@ -77,9 +161,10 @@ export struct FnFloatingTopCircleButton {
   @Prop fontColor: ResourceColor = $r('app.color.icon_primary');
   @Prop activeBg: ResourceColor = $r('app.color.brand_primary');
   action: () => void = () => {};
+  @State private pressed: boolean = false;
 
   build() {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
       SymbolGlyph(this.symbol)
         .fontSize(17)
         .fontColor([this.active ? Color.White : this.fontColor])
@@ -89,10 +174,19 @@ export struct FnFloatingTopCircleButton {
     .borderRadius(FN_FLOATING_TOP_CONTROL_RADIUS_VP)
     .backgroundColor(this.active ? this.activeBg : $r('app.color.gallery_material_surface_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .backgroundEffect(fnImmersiveBackgroundEffect(this.active))
+    .linearGradient(fnLiquidGlassGradient(this.active, this.pressed))
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+    .visualEffect(fnImmersivePointLightSourceEffect(this.active, this.pressed))
     .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
     .padding(0)
     .clip(true)
+    .onTouch((event: TouchEvent): void => {
+      const pressed = fnImmersiveTouchPressed(event);
+      if (pressed !== undefined) {
+        this.pressed = pressed;
+      }
+    })
     .onClick(this.action)
   }
 }
@@ -198,30 +292,54 @@ export struct FnTopBar {
 @Component
 export struct FnPrimaryButton {
   @Prop text: ResourceStr = '';
+  @State private pressed: boolean = false;
 
   build() {
-    Button(this.text)
+    Button(this.text, { stateEffect: false })
       .height($r('app.float.button_height'))
       .fontColor($r('app.color.button_primary_fg'))
       .backgroundColor($r('app.color.button_primary_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect(true))
+      .linearGradient(fnLiquidGlassGradient(true, this.pressed))
       .borderRadius($r('app.float.radius_medium'))
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .visualEffect(fnImmersivePointLightSourceEffect(true, this.pressed))
       .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
+      .clip(true)
+      .onTouch((event: TouchEvent): void => {
+        const pressed = fnImmersiveTouchPressed(event);
+        if (pressed !== undefined) {
+          this.pressed = pressed;
+        }
+      })
   }
 }
 
 @Component
 export struct FnSecondaryButton {
   @Prop text: ResourceStr = '';
+  @State private pressed: boolean = false;
 
   build() {
-    Button(this.text)
+    Button(this.text, { stateEffect: false })
       .height($r('app.float.button_height'))
       .backgroundColor($r('app.color.button_secondary_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect())
+      .linearGradient(fnLiquidGlassGradient(false, this.pressed))
       .fontColor($r('app.color.button_secondary_fg'))
       .borderRadius($r('app.float.radius_medium'))
-      .borderWidth(1)
-      .borderColor($r('app.color.immersive_panel_border'))
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .visualEffect(fnImmersivePointLightSourceEffect(false, this.pressed))
       .shadow({ radius: 14, color: '#14001A33', offsetX: 0, offsetY: 6 })
+      .clip(true)
+      .onTouch((event: TouchEvent): void => {
+        const pressed = fnImmersiveTouchPressed(event);
+        if (pressed !== undefined) {
+          this.pressed = pressed;
+        }
+      })
   }
 }
 
