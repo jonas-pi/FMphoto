@@ -1,5 +1,10 @@
 import { AiPersonItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
-import { FnInlineLoading, FnStateText } from '../../common/FnUiCommon';
+import {
+  fnImmersiveBackgroundEffect,
+  fnLiquidGlassGradient,
+  FnInlineLoading,
+  FnStateText
+} from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, loadThumbPix, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -575,9 +580,12 @@ export struct GalleryAlbumAlbumsHomeView {
       .padding(10)
       .backgroundColor($r('app.color.gallery_material_surface_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect())
+      .linearGradient(fnLiquidGlassGradient())
       .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
       .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
+      .clip(true)
 
       Text('人物')
         .fontSize(13)
@@ -610,9 +618,12 @@ export struct GalleryAlbumAlbumsHomeView {
       .padding(10)
       .backgroundColor($r('app.color.gallery_material_surface_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect())
+      .linearGradient(fnLiquidGlassGradient())
       .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
       .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
+      .clip(true)
 
       Text('地点')
         .fontSize(13)
@@ -645,9 +656,12 @@ export struct GalleryAlbumAlbumsHomeView {
       .padding(10)
       .backgroundColor($r('app.color.gallery_material_surface_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect())
+      .linearGradient(fnLiquidGlassGradient())
       .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
       .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
+      .clip(true)
 
       Text('分类')
         .fontSize(13)
@@ -692,8 +706,11 @@ export struct GalleryAlbumAlbumsHomeView {
       .height(ALBUMS_HOME_SHORTCUT_TILE_SIZE_VP)
       .backgroundColor($r('app.color.gallery_material_surface_bg'))
       .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .backgroundEffect(fnImmersiveBackgroundEffect())
+      .linearGradient(fnLiquidGlassGradient())
       .borderRadius(18)
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .clip(true)
 
       Column({ space: 4 }) {
         Text(title)
@@ -724,9 +741,12 @@ export struct GalleryAlbumAlbumsHomeView {
     .padding({ left: 14, right: 16 })
     .backgroundColor($r('app.color.gallery_material_surface_bg'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .backgroundEffect(fnImmersiveBackgroundEffect())
+    .linearGradient(fnLiquidGlassGradient())
     .borderRadius(ALBUMS_HOME_SHORTCUT_CARD_RADIUS_VP)
     .border({ width: 1, color: $r('app.color.immersive_panel_border') })
     .shadow({ radius: 16, color: '#14001A33', offsetX: 0, offsetY: 6 })
+    .clip(true)
     .onClick(action)
   }
 

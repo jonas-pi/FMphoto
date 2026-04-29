@@ -73,7 +73,11 @@ import {
   playGalleryEnterSelectionHaptic,
   playGalleryPullRefreshThresholdHaptic
 } from './GallerySelectionHaptic';
-import { FnFullLoadingMask } from '../common/FnUiCommon';
+import {
+  fnImmersiveBackgroundEffect,
+  fnLiquidGlassGradient,
+  FnFullLoadingMask
+} from '../common/FnUiCommon';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../common/FnMotion';
 import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../common/GalleryTopBarLayout';
 import {
@@ -2342,9 +2346,12 @@ export struct GalleryAlbumTab {
             .padding({ left: 16, right: 16, top: 14, bottom: 14 })
             .backgroundColor($r('app.color.gallery_material_surface_bg'))
             .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+            .backgroundEffect(fnImmersiveBackgroundEffect())
+            .linearGradient(fnLiquidGlassGradient())
             .borderRadius(22)
             .border({ width: 1, color: $r('app.color.immersive_panel_border') })
             .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
+            .clip(true)
             .margin({
               top: this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP + 8,
               right: GALLERY_TOP_BAR_PAD_RIGHT_VP
