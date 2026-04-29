@@ -2135,6 +2135,10 @@ export struct GalleryAlbumTab {
     return galleryAlbumCurrentBottomDockInsetVp(this.asRootSurfaceHost());
   }
 
+  private loadingMaskTopOffsetVp(): number {
+    return this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP;
+  }
+
   private onEpochChange(): void {
     galleryAlbumOnEpochChange(this.asLifecycleHost());
   }
@@ -2320,6 +2324,7 @@ export struct GalleryAlbumTab {
           }
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.Transparent)
           .zIndex(11)
         }
 
@@ -2419,6 +2424,7 @@ export struct GalleryAlbumTab {
         GalleryAlbumAlbumsHomeView({
           baseUrl: this.baseUrl,
           pageVisible: this.isRootAlbumsSurfaceLayerVisible(),
+          pageShowSignal: this.pageShowSignal,
           contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
           contentInsetBottomVp: this.currentBottomDockInsetVp(),
           mediaLoading: this.categoryLoading,
@@ -2869,24 +2875,27 @@ export struct GalleryAlbumTab {
       .height('100%')
 
       if (this.galleryBatchDeleting) {
-        FnFullLoadingMask({ text: '移入回收站中...' })
+        FnFullLoadingMask({ text: '移入回收站中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
       if (this.galleryBatchDownloading) {
-        FnFullLoadingMask({ text: '下载中...' })
+        FnFullLoadingMask({ text: '下载中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
       if (this.recentOpening) {
-        FnFullLoadingMask({ text: '加载最近添加中...' })
+        FnFullLoadingMask({ text: '加载最近添加中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
       if (this.collectOpening) {
-        FnFullLoadingMask({ text: '加载收藏中...' })
+        FnFullLoadingMask({ text: '加载收藏中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
       if (this.categoryOpening) {
-        FnFullLoadingMask({ text: this.categoryOpeningText })
+        FnFullLoadingMask({ text: this.categoryOpeningText, topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
 
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
         if (this.uploading) {
-          FnFullLoadingMask({ text: this.uploadText.length > 0 ? this.uploadText : '上传中...' })
+          FnFullLoadingMask({
+            text: this.uploadText.length > 0 ? this.uploadText : '上传中...',
+            topOffsetVp: this.loadingMaskTopOffsetVp()
+          })
         }
       }
     }

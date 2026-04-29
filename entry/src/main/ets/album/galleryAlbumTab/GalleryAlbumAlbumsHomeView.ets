@@ -1,12 +1,13 @@
-import { AiPersonItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
+import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import {
-  fnImmersiveBackgroundEffect,
-  fnLiquidGlassGradient,
   FnInlineLoading,
   FnStateText
 } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, loadThumbPix, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { AppSession } from '../../auth/AppSession';
+import { GalleryNetworkThumb, loadThumbPix, nasUrl, pickThumb, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { loadFirstRecentAddedItem } from '../RecentAddedOpenHelper';
+import { loadFirstCollectGalleryItem } from './GalleryAlbumModeLoaders';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const ALBUMS_HOME_SECTION_SIDE_PAD_VP: number = 14;
@@ -14,9 +15,10 @@ const ALBUMS_HOME_MEDIA_GRID_GAP_VP: number = 10;
 const ALBUMS_HOME_MEDIA_CARD_RADIUS_VP: number = 22;
 const ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP: number = 10;
 const ALBUMS_HOME_SECTION_TITLE_FONT_VP: number = 14;
-const ALBUMS_HOME_SHORTCUT_CARD_HEIGHT_VP: number = 82;
-const ALBUMS_HOME_SHORTCUT_TILE_SIZE_VP: number = 52;
-const ALBUMS_HOME_SHORTCUT_CARD_RADIUS_VP: number = 26;
+const ALBUMS_HOME_SHORTCUT_ROW_HEIGHT_VP: number = 74;
+const ALBUMS_HOME_SHORTCUT_GROUP_RADIUS_VP: number = 26;
+const ALBUMS_HOME_SHORTCUT_ICON_SIZE_VP: number = 52;
+const ALBUMS_HOME_SHORTCUT_DIVIDER_LEFT_VP: number = 78;
 const ALBUMS_HOME_SMART_RING_GAP_VP: number = 6;
 const ALBUMS_HOME_SMART_GRID_GAP_VP: number = 4;
 const ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP: number = 10;
@@ -26,7 +28,8 @@ const TAG = 'GalleryDiag';
 @Component
 export struct GalleryAlbumAlbumsHomeView {
   @Prop @Watch('onBaseUrlChanged') baseUrl: string = '';
-  @Prop pageVisible: boolean = false;
+  @Prop @Watch('onPageVisibleChanged') pageVisible: boolean = false;
+  @Prop @Watch('onPageShowSignalChanged') pageShowSignal: number = 0;
   @Prop contentInsetTopVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
   @Prop mediaLoading: boolean = false;
@@ -60,20 +63,30 @@ export struct GalleryAlbumAlbumsHomeView {
   @State private thumbLoadingPaused: boolean = false;
   @State private personPreviewPix: Array<PixelMap | undefined> = [];
   @State private smartPreviewPix: Array<PixelMap | undefined> = [];
+  @State private recentShortcutThumbUri: string = '';
+  @State private collectShortcutThumbUri: string = '';
+  @State private shortcutPreviewPix: Array<PixelMap | undefined> = [];
+  @State private shortcutPreviewLoaded: boolean = false;
   private thumbResumeTimer: number = -1;
   private previewRefreshTimer: number = -1;
   private previewWarmupGen: number = 0;
+  private shortcutPreviewGen: number = 0;
+  private shortcutRetryTimer: number = -1;
+  private shortcutRetryCount: number = 0;
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
     if (this.personPreviewPix.length <= 0 && this.smartPreviewPix.length <= 0) {
       this.queuePreviewRefresh();
     }
+    this.queueShortcutPreviewRefresh(false);
   }
 
   aboutToDisappear(): void {
     this.clearThumbResumeTimer();
     this.clearPreviewRefreshTimer();
+    this.clearShortcutRetryTimer();
+    this.shortcutPreviewGen++;
   }
 
   private recycleThumbCache(aggressive: boolean = false): void {
@@ -97,6 +110,13 @@ export struct GalleryAlbumAlbumsHomeView {
     }
   }
 
+  private clearShortcutRetryTimer(): void {
+    if (this.shortcutRetryTimer >= 0) {
+      clearTimeout(this.shortcutRetryTimer);
+      this.shortcutRetryTimer = -1;
+    }
+  }
+
   private queuePreviewRefresh(): void {
     this.clearPreviewRefreshTimer();
     hilog.warn(
@@ -114,6 +134,115 @@ export struct GalleryAlbumAlbumsHomeView {
       const warmupGen = ++this.previewWarmupGen;
       void this.warmPreviewPix(warmupGen);
     }, 220);
+  }
+
+  private shortcutThumbUri(item: GalleryListItem | undefined): string {
+    if (item === undefined) {
+      return '';
+    }
+    const thumb = pickThumb(item);
+    return thumb.length > 0 ? nasUrl(this.baseUrl, thumb) : '';
+  }
+
+  private resetShortcutPreviewCache(): void {
+    this.clearShortcutRetryTimer();
+    this.shortcutRetryCount = 0;
+    this.shortcutPreviewLoaded = false;
+    this.recentShortcutThumbUri = '';
+    this.collectShortcutThumbUri = '';
+    this.shortcutPreviewPix = [];
+  }
+
+  private scheduleShortcutPreviewRetry(gen: number, delayMs: number = 420, countFailure: boolean = true): void {
+    if (gen !== this.shortcutPreviewGen || this.shortcutPreviewLoaded || !this.pageVisible) {
+      return;
+    }
+    if (countFailure) {
+      if (this.shortcutRetryCount >= 4) {
+        return;
+      }
+      this.shortcutRetryCount++;
+    }
+    this.clearShortcutRetryTimer();
+    this.shortcutRetryTimer = setTimeout((): void => {
+      this.shortcutRetryTimer = -1;
+      if (gen !== this.shortcutPreviewGen || this.shortcutPreviewLoaded || !this.pageVisible) {
+        return;
+      }
+      void this.refreshShortcutPreviews(gen);
+    }, delayMs);
+  }
+
+  private queueShortcutPreviewRefresh(force: boolean): void {
+    if (!force && this.shortcutPreviewLoaded) {
+      return;
+    }
+    this.clearShortcutRetryTimer();
+    this.shortcutRetryCount = 0;
+    const gen = ++this.shortcutPreviewGen;
+    void this.refreshShortcutPreviews(gen);
+  }
+
+  private async refreshShortcutPreviews(gen: number): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      this.scheduleShortcutPreviewRetry(gen, 420, false);
+      return;
+    }
+    const shouldContinue = (): boolean => gen === this.shortcutPreviewGen;
+    const pair = await Promise.all([
+      loadFirstRecentAddedItem(client, shouldContinue),
+      loadFirstCollectGalleryItem(client, shouldContinue)
+    ]);
+    if (!shouldContinue()) {
+      return;
+    }
+    const recentUri = this.shortcutThumbUri(pair[0].items.length > 0 ? pair[0].items[0] : undefined);
+    const collectUri = this.shortcutThumbUri(pair[1].items.length > 0 ? pair[1].items[0] : undefined);
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'shortcutPreviews items recent=%{public}d collect=%{public}d recentUri=%{public}s collectUri=%{public}s',
+      pair[0].items.length,
+      pair[1].items.length,
+      recentUri,
+      collectUri
+    );
+    this.recentShortcutThumbUri = recentUri;
+    this.collectShortcutThumbUri = collectUri;
+    const pixPair = await Promise.all([
+      recentUri.length > 0 ? loadThumbPix(recentUri, false) : Promise.resolve(undefined),
+      collectUri.length > 0 ? loadThumbPix(collectUri, false) : Promise.resolve(undefined)
+    ]);
+    if (!shouldContinue()) {
+      return;
+    }
+    this.shortcutPreviewPix = [pixPair[0], pixPair[1]];
+    const recentReady = recentUri.length <= 0 || pixPair[0] !== undefined;
+    const collectReady = collectUri.length <= 0 || pixPair[1] !== undefined;
+    this.shortcutPreviewLoaded = recentReady && collectReady;
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'shortcutPreviews pix recent=%{public}s recentInfo=%{public}s collect=%{public}s collectInfo=%{public}s loaded=%{public}s',
+      pixPair[0] !== undefined ? 'yes' : 'no',
+      this.shortcutPixInfo(pixPair[0]),
+      pixPair[1] !== undefined ? 'yes' : 'no',
+      this.shortcutPixInfo(pixPair[1]),
+      this.shortcutPreviewLoaded ? 'true' : 'false'
+    );
+    this.logShortcutState('after-pix');
+    const stateGen = gen;
+    setTimeout((): void => {
+      if (stateGen === this.shortcutPreviewGen) {
+        this.logShortcutState('after-pix-tick');
+      }
+    }, 120);
+    if (this.shortcutPreviewLoaded) {
+      this.shortcutRetryCount = 0;
+    } else {
+      this.scheduleShortcutPreviewRetry(gen, 1700, true);
+    }
   }
 
   private async warmPreviewPix(gen: number): Promise<void> {
@@ -181,6 +310,25 @@ export struct GalleryAlbumAlbumsHomeView {
 
   private onBaseUrlChanged(): void {
     this.queuePreviewRefresh();
+    this.shortcutPreviewGen++;
+    this.resetShortcutPreviewCache();
+    if (this.pageVisible) {
+      this.queueShortcutPreviewRefresh(true);
+    }
+  }
+
+  private onPageVisibleChanged(): void {
+    if (!this.pageVisible) {
+      this.clearShortcutRetryTimer();
+      return;
+    }
+    this.queueShortcutPreviewRefresh(true);
+  }
+
+  private onPageShowSignalChanged(): void {
+    if (this.pageVisible) {
+      this.queueShortcutPreviewRefresh(true);
+    }
   }
 
   private onPersonItemsChanged(): void {
@@ -319,6 +467,105 @@ export struct GalleryAlbumAlbumsHomeView {
       hash = (hash * 131 + uri.charCodeAt(i)) % 2147483647;
     }
     return `${uri.length}_${hash}`;
+  }
+
+  private shortcutPixInfo(pix: PixelMap | undefined): string {
+    if (pix === undefined) {
+      return 'none';
+    }
+    try {
+      const info = pix.getImageInfoSync();
+      return `${info.size.width}x${info.size.height}`;
+    } catch (_e) {
+      return 'info-error';
+    }
+  }
+
+  private shortcutIconBranch(thumbUri: string, thumbPix: PixelMap | undefined, recycle: boolean): string {
+    if (thumbUri.length > 0) {
+      return thumbPix !== undefined ? 'network-cache-ready' : 'network-wait-cache';
+    }
+    return recycle ? 'recycle-symbol' : 'monogram';
+  }
+
+  private shortcutIndexOf(kind: string): number {
+    if (kind === 'recent') {
+      return 0;
+    }
+    if (kind === 'collect') {
+      return 1;
+    }
+    return -1;
+  }
+
+  private shortcutThumbUriForKind(kind: string): string {
+    if (kind === 'recent') {
+      return this.recentShortcutThumbUri;
+    }
+    if (kind === 'collect') {
+      return this.collectShortcutThumbUri;
+    }
+    return '';
+  }
+
+  private shortcutPreviewPixForKind(kind: string): PixelMap | undefined {
+    return this.shortcutPreviewPixAt(this.shortcutIndexOf(kind));
+  }
+
+  private shortcutDebugLabel(kind: string): string {
+    return `shortcut_${kind}_${this.shortcutPreviewPixForKind(kind) !== undefined ? 'pix' : 'nopix'}`;
+  }
+
+  private shortcutThumbId(kind: string): string {
+    return `album_shortcut_${kind}_${this.previewUriToken(this.shortcutThumbUriForKind(kind))}`;
+  }
+
+  private shortcutPreviewPixAt(idx: number): PixelMap | undefined {
+    if (idx < 0 || idx >= this.shortcutPreviewPix.length) {
+      return undefined;
+    }
+    return this.shortcutPreviewPix[idx];
+  }
+
+  private logShortcutIconSnapshot(
+    stage: string,
+    kind: string,
+    recycle: boolean,
+    widthText: string,
+    heightText: string
+  ): void {
+    const thumbUri = this.shortcutThumbUriForKind(kind);
+    const thumbPix = this.shortcutPreviewPixForKind(kind);
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'shortcutRender stage=%{public}s kind=%{public}s branch=%{public}s uriToken=%{public}s pix=%{public}s area=%{public}s/%{public}s pageVisible=%{public}s',
+      stage,
+      kind,
+      this.shortcutIconBranch(thumbUri, thumbPix, recycle),
+      this.previewUriToken(thumbUri),
+      this.shortcutPixInfo(thumbPix),
+      widthText,
+      heightText,
+      this.pageVisible ? 'true' : 'false'
+    );
+  }
+
+  private logShortcutState(stage: string): void {
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'shortcutState stage=%{public}s recentBranch=%{public}s recentUriToken=%{public}s recentPix=%{public}s collectBranch=%{public}s collectUriToken=%{public}s collectPix=%{public}s loaded=%{public}s pageVisible=%{public}s',
+      stage,
+      this.shortcutIconBranch(this.recentShortcutThumbUri, this.shortcutPreviewPixAt(0), false),
+      this.previewUriToken(this.recentShortcutThumbUri),
+      this.shortcutPixInfo(this.shortcutPreviewPixAt(0)),
+      this.shortcutIconBranch(this.collectShortcutThumbUri, this.shortcutPreviewPixAt(1), false),
+      this.previewUriToken(this.collectShortcutThumbUri),
+      this.shortcutPixInfo(this.shortcutPreviewPixAt(1)),
+      this.shortcutPreviewLoaded ? 'true' : 'false',
+      this.pageVisible ? 'true' : 'false'
+    );
   }
 
   private previewThumbId(kind: string, idx: number, uri: string): string {
@@ -577,18 +824,9 @@ export struct GalleryAlbumAlbumsHomeView {
       }
       .width('100%')
       .aspectRatio(1)
-      .padding(10)
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .backgroundEffect(fnImmersiveBackgroundEffect())
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
-      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
-      .clip(true)
 
       Text('人物')
-        .fontSize(13)
+        .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .maxLines(1)
@@ -596,7 +834,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .width('100%')
 
       Text(this.personModuleSubtitle())
-        .fontSize(11)
+        .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -615,18 +853,9 @@ export struct GalleryAlbumAlbumsHomeView {
       }
       .width('100%')
       .aspectRatio(1)
-      .padding(10)
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .backgroundEffect(fnImmersiveBackgroundEffect())
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
-      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
-      .clip(true)
 
       Text('地点')
-        .fontSize(13)
+        .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .maxLines(1)
@@ -634,7 +863,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .width('100%')
 
       Text('预留')
-        .fontSize(11)
+        .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -653,18 +882,9 @@ export struct GalleryAlbumAlbumsHomeView {
       }
       .width('100%')
       .aspectRatio(1)
-      .padding(10)
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .backgroundEffect(fnImmersiveBackgroundEffect())
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
-      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      .shadow({ radius: 10, color: '#14001A33', offsetX: 0, offsetY: 4 })
-      .clip(true)
 
       Text('分类')
-        .fontSize(13)
+        .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .maxLines(1)
@@ -672,7 +892,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .width('100%')
 
       Text(this.smartModuleSubtitle())
-        .fontSize(11)
+        .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -694,60 +914,113 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   @Builder
-  private shortcutCard(monogram: string, title: string, subtitle: string, action: () => void) {
-    Row({ space: 14 }) {
-      Stack({ alignContent: Alignment.Center }) {
+  private shortcutIcon(
+    kind: string,
+    monogram: string,
+    recycle: boolean = false
+  ) {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.shortcutPreviewPixForKind(kind) !== undefined) {
+        Image(this.shortcutPreviewPixForKind(kind) as PixelMap)
+          .id(this.shortcutThumbId(kind))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .draggable(false)
+      } else if (this.shortcutThumbUriForKind(kind).length > 0) {
+        GalleryNetworkThumb({
+          uri: this.shortcutThumbUriForKind(kind),
+          isVideo: false,
+          isGif: false,
+          paused: false,
+          fadeInEnabled: false,
+          debugLabel: this.shortcutDebugLabel(kind),
+          cacheIdentity: `shortcut_${kind}`
+        })
+          .id(this.shortcutThumbId(kind))
+          .width('100%')
+          .height('100%')
+      } else if (recycle) {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(24)
+          .fontColor([$r('app.color.text_secondary')])
+      } else {
         Text(monogram)
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-      }
-      .width(ALBUMS_HOME_SHORTCUT_TILE_SIZE_VP)
-      .height(ALBUMS_HOME_SHORTCUT_TILE_SIZE_VP)
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .backgroundEffect(fnImmersiveBackgroundEffect())
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(18)
-      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-      .clip(true)
-
-      Column({ space: 4 }) {
-        Text(title)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-
-        Text(subtitle)
-          .fontSize(11)
           .fontColor($r('app.color.text_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+    }
+    .width(ALBUMS_HOME_SHORTCUT_ICON_SIZE_VP)
+    .height(ALBUMS_HOME_SHORTCUT_ICON_SIZE_VP)
+    .borderRadius(16)
+    .backgroundColor('#12001A33')
+    .clip(true)
+    .onAppear((): void => {
+      this.logShortcutIconSnapshot('appear', kind, recycle, 'n/a', 'n/a');
+    })
+  }
 
-      Text('>')
-        .fontSize(18)
+  @Builder
+  private shortcutRow(
+    kind: string,
+    monogram: string,
+    title: string,
+    action: () => void,
+    recycle: boolean = false
+  ) {
+    Row({ space: 14 }) {
+      this.shortcutIcon(kind, monogram, recycle)
+
+      Text(title)
+        .layoutWeight(1)
+        .fontSize(17)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(18)
+        .fontColor([$r('app.color.text_secondary')])
     }
     .width('100%')
-    .height(ALBUMS_HOME_SHORTCUT_CARD_HEIGHT_VP)
-    .padding({ left: 14, right: 16 })
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .backgroundEffect(fnImmersiveBackgroundEffect())
-    .linearGradient(fnLiquidGlassGradient())
-    .borderRadius(ALBUMS_HOME_SHORTCUT_CARD_RADIUS_VP)
-    .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-    .shadow({ radius: 16, color: '#14001A33', offsetX: 0, offsetY: 6 })
-    .clip(true)
+    .height(ALBUMS_HOME_SHORTCUT_ROW_HEIGHT_VP)
+    .padding({ left: 14, right: 18 })
+    .alignItems(VerticalAlign.Center)
     .onClick(action)
+  }
+
+  @Builder
+  private shortcutDivider() {
+    Divider()
+      .strokeWidth(1)
+      .color($r('app.color.gallery_material_shell_border'))
+      .margin({ left: ALBUMS_HOME_SHORTCUT_DIVIDER_LEFT_VP })
+  }
+
+  @Builder
+  private shortcutGroup() {
+    Column() {
+      this.shortcutRow('recent', '近', '最近添加', this.onOpenRecentAdded)
+      this.shortcutDivider()
+      this.shortcutRow('collect', '藏', '收藏夹', this.onOpenCollect)
+    }
+    .width('100%')
+    .borderRadius(ALBUMS_HOME_SHORTCUT_GROUP_RADIUS_VP)
+    .backgroundColor($r('app.color.album_shortcut_group_bg'))
+    .clip(true)
+  }
+
+  @Builder
+  private recycleShortcutGroup() {
+    Column() {
+      this.shortcutRow('recycle', '回', '回收站', this.onOpenRecycleBin, true)
+    }
+    .width('100%')
+    .borderRadius(ALBUMS_HOME_SHORTCUT_GROUP_RADIUS_VP)
+    .backgroundColor($r('app.color.album_shortcut_group_bg'))
+    .clip(true)
   }
 
   build() {
@@ -817,10 +1090,9 @@ export struct GalleryAlbumAlbumsHomeView {
         Column({ space: 10 }) {
           this.sectionTitle('常用入口')
 
-          Column({ space: 10 }) {
-            this.shortcutCard('最', '最近添加', '查看最近新增的照片与视频', this.onOpenRecentAdded)
-            this.shortcutCard('藏', '收藏', '查看已收藏的媒体内容', this.onOpenCollect)
-            this.shortcutCard('回', '回收站', '查看已删除但仍可恢复的项目', this.onOpenRecycleBin)
+          Column({ space: 12 }) {
+            this.shortcutGroup()
+            this.recycleShortcutGroup()
           }
           .width('100%')
           .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP })

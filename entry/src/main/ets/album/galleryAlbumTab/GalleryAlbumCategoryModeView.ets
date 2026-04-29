@@ -66,14 +66,14 @@ export struct GalleryAlbumCategoryModeView {
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .padding({ top: 40 })
+        .padding({ top: this.contentInsetTopVp + 40 })
       } else if (this.error.length > 0) {
         Text(this.error)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
           .textAlign(TextAlign.Center)
-          .padding({ top: 40, left: 24, right: 24 })
+          .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         Stack({ alignContent: Alignment.Center }) {
           Grid() {
@@ -119,14 +119,15 @@ export struct GalleryAlbumCategoryModeView {
           .padding({
             left: 12,
             right: 12,
-            top: this.contentInsetTopVp + 8,
+            top: 8,
             bottom: this.contentInsetBottomVp + 12
           })
+          .margin({ top: this.contentInsetTopVp })
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
 
           if (this.opening) {
-            FnFullLoadingMask({ text: '加载中…' })
+            FnFullLoadingMask({ text: '加载中…', topOffsetVp: this.contentInsetTopVp })
           }
         }
         .width('100%')

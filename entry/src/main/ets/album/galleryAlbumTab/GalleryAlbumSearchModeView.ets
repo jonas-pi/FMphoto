@@ -85,6 +85,12 @@ export struct GalleryAlbumSearchModeView {
     this.galleryInitialSlidePending = false;
   }
 
+  private releaseScrollLockIfIdle(): void {
+    if (!this.gallerySlideGestureActive && !this.galleryMainListScrollEnabled) {
+      this.ensureMainListScrollEnabled();
+    }
+  }
+
   private currentRenderedRowCount(): number {
     return Math.ceil(this.currentRenderedCount() / 3);
   }
@@ -242,10 +248,12 @@ export struct GalleryAlbumSearchModeView {
   }
 
   private onSearchResultsChanged(): void {
+    this.ensureMainListScrollEnabled();
     this.resetRenderedSearchResults();
   }
 
   private onLoadingChanged(): void {
+    this.ensureMainListScrollEnabled();
     if (this.loading) {
       this.resetRenderedSearchResults();
       return;
@@ -256,6 +264,7 @@ export struct GalleryAlbumSearchModeView {
   }
 
   aboutToAppear(): void {
+    this.ensureMainListScrollEnabled();
     this.resetRenderedSearchResults();
   }
 
@@ -422,24 +431,17 @@ export struct GalleryAlbumSearchModeView {
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .padding({ top: 40 })
+        .padding({ top: this.contentInsetTopVp + 40 })
       } else if (this.error.length > 0) {
         Text(this.error)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
           .textAlign(TextAlign.Center)
-          .padding({ top: 40, left: 24, right: 24 })
+          .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         Column() {
           List() {
-            if (this.contentInsetTopVp > 0) {
-              ListItem() {
-                Column()
-                  .width('100%')
-                  .height(this.contentInsetTopVp)
-              }
-            }
             LazyForEach(this.searchRowSource, (block: GallerySearchRowBlock) => {
               ListItem() {
                 Row({ space: 2 }) {
@@ -450,6 +452,7 @@ export struct GalleryAlbumSearchModeView {
                 .width('100%')
                 .padding({ left: 2, right: 2, top: 1, bottom: 1 })
                 .onTouch((event: TouchEvent): void => {
+                  this.releaseScrollLockIfIdle();
                   if (!this.gallerySlideGestureActive) {
                     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
                       this.clearInitialGallerySlideGesture();
@@ -586,7 +589,9 @@ export struct GalleryAlbumSearchModeView {
           .scrollBar(BarState.Auto)
           .divider({ strokeWidth: 0 })
           .enableScrollInteraction(this.galleryMainListScrollEnabled)
+          .margin({ top: this.contentInsetTopVp })
           .onTouch((event: TouchEvent): void => {
+            this.releaseScrollLockIfIdle();
             if (!this.gallerySlideGestureActive) {
               if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
                 this.clearInitialGallerySlideGesture();

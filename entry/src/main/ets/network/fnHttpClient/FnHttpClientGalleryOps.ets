@@ -311,6 +311,7 @@ export class FnHttpClientGalleryOps {
       const parsed = FnHttpClientGalleryOps.parseGalleryAssetUrl(fullUrl);
       const authx = await genFnGalleryAuthxGet(parsed.signPath, parsed.queryParams);
       const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Accept'] = '*/*';
       const req = http.createHttp();
       this.registerPendingRequest(req);
       try {
@@ -319,7 +320,8 @@ export class FnHttpClientGalleryOps {
           header: headers,
           expectDataType: http.HttpDataType.ARRAY_BUFFER,
           connectTimeout: timeoutMs,
-          readTimeout: timeoutMs
+          readTimeout: timeoutMs,
+          maxLimit: 20 * 1024 * 1024
         };
         if (CertPolicy.isTrusted(activeBase)) {
           opt.remoteValidation = 'skip';

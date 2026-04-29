@@ -591,10 +591,10 @@ struct RecycleBinPage {
       Column() {
 
       if (this.loading) {
-        FnInlineLoading({ text: '加载回收站…' }).layoutWeight(1)
+        FnInlineLoading({ text: '加载回收站…', topOffsetVp: this.contentInsetTopVp() }).layoutWeight(1)
       } else if (this.error.length > 0) {
         Column({ space: 12 }) {
-          FnStateText({ text: this.error })
+          FnStateText({ text: this.error, topOffsetVp: this.contentInsetTopVp() })
           FnHdsPillButton({
             text: '刷新',
             widthValue: 104,
@@ -610,7 +610,10 @@ struct RecycleBinPage {
         .width('100%')
         .justifyContent(FlexAlign.Center)
       } else if (this.items.length === 0) {
-        FnStateText({ text: '回收站为空' }).layoutWeight(1)
+        FnStateText({
+          text: '回收站为空',
+          topOffsetVp: this.contentInsetTopVp()
+        }).layoutWeight(1)
       } else {
         Stack() {
           Column() {
@@ -793,7 +796,10 @@ struct RecycleBinPage {
           .height('100%')
 
           if (this.restoring || this.rbBatchDownloading) {
-            FnFullLoadingMask({ text: this.restoring ? '正在还原…' : '下载中…' })
+            FnFullLoadingMask({
+              text: this.restoring ? '正在还原…' : '下载中…',
+              topOffsetVp: this.contentInsetTopVp()
+            })
           }
         }
         .layoutWeight(1)

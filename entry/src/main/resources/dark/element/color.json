@@ -6,6 +6,10 @@
     },
     {
       "name": "page_background",
+      "value": "#000000"
+    },
+    {
+      "name": "album_shortcut_group_bg",
       "value": "#0F1115"
     },
     {

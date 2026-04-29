@@ -140,10 +140,25 @@ export struct FnHdsPillButton {
   @Prop fontColorValue: ResourceColor = $r('app.color.button_secondary_fg');
   @Prop fontWeightValue: FontWeight | number | string = FontWeight.Medium;
   @Prop lightColorValue: ResourceColor = $r('app.color.gallery_material_surface_bg');
+  @State private measuredWidthVp: number = 0;
   action: () => void = () => {};
+  private lastActionAt: number = 0;
 
   private shapeRadius(): number {
     return this.radiusValue >= 0 ? this.radiusValue : this.heightValue / 2;
+  }
+
+  private materialWidth(): Length {
+    return this.measuredWidthVp > 1 ? this.measuredWidthVp : this.widthValue;
+  }
+
+  private triggerAction(): void {
+    const now = Date.now();
+    if (now - this.lastActionAt < 80) {
+      return;
+    }
+    this.lastActionAt = now;
+    this.action();
   }
 
   @Builder
@@ -189,8 +204,8 @@ export struct FnHdsPillButton {
       .barOverlap(true)
       .vertical(false)
       .barPosition(BarPosition.End)
-      .barWidth(this.widthValue)
-      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.lightColorValue))
+      .barWidth(this.materialWidth())
+      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.materialWidth(), this.lightColorValue))
       .scrollable(false)
       .divider({ mode: DividerMode.NONE })
       .barBackgroundColor(Color.Transparent)
@@ -202,13 +217,22 @@ export struct FnHdsPillButton {
         return false;
       })
       .onTabBarClick((_index: number): void => {
-        this.action();
+        this.triggerAction();
       })
 
       this.labelContent()
     }
     .width(this.widthValue)
     .height(this.heightValue)
+    .onAreaChange((_old: Area, area: Area): void => {
+      const width = area.width as number;
+      if (width > 1 && Math.abs(width - this.measuredWidthVp) > 0.5) {
+        this.measuredWidthVp = width;
+      }
+    })
+    .onClick((): void => {
+      this.triggerAction();
+    })
   }
 }
 
@@ -222,6 +246,7 @@ export struct FnHdsSymbolButton {
   @Prop fontColorValue: ResourceColor = $r('app.color.icon_primary');
   @Prop lightColorValue: ResourceColor = $r('app.color.gallery_material_surface_bg');
   action: () => void = () => {};
+  private lastActionAt: number = 0;
 
   private shapeRadius(): number {
     return this.radiusValue >= 0 ? this.radiusValue : Math.min(this.heightValue, this.numericWidth()) / 2;
@@ -229,6 +254,15 @@ export struct FnHdsSymbolButton {
 
   private numericWidth(): number {
     return typeof this.widthValue === 'number' ? this.widthValue : this.heightValue;
+  }
+
+  private triggerAction(): void {
+    const now = Date.now();
+    if (now - this.lastActionAt < 80) {
+      return;
+    }
+    this.lastActionAt = now;
+    this.action();
   }
 
   @Builder
@@ -245,35 +279,119 @@ export struct FnHdsSymbolButton {
   }
 
   build() {
-    HdsTabs({ index: 0 }) {
-      TabContent() {
-        Column()
-          .width('100%')
-          .height('100%')
+    Stack() {
+      HdsTabs({ index: 0 }) {
+        TabContent() {
+          Column()
+            .width('100%')
+            .height('100%')
+        }
+        .tabBar(this.tabBarContent)
       }
-      .tabBar(this.tabBarContent)
+      .width(this.widthValue)
+      .height(this.heightValue)
+      .barHeight(this.heightValue)
+      .barOverlap(true)
+      .vertical(false)
+      .barPosition(BarPosition.End)
+      .barWidth(this.widthValue)
+      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.lightColorValue))
+      .scrollable(false)
+      .divider({ mode: DividerMode.NONE })
+      .barBackgroundColor(Color.Transparent)
+      .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: this.heightValue })
+      .blurStrategy(BlurStrategy.ADAPTIVE)
+      .borderRadius(this.shapeRadius())
+      .clip(true)
+      .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
+        return false;
+      })
+      .onTabBarClick((_index: number): void => {
+        this.triggerAction();
+      })
     }
     .width(this.widthValue)
     .height(this.heightValue)
-    .barHeight(this.heightValue)
-    .barOverlap(true)
-    .vertical(false)
-    .barPosition(BarPosition.End)
-    .barWidth(this.widthValue)
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.lightColorValue))
-    .scrollable(false)
-    .divider({ mode: DividerMode.NONE })
-    .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: this.heightValue })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(this.shapeRadius())
-    .clip(true)
-    .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
-      return false;
+    .onClick((): void => {
+      this.triggerAction();
     })
-    .onTabBarClick((_index: number): void => {
-      this.action();
-    })
+  }
+}
+
+@Component
+export struct FnHdsTextPill {
+  @Prop text: ResourceStr = '';
+  @Prop widthValue: Length = FN_FLOATING_TOP_PILL_MIN_WIDTH_VP;
+  @Prop heightValue: number = FN_FLOATING_TOP_CONTROL_SIZE_VP;
+  @Prop radiusValue: number = -1;
+  @Prop fontSizeValue: number = GALLERY_TOP_BAR_BUTTON_FONT_VP;
+  @Prop fontColorValue: ResourceColor = $r('app.color.button_secondary_fg');
+  @Prop fontWeightValue: FontWeight | number | string = FontWeight.Medium;
+  @Prop lightColorValue: ResourceColor = $r('app.color.gallery_material_surface_bg');
+
+  private shapeRadius(): number {
+    return this.radiusValue >= 0 ? this.radiusValue : this.heightValue / 2;
+  }
+
+  @Builder
+  private blankTabBarContent() {
+    Row()
+      .width('100%')
+      .height('100%')
+  }
+
+  @Builder
+  private labelContent() {
+    Row() {
+      Text(this.text)
+        .fontSize(this.fontSizeValue)
+        .fontWeight(this.fontWeightValue)
+        .fontColor(this.fontColorValue)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 8, right: 8 })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  build() {
+    Stack() {
+      HdsTabs({ index: 0 }) {
+        TabContent() {
+          Column()
+            .width('100%')
+            .height('100%')
+        }
+        .tabBar(this.blankTabBarContent)
+      }
+      .width('100%')
+      .height(this.heightValue)
+      .barHeight(this.heightValue)
+      .barOverlap(true)
+      .vertical(false)
+      .barPosition(BarPosition.End)
+      .barWidth(this.widthValue)
+      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.lightColorValue))
+      .scrollable(false)
+      .divider({ mode: DividerMode.NONE })
+      .barBackgroundColor(Color.Transparent)
+      .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: this.heightValue })
+      .blurStrategy(BlurStrategy.ADAPTIVE)
+      .borderRadius(this.shapeRadius())
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
+
+      this.labelContent()
+    }
+    .width(this.widthValue)
+    .height(this.heightValue)
+    .hitTestBehavior(HitTestMode.None)
   }
 }
 
@@ -530,6 +648,7 @@ export struct FnImmersiveBackdrop {
 
 @Component
 export struct FnFullLoadingMask {
+  @Prop topOffsetVp: number = 0;
   @Prop text: string = '加载中...';
 
   build() {
@@ -541,6 +660,7 @@ export struct FnFullLoadingMask {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .padding({ top: this.topOffsetVp })
     .backgroundColor($r('app.color.overlay_mask'))
     .hitTestBehavior(HitTestMode.Block)
   }
@@ -548,6 +668,7 @@ export struct FnFullLoadingMask {
 
 @Component
 export struct FnInlineLoading {
+  @Prop topOffsetVp: number = 0;
   @Prop text: string = '加载中...';
 
   build() {
@@ -557,6 +678,7 @@ export struct FnInlineLoading {
     }
     .width('100%')
     .justifyContent(FlexAlign.Center)
+    .padding({ top: this.topOffsetVp })
   }
 }
 
@@ -564,12 +686,13 @@ export struct FnInlineLoading {
 export struct FnStateText {
   @Prop text: string = '';
   @Prop isError: boolean = false;
+  @Prop topOffsetVp: number = 0;
 
   build() {
     Text(this.text)
       .layoutWeight(1)
       .width('100%')
-      .padding({ left: 24, right: 24, top: 40 })
+      .padding({ left: 24, right: 24, top: this.topOffsetVp + 40 })
       .textAlign(TextAlign.Center)
       .fontSize(14)
       .fontColor(this.isError ? '#FFE0483E' : $r('app.color.text_secondary'))

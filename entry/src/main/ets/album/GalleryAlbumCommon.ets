@@ -382,6 +382,114 @@ function pickFirstThumbUrl(urls: Array<string | undefined>): string {
   return '';
 }
 
+type LooseThumbRecord = Record<string, Object | string | number | boolean | undefined | null>;
+
+function readLooseThumbString(raw: LooseThumbRecord, keys: string[]): string {
+  for (let i = 0; i < keys.length; i++) {
+    const value = raw[keys[i]];
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (text.length > 0) {
+        return text;
+      }
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      const text = String(value).trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+  }
+  return '';
+}
+
+function asLooseThumbRecord(value: Object | string | number | boolean | undefined | null): LooseThumbRecord | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as LooseThumbRecord;
+}
+
+function pickLooseThumbnailBlockUrl(value: Object | string | number | boolean | undefined | null): string {
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text.length > 0 ? text : '';
+  }
+  const raw = asLooseThumbRecord(value);
+  if (raw === null) {
+    return '';
+  }
+  return readLooseThumbString(raw, [
+    'mUrl',
+    'sUrl',
+    'xsUrl',
+    'xxsUrl',
+    'originalUrl',
+    'videoUrl',
+    'url',
+    'src'
+  ]);
+}
+
+function buildPhotoThumbStream(raw: LooseThumbRecord, mode: 'm' | 's' = 's'): string {
+  const id = readLooseThumbString(raw, ['photoId', 'id']);
+  const uuid = readLooseThumbString(raw, ['uuid', 'photoUUID', 'session']);
+  if (id.length === 0 || uuid.length === 0 || id === 'null' || uuid === 'null') {
+    return '';
+  }
+  return `/p/api/v1/stream/p/t/${id}/${mode}/${uuid}`;
+}
+
+function pickNestedPhotoThumb(it: GalleryListItem): string {
+  const raw = it as LooseThumbRecord;
+  const direct = readLooseThumbString(raw, [
+    'mUrl',
+    'sUrl',
+    'xsUrl',
+    'xxsUrl',
+    'coverUrl',
+    'posterUrl',
+    'imageUrl',
+    'imgUrl',
+    'photoUrl'
+  ]);
+  if (direct.length > 0) {
+    return direct;
+  }
+  const nestedKeys: string[] = ['poster', 'coverInfo', 'coverPhoto', 'photo', 'media', 'item'];
+  for (let i = 0; i < nestedKeys.length; i++) {
+    const nested = asLooseThumbRecord(raw[nestedKeys[i]]);
+    if (nested === null) {
+      continue;
+    }
+    const nestedDirect = readLooseThumbString(nested, [
+      'cover',
+      'thumb',
+      'small_thumb',
+      'thumb_url',
+      'poster',
+      'posterUrl',
+      'imageUrl',
+      'imgUrl',
+      'photoUrl',
+      'url',
+      'src',
+      'path'
+    ]);
+    if (nestedDirect.length > 0) {
+      return nestedDirect;
+    }
+    const nestedBlock = pickLooseThumbnailBlockUrl(nested['thumbnail']);
+    if (nestedBlock.length > 0) {
+      return nestedBlock;
+    }
+    const nestedStream = buildPhotoThumbStream(nested);
+    if (nestedStream.length > 0) {
+      return nestedStream;
+    }
+  }
+  return buildPhotoThumbStream(raw);
+}
+
 export function pickThumb(it: GalleryListItem): string {
   const th = it.additional?.thumbnail;
   const fromAdditional = th !== undefined ? pickFirstThumbUrl([th.mUrl, th.sUrl, th.xsUrl, th.xxsUrl]) : '';
@@ -403,6 +511,10 @@ export function pickThumb(it: GalleryListItem): string {
   }
   if (typeof topTh === 'string' && topTh.trim().length > 0) {
     return topTh.trim();
+  }
+  const looseThumb = pickNestedPhotoThumb(it);
+  if (looseThumb.length > 0) {
+    return looseThumb;
   }
   for (const u of [it.url, it.src, it.path]) {
     if (u !== undefined && u.trim().length > 0) {
@@ -447,6 +559,10 @@ export function pickThumbForGridDensity(it: GalleryListItem, density: 'day' | 'm
   }
   if (typeof topTh === 'string' && topTh.trim().length > 0) {
     return topTh.trim();
+  }
+  const looseThumb = pickNestedPhotoThumb(it);
+  if (looseThumb.length > 0) {
+    return looseThumb;
   }
   for (const u of [it.url, it.src, it.path]) {
     if (u !== undefined && u.trim().length > 0) {

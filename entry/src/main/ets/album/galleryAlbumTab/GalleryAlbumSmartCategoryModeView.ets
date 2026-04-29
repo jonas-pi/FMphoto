@@ -108,14 +108,14 @@ export struct GalleryAlbumSmartCategoryModeView {
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .padding({ top: 40 })
+        .padding({ top: this.contentInsetTopVp + 40 })
       } else if (this.error.length > 0) {
         Text(this.error)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
           .textAlign(TextAlign.Center)
-          .padding({ top: 40, left: 24, right: 24 })
+          .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         List() {
           if (this.sceneItems.length > 0) {
@@ -153,7 +153,8 @@ export struct GalleryAlbumSmartCategoryModeView {
         }
         .width('100%')
         .layoutWeight(1)
-        .padding({ top: this.contentInsetTopVp, bottom: this.contentInsetBottomVp + 12 })
+        .padding({ top: 0, bottom: this.contentInsetBottomVp + 12 })
+        .margin({ top: this.contentInsetTopVp })
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         .divider({ strokeWidth: 0 })

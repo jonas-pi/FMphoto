@@ -47,6 +47,8 @@ import {
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../common/GalleryTopBarLayout';
 
+const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
+
 @Component
 struct MePanel {
   @Prop topSafeInsetVp: number = 0;
@@ -381,14 +383,7 @@ struct Home {
     this.gallerySelectionDockDownloadAction = onDownload;
     this.gallerySelectionDockDeleteAction = onDelete;
     this.clearGallerySelectionDockTimer();
-    if (!active) {
-      this.gallerySelectionDockActive = false;
-      return;
-    }
-    this.gallerySelectionDockTimer = setTimeout((): void => {
-      this.gallerySelectionDockTimer = -1;
-      this.gallerySelectionDockActive = true;
-    }, 180);
+    this.gallerySelectionDockActive = active;
   }
 
   private animateShellToMe(): void {
@@ -608,22 +603,18 @@ struct Home {
         '#E11D48'
       ))
     }
-    .width('100%')
-    .layoutWeight(1)
+    .width(FN_SELECTION_DOCK_WIDTH_VP)
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
-    .barFloatingStyle({
-      barBottomMargin: 0,
-      gradientMask: {
-        maskColor: Color.Transparent,
-        maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP
-      },
-      lightColor: this.dockMaterialBackgroundColor(),
-      systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
-    })
+    .barWidth(FN_SELECTION_DOCK_WIDTH_VP)
+    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
+      FN_SELECTION_DOCK_WIDTH_VP,
+      this.dockMaterialBackgroundColor()
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .barBackgroundColor(Color.Transparent)
@@ -707,34 +698,41 @@ struct Home {
 
   @Builder
   private renderBottomDock() {
-    Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
-      if (this.shouldShowGalleryDockSideButtons()) {
-        this.floatingDockSideButton(true)
-      } else {
-        Blank()
-          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-      }
-
-      if (this.gallerySelectionDockActive) {
+    if (this.gallerySelectionDockActive) {
+      Row() {
         this.floatingDockSelectionHdsTabs()
-      } else {
-        this.floatingDockHdsTabs()
       }
+      .width('100%')
+      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: this.bottomDockBottomGap() })
+    } else {
+      Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+        if (this.shouldShowGalleryDockSideButtons()) {
+          this.floatingDockSideButton(true)
+        } else {
+          Blank()
+            .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        }
 
-      if (this.shouldShowGalleryDockSideButtons()) {
-        this.floatingDockSideButton(false)
-      } else {
-        Blank()
-          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        this.floatingDockHdsTabs()
+
+        if (this.shouldShowGalleryDockSideButtons()) {
+          this.floatingDockSideButton(false)
+        } else {
+          Blank()
+            .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        }
       }
+      .width('100%')
+      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: this.bottomDockBottomGap() })
     }
-    .width('100%')
-    .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .margin({ bottom: this.bottomDockBottomGap() })
   }
 
   build() {
