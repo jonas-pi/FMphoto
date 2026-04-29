@@ -309,7 +309,7 @@ struct Home {
 
   private dockMaterialShadowColor(): ResourceColor {
     return this.isDarkTheme ? '#52000000' : '#22001A33';
-  }
+    }
 
   private syncBottomTabsController(index: number): void {
     try {

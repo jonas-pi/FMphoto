@@ -6,9 +6,9 @@ import {
   GALLERY_TOP_BAR_TITLE_FONT_VP
 } from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
-  fnImmersiveBackgroundEffect,
-  fnLiquidGlassGradient,
+  fnHdsImmersiveTabsFloatingStyle,
   FnFloatingTopCircleButton,
   FnFloatingTopPillButton
 } from '../../common/FnUiCommon';
@@ -30,7 +30,7 @@ export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number =
 export struct GalleryAlbumTopBar {
   @Prop homeSurface: string = 'photos';
   @Prop rootSurfaceTitle: string = '图库';
-  @Prop inSearchMode: boolean = false;
+  @Prop @Watch('onSearchModeChanged') inSearchMode: boolean = false;
   @Prop inCategoryMode: boolean = false;
   @Prop inSmartCategoryMode: boolean = false;
   @Prop inPersonMode: boolean = false;
@@ -51,6 +51,7 @@ export struct GalleryAlbumTopBar {
   onShowMoreMenu: () => void = () => {};
 
   @State private suppressSearchAutoFocus: boolean = true;
+  @State private searchFieldWidthVp: number = 0;
   private searchInputCtrl: TextInputController = new TextInputController();
   private suppressSearchFocusTimer: number = -1;
   private searchFocusKickTimer: number = -1;
@@ -107,6 +108,10 @@ export struct GalleryAlbumTopBar {
     }
   }
 
+  private searchHdsWidth(): Length {
+    return this.searchFieldWidthVp > 1 ? this.searchFieldWidthVp : '100%';
+  }
+
   private suppressSearchRestoreTemporarily(): void {
     this.blurSearchInput();
     this.suppressSearchAutoFocus = true;
@@ -118,27 +123,56 @@ export struct GalleryAlbumTopBar {
   }
 
   private onPageShowSignal(): void {
+    if (this.inSearchMode) {
+      this.activateSearchAutoFocus(96);
+      return;
+    }
     this.suppressSearchRestoreTemporarily();
   }
 
-  private focusSearchInputSoon(): void {
+  private focusSearchInputOnce(): void {
+    if (!this.inSearchMode) {
+      return;
+    }
+    this.suppressSearchAutoFocus = false;
+    try {
+      this.getUIContext().getFocusController().requestFocus(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY);
+    } catch (_e) {
+    }
+    try {
+      this.searchInputCtrl.caretPosition(this.searchQuery.length);
+    } catch (_e) {
+    }
+  }
+
+  private focusSearchInputSoon(delayMs: number = 48, retryCount: number = 0): void {
     this.clearSearchFocusKickTimer();
     this.searchFocusKickTimer = setTimeout((): void => {
       this.searchFocusKickTimer = -1;
-      this.suppressSearchAutoFocus = false;
-      this.getUIContext().getFocusController().requestFocus(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY);
-      try {
-        this.searchInputCtrl.caretPosition(this.searchQuery.length);
-      } catch (_e) {
+      this.focusSearchInputOnce();
+      if (this.inSearchMode && retryCount < 2) {
+        this.focusSearchInputSoon(96, retryCount + 1);
       }
-    }, 32);
+    }, delayMs);
+  }
+
+  private activateSearchAutoFocus(delayMs: number = 48): void {
+    this.clearSuppressSearchFocusTimer();
+    this.suppressSearchAutoFocus = false;
+    this.focusSearchInputSoon(delayMs);
+  }
+
+  private onSearchModeChanged(): void {
+    if (this.inSearchMode) {
+      this.activateSearchAutoFocus(80);
+      return;
+    }
+    this.suppressSearchRestoreTemporarily();
   }
 
   private openSearchPanelWithAutoFocus(): void {
-    this.clearSuppressSearchFocusTimer();
-    this.suppressSearchAutoFocus = false;
     this.onOpenSearch();
-    this.focusSearchInputSoon();
+    this.activateSearchAutoFocus(48);
   }
 
   private leaveSearchMode(): void {
@@ -147,6 +181,10 @@ export struct GalleryAlbumTopBar {
   }
 
   aboutToAppear(): void {
+    if (this.inSearchMode) {
+      this.activateSearchAutoFocus(80);
+      return;
+    }
     this.suppressSearchRestoreTemporarily();
   }
 
@@ -165,6 +203,46 @@ export struct GalleryAlbumTopBar {
     FnFloatingTopCircleButton({ symbol: symbol, active: active, action: action })
   }
 
+  @Builder
+  private searchFieldBlankTabBar() {
+    Row()
+      .width('100%')
+      .height('100%')
+  }
+
+  @Builder
+  private searchFieldHdsBackground() {
+    HdsTabs({ index: 0 }) {
+      TabContent() {
+        Column()
+          .width('100%')
+          .height('100%')
+      }
+      .tabBar(this.searchFieldBlankTabBar)
+    }
+    .width(this.searchHdsWidth())
+    .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+    .barHeight(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+    .barOverlap(true)
+    .vertical(false)
+    .barPosition(BarPosition.End)
+    .barWidth(this.searchHdsWidth())
+    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+      GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP,
+      this.searchHdsWidth(),
+      $r('app.color.gallery_material_surface_bg')
+    ))
+    .scrollable(false)
+    .barMode(BarMode.Fixed)
+    .divider({ mode: DividerMode.NONE })
+    .barBackgroundColor(Color.Transparent)
+    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP })
+    .blurStrategy(BlurStrategy.ADAPTIVE)
+    .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+    .clip(true)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
   build() {
     Row() {
       if (this.gallerySelectionMode && !this.inSearchMode) {
@@ -180,44 +258,52 @@ export struct GalleryAlbumTopBar {
       } else if (this.inSearchMode) {
         this.floatingPillButton('返回', (): void => this.leaveSearchMode())
 
-        Row({ space: 8 }) {
-          SymbolGlyph($r('sys.symbol.magnifyingglass'))
-            .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
-            .fontColor([$r('app.color.gallery_material_search_placeholder')])
+        Stack({ alignContent: Alignment.Center }) {
+          this.searchFieldHdsBackground()
 
-          TextInput({ placeholder: 'AI 搜索图库...', text: this.searchQuery, controller: this.searchInputCtrl })
-            .layoutWeight(1)
-            .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
-            .height('100%')
-            .defaultFocus(!this.suppressSearchAutoFocus)
-            .enableKeyboardOnFocus(true)
-            .enabled(!this.suppressSearchAutoFocus)
-            .backgroundColor(Color.Transparent)
-            .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
-            .caretColor($r('app.color.brand_primary'))
-            .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-            .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
-            .enterKeyType(EnterKeyType.Search)
-            .onChange(this.onSearchQueryChange)
-            .onSubmit(this.onSearchSubmit)
-            .onAppear((): void => {
-              if (!this.suppressSearchAutoFocus) {
-                this.focusSearchInputSoon();
-              }
-            })
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
+              .fontColor([$r('app.color.gallery_material_search_placeholder')])
+
+            TextInput({ placeholder: 'AI 搜索图库...', text: this.searchQuery, controller: this.searchInputCtrl })
+              .layoutWeight(1)
+              .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
+              .height('100%')
+              .defaultFocus(!this.suppressSearchAutoFocus)
+              .enableKeyboardOnFocus(true)
+              .enabled(!this.suppressSearchAutoFocus)
+              .backgroundColor(Color.Transparent)
+              .fontSize(13)
+              .fontColor($r('app.color.text_primary'))
+              .caretColor($r('app.color.brand_primary'))
+              .placeholderColor($r('app.color.gallery_material_search_placeholder'))
+              .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
+              .enterKeyType(EnterKeyType.Search)
+              .onChange(this.onSearchQueryChange)
+              .onSubmit(this.onSearchSubmit)
+              .onAppear((): void => {
+                if (!this.suppressSearchAutoFocus) {
+                  this.focusSearchInputSoon(48);
+                }
+              })
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ left: 12, right: 12 })
+          .alignItems(VerticalAlign.Center)
         }
         .layoutWeight(1)
         .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
         .margin({ left: GALLERY_TOP_BAR_SEARCH_GAP_VP })
-        .padding({ left: 12, right: 12 })
         .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-        .backgroundColor($r('app.color.gallery_material_search_bg'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .backgroundEffect(fnImmersiveBackgroundEffect())
-        .linearGradient(fnLiquidGlassGradient())
-        .border({ width: 1, color: $r('app.color.gallery_material_surface_border') })
         .clip(true)
+        .onAreaChange((_old: Area, area: Area): void => {
+          const width = area.width as number;
+          if (width > 1 && Math.abs(width - this.searchFieldWidthVp) > 0.5) {
+            this.searchFieldWidthVp = width;
+          }
+        })
       } else if (this.isRootSurfaceMode()) {
         Text(this.rootSurfaceTitle)
           .layoutWeight(1)
