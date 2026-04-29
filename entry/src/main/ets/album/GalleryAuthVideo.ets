@@ -12,9 +12,9 @@ import { media } from '@kit.MediaKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import {
+  FnHdsPillButton,
+  FnHdsSymbolButton,
   fnImmersiveBackgroundEffect,
-  fnImmersivePointLightSourceEffect,
-  fnImmersiveTouchPressed,
   fnLiquidGlassGradient
 } from '../common/FnUiCommon';
 
@@ -88,7 +88,6 @@ export struct GalleryAuthVideo {
   @State private qualityIndex: number = LAST_VIDEO_QUALITY_INDEX;
   @State private longPressSpeeding: boolean = false;
   @State private progressW: number = 1;
-  @State private controlPressedKey: string = '';
 
   private xController: XComponentController = new XComponentController();
   private avPlayer: media.AVPlayer | null = null;
@@ -124,18 +123,6 @@ export struct GalleryAuthVideo {
    * 每次新起播在 startPlay 入口清零，仅在 arm… 时写入。
    */
   private playbackFalsePositiveGuardUntilMs: number = 0;
-
-  private syncControlPressed(key: string, event: TouchEvent): void {
-    const pressed = fnImmersiveTouchPressed(event);
-    if (pressed === undefined) {
-      return;
-    }
-    if (pressed) {
-      this.controlPressedKey = key;
-    } else if (this.controlPressedKey === key) {
-      this.controlPressedKey = '';
-    }
-  }
 
   private surfaceBackgroundColor(): ResourceColor {
     return this.isDarkTheme ? Color.Black : Color.White;
@@ -1000,59 +987,41 @@ export struct GalleryAuthVideo {
           Blank().layoutWeight(1).hitTestBehavior(HitTestMode.None)
           Column({ space: 8 }) {
             Row({ space: 10 }) {
-              Button({ type: ButtonType.Circle, stateEffect: false }) {
-                SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-                  .fontSize(20)
-                  .fontColor([this.controlPrimaryTextColor()])
-              }
-              .width(40).height(40).borderRadius(20).backgroundColor(this.controlChipBackground())
-              .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-              .backgroundEffect(fnImmersiveBackgroundEffect(false, this.controlChipBackground()))
-              .linearGradient(fnLiquidGlassGradient(false, this.controlPressedKey === 'play'))
-              .border({ width: 1, color: this.controlChipBorder() })
-              .visualEffect(fnImmersivePointLightSourceEffect(false, this.controlPressedKey === 'play'))
-              .shadow({ radius: 14, color: this.controlShadowColor(), offsetX: 0, offsetY: 6 })
-              .clip(true)
-              .onTouch((event: TouchEvent): void => {
-                this.syncControlPressed('play', event);
+              FnHdsSymbolButton({
+                symbol: this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'),
+                widthValue: 40,
+                heightValue: 40,
+                radiusValue: 20,
+                fontSizeValue: 20,
+                fontColorValue: this.controlPrimaryTextColor(),
+                action: (): void => {
+                  void this.togglePlayPause();
+                }
               })
-              .onClick((): void => { void this.togglePlayPause(); })
 
-              Button({ type: ButtonType.Capsule, stateEffect: false }) {
-                Text(this.longPressSpeeding ? '2.0x' : `${this.speedRate.toFixed(2)}x`)
-                  .fontSize(13)
-                  .fontColor(this.controlPrimaryTextColor())
-              }
-              .height(36).borderRadius(18).backgroundColor(this.controlChipBackground())
-              .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-              .backgroundEffect(fnImmersiveBackgroundEffect(false, this.controlChipBackground()))
-              .linearGradient(fnLiquidGlassGradient(false, this.controlPressedKey === 'speed'))
-              .border({ width: 1, color: this.controlChipBorder() })
-              .visualEffect(fnImmersivePointLightSourceEffect(false, this.controlPressedKey === 'speed'))
-              .shadow({ radius: 12, color: this.controlShadowColor(), offsetX: 0, offsetY: 5 })
-              .clip(true)
-              .onTouch((event: TouchEvent): void => {
-                this.syncControlPressed('speed', event);
+              FnHdsPillButton({
+                text: this.longPressSpeeding ? '2.0x' : `${this.speedRate.toFixed(2)}x`,
+                widthValue: 78,
+                heightValue: 36,
+                radiusValue: 18,
+                fontSizeValue: 13,
+                fontColorValue: this.controlPrimaryTextColor(),
+                action: (): void => {
+                  void this.chooseSpeed();
+                }
               })
-              .onClick((): void => { void this.chooseSpeed(); })
 
-              Button({ type: ButtonType.Capsule, stateEffect: false }) {
-                Text(this.currentQualityLabel())
-                  .fontSize(13)
-                  .fontColor(this.controlPrimaryTextColor())
-              }
-              .height(36).borderRadius(18).backgroundColor(this.controlChipBackground())
-              .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-              .backgroundEffect(fnImmersiveBackgroundEffect(false, this.controlChipBackground()))
-              .linearGradient(fnLiquidGlassGradient(false, this.controlPressedKey === 'quality'))
-              .border({ width: 1, color: this.controlChipBorder() })
-              .visualEffect(fnImmersivePointLightSourceEffect(false, this.controlPressedKey === 'quality'))
-              .shadow({ radius: 12, color: this.controlShadowColor(), offsetX: 0, offsetY: 5 })
-              .clip(true)
-              .onTouch((event: TouchEvent): void => {
-                this.syncControlPressed('quality', event);
+              FnHdsPillButton({
+                text: this.currentQualityLabel(),
+                widthValue: 78,
+                heightValue: 36,
+                radiusValue: 18,
+                fontSizeValue: 13,
+                fontColorValue: this.controlPrimaryTextColor(),
+                action: (): void => {
+                  void this.chooseQuality();
+                }
               })
-              .onClick((): void => { void this.chooseQuality(); })
             }
             .width('100%')
             .justifyContent(FlexAlign.SpaceBetween)
@@ -1154,27 +1123,14 @@ export struct GalleryAuthVideo {
             .fontColor(this.hintTextColor())
             .textAlign(TextAlign.Center)
           if (this.showPlaybackRetry) {
-            Button({ type: ButtonType.Capsule, stateEffect: false }) {
-              Text('重试')
-                .fontSize(15)
-                .fontColor(Color.White)
-            }
-            .height(40)
-            .padding({ left: 28, right: 28 })
-            .backgroundColor($r('app.color.button_primary_bg'))
-            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-            .backgroundEffect(fnImmersiveBackgroundEffect(true))
-            .linearGradient(fnLiquidGlassGradient(true, this.controlPressedKey === 'retry'))
-            .borderRadius(20)
-            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-            .visualEffect(fnImmersivePointLightSourceEffect(true, this.controlPressedKey === 'retry'))
-            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
-            .clip(true)
-            .onTouch((event: TouchEvent): void => {
-              this.syncControlPressed('retry', event);
-            })
-            .onClick((): void => {
-              this.onUserRetryPlayback();
+            FnHdsPillButton({
+              text: '\u91cd\u8bd5',
+              widthValue: 96,
+              heightValue: 40,
+              radiusValue: 20,
+              fontSizeValue: 15,
+              fontColorValue: this.controlPrimaryTextColor(),
+              action: this.onUserRetryPlayback
             })
           }
         }

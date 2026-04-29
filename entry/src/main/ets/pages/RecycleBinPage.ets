@@ -13,11 +13,8 @@ import {
 import { FnListDataSource } from '../common/FnListDataSource';
 import { RecycleBinListItem } from '../model/FnApiTypes';
 import {
-  fnImmersiveBackgroundEffect,
-  fnImmersivePointLightSourceEffect,
-  fnImmersiveTouchPressed,
-  fnLiquidGlassGradient,
   FnFullLoadingMask,
+  FnHdsPillButton,
   FnInlineLoading,
   FnStateText
 } from '../common/FnUiCommon';
@@ -88,7 +85,6 @@ struct RecycleBinPage {
   @State private rbSlideGestureActive: boolean = false;
   @State private rbScrollEnabled: boolean = true;
   @State private rbThumbLoadingPaused: boolean = false;
-  @State private refreshPressed: boolean = false;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private systemTopInsetVp: number = 0;
 
@@ -599,28 +595,16 @@ struct RecycleBinPage {
       } else if (this.error.length > 0) {
         Column({ space: 12 }) {
           FnStateText({ text: this.error })
-          Button('刷新', { stateEffect: false })
-            .height($r('app.float.button_height'))
-            .padding({ left: 28, right: 28 })
-            .backgroundColor($r('app.color.button_primary_bg'))
-            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-            .backgroundEffect(fnImmersiveBackgroundEffect(true))
-            .linearGradient(fnLiquidGlassGradient(true, this.refreshPressed))
-            .fontColor($r('app.color.button_primary_fg'))
-            .borderRadius($r('app.float.radius_medium'))
-            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-            .visualEffect(fnImmersivePointLightSourceEffect(true, this.refreshPressed))
-            .shadow({ radius: 18, color: '#334A8BFF', offsetX: 0, offsetY: 8 })
-            .clip(true)
-            .onTouch((event: TouchEvent): void => {
-              const pressed = fnImmersiveTouchPressed(event);
-              if (pressed !== undefined) {
-                this.refreshPressed = pressed;
-              }
-            })
-            .onClick((): void => {
+          FnHdsPillButton({
+            text: '刷新',
+            widthValue: 104,
+            heightValue: 40,
+            fontSizeValue: 16,
+            fontColorValue: $r('app.color.brand_primary'),
+            action: (): void => {
               void this.loadAll();
-            })
+            }
+          })
         }
         .layoutWeight(1)
         .width('100%')
