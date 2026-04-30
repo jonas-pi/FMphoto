@@ -20,6 +20,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 const DOMAIN = 0xFF00;
 const TAG = 'BgKeepAlive';
 const SUSPEND_REASON = 'FNOS: background grace for session state';
+const BG_TRANSIENT_TASK_SYSCAP = 'SystemCapability.ResourceSchedule.BackgroundTaskManager.TransientTask';
+const BG_CONTINUOUS_TASK_SYSCAP = 'SystemCapability.ResourceSchedule.BackgroundTaskManager.ContinuousTask';
 
 export class BackgroundKeepAliveController {
   private static suspendRequestId: number = -1;
@@ -41,16 +43,21 @@ export class BackgroundKeepAliveController {
 
   private static requestSuspendDelaySafe(): void {
     BackgroundKeepAliveController.cancelSuspendDelaySafe();
-    try {
-      const delayInfo = backgroundTaskManager.requestSuspendDelay(SUSPEND_REASON, (): void => {
-        hilog.warn(DOMAIN, TAG, 'suspend quota callback, cancel id=%{public}d',
-          BackgroundKeepAliveController.suspendRequestId);
-        BackgroundKeepAliveController.cancelSuspendDelaySafe();
-      });
-      BackgroundKeepAliveController.suspendRequestId = delayInfo.requestId;
-      hilog.info(DOMAIN, TAG, 'requestSuspendDelay ok id=%{public}d', delayInfo.requestId);
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'requestSuspendDelay failed: %{public}s', String(e));
+    if (canIUse(BG_TRANSIENT_TASK_SYSCAP)) {
+      try {
+        // @SuppressWarnings syscap
+        const delayInfo = backgroundTaskManager.requestSuspendDelay(SUSPEND_REASON, (): void => {
+          hilog.warn(DOMAIN, TAG, 'suspend quota callback, cancel id=%{public}d',
+            BackgroundKeepAliveController.suspendRequestId);
+          BackgroundKeepAliveController.cancelSuspendDelaySafe();
+        });
+        BackgroundKeepAliveController.suspendRequestId = delayInfo.requestId;
+        hilog.info(DOMAIN, TAG, 'requestSuspendDelay ok id=%{public}d', delayInfo.requestId);
+      } catch (e) {
+        hilog.warn(DOMAIN, TAG, 'requestSuspendDelay failed: %{public}s', String(e));
+      }
+    } else {
+      hilog.info(DOMAIN, TAG, 'skip requestSuspendDelay: syscap unsupported');
     }
   }
 
@@ -60,10 +67,13 @@ export class BackgroundKeepAliveController {
     }
     const id = BackgroundKeepAliveController.suspendRequestId;
     BackgroundKeepAliveController.suspendRequestId = -1;
-    try {
-      backgroundTaskManager.cancelSuspendDelay(id);
-    } catch (_e) {
+    if (canIUse(BG_TRANSIENT_TASK_SYSCAP)) {
+      try {
+        // @SuppressWarnings syscap
+        backgroundTaskManager.cancelSuspendDelay(id);
+      } catch (_e) {
       // 已失效或被系统回收，忽略
+      }
     }
   }
 
@@ -71,6 +81,10 @@ export class BackgroundKeepAliveController {
 
   private static async startDataTransferBackgroundSafe(context: common.UIAbilityContext): Promise<void> {
     if (BackgroundKeepAliveController.longRunningActive) {
+      return;
+    }
+    if (!canIUse(BG_CONTINUOUS_TASK_SYSCAP)) {
+      hilog.info(DOMAIN, TAG, 'skip startBackgroundRunning: syscap unsupported');
       return;
     }
     try {
@@ -93,6 +107,7 @@ export class BackgroundKeepAliveController {
       });
 
       // 使用官方枚举值（DATA_TRANSFER = 1），避免传 string[] 导致运行时 TypeError
+      // @SuppressWarnings syscap
       await backgroundTaskManager.startBackgroundRunning(
         context,
         backgroundTaskManager.BackgroundMode.DATA_TRANSFER,
@@ -111,7 +126,11 @@ export class BackgroundKeepAliveController {
       return;
     }
     BackgroundKeepAliveController.longRunningActive = false;
+    if (!canIUse(BG_CONTINUOUS_TASK_SYSCAP)) {
+      return;
+    }
     try {
+      // @SuppressWarnings syscap
       await backgroundTaskManager.stopBackgroundRunning(context);
       hilog.info(DOMAIN, TAG, 'stopBackgroundRunning ok');
     } catch (e) {

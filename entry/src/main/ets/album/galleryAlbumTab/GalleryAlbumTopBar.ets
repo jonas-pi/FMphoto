@@ -9,9 +9,14 @@ import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../commo
 import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   fnHdsImmersiveTabsFloatingStyle,
+  fnLiquidGlassGradient,
   FnFloatingTopCircleButton,
   FnFloatingTopPillButton
 } from '../../common/FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../../common/FnImmersiveSettings';
 
 const GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP: number = 8;
 const GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP: number = 6;
@@ -40,6 +45,7 @@ export struct GalleryAlbumTopBar {
   @Prop searchQuery: string = '';
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onSearchQueryChange: (value: string) => void = (_: string) => {};
   onSearchSubmit: () => void = () => {};
@@ -111,6 +117,10 @@ export struct GalleryAlbumTopBar {
 
   private searchHdsWidth(): Length {
     return this.searchFieldWidthVp > 1 ? this.searchFieldWidthVp : '100%';
+  }
+
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
   private shouldAutoFocusSearchInput(): boolean {
@@ -236,35 +246,50 @@ export struct GalleryAlbumTopBar {
 
   @Builder
   private searchFieldHdsBackground() {
-    HdsTabs({ index: 0 }) {
-      TabContent() {
-        Column()
-          .width('100%')
-          .height('100%')
+    if (this.canUseHds()) {
+      HdsTabs({ index: 0 }) {
+        TabContent() {
+          Column()
+            .width('100%')
+            .height('100%')
+        }
+        .tabBar(this.searchFieldBlankTabBar)
       }
-      .tabBar(this.searchFieldBlankTabBar)
+      .width(this.searchHdsWidth())
+      .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+      .barHeight(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+      .barOverlap(true)
+      .vertical(false)
+      .barPosition(BarPosition.End)
+      .barWidth(this.searchHdsWidth())
+      // @SuppressWarnings compatibility
+      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+        GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP,
+        this.searchHdsWidth(),
+        $r('app.color.gallery_material_surface_bg')
+      ))
+      .scrollable(false)
+      .barMode(BarMode.Fixed)
+      .divider({ mode: DividerMode.NONE })
+      .barBackgroundColor(Color.Transparent)
+      .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP })
+      .blurStrategy(BlurStrategy.ADAPTIVE)
+      .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
+    } else {
+      Row()
+        .width('100%')
+        .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .linearGradient(fnLiquidGlassGradient())
+        .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
     }
-    .width(this.searchHdsWidth())
-    .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-    .barHeight(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-    .barOverlap(true)
-    .vertical(false)
-    .barPosition(BarPosition.End)
-    .barWidth(this.searchHdsWidth())
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-      GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP,
-      this.searchHdsWidth(),
-      $r('app.color.gallery_material_surface_bg')
-    ))
-    .scrollable(false)
-    .barMode(BarMode.Fixed)
-    .divider({ mode: DividerMode.NONE })
-    .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-    .clip(true)
-    .hitTestBehavior(HitTestMode.None)
   }
 
   build() {

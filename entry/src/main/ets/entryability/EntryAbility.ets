@@ -2,6 +2,10 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
+import {
+  fnLoadImmersiveLightPreference,
+  fnSetImmersiveLightEnabled
+} from '../common/FnImmersiveSettings';
 
 /** 应用日志域（与网络模块 FnHttp 同域便于筛选，取值需在 0x0～0xFFFF） */
 const DOMAIN = 0xFF00;
@@ -41,6 +45,8 @@ export default class EntryAbility extends UIAbility {
     try {
       const dark = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
       AppStorage.setOrCreate<number>('colorMode', dark ? 1 : 0);
+      fnSetImmersiveLightEnabled(true);
+      void fnLoadImmersiveLightPreference(this.context);
       hilog.info(DOMAIN, LOG_TAG, 'initial colorMode=%{public}d', dark ? 1 : 0);
     } catch (_e) {}
 
