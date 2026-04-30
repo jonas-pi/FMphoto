@@ -1,4 +1,5 @@
 import { UIContext } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
@@ -9,6 +10,7 @@ import {
   SmartCategoryItem
 } from '../../model/FnApiTypes';
 import { AppSession } from '../../auth/AppSession';
+import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
 import { FN_GLOBAL_TAB_SWITCH_OFFSET_VP, FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { CATEGORY_GALLERY_INITIAL_RENDER_CAP, CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
@@ -238,6 +240,9 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
   const stored = AppSession.getStored();
   const albumDirHint =
     stored !== null && stored.albumParentGuid.trim().length > 0 ? stored.albumParentGuid.trim() : undefined;
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  try {
+    await BackgroundKeepAliveController.withDataTransfer(ctx, 'album-upload', async (): Promise<void> => {
   for (let i = 0; i < uris.length; i++) {
     host.uploadText = `上传中 ${i + 1}/${uris.length}…`;
     const res = await client.uploadPhotoByUri(uris[i], 150000, albumDirHint);
@@ -248,8 +253,11 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
       firstFailMsg = em.length > 0 ? em : '上传失败';
     }
   }
-  host.uploading = false;
-  host.uploadText = '';
+    });
+  } finally {
+    host.uploading = false;
+    host.uploadText = '';
+  }
   if (ok > 0) {
     host.toast(`上传完成 ${ok}/${uris.length}`);
     GalleryTimelineRefreshStore.bump();
