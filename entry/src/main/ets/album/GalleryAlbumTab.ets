@@ -90,7 +90,10 @@ import { GalleryAlbumSearchModeView } from './galleryAlbumTab/GalleryAlbumSearch
 import { GalleryAlbumCategoryModeView } from './galleryAlbumTab/GalleryAlbumCategoryModeView';
 import { GalleryAlbumSmartCategoryModeView } from './galleryAlbumTab/GalleryAlbumSmartCategoryModeView';
 import { GalleryAlbumPersonModeView } from './galleryAlbumTab/GalleryAlbumPersonModeView';
-import { GalleryAlbumMainModeView } from './galleryAlbumTab/GalleryAlbumMainModeView';
+import {
+  GALLERY_ALBUM_MAIN_LIST_DOM_ID,
+  GalleryAlbumMainModeView
+} from './galleryAlbumTab/GalleryAlbumMainModeView';
 import { GalleryViewGranularity, galleryViewGranularityColumns } from './galleryAlbumTab/GalleryAlbumGranularity';
 import {
   categoryCount,
@@ -112,6 +115,10 @@ import {
   galleryAlbumRebuildFlow,
   galleryAlbumUpsertSection,
 } from './galleryAlbumTab/GalleryAlbumFlowLogic';
+import {
+  galleryAlbumEnsureSelectionVisualStorage,
+  galleryAlbumSyncSelectionVisualState
+} from './galleryAlbumTab/GalleryAlbumSelectionOverlay';
 import {
   loadCollectGalleryItems as requestCollectGalleryItems,
   loadMediaCategories as requestMediaCategories,
@@ -637,6 +644,11 @@ export struct GalleryAlbumTab {
   private gallerySlideLastAppliedEndFlat: number = -99999;
   private gallerySlideLastApplyMs: number = 0;
   private gallerySlidePendingEndFlat: number = -1;
+  private galleryMainListDomId: string = GALLERY_ALBUM_MAIN_LIST_DOM_ID;
+  private gallerySlideAutoScrollTimer: number = -1;
+  private gallerySlideAutoScrollVelocityVp: number = 0;
+  private gallerySlideAutoScrollPointerX: number = 0;
+  private gallerySlideAutoScrollPointerY: number = 0;
   /** 防抖定时器 id，小于 0 表示未挂起。 */
   private bootstrapDebounceTimer: number = -1;
   /** 与 GalleryTimelineRefreshStore.version 对齐；bootstrap 成功后更新，避免重复全量刷新。 */
@@ -651,6 +663,133 @@ export struct GalleryAlbumTab {
   private galleryTimelineAtTopForPull: boolean = true;
   /** 下拉未回到顶部附近前，不重复触发“已达阈值”震动，避免来回拖动连续触发。 */
   private galleryPullRefreshThresholdHapticDone: boolean = false;
+
+  private selectionVisualChangedIds(prev: string[], next: string[]): Set<string> {
+    const prevSet = new Set<string>();
+    const changed = new Set<string>();
+    for (let i = 0; i < prev.length; i++) {
+      const id = prev[i];
+      if (id.length > 0) {
+        prevSet.add(id);
+      }
+    }
+    const nextSet = new Set<string>();
+    for (let i = 0; i < next.length; i++) {
+      const id = next[i];
+      if (id.length === 0) {
+        continue;
+      }
+      nextSet.add(id);
+      if (!prevSet.has(id)) {
+        changed.add(id);
+      }
+    }
+    prevSet.forEach((id: string): void => {
+      if (!nextSet.has(id)) {
+        changed.add(id);
+      }
+    });
+    return changed;
+  }
+
+  private selectionVisualIdSample(ids: Set<string>): string {
+    let out = '';
+    let count = 0;
+    ids.forEach((id: string): void => {
+      if (count >= 4) {
+        count++;
+        return;
+      }
+      if (out.length > 0) {
+        out += '|';
+      }
+      out += id;
+      count++;
+    });
+    if (count > 4) {
+      out += `+${count - 4}`;
+    }
+    return out.length > 0 ? out : 'none';
+  }
+
+  private notifyMainGallerySelectionRowsForIds(changedIds: Set<string>): number {
+    if (!this.isMainGalleryModeActive() || changedIds.size <= 0) {
+      return 0;
+    }
+    const notified = new Set<number>();
+    const total = this.flowDataSource.totalCount();
+    for (let i = 0; i < total; i++) {
+      const node = this.flowDataSource.getData(i);
+      if (node.kind !== 'row') {
+        continue;
+      }
+      for (let k = 0; k < node.rowSlotItems.length; k++) {
+        const item = node.rowSlotItems[k];
+        if (item === null || item === undefined) {
+          continue;
+        }
+        const id = galleryAlbumItemIdOf(item);
+        if (changedIds.has(id)) {
+          notified.add(i);
+          break;
+        }
+      }
+    }
+    notified.forEach((idx: number): void => {
+      this.flowDataSource.notifyDataChange(idx);
+    });
+    return notified.size;
+  }
+
+  private notifyMainGalleryVisibleSelectionRows(): number {
+    if (!this.isMainGalleryModeActive()) {
+      return 0;
+    }
+    const total = this.flowDataSource.totalCount();
+    if (total <= 0) {
+      return 0;
+    }
+    let first = Math.max(0, Math.min(this.listVisibleFirstNodeIdx - 3, total - 1));
+    let last = Math.max(first, Math.min(this.listVisibleLastNodeIdx + 3, total - 1));
+    if (last - first < 8) {
+      first = Math.max(0, Math.min(first, total - 1));
+      last = Math.min(total - 1, first + 24);
+    }
+    let count = 0;
+    for (let i = first; i <= last; i++) {
+      const node = this.flowDataSource.getData(i);
+      if (node.kind !== 'row') {
+        continue;
+      }
+      this.flowDataSource.notifyDataChange(i);
+      count++;
+    }
+    return count;
+  }
+
+  private logSelectionVisualRefresh(
+    reason: string,
+    changedIds: Set<string>,
+    idRows: number,
+    visibleRows: number
+  ): void {
+    hilog.warn(
+      DOMAIN,
+      'GalleryDiag',
+      'selectionVisual reason=%{public}s mode=%{public}s selected=%{public}d changed=%{public}d ' +
+        'idRows=%{public}d visibleRows=%{public}d visible=%{public}d~%{public}d flow=%{public}d ids=%{public}s',
+      reason,
+      this.gallerySelectionMode ? 'on' : 'off',
+      this.gallerySelectedIds.length,
+      changedIds.size,
+      idRows,
+      visibleRows,
+      this.listVisibleFirstNodeIdx,
+      this.listVisibleLastNodeIdx,
+      this.flowDataSource.totalCount(),
+      this.selectionVisualIdSample(changedIds)
+    );
+  }
 
   private isMainGalleryModeActive(): boolean {
     return !this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode;
@@ -697,13 +836,18 @@ export struct GalleryAlbumTab {
     if (value) {
       this.dismissMoreMenu();
     }
-    this.notifyMainGallerySelectionVisualRefresh();
+    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
+    const visibleRows = this.notifyMainGalleryVisibleSelectionRows();
+    this.logSelectionVisualRefresh(value ? 'mode-on' : 'mode-off', new Set<string>(), 0, visibleRows);
     this.notifySelectionDockStateChange();
   }
 
   private setGallerySelectedIdsStateLocal(value: string[]): void {
+    const changedIds = this.selectionVisualChangedIds(this.gallerySelectedIds, value);
     this.gallerySelectedIds = value;
-    this.notifyMainGallerySelectionVisualRefresh();
+    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
+    const idRows = this.notifyMainGallerySelectionRowsForIds(changedIds);
+    this.logSelectionVisualRefresh('ids', changedIds, idRows, 0);
     this.notifySelectionDockStateChange();
   }
 
@@ -747,6 +891,18 @@ export struct GalleryAlbumTab {
       set searchResults(value: GalleryListItem[]) { self.searchResults = value; }
       get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
       set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
+      get scrollerRef(): Scroller { return self.scrollerRef; }
+      set scrollerRef(value: Scroller) { self.scrollerRef = value; }
+      get galleryMainListDomId(): string { return self.galleryMainListDomId; }
+      set galleryMainListDomId(value: string) { self.galleryMainListDomId = value; }
+      get gallerySlideAutoScrollTimer(): number { return self.gallerySlideAutoScrollTimer; }
+      set gallerySlideAutoScrollTimer(value: number) { self.gallerySlideAutoScrollTimer = value; }
+      get gallerySlideAutoScrollVelocityVp(): number { return self.gallerySlideAutoScrollVelocityVp; }
+      set gallerySlideAutoScrollVelocityVp(value: number) { self.gallerySlideAutoScrollVelocityVp = value; }
+      get gallerySlideAutoScrollPointerX(): number { return self.gallerySlideAutoScrollPointerX; }
+      set gallerySlideAutoScrollPointerX(value: number) { self.gallerySlideAutoScrollPointerX = value; }
+      get gallerySlideAutoScrollPointerY(): number { return self.gallerySlideAutoScrollPointerY; }
+      set gallerySlideAutoScrollPointerY(value: number) { self.gallerySlideAutoScrollPointerY = value; }
       get galleryThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.galleryThumbHitBounds; }
       set galleryThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.galleryThumbHitBounds = value; }
       get searchThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.searchThumbHitBounds; }
@@ -2148,6 +2304,8 @@ export struct GalleryAlbumTab {
   }
 
   aboutToAppear(): void {
+    galleryAlbumEnsureSelectionVisualStorage();
+    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
     this.clearGranularitySwitchTimer();
     this.renderedViewGranularity = this.viewGranularity;
     this.lastGranularityMotionMode = this.viewGranularity;
@@ -2571,6 +2729,7 @@ export struct GalleryAlbumTab {
           timelineLongPressExpanded: this.timelineLongPressExpanded,
           timelineIndicatorY: this.timelineIndicatorY,
           timelineSliderRatio: this.timelineSliderRatio,
+          mainListDomId: this.galleryMainListDomId,
           scrollerRef: this.scrollerRef,
           flowDataSource: this.flowDataSource,
           itemIdOf: (item: GalleryListItem): string => galleryAlbumItemIdOf(item),

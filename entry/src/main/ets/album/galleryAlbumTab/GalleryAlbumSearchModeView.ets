@@ -5,6 +5,7 @@ import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb, trimThu
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
+import { GalleryAlbumSelectionOverlay } from './GalleryAlbumSelectionOverlay';
 
 const GALLERY_SEARCH_INITIAL_RENDER_COUNT = 120;
 const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
@@ -366,39 +367,9 @@ export struct GalleryAlbumSearchModeView {
       })
         .width('100%')
         .aspectRatio(1)
-      Column()
-        .width('100%')
-        .aspectRatio(1)
-        .backgroundColor('#55000000')
-        .opacity(this.gallerySelectionMode && this.isItemSelected(item) ? 1 : 0)
-        .hitTestBehavior(HitTestMode.None)
-        .animation({ duration: 0, curve: Curve.Linear })
-      Row() {
-        Blank().layoutWeight(1)
-        Column() {
-          if (this.isItemSelected(item)) {
-            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-              .fontSize(24)
-              .fontColor([$r('app.color.brand_primary')])
-              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-          } else {
-            Stack({ alignContent: Alignment.Center }) {
-              Circle()
-                .width(22)
-                .height(22)
-                .fill(Color.Transparent)
-                .stroke(Color.White)
-                .strokeWidth(2)
-            }
-            .width(24)
-            .height(24)
-          }
-        }
-        .padding({ top: 6, right: 6 })
-      }
-      .width('100%')
-      .hitTestBehavior(HitTestMode.None)
-      .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+      GalleryAlbumSelectionOverlay({
+        itemId: this.itemIdOf(item)
+      })
     }
     .id(this.searchThumbDomId(flatIndex))
     .onAreaChange((): void => {
@@ -460,11 +431,7 @@ export struct GalleryAlbumSearchModeView {
                     return;
                   }
                   if (event.type === TouchType.Move) {
-                    const pt = this.readTouchFingerWindow(event);
-                    if (pt === null) {
-                      return;
-                    }
-                    this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
+                    return;
                   }
                 })
                 .parallelGesture(GestureGroup(GestureMode.Parallel,
@@ -484,11 +451,10 @@ export struct GalleryAlbumSearchModeView {
                           return;
                         }
                         const longPressItem = this.searchResults[fi];
-                        const wasSelectionMode = this.gallerySelectionMode;
-                        this.onGalleryThumbLongPress(longPressItem);
-                        if (!wasSelectionMode) {
-                          this.armInitialGallerySlideGesture(ev, longPressItem, fi);
+                        if (!this.gallerySelectionMode) {
+                          this.onGalleryThumbLongPress(longPressItem);
                         }
+                        this.armInitialGallerySlideGesture(ev, longPressItem, fi);
                       }),
                     PanGesture({
                       fingers: 1,
@@ -599,11 +565,6 @@ export struct GalleryAlbumSearchModeView {
               return;
             }
             if (event.type === TouchType.Move) {
-              const pt = this.readTouchFingerWindow(event);
-              if (pt === null) {
-                return;
-              }
-              this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
               return;
             }
             if (event.type === TouchType.Up || event.type === TouchType.Cancel) {

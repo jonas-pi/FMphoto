@@ -61,12 +61,17 @@ import {
 } from '../common/GalleryTopBarLayout';
 
 const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
+const ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP: number = 72;
+const ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP: number = 22;
+const ME_ACTION_GAP_VP: number = 18;
 
 @Component
 struct MePanel {
   @Prop topSafeInsetVp: number = 0;
   @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private sdkApiVersion: number = 0;
+  @State private immersiveSwitchWidthVp: number = 0;
+  private lastImmersiveToggleAt: number = 0;
 
   private immersiveSupportText(): string {
     if (this.sdkApiVersion <= 0) {
@@ -84,12 +89,132 @@ struct MePanel {
     void fnSaveImmersiveLightPreference(ctx, enabled);
   }
 
+  private shouldUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private immersiveSwitchMaterialWidth(): Length {
+    return this.immersiveSwitchWidthVp > 1 ? this.immersiveSwitchWidthVp : '100%';
+  }
+
+  private triggerImmersiveLightToggle(): void {
+    const now = Date.now();
+    if (now - this.lastImmersiveToggleAt < 120) {
+      return;
+    }
+    this.lastImmersiveToggleAt = now;
+    this.toggleImmersiveLight(!this.immersiveLightEnabled);
+  }
+
   aboutToAppear(): void {
     this.sdkApiVersion = fnCurrentSdkApiVersion();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void fnLoadImmersiveLightPreference(ctx).then((enabled: boolean): void => {
       this.immersiveLightEnabled = enabled;
     });
+  }
+
+  @Builder
+  private immersiveSwitchTabBarContent() {
+    Row()
+      .width('100%')
+      .height('100%')
+  }
+
+  @Builder
+  private immersiveSwitchContent() {
+    Row({ space: 12 }) {
+      Column({ space: 6 }) {
+        Text('\u6c89\u6d78\u5149\u611f')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.immersiveSupportText())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.immersiveLightEnabled })
+        .selectedColor($r('app.color.brand_primary'))
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 18, right: 16, top: 0, bottom: 0 })
+    .alignItems(VerticalAlign.Center)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private immersiveSwitchRow() {
+    Stack() {
+      if (this.shouldUseHds()) {
+        HdsTabs({ index: 0 }) {
+          TabContent() {
+            Column()
+              .width('100%')
+              .height('100%')
+          }
+          .tabBar(this.immersiveSwitchTabBarContent)
+        }
+        .width('100%')
+        .height(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
+        .barHeight(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
+        .barOverlap(true)
+        .vertical(false)
+        .barPosition(BarPosition.End)
+        .barWidth(this.immersiveSwitchMaterialWidth())
+        // @SuppressWarnings compatibility
+        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+          ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP,
+          this.immersiveSwitchMaterialWidth(),
+          $r('app.color.gallery_material_surface_bg')
+        ))
+        .scrollable(false)
+        .divider({ mode: DividerMode.NONE })
+        .barBackgroundColor(Color.Transparent)
+        .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP })
+        .blurStrategy(BlurStrategy.ADAPTIVE)
+        .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
+        .clip(true)
+        .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
+          return false;
+        })
+        .onTabBarClick((_index: number): void => {
+          this.triggerImmersiveLightToggle();
+        })
+      } else {
+        Row()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.card_background'))
+          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+          .linearGradient(fnLiquidGlassGradient())
+          .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
+          .borderWidth(1)
+          .borderColor($r('app.color.immersive_panel_border'))
+          .clip(true)
+      }
+
+      this.immersiveSwitchContent()
+    }
+    .width('100%')
+    .height(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
+    .onAreaChange((_old: Area, area: Area): void => {
+      const width = area.width as number;
+      if (width > 1 && Math.abs(width - this.immersiveSwitchWidthVp) > 0.5) {
+        this.immersiveSwitchWidthVp = width;
+      }
+    })
+    .onClick((): void => {
+      this.triggerImmersiveLightToggle();
+    })
   }
 
   build() {
@@ -169,34 +294,11 @@ struct MePanel {
         .borderColor($r('app.color.immersive_panel_border'))
         .visibility(Visibility.None)
 
-        Row({ space: 12 }) {
-          Column({ space: 6 }) {
-            Text('\u6c89\u6d78\u5149\u611f')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+        this.immersiveSwitchRow()
 
-            Text(this.immersiveSupportText())
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .layoutWeight(1)
-
-          Toggle({ type: ToggleType.Switch, isOn: this.immersiveLightEnabled })
-            .selectedColor($r('app.color.brand_primary'))
-            .onChange((on: boolean): void => {
-              this.toggleImmersiveLight(on);
-            })
-        }
-        .width('100%')
-        .padding({ left: 18, right: 16, top: 16, bottom: 16 })
-        .alignItems(VerticalAlign.Center)
-        .backgroundColor($r('app.color.card_background'))
-        .borderRadius(20)
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
 
         FnHdsPillButton({
           text: $r('app.string.logout'),
