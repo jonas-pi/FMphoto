@@ -3,8 +3,15 @@ import {
   fnBottomDockBottomGap,
   fnHdsBottomDockActionTabStyle,
   fnHdsImmersiveTabsFloatingStyle,
+  fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
+  FN_BOTTOM_DOCK_ICON_SIZE_VP,
+  FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
+  FN_BOTTOM_DOCK_INNER_SPACE_VP,
+  FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
+  FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
+  FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
   FN_FLOATING_TOP_BOTTOM_GAP_VP,
   FN_FLOATING_TOP_CONTROL_RADIUS_VP,
@@ -14,6 +21,10 @@ import {
   FnFloatingTopPillButton,
   FnHdsTextPill
 } from '../../common/FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../../common/FnImmersiveSettings';
 import {
   GALLERY_TOP_BAR_PAD_LEFT_VP,
   GALLERY_TOP_BAR_PAD_RIGHT_VP,
@@ -43,6 +54,7 @@ export struct GalleryPreviewChrome {
   @Prop darkMaterial: boolean = false;
   @Prop topSafeInsetVp: number = 0;
   @Prop bottomSafeInsetVp: number = 0;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onBack: () => void = () => {};
   onLoadOriginal: () => void = () => {};
@@ -81,6 +93,10 @@ export struct GalleryPreviewChrome {
 
   private previewActionColor(busy: boolean = false, color?: ResourceColor): ResourceColor {
     return busy ? this.dimmedColor() : (color ?? this.fgColor);
+  }
+
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
   private onPreviewHdsAction(index: number): void {
@@ -164,6 +180,7 @@ export struct GalleryPreviewChrome {
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP)
+    // @SuppressWarnings compatibility
     .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
       FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
       GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP,
@@ -182,6 +199,77 @@ export struct GalleryPreviewChrome {
     .onTabBarClick((index: number): void => {
       this.onPreviewHdsAction(index);
     })
+    .onAreaChange((_old, area): void => {
+      const h = area.height as number;
+      if (h > 0) {
+        this.onBottomBarHeightChange(h);
+      }
+    })
+  }
+
+  @Builder
+  private previewBottomFallbackAction(index: number, icon: Resource, label: ResourceStr, color: ResourceColor) {
+    Column({ space: 2 }) {
+      SymbolGlyph(icon)
+        .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
+        .fontColor([color])
+
+      Text(label)
+        .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(color)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .onClick((): void => {
+      this.onPreviewHdsAction(index);
+    })
+  }
+
+  @Builder
+  private previewBottomFallbackTabs() {
+    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+      this.previewBottomFallbackAction(
+        0,
+        $r('sys.symbol.share'),
+        this.sharing ? '\u5206\u4eab\u4e2d' : '\u5206\u4eab',
+        this.previewActionColor(this.sharing)
+      )
+      this.previewBottomFallbackAction(
+        1,
+        $r('sys.symbol.download'),
+        this.previewDownloadLabel(),
+        this.previewActionColor(this.downloading)
+      )
+      this.previewBottomFallbackAction(
+        2,
+        this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
+        '\u6536\u85cf',
+        this.previewActionColor(this.favoriteToggling, this.starFilled ? this.favoriteStarTint : this.fgColor)
+      )
+      this.previewBottomFallbackAction(
+        3,
+        $r('sys.symbol.trash'),
+        this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+        this.previewActionColor(this.deleting)
+      )
+    }
+    .width(GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .shadow({ radius: 18, color: '#28000000', offsetX: 0, offsetY: 8 })
+    .clip(true)
     .onAreaChange((_old, area): void => {
       const h = area.height as number;
       if (h > 0) {
@@ -261,7 +349,11 @@ export struct GalleryPreviewChrome {
         .hitTestBehavior(HitTestMode.None)
 
       Row() {
-        this.previewBottomHdsTabs()
+        if (this.canUseHds()) {
+          this.previewBottomHdsTabs()
+        } else {
+          this.previewBottomFallbackTabs()
+        }
       }
       .width('100%')
       .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })

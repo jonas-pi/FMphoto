@@ -6,10 +6,21 @@ import {
 import {
   fnHdsBottomDockActionTabStyle,
   fnHdsImmersiveTabsFloatingStyle,
+  fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
+  FN_BOTTOM_DOCK_ICON_SIZE_VP,
+  FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
+  FN_BOTTOM_DOCK_INNER_SPACE_VP,
+  FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
+  FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
+  FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../../common/FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../../common/FnImmersiveSettings';
 
 const RECYCLE_BIN_BATCH_DOCK_WIDTH_VP: number = 204;
 
@@ -17,6 +28,7 @@ const RECYCLE_BIN_BATCH_DOCK_WIDTH_VP: number = 204;
 export struct RecycleBinBatchBar {
   @Prop downloading: boolean = false;
   @Prop restoring: boolean = false;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onDownload: () => void = () => {};
   onRestore: () => void = () => {};
@@ -35,6 +47,10 @@ export struct RecycleBinBatchBar {
     if (!this.restoring) {
       this.onRestore();
     }
+  }
+
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
   @Builder
@@ -69,6 +85,7 @@ export struct RecycleBinBatchBar {
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(RECYCLE_BIN_BATCH_DOCK_WIDTH_VP)
+    // @SuppressWarnings compatibility
     .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
       FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
       RECYCLE_BIN_BATCH_DOCK_WIDTH_VP,
@@ -89,9 +106,66 @@ export struct RecycleBinBatchBar {
     })
   }
 
+  @Builder
+  private batchFallbackAction(index: number, icon: Resource, label: ResourceStr, color: ResourceColor) {
+    Column({ space: 2 }) {
+      SymbolGlyph(icon)
+        .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
+        .fontColor([color])
+
+      Text(label)
+        .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(color)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .onClick((): void => {
+      this.onBatchHdsAction(index);
+    })
+  }
+
+  @Builder
+  private batchFallbackTabs() {
+    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+      this.batchFallbackAction(
+        0,
+        $r('sys.symbol.download'),
+        $r('app.string.gallery_batch_download'),
+        this.actionColor(this.downloading)
+      )
+      this.batchFallbackAction(
+        1,
+        $r('sys.symbol.arrow_counterclockwise'),
+        '\u8fd8\u539f',
+        this.actionColor(this.restoring)
+      )
+    }
+    .width(RECYCLE_BIN_BATCH_DOCK_WIDTH_VP)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .shadow({ radius: 18, color: '#28000000', offsetX: 0, offsetY: 8 })
+    .clip(true)
+  }
+
   build() {
     Row() {
-      this.batchHdsTabs()
+      if (this.canUseHds()) {
+        this.batchHdsTabs()
+      } else {
+        this.batchFallbackTabs()
+      }
     }
     .width('100%')
     .padding({

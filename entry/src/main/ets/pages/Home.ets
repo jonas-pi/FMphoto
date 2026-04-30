@@ -20,11 +20,24 @@ import {
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
   FN_BOTTOM_DOCK_ICON_SIZE_VP,
+  FN_BOTTOM_DOCK_INNER_PADDING_H_VP,
+  FN_BOTTOM_DOCK_INNER_SPACE_VP,
+  FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
+  FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_GAP_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../common/FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  fnCurrentSdkApiVersion,
+  fnDeviceSupportsHdsImmersive,
+  fnLoadImmersiveLightPreference,
+  fnSaveImmersiveLightPreference,
+  FN_HDS_MIN_SDK_API_VERSION,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../common/FnImmersiveSettings';
 import {
   FN_GLOBAL_TAB_SWITCH_CURVE,
   FN_GLOBAL_TAB_SWITCH_DURATION,
@@ -52,6 +65,32 @@ const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
 @Component
 struct MePanel {
   @Prop topSafeInsetVp: number = 0;
+  @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  @State private sdkApiVersion: number = 0;
+
+  private immersiveSupportText(): string {
+    if (this.sdkApiVersion <= 0) {
+      return `HDS 需要 API${FN_HDS_MIN_SDK_API_VERSION}+`;
+    }
+    if (fnDeviceSupportsHdsImmersive()) {
+      return `当前 API${this.sdkApiVersion}，可实时切换 HDS`;
+    }
+    return `当前 API${this.sdkApiVersion}，HDS 需要 API${FN_HDS_MIN_SDK_API_VERSION}+`;
+  }
+
+  private toggleImmersiveLight(enabled: boolean): void {
+    this.immersiveLightEnabled = enabled;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void fnSaveImmersiveLightPreference(ctx, enabled);
+  }
+
+  aboutToAppear(): void {
+    this.sdkApiVersion = fnCurrentSdkApiVersion();
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void fnLoadImmersiveLightPreference(ctx).then((enabled: boolean): void => {
+      this.immersiveLightEnabled = enabled;
+    });
+  }
 
   build() {
     Column() {
@@ -130,6 +169,35 @@ struct MePanel {
         .borderColor($r('app.color.immersive_panel_border'))
         .visibility(Visibility.None)
 
+        Row({ space: 12 }) {
+          Column({ space: 6 }) {
+            Text('\u6c89\u6d78\u5149\u611f')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Text(this.immersiveSupportText())
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.immersiveLightEnabled })
+            .selectedColor($r('app.color.brand_primary'))
+            .onChange((on: boolean): void => {
+              this.toggleImmersiveLight(on);
+            })
+        }
+        .width('100%')
+        .padding({ left: 18, right: 16, top: 16, bottom: 16 })
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(20)
+
         FnHdsPillButton({
           text: $r('app.string.logout'),
           widthValue: '100%',
@@ -177,10 +245,11 @@ struct Home {
   @State private systemTopInsetVp: number = 0;
   @State private systemBottomInsetVp: number = 0;
   @State private gallerySelectionDockActive: boolean = false;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   private gallerySelectionDockDownloadAction: () => void = () => {};
   private gallerySelectionDockDeleteAction: () => void = () => {};
   private gallerySelectionDockTimer: number = -1;
-  private bottomTabsController: HdsTabsController = new HdsTabsController();
+  private bottomTabsController: HdsTabsController | null = null;
 
   onBackPress(): boolean {
     if (this.bottomNavIndex !== 2 && galleryTryConsumeAlbumBack()) {
@@ -313,7 +382,21 @@ struct Home {
     return this.isDarkTheme ? '#52000000' : '#22001A33';
     }
 
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private ensureBottomTabsController(): HdsTabsController {
+    if (this.bottomTabsController === null) {
+      this.bottomTabsController = new HdsTabsController();
+    }
+    return this.bottomTabsController;
+  }
+
   private syncBottomTabsController(index: number): void {
+    if (this.bottomTabsController === null) {
+      return;
+    }
     try {
       this.bottomTabsController.changeIndex(index);
     } catch (_e) {
@@ -455,6 +538,8 @@ struct Home {
 
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void fnLoadImmersiveLightPreference(ctx);
     const session = AppSession.getStored();
     if (session !== null && session.token.length > 0 && session.baseUrl.length > 0) {
       let base = session.baseUrl;
@@ -466,7 +551,6 @@ struct Home {
       this.gallerySurfaceIndex = this.bottomNavIndex === 1 ? 1 : 0;
       this.syncRootTabTransforms();
       if (session.fnosLongToken.length === 0) {
-        const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
         const client = AppSession.getClient();
         if (client !== null) {
           void client.fetchFnosLongTokenProbe(12000).then((token: string): void => {
@@ -517,7 +601,7 @@ struct Home {
 
   @Builder
   private floatingDockHdsTabs() {
-    HdsTabs({ controller: this.bottomTabsController, index: this.bottomNavIndex }) {
+    HdsTabs({ controller: this.ensureBottomTabsController(), index: this.bottomNavIndex }) {
       TabContent() {
         Column()
           .width('100%')
@@ -558,6 +642,7 @@ struct Home {
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
+    // @SuppressWarnings compatibility
     .barFloatingStyle({
       barBottomMargin: 0,
       gradientMask: {
@@ -577,6 +662,51 @@ struct Home {
     .onChange((index: number): void => {
       this.switchTab(index, true);
     })
+  }
+
+  @Builder
+  private floatingDockFallbackItem(index: number, icon: Resource, selectedIcon: Resource, label: string) {
+    Column({ space: 2 }) {
+      SymbolGlyph(this.isDockNavItemSelected(index) ? selectedIcon : icon)
+        .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
+        .fontColor([this.isDockNavItemSelected(index) ? $r('app.color.brand_primary') : $r('app.color.text_primary')])
+
+      Text(label)
+        .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.isDockNavItemSelected(index) ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .onClick((): void => {
+      this.switchTab(index);
+    })
+  }
+
+  @Builder
+  private floatingDockFallbackTabs() {
+    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+      this.floatingDockFallbackItem(0, $r('sys.symbol.picture'), $r('sys.symbol.picture_fill'), '\u56fe\u5e93')
+      this.floatingDockFallbackItem(1, $r('sys.symbol.rectangle_stack'), $r('sys.symbol.square_stack_3d_fill'), '\u76f8\u518c')
+      this.floatingDockFallbackItem(2, $r('sys.symbol.person'), $r('sys.symbol.person_fill'), '\u6211\u7684')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+    .backgroundColor(this.dockMaterialBackgroundColor())
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor(this.dockMaterialBorderColor())
+    .shadow({ radius: 20, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
+    .clip(true)
   }
 
   @Builder
@@ -610,6 +740,7 @@ struct Home {
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(FN_SELECTION_DOCK_WIDTH_VP)
+    // @SuppressWarnings compatibility
     .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
       FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
       FN_SELECTION_DOCK_WIDTH_VP,
@@ -632,6 +763,53 @@ struct Home {
       }
       this.gallerySelectionDockDeleteAction();
     })
+  }
+
+  @Builder
+  private floatingDockSelectionFallbackAction(index: number, icon: Resource, label: string, color: ResourceColor) {
+    Column({ space: 2 }) {
+      SymbolGlyph(icon)
+        .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
+        .fontColor([color])
+
+      Text(label)
+        .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(color)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .layoutWeight(1)
+    .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+    .borderRadius(FN_BOTTOM_DOCK_ITEM_RADIUS_VP)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .onClick((): void => {
+      if (index === 0) {
+        this.gallerySelectionDockDownloadAction();
+        return;
+      }
+      this.gallerySelectionDockDeleteAction();
+    })
+  }
+
+  @Builder
+  private floatingDockSelectionFallbackTabs() {
+    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+      this.floatingDockSelectionFallbackAction(0, $r('sys.symbol.download'), '\u4e0b\u8f7d', $r('app.color.brand_primary'))
+      this.floatingDockSelectionFallbackAction(1, $r('sys.symbol.trash'), '\u79fb\u5165\u56de\u6536\u7ad9', '#E11D48')
+    }
+    .width(FN_SELECTION_DOCK_WIDTH_VP)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+    .backgroundColor(this.dockMaterialBackgroundColor())
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor(this.dockMaterialBorderColor())
+    .shadow({ radius: 20, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
+    .clip(true)
   }
 
   @Builder
@@ -667,6 +845,7 @@ struct Home {
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    // @SuppressWarnings compatibility
     .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
       FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
       FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
@@ -693,14 +872,49 @@ struct Home {
 
   @Builder
   private floatingDockSideButton(isLayoutButton: boolean) {
-    this.floatingDockSideButtonBase(isLayoutButton)
+    if (this.canUseHds()) {
+      this.floatingDockSideButtonBase(isLayoutButton)
+    } else {
+      Stack({ alignContent: Alignment.Center }) {
+        if (isLayoutButton) {
+          this.floatingDockGridGlyph()
+        } else {
+          Text(this.currentGalleryGranularityLabel())
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .textAlign(TextAlign.Center)
+        }
+      }
+      .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      .backgroundColor($r('app.color.gallery_material_surface_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient())
+      .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
+      .borderWidth(1)
+      .borderColor(this.dockMaterialBorderColor())
+      .shadow({ radius: 18, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
+      .clip(true)
+      .onClick((): void => {
+        if (isLayoutButton) {
+          this.toast('\u663e\u793a\u6a21\u5f0f\u5207\u6362\u5165\u53e3\u9884\u7559\u4e2d');
+          return;
+        }
+        this.toggleGalleryViewGranularity();
+      })
+    }
   }
 
   @Builder
   private renderBottomDock() {
     if (this.gallerySelectionDockActive) {
       Row() {
-        this.floatingDockSelectionHdsTabs()
+        if (this.canUseHds()) {
+          this.floatingDockSelectionHdsTabs()
+        } else {
+          this.floatingDockSelectionFallbackTabs()
+        }
       }
       .width('100%')
       .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
@@ -717,7 +931,11 @@ struct Home {
             .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
         }
 
-        this.floatingDockHdsTabs()
+        if (this.canUseHds()) {
+          this.floatingDockHdsTabs()
+        } else {
+          this.floatingDockFallbackTabs()
+        }
 
         if (this.shouldShowGalleryDockSideButtons()) {
           this.floatingDockSideButton(false)
