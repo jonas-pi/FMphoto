@@ -1,3 +1,4 @@
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
@@ -29,11 +30,17 @@ export interface SelectionGestureControllerHost {
   gallerySlideLastAppliedEndFlat: number;
   gallerySlideLastApplyMs: number;
   gallerySlidePendingEndFlat: number;
+  galleryMainListDomId: string;
+  gallerySlideAutoScrollTimer: number;
+  gallerySlideAutoScrollVelocityVp: number;
+  gallerySlideAutoScrollPointerX: number;
+  gallerySlideAutoScrollPointerY: number;
   galleryLongPressIgnoreClickUntil: number;
   gallerySlideRefX: number;
   gallerySlideRefY: number;
   gallerySlideHasRef: boolean;
   searchResults: GalleryListItem[];
+  scrollerRef: Scroller;
   flowDataSource: GalleryWaterFlowDataSource;
   galleryThumbHitBounds: Map<string, GalleryThumbHitRect>;
   searchThumbHitBounds: Map<string, GalleryThumbHitRect>;
@@ -50,6 +57,18 @@ export interface SelectionGestureControllerHost {
 
 const GALLERY_SLIDE_SELECTION_APPLY_MIN_GAP_MS: number = 24;
 const GALLERY_SLIDE_SELECTION_APPLY_FORCE_GAP_FLATS: number = 2;
+const GALLERY_SLIDE_AUTO_SCROLL_TICK_MS: number = 16;
+const GALLERY_SLIDE_AUTO_SCROLL_EDGE_VP: number = 108;
+const GALLERY_SLIDE_AUTO_SCROLL_MIN_STEP_VP: number = 0.55;
+const GALLERY_SLIDE_AUTO_SCROLL_MAX_STEP_VP: number = 8.0;
+const GALLERY_SELECTION_DIAG_DOMAIN: number = 0xFF00;
+const GALLERY_SELECTION_DIAG_TAG: string = 'GalleryDiag';
+
+interface SelectionGalleryFlowSlot {
+  flowIndex: number;
+  slotIndex: number;
+  node: GalleryFlowNode;
+}
 
 function pickSearchThumbFlatUnderPointForSlide(
   host: SelectionGestureControllerHost,
@@ -69,6 +88,18 @@ function pickSearchThumbFlatUnderPointForSlide(
       selectionRecordSearchThumbRect(host, fi);
     }
   );
+}
+
+function selectionSameIdsInOrder(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function collectGalleryIdsInFlatRange(host: SelectionGestureControllerHost, lo: number, hi: number): string[] {
@@ -242,6 +273,7 @@ export function selectionBeginGallerySlideSelectGestureAtWindowPx(
 }
 
 export function selectionEndGallerySlideSelectGesture(host: SelectionGestureControllerHost): void {
+  selectionStopGallerySlideAutoScroll(host);
   const pendingEndFlat = host.gallerySlidePendingEndFlat;
   if (pendingEndFlat >= 0 && pendingEndFlat !== host.gallerySlideLastAppliedEndFlat) {
     selectionApplyGallerySlideRowRangeSelection(host, pendingEndFlat);
@@ -260,6 +292,114 @@ export function selectionEndGallerySlideSelectGesture(host: SelectionGestureCont
   host.galleryMainListScrollEnabled = true;
 }
 
+function selectionReadMainGalleryListRectPx(host: SelectionGestureControllerHost): GalleryThumbHitRect | null {
+  if (host.galleryMainListDomId.length === 0) {
+    return null;
+  }
+  try {
+    const info = host.getUIContext().getComponentUtils().getRectangleById(host.galleryMainListDomId);
+    const left = info.windowOffset.x as number;
+    const top = info.windowOffset.y as number;
+    const width = info.size.width as number;
+    const height = info.size.height as number;
+    if (!Number.isFinite(left) || !Number.isFinite(top) ||
+      !Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+      return null;
+    }
+    return {
+      left: left,
+      top: top,
+      right: left + width,
+      bottom: top + height
+    };
+  } catch (_e) {
+    return null;
+  }
+}
+
+function selectionComputeGallerySlideAutoScrollStepVp(
+  host: SelectionGestureControllerHost,
+  yPx: number
+): number {
+  if (host.inSearchMode || !host.gallerySlideGestureActive) {
+    return 0;
+  }
+  const rect = selectionReadMainGalleryListRectPx(host);
+  if (rect === null) {
+    return 0;
+  }
+  const edgePx = Math.max(1, selectionVpToPx(host, GALLERY_SLIDE_AUTO_SCROLL_EDGE_VP));
+  const startPx = rect.bottom - edgePx;
+  if (yPx <= startPx) {
+    return 0;
+  }
+  const ratio = Math.max(0, Math.min(1, (yPx - startPx) / edgePx));
+  const eased = ratio * ratio;
+  return GALLERY_SLIDE_AUTO_SCROLL_MIN_STEP_VP +
+    (GALLERY_SLIDE_AUTO_SCROLL_MAX_STEP_VP - GALLERY_SLIDE_AUTO_SCROLL_MIN_STEP_VP) * eased;
+}
+
+function selectionScrollMainGalleryByVp(host: SelectionGestureControllerHost, deltaVp: number): void {
+  if (Math.abs(deltaVp) < 0.01) {
+    return;
+  }
+  try {
+    const off = host.scrollerRef.currentOffset();
+    const yRaw = off.yOffset;
+    const y = typeof yRaw === 'number' && Number.isFinite(yRaw) ? Math.max(0, yRaw) : 0;
+    host.scrollerRef.scrollTo({ xOffset: 0, yOffset: Math.max(0, y + deltaVp) });
+  } catch (_e) {
+  }
+}
+
+function selectionStopGallerySlideAutoScroll(host: SelectionGestureControllerHost): void {
+  if (host.gallerySlideAutoScrollTimer >= 0) {
+    clearInterval(host.gallerySlideAutoScrollTimer);
+  }
+  host.gallerySlideAutoScrollTimer = -1;
+  host.gallerySlideAutoScrollVelocityVp = 0;
+}
+
+function selectionTickGallerySlideAutoScroll(host: SelectionGestureControllerHost): void {
+  if (!host.gallerySlideGestureActive) {
+    selectionStopGallerySlideAutoScroll(host);
+    return;
+  }
+  const stepVp = selectionComputeGallerySlideAutoScrollStepVp(host, host.gallerySlideAutoScrollPointerY);
+  if (stepVp <= 0) {
+    selectionStopGallerySlideAutoScroll(host);
+    return;
+  }
+  host.gallerySlideAutoScrollVelocityVp = stepVp;
+  selectionScrollMainGalleryByVp(host, stepVp);
+  selectionOnGallerySlideTouchMoveWindow(
+    host,
+    host.gallerySlideAutoScrollPointerX,
+    host.gallerySlideAutoScrollPointerY
+  );
+}
+
+function selectionUpdateGallerySlideAutoScroll(
+  host: SelectionGestureControllerHost,
+  xPx: number,
+  yPx: number
+): void {
+  host.gallerySlideAutoScrollPointerX = xPx;
+  host.gallerySlideAutoScrollPointerY = yPx;
+  const stepVp = selectionComputeGallerySlideAutoScrollStepVp(host, yPx);
+  host.gallerySlideAutoScrollVelocityVp = stepVp;
+  if (stepVp <= 0) {
+    selectionStopGallerySlideAutoScroll(host);
+    return;
+  }
+  if (host.gallerySlideAutoScrollTimer >= 0) {
+    return;
+  }
+  host.gallerySlideAutoScrollTimer = setInterval((): void => {
+    selectionTickGallerySlideAutoScroll(host);
+  }, GALLERY_SLIDE_AUTO_SCROLL_TICK_MS);
+}
+
 export function selectionResolveSlidePointerWindowPx(
   host: SelectionGestureControllerHost,
   ev: GestureEvent
@@ -268,13 +408,13 @@ export function selectionResolveSlidePointerWindowPx(
   if (win !== null) {
     return { x: selectionVpToPx(host, win.x), y: selectionVpToPx(host, win.y) };
   }
-  if (!host.gallerySlideHasRef) {
-    return null;
+  if (host.gallerySlideHasRef) {
+    return {
+      x: host.gallerySlideRefX + selectionPanOffsetVpToPx(host, ev.offsetX),
+      y: host.gallerySlideRefY + selectionPanOffsetVpToPx(host, ev.offsetY)
+    };
   }
-  return {
-    x: host.gallerySlideRefX + selectionPanOffsetVpToPx(host, ev.offsetX),
-    y: host.gallerySlideRefY + selectionPanOffsetVpToPx(host, ev.offsetY)
-  };
+  return null;
 }
 
 export function selectionHitGalleryThumbDomPx(
@@ -319,6 +459,34 @@ function selectionCachedGalleryThumbHitValidPx(
   }
   host.recordGalleryThumbRectFromDom(photoId, host.galleryThumbDomId(photoId));
   return true;
+}
+
+function selectionPickGalleryThumbFlatFromCacheOnly(
+  host: SelectionGestureControllerHost,
+  xPx: number,
+  yPx: number
+): number {
+  const n = host.flowDataSource.totalCount();
+  for (let i = n - 1; i >= 0; i--) {
+    const node = host.flowDataSource.getData(i);
+    if (node.kind !== 'row') {
+      continue;
+    }
+    for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
+      const slot = node.rowSlotItems[k];
+      if (slot === null || slot === undefined) {
+        continue;
+      }
+      const id = host.itemIdOf(slot);
+      if (id.length === 0) {
+        continue;
+      }
+      if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
+        return node.rowSlotFlatIndices[k];
+      }
+    }
+  }
+  return -1;
 }
 
 export function selectionPickGalleryThumbFlatUnderPoint(
@@ -379,7 +547,7 @@ export function selectionPickGalleryThumbFlatUnderPointForSlide(
   xPx: number,
   yPx: number
 ): number {
-  const fromCache = selectionPickGalleryThumbFlatUnderPoint(host, xPx, yPx);
+  const fromCache = selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
   if (fromCache >= 0) {
     return fromCache;
   }
@@ -433,12 +601,22 @@ export function selectionPickGalleryThumbFlatUnderPointForSlide(
         break;
       }
     }
-    const loR = centerRi >= 0 ? Math.max(0, centerRi - GALLERY_SLIDE_FLOW_ROW_RADIUS) : 0;
-    const hiR = centerRi >= 0 ? Math.min(nFlow - 1, centerRi + GALLERY_SLIDE_FLOW_ROW_RADIUS) : nFlow - 1;
-    for (let ri = hiR; ri >= loR; ri--) {
-      const hit = tryRowNode(host.flowDataSource.getData(ri));
-      if (hit >= 0) {
-        return hit;
+    if (centerRi >= 0) {
+      for (let delta = 0; delta <= GALLERY_SLIDE_FLOW_ROW_RADIUS; delta++) {
+        const downRi = centerRi + delta;
+        if (downRi < nFlow) {
+          const hit = tryRowNode(host.flowDataSource.getData(downRi));
+          if (hit >= 0) {
+            return hit;
+          }
+        }
+        const upRi = centerRi - delta;
+        if (delta > 0 && upRi >= 0) {
+          const hit = tryRowNode(host.flowDataSource.getData(upRi));
+          if (hit >= 0) {
+            return hit;
+          }
+        }
       }
     }
   }
@@ -465,10 +643,6 @@ export function selectionPickGalleryThumbFlatForRowOrCache(
   xPx: number,
   yPx: number
 ): number {
-  const fromCache = selectionPickGalleryThumbFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= 0) {
-    return fromCache;
-  }
   if (node.kind !== 'row') {
     return -1;
   }
@@ -489,7 +663,142 @@ export function selectionPickGalleryThumbFlatForRowOrCache(
       return node.rowSlotFlatIndices[k];
     }
   }
+  return selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
+}
+
+function selectionFindGalleryFlowSlot(
+  host: SelectionGestureControllerHost,
+  flatIdx: number
+): SelectionGalleryFlowSlot | null {
+  if (flatIdx < 0) {
+    return null;
+  }
+  const total = host.flowDataSource.totalCount();
+  for (let i = 0; i < total; i++) {
+    const node = host.flowDataSource.getData(i);
+    if (node.kind !== 'row') {
+      continue;
+    }
+    for (let k = 0; k < node.rowSlotFlatIndices.length; k++) {
+      if (node.rowSlotFlatIndices[k] === flatIdx) {
+        return {
+          flowIndex: i,
+          slotIndex: k,
+          node: node
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function selectionGetGalleryFlowSlotRect(
+  host: SelectionGestureControllerHost,
+  slot: SelectionGalleryFlowSlot
+): GalleryThumbHitRect | null {
+  const item = slot.node.rowSlotItems[slot.slotIndex];
+  if (item === null || item === undefined) {
+    return null;
+  }
+  const id = host.itemIdOf(item);
+  if (id.length === 0) {
+    return null;
+  }
+  let rect = host.galleryThumbHitBounds.get(id);
+  if (rect !== undefined) {
+    return rect;
+  }
+  host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
+  rect = host.galleryThumbHitBounds.get(id);
+  return rect === undefined ? null : rect;
+}
+
+function selectionClampInt(value: number, min: number, max: number): number {
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+}
+
+function selectionPickLoadedFlatInRowNearSlot(node: GalleryFlowNode, slotIndex: number): number {
+  const count = node.rowSlotFlatIndices.length;
+  if (count <= 0) {
+    return -1;
+  }
+  const start = selectionClampInt(slotIndex, 0, count - 1);
+  for (let delta = 0; delta < count; delta++) {
+    const right = start + delta;
+    if (right < count && node.rowSlotItems[right] !== null && node.rowSlotItems[right] !== undefined &&
+      node.rowSlotFlatIndices[right] >= 0) {
+      return node.rowSlotFlatIndices[right];
+    }
+    const left = start - delta;
+    if (left >= 0 && left !== right && node.rowSlotItems[left] !== null && node.rowSlotItems[left] !== undefined &&
+      node.rowSlotFlatIndices[left] >= 0) {
+      return node.rowSlotFlatIndices[left];
+    }
+  }
   return -1;
+}
+
+function selectionEstimateGalleryFlatFromPanOffset(
+  host: SelectionGestureControllerHost,
+  ev: GestureEvent
+): number {
+  if (host.inSearchMode || host.gallerySlideAnchorFlat < 0) {
+    return -1;
+  }
+  if (!Number.isFinite(ev.offsetX) || !Number.isFinite(ev.offsetY)) {
+    return -1;
+  }
+  const anchorSlot = selectionFindGalleryFlowSlot(host, host.gallerySlideAnchorFlat);
+  if (anchorSlot === null) {
+    return -1;
+  }
+  const anchorRect = selectionGetGalleryFlowSlotRect(host, anchorSlot);
+  if (anchorRect === null) {
+    return -1;
+  }
+  const itemWidth = Math.max(1, anchorRect.right - anchorRect.left);
+  const itemHeight = Math.max(1, anchorRect.bottom - anchorRect.top);
+  const dxPx = selectionPanOffsetVpToPx(host, ev.offsetX);
+  const dyPx = selectionPanOffsetVpToPx(host, ev.offsetY);
+  if (!Number.isFinite(dxPx) || !Number.isFinite(dyPx)) {
+    return -1;
+  }
+  const colDelta = Math.round(dxPx / itemWidth);
+  const rowDelta = Math.round(dyPx / itemHeight);
+  if (colDelta === 0 && rowDelta === 0) {
+    return host.gallerySlideAnchorFlat;
+  }
+
+  const rowFlowIndices: number[] = [];
+  let anchorRowOrdinal = -1;
+  const total = host.flowDataSource.totalCount();
+  for (let i = 0; i < total; i++) {
+    const node = host.flowDataSource.getData(i);
+    if (node.kind !== 'row') {
+      continue;
+    }
+    if (i === anchorSlot.flowIndex) {
+      anchorRowOrdinal = rowFlowIndices.length;
+    }
+    rowFlowIndices.push(i);
+  }
+  if (anchorRowOrdinal < 0 || rowFlowIndices.length <= 0) {
+    return -1;
+  }
+  const targetRowOrdinal = selectionClampInt(anchorRowOrdinal + rowDelta, 0, rowFlowIndices.length - 1);
+  const targetNode = host.flowDataSource.getData(rowFlowIndices[targetRowOrdinal]);
+  const targetSlot = selectionClampInt(
+    anchorSlot.slotIndex + colDelta,
+    0,
+    Math.max(0, targetNode.rowSlotFlatIndices.length - 1)
+  );
+  return selectionPickLoadedFlatInRowNearSlot(targetNode, targetSlot);
 }
 
 export function selectionSearchThumbDomId(
@@ -637,11 +946,14 @@ export function selectionApplyGallerySlideRowRangeSelection(
     ? collectSearchIdsInFlatRange(host, lo, hi)
     : collectGalleryIdsInFlatRange(host, lo, hi);
   const seen = new Set<string>();
-  const base = host.gallerySlideUnionBase;
-  for (let i = 0; i < base.length; i++) {
-    seen.add(base[i]);
+  const next: string[] = [];
+  for (let i = 0; i < host.gallerySlideUnionBase.length; i++) {
+    const id = host.gallerySlideUnionBase[i];
+    if (id.length > 0 && !seen.has(id)) {
+      seen.add(id);
+      next.push(id);
+    }
   }
-  const next: string[] = base.slice();
   for (let i = 0; i < rangeIds.length; i++) {
     const id = rangeIds[i];
     if (id.length > 0 && !seen.has(id)) {
@@ -652,7 +964,23 @@ export function selectionApplyGallerySlideRowRangeSelection(
   host.gallerySlideLastAppliedEndFlat = ef;
   host.gallerySlideLastApplyMs = Date.now();
   host.gallerySlidePendingEndFlat = ef;
-  host.setGallerySelectedIdsState(next);
+  hilog.warn(
+    GALLERY_SELECTION_DIAG_DOMAIN,
+    GALLERY_SELECTION_DIAG_TAG,
+    'selectionSlide apply mode=%{public}s anchor=%{public}d end=%{public}d lo=%{public}d hi=%{public}d ' +
+      'rangeIds=%{public}d base=%{public}d next=%{public}d',
+    host.inSearchMode ? 'search' : 'gallery',
+    host.gallerySlideAnchorFlat,
+    ef,
+    lo,
+    hi,
+    rangeIds.length,
+    host.gallerySelectedIds.length,
+    next.length
+  );
+  if (!selectionSameIdsInOrder(next, host.gallerySelectedIds)) {
+    host.setGallerySelectedIdsState(next);
+  }
 }
 
 export function selectionOnGallerySlidePanUpdate(
@@ -664,8 +992,10 @@ export function selectionOnGallerySlidePanUpdate(
   }
   const pt = selectionResolveSlidePointerWindowPx(host, ev);
   if (pt === null) {
+    selectionStopGallerySlideAutoScroll(host);
     return;
   }
+  selectionUpdateGallerySlideAutoScroll(host, pt.x, pt.y);
   const hitFlat = host.inSearchMode ?
     pickSearchThumbFlatUnderPointForSlide(host, pt.x, pt.y) :
     selectionPickGalleryThumbFlatUnderPointForSlide(host, pt.x, pt.y);
@@ -695,6 +1025,7 @@ export function selectionOnGallerySlideTouchMoveWindow(
   if (!host.gallerySlideGestureActive) {
     return;
   }
+  selectionUpdateGallerySlideAutoScroll(host, xPx, yPx);
   const hitFlat = host.inSearchMode
     ? pickSearchThumbFlatUnderPointForSlide(host, xPx, yPx)
     : selectionPickGalleryThumbFlatUnderPointForSlide(host, xPx, yPx);

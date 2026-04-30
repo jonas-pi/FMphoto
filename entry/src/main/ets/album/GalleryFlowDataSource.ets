@@ -33,6 +33,8 @@ export class GalleryFlowNode {
 
 interface GalleryFlowDataChangeListener {
   onDataReloaded(): void;
+  onDataChange?(index: number): void;
+  onDataChanged?(index: number): void;
 }
 
 export class GalleryWaterFlowDataSource {
@@ -64,6 +66,21 @@ export class GalleryWaterFlowDataSource {
   notifyDataReload(): void {
     this.listeners.forEach((l: GalleryFlowDataChangeListener): void => {
       l.onDataReloaded();
+    });
+  }
+
+  notifyDataChange(index: number): void {
+    if (index < 0 || index >= this.nodes.length) {
+      return;
+    }
+    this.listeners.forEach((l: GalleryFlowDataChangeListener): void => {
+      if (l.onDataChange !== undefined) {
+        l.onDataChange(index);
+      } else if (l.onDataChanged !== undefined) {
+        l.onDataChanged(index);
+      } else {
+        l.onDataReloaded();
+      }
     });
   }
 

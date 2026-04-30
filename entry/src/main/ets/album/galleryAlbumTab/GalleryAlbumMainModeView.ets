@@ -14,12 +14,13 @@ import {
   thumbIdentityOfItem,
   setThumbHighThroughputLevel
 } from '../GalleryAlbumCommon';
-import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
+import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
 import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 import { GalleryViewGranularity } from './GalleryAlbumGranularity';
+import { GalleryAlbumSelectionOverlay } from './GalleryAlbumSelectionOverlay';
 
 const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
 const GALLERY_MAIN_TOUCH_SLOP_VP: number = 10;
@@ -30,6 +31,7 @@ const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_YEAR: number = 120;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_MONTH: number = 160;
 const GALLERY_GRANULARITY_SWITCH_DURATION_MS: number = 140;
 const GALLERY_GRANULARITY_SWITCH_START_OPACITY: number = 0.92;
+export const GALLERY_ALBUM_MAIN_LIST_DOM_ID: string = 'gallery_album_main_list';
 
 @Component
 export struct GalleryAlbumMainModeView {
@@ -66,6 +68,7 @@ export struct GalleryAlbumMainModeView {
   @Prop timelineLongPressExpanded: boolean = false;
   @Prop timelineIndicatorY: number = 0;
   @Prop timelineSliderRatio: number = 0;
+  @Prop mainListDomId: string = GALLERY_ALBUM_MAIN_LIST_DOM_ID;
 
   scrollerRef: Scroller = new Scroller();
   flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
@@ -77,6 +80,9 @@ export struct GalleryAlbumMainModeView {
   private galleryTouchStartY: number = 0;
   private galleryTouchLastX: number = 0;
   private galleryTouchLastY: number = 0;
+  private galleryTouchRowNode: GalleryFlowNode | null = null;
+  private galleryTouchSlideDriving: boolean = false;
+  private gallerySecondaryPanDriving: boolean = false;
   private thumbThroughputLevel: number = 0;
   private thumbLastAdaptiveDropAtMs: number = 0;
   private lastViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
@@ -304,6 +310,8 @@ export struct GalleryAlbumMainModeView {
   }
 
   private armInitialGallerySlideGesture(ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void {
+    this.galleryTouchSlideDriving = false;
+    this.gallerySecondaryPanDriving = false;
     this.galleryInitialSlidePending = true;
     this.beginGallerySlideSelectGesture(ev, item, anchorFlat);
   }
@@ -323,19 +331,24 @@ export struct GalleryAlbumMainModeView {
     this.clearGalleryTouchLongPressTimer();
     this.galleryTouchDownActive = false;
     this.galleryTouchPendingLongPress = false;
+    this.galleryTouchRowNode = null;
+    this.galleryTouchSlideDriving = false;
+    this.gallerySecondaryPanDriving = false;
   }
 
-  private startGalleryTouchLongPress(pt: GalleryFingerWindowPoint): void {
+  private startGalleryTouchLongPress(pt: GalleryFingerWindowPoint, node: GalleryFlowNode | null = null): void {
     if (this.gallerySelectionMode || this.gallerySlideGestureActive) {
       return;
     }
     this.clearGalleryTouchLongPressTimer();
     this.galleryTouchDownActive = true;
     this.galleryTouchPendingLongPress = true;
+    this.galleryTouchRowNode = node;
     this.galleryTouchStartX = pt.x;
     this.galleryTouchStartY = pt.y;
     this.galleryTouchLastX = pt.x;
     this.galleryTouchLastY = pt.y;
+    this.galleryTouchSlideDriving = false;
     this.galleryTouchLongPressTimer = setTimeout((): void => {
       this.galleryTouchLongPressTimer = -1;
       if (!this.galleryTouchDownActive || !this.galleryTouchPendingLongPress ||
@@ -343,14 +356,19 @@ export struct GalleryAlbumMainModeView {
         return;
       }
       const all = this.getFlatItems();
-      const fi = this.pickGalleryThumbFlatUnderPoint(this.galleryTouchLastX, this.galleryTouchLastY);
+      const fi = this.galleryTouchRowNode !== null ?
+        this.pickGalleryThumbFlatForRowOrCache(this.galleryTouchRowNode, this.galleryTouchLastX, this.galleryTouchLastY) :
+        this.pickGalleryThumbFlatUnderPoint(this.galleryTouchLastX, this.galleryTouchLastY);
       if (fi < 0 || fi >= all.length) {
         this.galleryTouchPendingLongPress = false;
         return;
       }
       const item = all[fi];
-      this.onGalleryThumbLongPress(item);
+      if (!this.gallerySelectionMode) {
+        this.onGalleryThumbLongPress(item);
+      }
       this.beginGallerySlideSelectGestureAtWindowPx(item, fi, this.galleryTouchLastX, this.galleryTouchLastY);
+      this.galleryTouchSlideDriving = true;
       this.galleryTouchPendingLongPress = false;
     }, GALLERY_MAIN_TOUCH_LONG_PRESS_MS);
   }
@@ -358,19 +376,10 @@ export struct GalleryAlbumMainModeView {
   private onMainListTouchEvent(event: TouchEvent): void {
     const pt = this.readTouchFingerWindow(event);
     if (event.type === TouchType.Down) {
-      if (pt !== null) {
-        this.startGalleryTouchLongPress(pt);
-      } else {
-        this.resetGalleryTouchTracking();
-      }
       return;
     }
     if (this.gallerySlideGestureActive) {
       if (event.type === TouchType.Move) {
-        if (pt === null) {
-          return;
-        }
-        this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
         return;
       }
       if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
@@ -419,39 +428,9 @@ export struct GalleryAlbumMainModeView {
           .aspectRatio(1)
           .hitTestBehavior(HitTestMode.None)
       }
-      Column()
-        .width('100%')
-        .aspectRatio(1)
-        .backgroundColor('#55000000')
-        .opacity(this.gallerySelectionMode && this.isItemSelected(item) ? 1 : 0)
-        .hitTestBehavior(HitTestMode.None)
-        .animation({ duration: 0, curve: Curve.Linear })
-      Row() {
-        Blank().layoutWeight(1)
-        Column() {
-          if (this.isItemSelected(item)) {
-            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-              .fontSize(24)
-              .fontColor([$r('app.color.brand_primary')])
-              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-          } else {
-            Stack({ alignContent: Alignment.Center }) {
-              Circle()
-                .width(22)
-                .height(22)
-                .fill(Color.Transparent)
-                .stroke(Color.White)
-                .strokeWidth(2)
-            }
-            .width(24)
-            .height(24)
-          }
-        }
-        .padding({ top: 6, right: 6 })
-      }
-      .width('100%')
-      .hitTestBehavior(HitTestMode.None)
-      .visibility(this.gallerySelectionMode ? Visibility.Visible : Visibility.Hidden)
+      GalleryAlbumSelectionOverlay({
+        itemId: this.itemIdOf(item)
+      })
     }
     .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)
     .onAreaChange((): void => {
@@ -532,25 +511,50 @@ export struct GalleryAlbumMainModeView {
         .width('100%')
         .padding({ left: 2, right: 2, top: 1, bottom: 1 })
         .onTouch((event: TouchEvent): void => {
+          const touchPt = this.readTouchFingerWindow(event);
           if (!this.gallerySlideGestureActive) {
             if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
               this.clearInitialGallerySlideGesture();
+              this.resetGalleryTouchTracking();
+              return;
+            }
+            if (event.type === TouchType.Down) {
+              if (touchPt !== null) {
+                if (!this.gallerySelectionMode) {
+                  this.startGalleryTouchLongPress(touchPt, node);
+                }
+              }
+              return;
+            }
+            if (this.galleryTouchPendingLongPress && touchPt !== null && event.type === TouchType.Move) {
+              this.galleryTouchLastX = touchPt.x;
+              this.galleryTouchLastY = touchPt.y;
+              const dx = touchPt.x - this.galleryTouchStartX;
+              const dy = touchPt.y - this.galleryTouchStartY;
+              const slopPx = this.vpToPx(GALLERY_MAIN_TOUCH_SLOP_VP);
+              if ((dx * dx + dy * dy) > (slopPx * slopPx)) {
+                this.resetGalleryTouchTracking();
+              }
             }
             return;
           }
           if (event.type === TouchType.Move) {
-            const pt = this.readTouchFingerWindow(event);
-            if (pt === null) {
-              return;
+            if (touchPt !== null && this.galleryTouchSlideDriving) {
+              this.onGallerySlideTouchMoveWindow(touchPt.x, touchPt.y);
             }
-            this.onGallerySlideTouchMoveWindow(pt.x, pt.y);
+            return;
+          }
+          if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+            this.clearInitialGallerySlideGesture();
+            this.endGallerySlideSelectGesture();
+            this.resetGalleryTouchTracking();
           }
         })
         .parallelGesture(GestureGroup(GestureMode.Parallel,
           GestureGroup(GestureMode.Sequence,
             LongPressGesture({ repeat: false, duration: 420 })
               .onAction((ev: GestureEvent): void => {
-                if (this.gallerySlideGestureActive) {
+                if (this.gallerySelectionMode || this.gallerySlideGestureActive) {
                   return;
                 }
                 this.clearInitialGallerySlideGesture();
@@ -570,11 +574,10 @@ export struct GalleryAlbumMainModeView {
                   return;
                 }
                 const longPressItem = all[fi];
-                const wasSelectionMode = this.gallerySelectionMode;
-                this.onGalleryThumbLongPress(longPressItem);
-                if (!wasSelectionMode) {
-                  this.armInitialGallerySlideGesture(ev, longPressItem, fi);
+                if (!this.gallerySelectionMode) {
+                  this.onGalleryThumbLongPress(longPressItem);
                 }
+                this.armInitialGallerySlideGesture(ev, longPressItem, fi);
               }),
             PanGesture({
               fingers: 1,
@@ -599,14 +602,14 @@ export struct GalleryAlbumMainModeView {
           PanGesture({
             fingers: 1,
             direction: PanDirection.Horizontal,
-            distance: this.gallerySelectionMode ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE :
-              GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE
+            distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
           })
             .onActionStart((ev: GestureEvent): void => {
-              if (!this.gallerySelectionMode) {
+              this.gallerySecondaryPanDriving = false;
+              if (!this.gallerySelectionMode || this.gallerySlideGestureActive || this.galleryInitialSlidePending) {
                 return;
               }
-              if (this.gallerySlideGestureActive || this.galleryInitialSlidePending) {
+              if (Number.isFinite(ev.offsetX) && ev.offsetX < 0) {
                 return;
               }
               const pt = this.readGestureFingerWindow(ev);
@@ -623,18 +626,28 @@ export struct GalleryAlbumMainModeView {
               if (fi >= all.length) {
                 return;
               }
+              this.galleryTouchSlideDriving = false;
+              this.gallerySecondaryPanDriving = true;
               this.beginGallerySlideSelectGesture(ev, all[fi], fi);
             })
             .onActionUpdate((ev: GestureEvent): void => {
+              if (!this.gallerySecondaryPanDriving || !this.gallerySelectionMode ||
+                this.galleryInitialSlidePending || !this.gallerySlideGestureActive) {
+                return;
+              }
               this.onGallerySlidePanUpdate(ev);
             })
             .onActionEnd((): void => {
-              this.clearInitialGallerySlideGesture();
-              this.endGallerySlideSelectGesture();
+              if (this.gallerySecondaryPanDriving && !this.galleryInitialSlidePending && this.gallerySlideGestureActive) {
+                this.endGallerySlideSelectGesture();
+              }
+              this.gallerySecondaryPanDriving = false;
             })
             .onActionCancel((): void => {
-              this.clearInitialGallerySlideGesture();
-              this.endGallerySlideSelectGesture();
+              if (this.gallerySecondaryPanDriving && !this.galleryInitialSlidePending && this.gallerySlideGestureActive) {
+                this.endGallerySlideSelectGesture();
+              }
+              this.gallerySecondaryPanDriving = false;
             })
         ))
       }
@@ -700,6 +713,7 @@ export struct GalleryAlbumMainModeView {
                   .width('100%')
                 }
               }
+              .id(this.mainListDomId)
               .width('100%')
               .height('100%')
               .cachedCount(this.currentListCachedCount())
