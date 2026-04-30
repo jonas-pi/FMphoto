@@ -6,6 +6,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo, fileUri as fileUriUtil } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { AppSession } from '../auth/AppSession';
+import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { copyGalleryUriContentToAlbumUri } from './GalleryAlbumSaveToAlbum';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from './GalleryAlbumCommon';
@@ -145,6 +146,8 @@ export async function runBatchDownloadGalleryItems(
     useOriginalForImages = q === 'original';
   }
 
+  BackgroundKeepAliveController.beginDataTransfer(hostContext, 'batch-download');
+  try {
   const preparedFileUris: string[] = [];
   const preparedConfigs: photoAccessHelper.PhotoCreationConfig[] = [];
   const tempPaths: string[] = [];
@@ -230,5 +233,8 @@ export async function runBatchDownloadGalleryItems(
       } catch (_e) {
       }
     }
+  }
+  } finally {
+    BackgroundKeepAliveController.endDataTransfer('batch-download');
   }
 }

@@ -11,6 +11,7 @@ import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshS
 import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../album/GalleryAlbumCommon';
 import { openPersonAlbumById } from '../../album/PersonAlbumOpenHelper';
 import { AppSession } from '../../auth/AppSession';
+import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
 import { PreviewItemsDataSource } from './GalleryPreviewDataSource';
 import {
@@ -552,6 +553,7 @@ export function galleryPreviewDownloadCurrentImage(host: GalleryPreviewActionsHo
 
 async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promise<void> {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  await BackgroundKeepAliveController.withDataTransfer(ctx, 'preview-download', async (): Promise<void> => {
   const isVideo = galleryPreviewCurrentItemIsVideo(host);
   let useOriginal = false;
   if (!isVideo && galleryPreviewCurrentHasOriginalFromHost(host)) {
@@ -702,6 +704,7 @@ async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promis
     } catch (_e) {
     }
   }
+  });
 }
 
 export function galleryPreviewShareCurrentImage(host: GalleryPreviewActionsHost): void {

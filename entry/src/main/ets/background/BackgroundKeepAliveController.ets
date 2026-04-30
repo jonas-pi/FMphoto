@@ -1,17 +1,3 @@
-/**
- * 后台保活：基于鸿蒙 Background Tasks Kit（@ohos 官方能力，非轮询/恶意常驻）。
- *
- * 1) 短时任务 requestSuspendDelay：进后台时申请挂起宽限，便于状态收尾；回前台须 cancel，避免浪费配额。
- * 2) 长时任务 startBackgroundRunning(DATA_TRANSFER)：与 NAS 同步、图库拉取等数据传输场景匹配；
- *    须在 module.json5 声明 backgroundModes 与 KEEP_BACKGROUND_RUNNING。
- *
- * 配额与策略由系统统一下发，应用不得假设「永久后台」。
- *
- * 崩溃防护：
- *   - 所有系统 API 均包裹在独立 try-catch 中，防止单点异常扩散
- *   - startBackgroundRunning 使用枚举值 BackgroundMode.DATA_TRANSFER（非字符串）
- *   - 回前台/销毁时优先 stopBackgroundRunning，再 cancelSuspendDelay
- */
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { common, wantAgent } from '@kit.AbilityKit';
 import type { WantAgent } from '@kit.AbilityKit';
@@ -26,20 +12,67 @@ const BG_CONTINUOUS_TASK_SYSCAP = 'SystemCapability.ResourceSchedule.BackgroundT
 export class BackgroundKeepAliveController {
   private static suspendRequestId: number = -1;
   private static longRunningActive: boolean = false;
+  private static startInFlight: boolean = false;
+  private static stopInFlight: boolean = false;
+  private static appInBackground: boolean = false;
+  private static activeDataTransferCount: number = 0;
+  private static lastContext: common.UIAbilityContext | undefined = undefined;
 
-  /** UIAbility 进入后台时调用 */
   static onAbilityBackground(context: common.UIAbilityContext): void {
+    BackgroundKeepAliveController.lastContext = context;
+    BackgroundKeepAliveController.appInBackground = true;
     BackgroundKeepAliveController.requestSuspendDelaySafe();
-    void BackgroundKeepAliveController.startDataTransferBackgroundSafe(context);
+    BackgroundKeepAliveController.reconcileDataTransferBackground(context);
   }
 
-  /** UIAbility 回到前台或即将销毁时调用 */
   static onAbilityForegroundOrDestroy(context: common.UIAbilityContext): void {
-    void BackgroundKeepAliveController.stopDataTransferBackgroundSafe(context);
+    BackgroundKeepAliveController.lastContext = context;
+    BackgroundKeepAliveController.appInBackground = false;
+    BackgroundKeepAliveController.reconcileDataTransferBackground(context);
     BackgroundKeepAliveController.cancelSuspendDelaySafe();
   }
 
-  // ── 短时任务 ───────────────────────────────────────────────────────────
+  static beginDataTransfer(context: common.UIAbilityContext, reason: string): void {
+    BackgroundKeepAliveController.lastContext = context;
+    BackgroundKeepAliveController.activeDataTransferCount++;
+    hilog.info(
+      DOMAIN,
+      TAG,
+      'beginDataTransfer reason=%{public}s count=%{public}d background=%{public}s',
+      reason,
+      BackgroundKeepAliveController.activeDataTransferCount,
+      BackgroundKeepAliveController.appInBackground ? 'true' : 'false'
+    );
+    BackgroundKeepAliveController.reconcileDataTransferBackground(context);
+  }
+
+  static endDataTransfer(reason: string): void {
+    if (BackgroundKeepAliveController.activeDataTransferCount > 0) {
+      BackgroundKeepAliveController.activeDataTransferCount--;
+    }
+    hilog.info(
+      DOMAIN,
+      TAG,
+      'endDataTransfer reason=%{public}s count=%{public}d background=%{public}s',
+      reason,
+      BackgroundKeepAliveController.activeDataTransferCount,
+      BackgroundKeepAliveController.appInBackground ? 'true' : 'false'
+    );
+    BackgroundKeepAliveController.reconcileDataTransferBackground();
+  }
+
+  static async withDataTransfer<T>(
+    context: common.UIAbilityContext,
+    reason: string,
+    task: () => Promise<T>
+  ): Promise<T> {
+    BackgroundKeepAliveController.beginDataTransfer(context, reason);
+    try {
+      return await task();
+    } finally {
+      BackgroundKeepAliveController.endDataTransfer(reason);
+    }
+  }
 
   private static requestSuspendDelaySafe(): void {
     BackgroundKeepAliveController.cancelSuspendDelaySafe();
@@ -47,8 +80,12 @@ export class BackgroundKeepAliveController {
       try {
         // @SuppressWarnings syscap
         const delayInfo = backgroundTaskManager.requestSuspendDelay(SUSPEND_REASON, (): void => {
-          hilog.warn(DOMAIN, TAG, 'suspend quota callback, cancel id=%{public}d',
-            BackgroundKeepAliveController.suspendRequestId);
+          hilog.warn(
+            DOMAIN,
+            TAG,
+            'suspend quota callback, cancel id=%{public}d',
+            BackgroundKeepAliveController.suspendRequestId
+          );
           BackgroundKeepAliveController.cancelSuspendDelaySafe();
         });
         BackgroundKeepAliveController.suspendRequestId = delayInfo.requestId;
@@ -72,23 +109,41 @@ export class BackgroundKeepAliveController {
         // @SuppressWarnings syscap
         backgroundTaskManager.cancelSuspendDelay(id);
       } catch (_e) {
-      // 已失效或被系统回收，忽略
       }
     }
   }
 
-  // ── 长时任务（数据传输模式） ─────────────────────────────────────────────
+  private static shouldHoldDataTransferBackground(): boolean {
+    return BackgroundKeepAliveController.appInBackground &&
+      BackgroundKeepAliveController.activeDataTransferCount > 0;
+  }
+
+  private static reconcileDataTransferBackground(context?: common.UIAbilityContext): void {
+    const ctx = context ?? BackgroundKeepAliveController.lastContext;
+    if (ctx === undefined) {
+      return;
+    }
+    if (BackgroundKeepAliveController.shouldHoldDataTransferBackground()) {
+      void BackgroundKeepAliveController.startDataTransferBackgroundSafe(ctx);
+      return;
+    }
+    void BackgroundKeepAliveController.stopDataTransferBackgroundSafe(ctx);
+  }
 
   private static async startDataTransferBackgroundSafe(context: common.UIAbilityContext): Promise<void> {
-    if (BackgroundKeepAliveController.longRunningActive) {
+    if (
+      BackgroundKeepAliveController.longRunningActive ||
+      BackgroundKeepAliveController.startInFlight ||
+      !BackgroundKeepAliveController.shouldHoldDataTransferBackground()
+    ) {
       return;
     }
     if (!canIUse(BG_CONTINUOUS_TASK_SYSCAP)) {
       hilog.info(DOMAIN, TAG, 'skip startBackgroundRunning: syscap unsupported');
       return;
     }
+    BackgroundKeepAliveController.startInFlight = true;
     try {
-      // abilityInfo 在少数机型/时序下可能未就绪，全量保护
       if (context.abilityInfo === null || context.abilityInfo === undefined) {
         hilog.warn(DOMAIN, TAG, 'skip startBackgroundRunning: abilityInfo not ready');
         return;
@@ -106,7 +161,6 @@ export class BackgroundKeepAliveController {
         requestCode: 0
       });
 
-      // 使用官方枚举值（DATA_TRANSFER = 1），避免传 string[] 导致运行时 TypeError
       // @SuppressWarnings syscap
       await backgroundTaskManager.startBackgroundRunning(
         context,
@@ -117,16 +171,22 @@ export class BackgroundKeepAliveController {
       hilog.info(DOMAIN, TAG, 'startBackgroundRunning DATA_TRANSFER ok');
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'startBackgroundRunning skipped or failed: %{public}s', String(e));
-      // 不设 longRunningActive，允许下次重试
+    } finally {
+      BackgroundKeepAliveController.startInFlight = false;
+      if (!BackgroundKeepAliveController.shouldHoldDataTransferBackground()) {
+        BackgroundKeepAliveController.reconcileDataTransferBackground(context);
+      }
     }
   }
 
   private static async stopDataTransferBackgroundSafe(context: common.UIAbilityContext): Promise<void> {
-    if (!BackgroundKeepAliveController.longRunningActive) {
+    if (!BackgroundKeepAliveController.longRunningActive || BackgroundKeepAliveController.stopInFlight) {
       return;
     }
+    BackgroundKeepAliveController.stopInFlight = true;
     BackgroundKeepAliveController.longRunningActive = false;
     if (!canIUse(BG_CONTINUOUS_TASK_SYSCAP)) {
+      BackgroundKeepAliveController.stopInFlight = false;
       return;
     }
     try {
@@ -135,6 +195,11 @@ export class BackgroundKeepAliveController {
       hilog.info(DOMAIN, TAG, 'stopBackgroundRunning ok');
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'stopBackgroundRunning: %{public}s', String(e));
+    } finally {
+      BackgroundKeepAliveController.stopInFlight = false;
+      if (BackgroundKeepAliveController.shouldHoldDataTransferBackground()) {
+        BackgroundKeepAliveController.reconcileDataTransferBackground(context);
+      }
     }
   }
 }
