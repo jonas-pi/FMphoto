@@ -1,6 +1,6 @@
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
-import { GalleryListItem, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
+import { GalleryListItem, GalleryThumbnailBlock, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { smartCategoryCover } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
@@ -10,6 +10,57 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+
+type SmartMagicRecord = Record<string, Object | string | number | boolean | undefined | null>;
+
+function smartReadFirstString(raw: SmartMagicRecord, keys: string[]): string {
+  for (let i = 0; i < keys.length; i++) {
+    const value = raw[keys[i]];
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const text = String(value).trim();
+      if (text.length > 0 && text !== 'null') {
+        return text;
+      }
+    }
+  }
+  return '';
+}
+
+function normalizeSmartMagicItem(item: MagicSearchItem): GalleryListItem {
+  const out = item as GalleryListItem;
+  const raw = item as SmartMagicRecord;
+  const id = smartReadFirstString(raw, ['photoId', 'id']);
+  const uuid = smartReadFirstString(raw, ['uuid', 'photoUUID', 'session']);
+  if (id.length === 0 || uuid.length === 0) {
+    return out;
+  }
+
+  const thumbM = `/p/api/v1/stream/p/t/${id}/m/${uuid}`;
+  const thumbS = `/p/api/v1/stream/p/t/${id}/s/${uuid}`;
+  const original = `/p/api/v1/stream/p/t/${id}/o/${uuid}`;
+  const thumbBlock: GalleryThumbnailBlock = {
+    mUrl: thumbM,
+    sUrl: thumbS,
+    xsUrl: thumbS,
+    xxsUrl: thumbS,
+    originalUrl: original
+  };
+
+  out.id = id;
+  out.photoUUID = uuid;
+  out.thumb = thumbM;
+  out.small_thumb = thumbS;
+  out.thumbnail = thumbBlock;
+  if (out.originalUrl === undefined || out.originalUrl.trim().length === 0) {
+    out.originalUrl = original;
+  }
+  if (out.additional === undefined) {
+    out.additional = { thumbnail: thumbBlock };
+  } else {
+    out.additional.thumbnail = thumbBlock;
+  }
+  return out;
+}
 
 @Entry
 @Component
@@ -96,6 +147,10 @@ struct SmartCategoryPage {
     return smartCategoryCover(item);
   }
 
+  private smartCategoryGridKey(item: SmartCategoryItem, index: number): string {
+    return `sc_${index}_${this.nameOf(item)}_${this.coverOf(item)}`;
+  }
+
   private async loadData(): Promise<void> {
     this.loading = true;
     this.error = '';
@@ -160,22 +215,20 @@ struct SmartCategoryPage {
       }
       const rawList = res.data.list ?? [];
       const mapped: GalleryListItem[] = rawList.map((x: MagicSearchItem): GalleryListItem => {
-        const rich = x.additional !== undefined || x.thumbnail !== undefined || x.category !== undefined || x.fileType !== undefined;
-        if (rich) {
-          return x as GalleryListItem;
-        }
-        const id = x.id !== undefined ? String(x.id) : '';
-        const session = x.session !== undefined ? x.session : '';
-        if (id.length > 0 && session.length > 0) {
-          return { id: id, thumb: `/p/api/v1/stream/p/t/${id}/s/${session}` };
-        }
-        return x as GalleryListItem;
+        return normalizeSmartMagicItem(x);
       });
       if (mapped.length === 0) {
         this.toast('该分类暂无可预览媒体');
         return;
       }
-      const ok = await CategoryGalleryNavStore.open(this.baseUrl, keyword, mapped, this.getUIContext());
+      const ok = await CategoryGalleryNavStore.open(
+        this.baseUrl,
+        keyword,
+        mapped,
+        this.getUIContext(),
+        false,
+        { sourceKind: 'smart-category' }
+      );
       if (!ok) {
         this.toast('打开分类失败');
       }
@@ -216,7 +269,7 @@ struct SmartCategoryPage {
             void this.openSmartCategory(item);
           })
         }
-      }, (_item: SmartCategoryItem, i: number) => `sc_${i}`)
+      }, (item: SmartCategoryItem, i: number) => this.smartCategoryGridKey(item, i))
     }
     .columnsTemplate('1fr 1fr 1fr')
     .columnsGap(10)
