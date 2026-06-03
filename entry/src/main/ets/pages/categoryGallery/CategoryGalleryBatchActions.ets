@@ -9,7 +9,11 @@ import {
   runBatchDownloadGalleryItems
 } from '../../album/GalleryBatchDownload';
 import { AppSession } from '../../auth/AppSession';
-import { buildCategoryGalleryViewData, DayGroup } from './CategoryGalleryTypes';
+import {
+  buildCategoryGalleryInputOrderViewData,
+  buildCategoryGalleryViewData,
+  DayGroup
+} from './CategoryGalleryTypes';
 import { categoryGalleryItemIdOf } from './CategoryGallerySelectionController';
 
 export interface CategoryGalleryBatchActionsHost {
@@ -118,7 +122,9 @@ export async function categoryGalleryConfirmBatchDelete(host: CategoryGalleryBat
 
 export function categoryGalleryRebuildByFlatItems(host: CategoryGalleryBatchActionsHost): void {
   const useCreatedAt = CategoryGalleryNavStore.useCreatedAtGrouping;
-  const viewData = buildCategoryGalleryViewData(host.flatItems, useCreatedAt, CategoryGalleryNavStore.columnsPerRow);
+  const viewData = CategoryGalleryNavStore.sourceKind === 'smart-category'
+    ? buildCategoryGalleryInputOrderViewData(host.flatItems, CategoryGalleryNavStore.columnsPerRow)
+    : buildCategoryGalleryViewData(host.flatItems, useCreatedAt, CategoryGalleryNavStore.columnsPerRow);
   host.groups = viewData.groups;
   host.groupOffsets = viewData.groupOffsets;
 }

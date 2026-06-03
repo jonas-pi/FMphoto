@@ -3,6 +3,7 @@
  * 供 GalleryAlbumTab 与独立预览页共用，避免重复缓存与解码逻辑。
  */
 import { image } from '@kit.ImageKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem, GalleryThumbnailBlock } from '../model/FnApiTypes';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -27,6 +28,10 @@ const thumbLoadFailAt = new Map<string, number>();
 const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
 /** 原图下载智能超时：先短后长，兼顾小图响应与大图成功率 */
 const FULL_IMAGE_TIMEOUT_STEPS_MS: number[] = [12000, 25000, 45000];
+const FULL_IMAGE_PREVIEW_MAX_EDGE_PX = 4096;
+const FULL_IMAGE_SAFE_DECODE_BYTES = 24 * 1024 * 1024;
+const FULL_IMAGE_SAFE_DECODE_PIXELS = FULL_IMAGE_PREVIEW_MAX_EDGE_PX * FULL_IMAGE_PREVIEW_MAX_EDGE_PX;
+const FULL_IMAGE_NATIVE_RESPONSE_LIMIT_BYTES = 20 * 1024 * 1024;
 
 export interface GalleryThumbLoadTelemetry {
   active: number;
@@ -58,6 +63,143 @@ function fullImageTimeoutSteps(expectedBytes?: number): number[] {
     return [18000, 50000, 90000];
   }
   return FULL_IMAGE_TIMEOUT_STEPS_MS;
+}
+
+async function readImageSourceSize(src: image.ImageSource): Promise<image.Size | undefined> {
+  try {
+    const info = await src.getImageInfo();
+    return info.size;
+  } catch (_e) {
+    return undefined;
+  }
+}
+
+function shouldUseSafeFullDecode(srcSize?: image.Size, expectedBytes?: number): boolean {
+  if (expectedBytes !== undefined && expectedBytes >= FULL_IMAGE_SAFE_DECODE_BYTES) {
+    return true;
+  }
+  if (srcSize === undefined || srcSize.width <= 0 || srcSize.height <= 0) {
+    return false;
+  }
+  return srcSize.width * srcSize.height > FULL_IMAGE_SAFE_DECODE_PIXELS;
+}
+
+function buildSafeFullDecodeSize(srcSize?: image.Size): image.Size | undefined {
+  if (srcSize === undefined || srcSize.width <= 0 || srcSize.height <= 0) {
+    return undefined;
+  }
+  const maxEdge = Math.max(srcSize.width, srcSize.height);
+  if (maxEdge <= FULL_IMAGE_PREVIEW_MAX_EDGE_PX) {
+    return undefined;
+  }
+  const scale = FULL_IMAGE_PREVIEW_MAX_EDGE_PX / maxEdge;
+  return {
+    height: Math.max(1, Math.floor(srcSize.height * scale)),
+    width: Math.max(1, Math.floor(srcSize.width * scale))
+  };
+}
+
+async function tryCreateFullPixelMap(
+  src: image.ImageSource,
+  desiredDynamicRange: image.DecodingDynamicRange,
+  desiredSize?: image.Size
+): Promise<PixelMap | undefined> {
+  try {
+    const options: image.DecodingOptions = { desiredDynamicRange };
+    if (desiredSize !== undefined) {
+      options.desiredSize = desiredSize;
+    }
+    return await src.createPixelMap(options);
+  } catch (_e) {
+    return undefined;
+  }
+}
+
+async function decodeFullPixFromSource(src: image.ImageSource, expectedBytes?: number): Promise<PixelMap | undefined> {
+  const srcSize = await readImageSourceSize(src);
+  const safeSize = buildSafeFullDecodeSize(srcSize);
+  const safeDecode = shouldUseSafeFullDecode(srcSize, expectedBytes);
+  let pix: PixelMap | undefined = undefined;
+  if (!safeDecode) {
+    pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.HDR);
+    if (pix !== undefined) {
+      return pix;
+    }
+    pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR);
+    if (pix !== undefined) {
+      return pix;
+    }
+  }
+  if (safeSize !== undefined) {
+    pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR, safeSize);
+    if (pix !== undefined) {
+      return pix;
+    }
+    pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.HDR, safeSize);
+    if (pix !== undefined) {
+      return pix;
+    }
+  }
+  if (safeDecode) {
+    return await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR);
+  }
+  return undefined;
+}
+
+function fullImagePreviewFallbackUrl(fullUrl: string): string {
+  return fullUrl.replace('/o/', '/m/');
+}
+
+function shouldAvoidNativeFullFetch(expectedBytes?: number): boolean {
+  return expectedBytes !== undefined && expectedBytes >= FULL_IMAGE_NATIVE_RESPONSE_LIMIT_BYTES;
+}
+
+function shouldUseTempFileFullDecode(expectedBytes?: number, cacheDir?: string): boolean {
+  return cacheDir !== undefined &&
+    cacheDir.length > 0 &&
+    shouldAvoidNativeFullFetch(expectedBytes);
+}
+
+async function decodeFullPixFromTempFile(
+  fullUrl: string,
+  expectedBytes: number | undefined,
+  cacheDir: string
+): Promise<PixelMap | undefined> {
+  const client = AppSession.getClient();
+  if (client === null) {
+    return undefined;
+  }
+  const timeoutSteps = fullImageTimeoutSteps(expectedBytes);
+  const timeoutMs = timeoutSteps[timeoutSteps.length - 1];
+  const tempPath = `${cacheDir}/preview_original_${Date.now()}_${Math.floor(Math.random() * 1000000)}.img`;
+  const downloaded = await client.downloadGalleryAssetToFile(fullUrl, tempPath, timeoutMs);
+  if (!downloaded) {
+    return undefined;
+  }
+  let fd = -1;
+  try {
+    const f = await fileIo.open(tempPath, fileIo.OpenMode.READ_ONLY);
+    fd = f.fd;
+    const src = image.createImageSource(fd);
+    try {
+      return await decodeFullPixFromSource(src, expectedBytes);
+    } finally {
+      src.release();
+    }
+  } catch (_e) {
+    return undefined;
+  } finally {
+    if (fd >= 0) {
+      try {
+        await fileIo.close(fd);
+      } catch (_e) {
+      }
+    }
+    try {
+      await fileIo.unlink(tempPath);
+    } catch (_e) {
+    }
+  }
 }
 
 /**
@@ -802,9 +944,19 @@ export async function loadThumbPix(
   }
 }
 
-export async function loadFullPix(fullUrl: string, expectedBytes?: number): Promise<PixelMap | undefined> {
+export async function loadFullPix(
+  fullUrl: string,
+  expectedBytes?: number,
+  cacheDir?: string
+): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) {
     return undefined;
+  }
+  if (shouldUseTempFileFullDecode(expectedBytes, cacheDir)) {
+    const filePix = await decodeFullPixFromTempFile(fullUrl, expectedBytes, cacheDir as string);
+    if (filePix !== undefined) {
+      return filePix;
+    }
   }
   const client = AppSession.getClient();
   if (client === null) {
@@ -817,25 +969,34 @@ export async function loadFullPix(fullUrl: string, expectedBytes?: number): Prom
    * 2) 若失败则逐步放宽超时，提升超大原图（弱网/高时延）成功率；
    * 3) 任一阶段成功即停止，避免无谓等待。
    */
-  const timeoutSteps = fullImageTimeoutSteps(expectedBytes);
+  const fallbackUrl = fullImagePreviewFallbackUrl(fullUrl);
+  const fetchUrl = shouldAvoidNativeFullFetch(expectedBytes) && fallbackUrl !== fullUrl
+    ? fallbackUrl
+    : fullUrl;
+  const timeoutSteps = fullImageTimeoutSteps(fetchUrl === fullUrl ? expectedBytes : undefined);
   for (let i = 0; i < timeoutSteps.length; i++) {
-    buf = await client.fetchGalleryImageBuffer(fullUrl, timeoutSteps[i]);
+    buf = await client.fetchGalleryImageBuffer(fetchUrl, timeoutSteps[i]);
     if (buf !== undefined && buf.byteLength > 0) {
       break;
+    }
+  }
+  if ((buf === undefined || buf.byteLength === 0) && fallbackUrl !== fullUrl && fetchUrl === fullUrl) {
+    for (let i = 0; i < FULL_IMAGE_TIMEOUT_STEPS_MS.length; i++) {
+      buf = await client.fetchGalleryImageBuffer(fallbackUrl, FULL_IMAGE_TIMEOUT_STEPS_MS[i]);
+      if (buf !== undefined && buf.byteLength > 0) {
+        break;
+      }
     }
   }
   if (buf === undefined || buf.byteLength === 0) {
     return undefined;
   }
+  const src = image.createImageSource(buf);
   try {
-    const src = image.createImageSource(buf);
-    // 启用 HDR 解码：若源图为 HDR Vivid/HEIF 则保留增益图，输出 RGBA_F16 PixelMap；
-    // 普通 SDR 图片不受影响，仍按原始格式解码。
-    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.HDR });
+    // Avoid full-resolution HDR decode for large originals; it can allocate hundreds of MB.
+    return await decodeFullPixFromSource(src, fetchUrl === fullUrl ? expectedBytes : undefined);
+  } finally {
     src.release();
-    return pix;
-  } catch (_e) {
-    return undefined;
   }
 }
 

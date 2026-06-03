@@ -130,3 +130,35 @@ export function buildCategoryGalleryViewData(
 
   return { groups, flatItems, groupOffsets };
 }
+
+export function buildCategoryGalleryInputOrderViewData(
+  items: GalleryListItem[],
+  columnsPerRow: number = 3
+): CategoryGalleryViewData {
+  if (items.length === 0) {
+    return { groups: [], flatItems: [], groupOffsets: [] };
+  }
+  const normalizedColumns = columnsPerRow === 4 ? 4 : 3;
+  const rows: RowModel[] = [];
+  for (let ri = 0; ri < items.length; ri += normalizedColumns) {
+    const cells: GalleryListItem[] = [];
+    for (let ci = 0; ci < normalizedColumns && ri + ci < items.length; ci++) {
+      cells.push(items[ri + ci]);
+    }
+    rows.push({
+      startIdx: ri,
+      cells: cells
+    });
+  }
+  const group: DayGroup = {
+    label: '',
+    sortKey: 'input-order',
+    rows: rows,
+    count: items.length
+  };
+  return {
+    groups: [group],
+    flatItems: items.slice(),
+    groupOffsets: [0]
+  };
+}

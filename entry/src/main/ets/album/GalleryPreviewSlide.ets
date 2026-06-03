@@ -289,7 +289,8 @@ export struct GalleryPreviewSlide {
     this.fullLoading = true;
     const token = ++this.fullLoadToken;
     const expectedBytes = this.tryReadOriginalBytes();
-    void loadFullPix(oUrl, expectedBytes).then((p: PixelMap | undefined) => {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void loadFullPix(oUrl, expectedBytes, ctx.cacheDir).then((p: PixelMap | undefined) => {
       if (token !== this.fullLoadToken) {
         return;
       }

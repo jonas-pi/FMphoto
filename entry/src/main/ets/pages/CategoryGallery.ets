@@ -400,12 +400,14 @@ struct CategoryGallery {
     const blocks: Array<CategoryGalleryListBlock> = [];
     for (let groupIdx = 0; groupIdx < this.groups.length; groupIdx++) {
       const group = this.groups[groupIdx];
-      blocks.push({
-        key: `h_${group.sortKey}`,
-        isHeader: true,
-        groupIdx: groupIdx,
-        label: group.label
-      });
+      if (group.label.length > 0) {
+        blocks.push({
+          key: `h_${group.sortKey}`,
+          isHeader: true,
+          groupIdx: groupIdx,
+          label: group.label
+        });
+      }
       for (let rowIdx = 0; rowIdx < group.rows.length; rowIdx++) {
         const row = group.rows[rowIdx];
         const cellKeys: string[] = [];
