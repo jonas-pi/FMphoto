@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FMphoto 隐私政策</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f8fb;
+      --fg: #172033;
+      --muted: #5f6b7a;
+      --card: #ffffff;
+      --line: #d8dee8;
+      --accent: #2563eb;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111318;
+        --fg: #edf2f7;
+        --muted: #aab4c0;
+        --card: #1a1d24;
+        --line: #303642;
+        --accent: #6ea8ff;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.75;
+    }
+
+    main {
+      width: min(920px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
+
+    article {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: clamp(24px, 4vw, 44px);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 32px 0 10px;
+      font-size: 21px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 1.2em;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 26px;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+      <h1>FMphoto 隐私政策</h1>
+      <p class="meta">生效日期：2026 年 6 月 10 日</p>
+
+      <p>FMphoto 是一个面向飞牛 NAS 相册的非官方 HarmonyOS 客户端。应用的核心用途是在用户指定的 NAS 服务之间登录、浏览、搜索、预览、上传、下载和管理相册内容。除用户自行配置的 NAS 地址外，应用本身不运营开发者云端服务，不包含广告、第三方统计或第三方崩溃上报 SDK，也不会主动把用户数据发送给开发者服务器。</p>
+
+      <h2>我们处理哪些信息</h2>
+      <p>为实现相册客户端功能，应用会在设备本地和用户配置的 NAS 之间处理以下信息：</p>
+      <ul>
+        <li>NAS 连接信息：用户输入的服务器地址、协议选择、账号名、相册父目录等配置。</li>
+        <li>登录凭据和会话信息：用户输入的 NAS 密码、登录后获得的 token、长 token、WebSocket 签名密钥、OpenAPI Authx key/secret、受信任证书主机列表等。当前实现会把这些信息保存在应用私有偏好设置中，用于会话保持、冷启动恢复和登录表单回填。</li>
+        <li>相册数据：从 NAS 返回的照片、视频、缩略图、原图地址、文件名、文件大小、拍摄时间、收藏状态、回收站状态、人物/分类/智能搜索结果等。</li>
+        <li>媒体元数据：查看详情或地图功能时，应用可能展示 NAS 返回的相机型号、曝光信息、文件路径、经纬度、地点聚合等照片元数据。</li>
+        <li>用户选择的本地媒体：当用户主动上传照片时，应用会通过系统图片选择器读取所选文件内容，并发送到用户配置的 NAS。</li>
+        <li>本地临时文件：下载、预览 GIF/视频、保存到系统相册等操作可能在应用缓存目录创建临时文件，操作完成后应用会尽量清理。</li>
+        <li>运行日志：应用可能记录连接状态、请求结果、错误摘要、主机地址或文件名等诊断信息。应用不以收集隐私为目的记录密码或完整 cookie，但用户分享日志前仍应自行检查其中是否包含 NAS 地址或错误响应内容。</li>
+      </ul>
+
+      <h2>信息如何使用</h2>
+      <ul>
+        <li>连接用户指定的 NAS，并完成登录、会话恢复和接口签名。</li>
+        <li>展示相册首页、时间线、分类、人物、搜索结果、地图、照片详情和预览内容。</li>
+        <li>执行用户主动发起的上传、下载、保存、收藏、删除、恢复等相册操作。</li>
+        <li>在下载或上传过程中维持短时间后台数据传输，减少任务被系统中断的概率。</li>
+        <li>记住用户的登录表单和证书信任选择，减少重复输入。</li>
+      </ul>
+
+      <h2>数据发送到哪里</h2>
+      <p>应用的数据传输目标是用户在登录页填写并确认的 NAS 地址，以及该 NAS 提供的相册 Web/API 接口。开发者不会通过本应用接收、存储或转售用户的照片、视频、账号、密码、token、日志或其他个人信息。</p>
+      <p>如果用户填写的是公网域名、远程访问地址、反向代理地址或第三方网络服务地址，相关数据会按用户的配置发送到该地址。该地址及其服务器的安全性、日志策略和数据处理方式由用户或对应服务提供方负责。</p>
+
+      <h2>系统权限说明</h2>
+      <ul>
+        <li>网络访问：用于连接用户配置的 NAS，加载相册、缩略图、原图、视频和执行接口请求。</li>
+        <li>获取网络状态：用于判断网络连接状态，辅助相册请求和错误提示。</li>
+        <li>后台运行/数据传输：用于用户主动上传或下载媒体时维持短时间后台任务。</li>
+        <li>振动：用于长按、多选等交互反馈。</li>
+        <li>系统图片选择器和相册保存入口：用于用户主动选择本地照片上传，或把从 NAS 下载的图片/视频保存到系统相册。应用不会在未经过用户操作的情况下扫描本地媒体库。</li>
+      </ul>
+
+      <h2>定位和地图</h2>
+      <p>应用不申请设备定位权限，也不读取设备实时位置。地图和地点相关功能使用的是 NAS 相册接口返回的照片地理元数据，例如照片 EXIF 或 NAS 聚合出的经纬度、地点名称。内置 Web 地图页面已关闭网页地理定位访问。</p>
+
+      <h2>保存与删除</h2>
+      <p>会话 token、签名密钥、账号、最后一次输入的密码、服务器地址、证书信任列表和部分设置保存在设备本地应用私有存储中。退出登录会清除主要会话 token 和签名凭据，但为便于下次登录，账号、登录表单信息和最后一次密码可能仍保留在本地。若要彻底删除本地保存信息，请在系统设置中清除应用数据或卸载应用。</p>
+      <p>存放在 NAS 上的照片、视频、人物分类、智能分类、回收站和相册元数据由用户的 NAS 管理。应用中的删除、恢复、上传、收藏等操作会直接作用于用户配置的 NAS，具体保留时间以 NAS 的设置和回收站策略为准。</p>
+
+      <h2>安全说明</h2>
+      <p>应用支持使用 HTTPS 连接 NAS。对于自签名证书或无法校验的证书，只有在用户明确选择信任后，应用才会将对应主机加入本地受信任列表并继续连接。用户应确认 NAS 地址、证书和网络环境可信后再输入账号密码。</p>
+
+      <h2>儿童隐私</h2>
+      <p>本应用不是面向儿童的服务，也不会主动识别、收集或分析儿童个人信息。相册中是否包含儿童照片或相关信息，取决于用户自己的 NAS 内容和使用方式。</p>
+
+      <h2>政策更新</h2>
+      <p>如果应用的数据处理方式、权限范围或第三方依赖发生变化，本页面会随版本更新。继续使用更新后的应用即表示用户了解更新后的说明。</p>
+
+      <h2>联系方式</h2>
+      <p>如对本隐私政策或应用的数据处理方式有疑问，可以通过 GitHub 仓库联系开发者：</p>
+      <p><a href="https://github.com/jonas-pi/FMphoto">https://github.com/jonas-pi/FMphoto</a></p>
+    </article>
+  </main>
+</body>
+</html>
