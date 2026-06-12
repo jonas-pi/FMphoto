@@ -57,6 +57,30 @@
       "value": "登录中…"
     },
     {
+      "name": "twofa_step_hint",
+      "value": "账号已开启双重验证，请输入身份验证器 App 中的 6 位动态验证码（或使用邮箱紧急验证码）"
+    },
+    {
+      "name": "hint_otp",
+      "value": "6 位动态验证码"
+    },
+    {
+      "name": "trust_device",
+      "value": "信任本设备（下次免验证码）"
+    },
+    {
+      "name": "verify_2fa",
+      "value": "验证并登录"
+    },
+    {
+      "name": "verifying_2fa",
+      "value": "验证中…"
+    },
+    {
+      "name": "back_to_password_step",
+      "value": "返回修改账号密码"
+    },
+    {
       "name": "cert_dialog_title",
       "value": "证书不可信"
     },

@@ -53,7 +53,12 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
     const user = stored.account.length > 0 ? stored.account : defaults.username;
     if (pass.length > 0 && user.length > 0) {
       const trusted = CertPolicy.isTrusted(stored.baseUrl);
-      const wsRes = await fnWsLogin(stored.baseUrl, user, pass, trusted);
+      const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
+      const wsRes = await fnWsLogin(stored.baseUrl, user, pass, trusted, deviceId);
+      if (wsRes.requires2fa === true || wsRes.requires2faSetup === true) {
+        hilog.warn(DOMAIN, TAG, 'silent WS relogin blocked by 2FA; user must login manually');
+        return false;
+      }
       if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
         const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
         if (sk.length === 0) {
