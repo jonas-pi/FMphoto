@@ -1,5 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { createFnWsDeviceId } from '../network/FnWsDeviceId';
 
 const PREF_NAME = 'fnos_client_prefs';
 
@@ -17,6 +18,8 @@ const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
 const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
+/** 飞牛 WS 登录 did，用于 2FA 信任设备识别（退出登录不清理） */
+const K_WS_DEVICE_ID = 'ws_device_id';
 
 export interface StoredSession {
   baseUrl: string;
@@ -143,6 +146,18 @@ export class SessionPreferences {
     await prefsPutString(p, K_OPENAPI_AUTHX_KEY, s.openApiAuthxKey.length > 0 ? s.openApiAuthxKey : '');
     await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, s.openApiAuthxSecret.length > 0 ? s.openApiAuthxSecret : '');
     await prefsFlush(p);
+  }
+
+  /** 读取或生成本机稳定的 WS did（信任设备须每次登录携带同一值） */
+  static async ensureWsDeviceId(ctx: common.UIAbilityContext): Promise<string> {
+    const p = await openPrefs(ctx);
+    let did = (await prefsGetString(p, K_WS_DEVICE_ID, '')).trim();
+    if (did.length === 0) {
+      did = createFnWsDeviceId();
+      await prefsPutString(p, K_WS_DEVICE_ID, did);
+      await prefsFlush(p);
+    }
+    return did;
   }
 
   static async loadLoginFormDefaults(ctx: common.UIAbilityContext): Promise<LoginFormDefaults> {

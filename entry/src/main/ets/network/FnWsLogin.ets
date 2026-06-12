@@ -40,6 +40,12 @@ export interface FnWsLoginResult {
   admin?: boolean;
   message?: string;
   certificateError?: boolean;
+  /** 密码正确但需第二步 TOTP / 紧急验证码（user.2fa.loginVerify） */
+  requires2fa?: boolean;
+  /** 系统强制 2FA 但账号尚未在网页端绑定 TOTP */
+  requires2faSetup?: boolean;
+  /** 2FA 挑战令牌，供 user.2fa.loginVerify 使用 */
+  accessToken?: string;
 }
 
 interface WsJson {
@@ -57,6 +63,10 @@ interface WsJson {
   msg?: string;
   longToken?: string;
   long_token?: string | number;
+  accessToken?: string;
+  isBindTwofaSecret?: boolean;
+  isTrustedDevice?: boolean;
+  isTwofaEnforced?: boolean;
 }
 
 interface PendingAfterAuth {
@@ -82,8 +92,55 @@ function buildAuthTokenJson(tokenVal: string, siVal: string): string {
 /**
  * 紧凑 JSON，键序：reqid -> req -> user -> password -> deviceType -> deviceName -> stay -> si
  */
-function buildLoginPlainJson(reqid: string, user: string, pass: string, siVal: string): string {
-  return `{"reqid":${JSON.stringify(reqid)},"req":"user.login","user":${JSON.stringify(user)},"password":${JSON.stringify(pass)},"deviceType":"Browser","deviceName":"MyClient","stay":true,"si":${JSON.stringify(siVal)}}`;
+function buildLoginPlainJson(reqid: string, user: string, pass: string, siVal: string, deviceId: string): string {
+  return `{"reqid":${JSON.stringify(reqid)},"req":"user.login","user":${JSON.stringify(user)},"password":${JSON.stringify(pass)},"deviceType":"Browser","deviceName":"FMphoto","stay":true,"did":${JSON.stringify(deviceId)},"si":${JSON.stringify(siVal)}}`;
+}
+
+/**
+ * 紧凑 JSON：user.2fa.loginVerify（第二步 OTP）
+ * stay 须为 0/1 整数，与官方 WebSocket 载荷一致。
+ */
+function build2faVerifyPlainJson(
+  reqid: string,
+  code: string,
+  accessToken: string,
+  trustDevice: boolean,
+  stay: boolean,
+  siVal: string,
+  deviceId: string
+): string {
+  const stayNum = stay ? 1 : 0;
+  return `{"reqid":${JSON.stringify(reqid)},"code":${JSON.stringify(code)},"isTrustedDevice":${trustDevice},"accessToken":${JSON.stringify(accessToken)},"stay":${stayNum},"deviceName":"FMphoto","deviceType":"Browser","did":${JSON.stringify(deviceId)},"req":"user.2fa.loginVerify","si":${JSON.stringify(siVal)}}`;
+}
+
+function isFinalLoginSuccess(data: WsJson): boolean {
+  return data.result === 'succ'
+    && data.token !== undefined
+    && data.token.length > 0
+    && data.secret !== undefined
+    && data.secret.length > 0;
+}
+
+/** 已绑定 TOTP，当前设备未信任，需 OTP */
+function isTwofaChallenge(data: WsJson): boolean {
+  const at = data.accessToken !== undefined ? data.accessToken : '';
+  return data.result === 'succ'
+    && data.isBindTwofaSecret === true
+    && data.isTrustedDevice === false
+    && at.length > 0
+    && (data.token === undefined || data.token.length === 0)
+    && (data.secret === undefined || data.secret.length === 0);
+}
+
+/** 管理员强制 2FA 但用户尚未绑定 */
+function isTwofaSetupChallenge(data: WsJson): boolean {
+  const at = data.accessToken !== undefined ? data.accessToken : '';
+  return data.result === 'succ'
+    && data.isTwofaEnforced === true
+    && data.isBindTwofaSecret === false
+    && at.length > 0
+    && (data.token === undefined || data.token.length === 0)
+    && (data.secret === undefined || data.secret.length === 0);
 }
 
 function messageToString(value: string | ArrayBuffer): string {
@@ -328,8 +385,13 @@ export async function fnWsLogin(
   httpBaseNoSlash: string,
   username: string,
   password: string,
-  isTrustedHost: boolean
+  isTrustedHost: boolean,
+  deviceId: string
 ): Promise<FnWsLoginResult> {
+  if (deviceId.trim().length === 0) {
+    return { success: false, message: '缺少设备标识 did' };
+  }
+  const did = deviceId.trim();
   fnWsResetReqIdCounter();
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
   hilog.info(DOMAIN, TAG, 'WS connect %{public}s trusted=%{public}s', wsUrl, String(isTrustedHost));
@@ -422,7 +484,7 @@ export async function fnWsLogin(
               aesKey32 = await fnWsRandomAesKey32();
               iv = await fnWsRandomIv16();
               const reqid = fnWsMakeReqId(backId);
-              const loginJson = buildLoginPlainJson(reqid, username, password, si);
+              const loginJson = buildLoginPlainJson(reqid, username, password, si, did);
               const enc = await fnWsBuildEncryptedLogin(loginJson, pubPem, aesKey32 as Uint8Array, iv as Uint8Array);
               ws.send(fnWsStringifyEncryptedFrame(enc));
               step = 'waitLogin';
@@ -455,8 +517,26 @@ export async function fnWsLogin(
       }
 
       if (step === 'waitLogin') {
-        if (data.result === 'succ' && data.token !== undefined && data.token.length > 0) {
-          const token = data.token;
+        if (isTwofaSetupChallenge(data)) {
+          finish({
+            success: false,
+            requires2faSetup: true,
+            message: '该账号需在飞牛网页端先绑定双重验证'
+          });
+          return;
+        }
+        if (isTwofaChallenge(data)) {
+          const at = data.accessToken !== undefined ? data.accessToken : '';
+          finish({
+            success: false,
+            requires2fa: true,
+            accessToken: at,
+            message: '请输入身份验证器中的 6 位动态验证码'
+          });
+          return;
+        }
+        if (isFinalLoginSuccess(data)) {
+          const token = data.token as string;
           const secretB64 = data.secret !== undefined ? data.secret : '';
           const bid = data.backId !== undefined && data.backId.length > 0 ? data.backId : backId;
           let siForAuth = si;
@@ -518,6 +598,227 @@ export async function fnWsLogin(
       const reqid = fnWsMakeReqId(backId);
       const first = `{"reqid":${JSON.stringify(reqid)},"req":"util.crypto.getRSAPub"}`;
       ws.send(first);
+    });
+
+    const onConnect = (err: Error): void => {
+      if (err !== undefined) {
+        handleWsFailure(err, '无法连接 WebSocket');
+      }
+    };
+
+    if (connectOptions !== undefined) {
+      ws.connect(wsUrl, connectOptions, onConnect);
+    } else {
+      ws.connect(wsUrl, onConnect);
+    }
+  });
+}
+
+/**
+ * 2FA 第二步：提交 TOTP / 紧急验证码（user.2fa.loginVerify）。
+ * 须在 fnWsLogin 返回 requires2fa 后尽快调用；accessToken 有时效。
+ */
+export async function fnWs2faVerify(
+  httpBaseNoSlash: string,
+  accessToken: string,
+  otpCode: string,
+  trustDevice: boolean,
+  isTrustedHost: boolean,
+  deviceId: string
+): Promise<FnWsLoginResult> {
+  const code = otpCode.trim();
+  if (!/^\d{6}$/.test(code)) {
+    return { success: false, message: '验证码须为 6 位数字' };
+  }
+  if (accessToken.length === 0) {
+    return { success: false, message: '缺少 2FA 挑战令牌，请重新登录' };
+  }
+  if (deviceId.trim().length === 0) {
+    return { success: false, message: '缺少设备标识 did，请重新登录' };
+  }
+  const did = deviceId.trim();
+
+  fnWsResetReqIdCounter();
+  const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
+  hilog.info(DOMAIN, TAG, 'WS 2FA verify %{public}s', wsUrl);
+
+  return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
+    let done = false;
+    let failureInFlight = false;
+    const finish = (r: FnWsLoginResult): void => {
+      if (done) {
+        return;
+      }
+      done = true;
+      clearTimeout(timer);
+      try {
+        ws.close();
+      } catch (_e) {
+      }
+      resolve(r);
+    };
+
+    const timer = setTimeout((): void => {
+      finish({ success: false, message: '双重验证超时' });
+    }, WS_TIMEOUT_MS);
+
+    let backId = DEFAULT_BACK_ID;
+    let pubPem = '';
+    let si = '';
+    let aesKey32: Uint8Array | null = null;
+    let iv: Uint8Array | null = null;
+    let step: 'waitPub' | 'waitLogin' | 'waitAuth' = 'waitPub';
+    let pendingAfterAuth: PendingAfterAuth | null = null;
+
+    const ws = webSocket.createWebSocket();
+    const connectOptions = buildWsConnectOptions(isTrustedHost);
+
+    const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
+      if (done || failureInFlight) {
+        return;
+      }
+      failureInFlight = true;
+      void (async (): Promise<void> => {
+        try {
+          const info = await resolveWsFailure(httpBaseNoSlash, err, isTrustedHost, fallbackMessage);
+          finish({
+            success: false,
+            message: info.message,
+            certificateError: info.certificateError
+          });
+        } catch (e) {
+          const em = describeWsError(e);
+          finish({ success: false, message: em.length > 0 ? em : fallbackMessage });
+        }
+      })();
+    };
+
+    ws.on('error', (err: Error) => {
+      handleWsFailure(err, 'WebSocket 错误');
+    });
+
+    ws.on('message', (err: Error, value: string | ArrayBuffer) => {
+      if (err !== undefined) {
+        return;
+      }
+      const text = messageToString(value);
+      const data = parseJsonSafe(text);
+      if (data === null) {
+        if (step === 'waitAuth' && pendingAfterAuth !== null) {
+          finish({ success: false, message: 'authToken 响应不是有效 JSON' });
+        }
+        return;
+      }
+      if (data.errno !== undefined && data.errno !== 0) {
+        const m = data.msg !== undefined && data.msg.length > 0 ? data.msg : `错误码 ${data.errno}`;
+        finish({ success: false, message: m });
+        return;
+      }
+
+      if (step === 'waitPub') {
+        if (data.pub !== undefined && data.pub.length > 0 && data.si !== undefined) {
+          pubPem = data.pub;
+          si = data.si;
+          void (async (): Promise<void> => {
+            try {
+              aesKey32 = await fnWsRandomAesKey32();
+              iv = await fnWsRandomIv16();
+              const reqid = fnWsMakeReqId(backId);
+              const verifyJson = build2faVerifyPlainJson(
+                reqid, code, accessToken, trustDevice, true, si, did
+              );
+              const enc = await fnWsBuildEncryptedLogin(verifyJson, pubPem, aesKey32 as Uint8Array, iv as Uint8Array);
+              ws.send(fnWsStringifyEncryptedFrame(enc));
+              step = 'waitLogin';
+            } catch (e) {
+              finish({ success: false, message: `加密失败：${String(e)}` });
+            }
+          })();
+        }
+        return;
+      }
+
+      if (step === 'waitAuth') {
+        if (pendingAfterAuth === null) {
+          return;
+        }
+        const p = pendingAfterAuth;
+        pendingAfterAuth = null;
+        finish({
+          success: true,
+          token: p.token,
+          secretCipherB64: p.secretCipherB64,
+          signKeyB64: p.signKeyB64,
+          longToken: p.longToken,
+          backId: p.backId,
+          uid: p.uid,
+          admin: p.admin
+        });
+        return;
+      }
+
+      if (step === 'waitLogin') {
+        if (isFinalLoginSuccess(data)) {
+          const token = data.token as string;
+          const secretB64 = data.secret !== undefined ? data.secret : '';
+          const bid = data.backId !== undefined && data.backId.length > 0 ? data.backId : backId;
+          let siForAuth = si;
+          if (data.si !== undefined && data.si.length > 0) {
+            siForAuth = data.si;
+          }
+          const uidVal = data.uid;
+          const adminVal = data.admin;
+          let longTokFromLogin = '';
+          if (data.longToken !== undefined && data.longToken.length > 0) {
+            longTokFromLogin = data.longToken;
+          } else if (data.long_token !== undefined) {
+            const raw = `${data.long_token}`;
+            if (raw.length > 0 && raw !== 'undefined') {
+              longTokFromLogin = raw;
+            }
+          }
+          void (async (): Promise<void> => {
+            try {
+              if (secretB64.length === 0 || iv === null || aesKey32 === null) {
+                finish({ success: false, message: '验证成功但未返回 secret' });
+                return;
+              }
+              const hmacKey = await fnWsAesCbcDecryptSecretToHmacKey(secretB64, aesKey32, iv as Uint8Array);
+              const payload = buildAuthTokenJson(token, siForAuth);
+              const frame = await fnWsHmacSha256SignConcatJson(hmacKey, payload);
+              const signKeyB64 = fnWsHmacKeyBytesToB64(hmacKey);
+              pendingAfterAuth = {
+                token: token,
+                signKeyB64: signKeyB64,
+                backId: bid,
+                secretCipherB64: secretB64,
+                longToken: longTokFromLogin.length > 0 ? longTokFromLogin : undefined,
+                uid: uidVal,
+                admin: adminVal
+              };
+              step = 'waitAuth';
+              ws.send(frame);
+            } catch (e) {
+              finish({ success: false, message: `authToken 失败：${String(e)}` });
+            }
+          })();
+        } else {
+          const m =
+            data.msg !== undefined && data.msg.length > 0
+              ? data.msg
+              : '验证码错误或已过期';
+          finish({ success: false, message: m });
+        }
+      }
+    });
+
+    ws.on('open', (err: Error) => {
+      if (err !== undefined) {
+        handleWsFailure(err, 'WebSocket 打开失败');
+        return;
+      }
+      const reqid = fnWsMakeReqId(backId);
+      ws.send(`{"reqid":${JSON.stringify(reqid)},"req":"util.crypto.getRSAPub"}`);
     });
 
     const onConnect = (err: Error): void => {

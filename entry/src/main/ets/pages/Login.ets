@@ -8,7 +8,7 @@ import { window } from '@kit.ArkUI';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
-import { fnWsLogin } from '../network/FnWsLogin';
+import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { FnPrimaryButton } from '../common/FnUiCommon';
@@ -31,6 +31,15 @@ struct Login {
   @State private useHttps: boolean = true;
   @State private loading: boolean = false;
   @State private errorText: string = '';
+  /** 密码校验通过，等待第二步 OTP */
+  @State private show2faStep: boolean = false;
+  @State private otpCode: string = '';
+  @State private trustDevice: boolean = true;
+  private pendingAccessToken: string = '';
+  private pendingDeviceId: string = '';
+  private pendingServer: string = '';
+  private pendingUser: string = '';
+  private pendingPass: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
 
   onPageShow(): void {
@@ -136,6 +145,22 @@ struct Login {
     });
   }
 
+  private async finishWsLoginSuccess(
+    ctx: common.UIAbilityContext,
+    server: string,
+    user: string,
+    pass: string,
+    token: string,
+    signKeyB64: string,
+    longToken?: string
+  ): Promise<void> {
+    if (signKeyB64.length === 0) {
+      this.errorText = '登录成功但未拿到签名密钥，请重试';
+      return;
+    }
+    await this.persistSessionAndGoHome(ctx, server, user, pass, token, signKeyB64, token, signKeyB64, longToken);
+  }
+
   /** 仅 WebSocket 登录 */
   private async attemptLoginWebSocketOnly(
     ctx: common.UIAbilityContext,
@@ -144,18 +169,37 @@ struct Login {
     pass: string
   ): Promise<void> {
     const trusted = CertPolicy.isTrusted(server);
-    const wsRes = await fnWsLogin(server, user, pass, trusted);
+    const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
+    const wsRes = await fnWsLogin(server, user, pass, trusted, deviceId);
     if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
       hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok');
       const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
-      const authxKey = wsRes.token;
-      const authxSecret = sk;
-      if (authxSecret.length === 0) {
-        this.errorText = '登录成功但未拿到签名密钥，请重试';
+      const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
+      await this.finishWsLoginSuccess(ctx, server, user, pass, wsRes.token, sk, lt);
+      return;
+    }
+    if (wsRes.requires2fa === true) {
+      const at = wsRes.accessToken !== undefined ? wsRes.accessToken : '';
+      if (at.length === 0) {
+        this.errorText = '需要双重验证但未收到挑战令牌，请重试';
         return;
       }
-      const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-      await this.persistSessionAndGoHome(ctx, server, user, pass, wsRes.token, sk, authxKey, authxSecret, lt);
+      this.pendingAccessToken = at;
+      this.pendingDeviceId = deviceId;
+      this.pendingServer = server;
+      this.pendingUser = user;
+      this.pendingPass = pass;
+      this.show2faStep = true;
+      this.otpCode = '';
+      this.errorText = '';
+      hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login requires 2FA');
+      return;
+    }
+    if (wsRes.requires2faSetup === true) {
+      this.errorText =
+        wsRes.message !== undefined && wsRes.message.length > 0
+          ? wsRes.message
+          : '该账号需在飞牛网页端先绑定双重验证';
       return;
     }
     if (wsRes.certificateError === true && !trusted) {
@@ -240,6 +284,9 @@ struct Login {
     this.loading = true;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
+      this.show2faStep = false;
+      this.pendingAccessToken = '';
+      this.pendingDeviceId = '';
       await this.attemptLoginWebSocketOnly(ctx, server, this.username.trim(), this.password);
     } catch (e) {
       const msg = this.describeLoginError(e);
@@ -248,6 +295,58 @@ struct Login {
     } finally {
       this.loading = false;
     }
+  }
+
+  private async on2faVerifyClick(): Promise<void> {
+    this.errorText = '';
+    const code = this.otpCode.trim();
+    if (!/^\d{6}$/.test(code)) {
+      this.errorText = '请输入身份验证器中的 6 位动态验证码';
+      return;
+    }
+    if (this.pendingAccessToken.length === 0 || this.pendingServer.length === 0 || this.pendingDeviceId.length === 0) {
+      this.errorText = '验证会话已失效，请返回重新登录';
+      this.show2faStep = false;
+      return;
+    }
+    this.loading = true;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const trusted = CertPolicy.isTrusted(this.pendingServer);
+    try {
+      const wsRes = await fnWs2faVerify(
+        this.pendingServer,
+        this.pendingAccessToken,
+        code,
+        this.trustDevice,
+        trusted,
+        this.pendingDeviceId
+      );
+      if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
+        const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
+        const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
+        await this.finishWsLoginSuccess(ctx, this.pendingServer, this.pendingUser, this.pendingPass, wsRes.token, sk, lt);
+        return;
+      }
+      if (wsRes.certificateError === true && !trusted) {
+        this.errorText = '证书不可信，请先在登录步骤信任服务器地址';
+        return;
+      }
+      this.errorText =
+        wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : '双重验证失败';
+    } catch (e) {
+      const msg = this.describeLoginError(e);
+      this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private onBackFrom2fa(): void {
+    this.show2faStep = false;
+    this.otpCode = '';
+    this.pendingAccessToken = '';
+    this.pendingDeviceId = '';
+    this.errorText = '';
   }
 
   build() {
@@ -314,6 +413,40 @@ struct Login {
           .backgroundColor($r('app.color.card_background'))
           .borderRadius($r('app.float.radius_medium'))
           .padding({ left: 12, right: 12 })
+          .enabled(!this.show2faStep)
+
+        if (this.show2faStep) {
+          Text($r('app.string.twofa_step_hint'))
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+
+          TextInput({ placeholder: $r('app.string.hint_otp'), text: this.otpCode })
+            .type(InputType.Number)
+            .maxLength(6)
+            .enableAutoFill(false)
+            .enableKeyboardOnFocus(false)
+            .onChange((v: string) => {
+              this.otpCode = v.replace(/[^\d]/g, '').substring(0, 6);
+            })
+            .width('100%')
+            .height(44)
+            .backgroundColor($r('app.color.card_background'))
+            .borderRadius($r('app.float.radius_medium'))
+            .padding({ left: 12, right: 12 })
+
+          Row() {
+            Text($r('app.string.trust_device'))
+              .fontSize(15)
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.trustDevice })
+              .selectedColor($r('app.color.brand_primary'))
+              .onChange((on: boolean) => {
+                this.trustDevice = on;
+              })
+          }
+          .width('100%')
+        }
 
         if (this.errorText.length > 0) {
           Text(this.errorText)
@@ -322,14 +455,36 @@ struct Login {
             .width('100%')
         }
 
-        FnPrimaryButton({
-          text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action'),
-          action: (): void => {
-            void this.onLoginClick();
-          }
-        })
-          .width('100%')
-          .enabled(!this.loading)
+        if (this.show2faStep) {
+          FnPrimaryButton({
+            text: this.loading ? $r('app.string.verifying_2fa') : $r('app.string.verify_2fa'),
+            action: (): void => {
+              void this.on2faVerifyClick();
+            }
+          })
+            .width('100%')
+            .enabled(!this.loading)
+
+          Button($r('app.string.back_to_password_step'))
+            .type(ButtonType.Normal)
+            .width('100%')
+            .height(44)
+            .backgroundColor($r('app.color.card_background'))
+            .fontColor($r('app.color.text_secondary'))
+            .enabled(!this.loading)
+            .onClick((): void => {
+              this.onBackFrom2fa();
+            })
+        } else {
+          FnPrimaryButton({
+            text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action'),
+            action: (): void => {
+              void this.onLoginClick();
+            }
+          })
+            .width('100%')
+            .enabled(!this.loading)
+        }
 
         Text($r('app.string.fnid_hint'))
           .fontSize(13)
