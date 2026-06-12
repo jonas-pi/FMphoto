@@ -10,6 +10,7 @@ import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import {
   BlurStrategy,
   DividerMode,
+  hdsEffect,
   HdsTabs,
   HdsTabsFloatingStyle,
   hdsMaterial,
@@ -51,6 +52,27 @@ export const FN_BOTTOM_DOCK_INNER_PADDING_H_VP: number = 5;
 export const FN_BOTTOM_DOCK_INNER_SPACE_VP: number = 6;
 export const FN_BOTTOM_DOCK_ITEM_HEIGHT_VP: number = FN_BOTTOM_DOCK_CENTER_HEIGHT_VP - 8;
 export const FN_BOTTOM_DOCK_BASE_GAP_VP: number = 16;
+/** 顶栏按钮开启态（对齐 sys.color.ohos_id_color_activated 语义）背景叠色 */
+const FN_FLOATING_BUTTON_ACTIVE_LIGHT_COLOR: string = '#334A8BFF';
+const FN_FLOATING_BUTTON_ACTIVE_BORDER_COLOR: string = '#664A8BFF';
+
+export function fnFloatingButtonActiveLightColor(
+  active: boolean,
+  base: ResourceColor = $r('app.color.gallery_material_surface_bg')
+): ResourceColor {
+  return active ? FN_FLOATING_BUTTON_ACTIVE_LIGHT_COLOR : base;
+}
+
+export function fnFloatingButtonActiveFontColor(
+  active: boolean,
+  prominent: boolean,
+  base: ResourceColor
+): ResourceColor {
+  if (active || prominent) {
+    return $r('sys.color.ohos_id_color_activated');
+  }
+  return base;
+}
 
 export function fnBottomDockBottomGap(bottomSafeInsetVp: number): number {
   const liftedGap = FN_BOTTOM_DOCK_BASE_GAP_VP + (FN_BOTTOM_DOCK_CENTER_HEIGHT_VP / 4);
@@ -152,8 +174,12 @@ export struct FnHdsPillButton {
   @Prop fontColorValue: ResourceColor = $r('app.color.button_secondary_fg');
   @Prop fontWeightValue: FontWeight | number | string = FontWeight.Medium;
   @Prop lightColorValue: ResourceColor = $r('app.color.gallery_material_surface_bg');
+  @Prop prominent: boolean = false;
+  @Prop active: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private measuredWidthVp: number = 0;
+  @State private isPressed: boolean = false;
+  @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
   action: () => void = () => {};
   private lastActionAt: number = 0;
 
@@ -178,6 +204,30 @@ export struct FnHdsPillButton {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
+  private resolvedFontColor(): ResourceColor {
+    return fnFloatingButtonActiveFontColor(this.active, this.prominent, this.fontColorValue);
+  }
+
+  private resolvedLightColor(): ResourceColor {
+    return fnFloatingButtonActiveLightColor(this.active, this.lightColorValue);
+  }
+
+  private resolvedBorderColor(): ResourceColor {
+    return this.active ? FN_FLOATING_BUTTON_ACTIVE_BORDER_COLOR : $r('app.color.immersive_panel_border');
+  }
+
+  private onPressTouch(event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.isPressed = true;
+      this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.isPressed = false;
+      this.pressShadowType = hdsEffect.PressShadowType.NONE;
+    }
+  }
+
   @Builder
   private blankTabBarContent() {
     Row()
@@ -190,8 +240,8 @@ export struct FnHdsPillButton {
     Row() {
       Text(this.text)
         .fontSize(this.fontSizeValue)
-        .fontWeight(this.fontWeightValue)
-        .fontColor(this.fontColorValue)
+        .fontWeight(this.active || this.prominent ? FontWeight.Bold : this.fontWeightValue)
+        .fontColor(this.resolvedFontColor())
         .textAlign(TextAlign.Center)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Clip })
@@ -224,7 +274,7 @@ export struct FnHdsPillButton {
         .barPosition(BarPosition.End)
         .barWidth(this.materialWidth())
         // @SuppressWarnings compatibility
-        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.materialWidth(), this.lightColorValue))
+        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.materialWidth(), this.resolvedLightColor()))
         .scrollable(false)
         .divider({ mode: DividerMode.NONE })
         .barBackgroundColor(Color.Transparent)
@@ -242,12 +292,12 @@ export struct FnHdsPillButton {
         Row()
           .width('100%')
           .height('100%')
-          .backgroundColor(this.lightColorValue)
+          .backgroundColor(this.resolvedLightColor())
           .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .linearGradient(fnLiquidGlassGradient())
+          .linearGradient(fnLiquidGlassGradient(false, this.isPressed, this.active))
           .borderRadius(this.shapeRadius())
           .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
+          .borderColor(this.resolvedBorderColor())
           .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
           .clip(true)
       }
@@ -256,11 +306,17 @@ export struct FnHdsPillButton {
     }
     .width(this.widthValue)
     .height(this.heightValue)
+    .visualEffect(new hdsEffect.HdsEffectBuilder()
+      .pressShadow(this.pressShadowType)
+      .buildEffect())
     .onAreaChange((_old: Area, area: Area): void => {
       const width = area.width as number;
       if (width > 1 && Math.abs(width - this.measuredWidthVp) > 0.5) {
         this.measuredWidthVp = width;
       }
+    })
+    .onTouch((event: TouchEvent): void => {
+      this.onPressTouch(event);
     })
     .onClick((): void => {
       this.triggerAction();
@@ -277,7 +333,10 @@ export struct FnHdsSymbolButton {
   @Prop fontSizeValue: number = 17;
   @Prop fontColorValue: ResourceColor = $r('app.color.icon_primary');
   @Prop lightColorValue: ResourceColor = $r('app.color.gallery_material_surface_bg');
+  @Prop active: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  @State private isPressed: boolean = false;
+  @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
   action: () => void = () => {};
   private lastActionAt: number = 0;
 
@@ -302,12 +361,36 @@ export struct FnHdsSymbolButton {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
+  private resolvedFontColor(): ResourceColor {
+    return fnFloatingButtonActiveFontColor(this.active, false, this.fontColorValue);
+  }
+
+  private resolvedLightColor(): ResourceColor {
+    return fnFloatingButtonActiveLightColor(this.active, this.lightColorValue);
+  }
+
+  private resolvedBorderColor(): ResourceColor {
+    return this.active ? FN_FLOATING_BUTTON_ACTIVE_BORDER_COLOR : $r('app.color.immersive_panel_border');
+  }
+
+  private onPressTouch(event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.isPressed = true;
+      this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.isPressed = false;
+      this.pressShadowType = hdsEffect.PressShadowType.NONE;
+    }
+  }
+
   @Builder
   private tabBarContent() {
     Row() {
       SymbolGlyph(this.symbol)
         .fontSize(this.fontSizeValue)
-        .fontColor([this.fontColorValue])
+        .fontColor([this.resolvedFontColor()])
     }
       .width('100%')
       .height('100%')
@@ -334,7 +417,7 @@ export struct FnHdsSymbolButton {
         .barPosition(BarPosition.End)
         .barWidth(this.widthValue)
         // @SuppressWarnings compatibility
-        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.lightColorValue))
+        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.resolvedLightColor()))
         .scrollable(false)
         .divider({ mode: DividerMode.NONE })
         .barBackgroundColor(Color.Transparent)
@@ -352,12 +435,12 @@ export struct FnHdsSymbolButton {
         Row()
           .width('100%')
           .height('100%')
-          .backgroundColor(this.lightColorValue)
+          .backgroundColor(this.resolvedLightColor())
           .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .linearGradient(fnLiquidGlassGradient())
+          .linearGradient(fnLiquidGlassGradient(false, this.isPressed, this.active))
           .borderRadius(this.shapeRadius())
           .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
+          .borderColor(this.resolvedBorderColor())
           .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
           .clip(true)
       }
@@ -368,6 +451,12 @@ export struct FnHdsSymbolButton {
     }
     .width(this.widthValue)
     .height(this.heightValue)
+    .visualEffect(new hdsEffect.HdsEffectBuilder()
+      .pressShadow(this.pressShadowType)
+      .buildEffect())
+    .onTouch((event: TouchEvent): void => {
+      this.onPressTouch(event);
+    })
     .onClick((): void => {
       this.triggerAction();
     })
@@ -471,13 +560,17 @@ export struct FnHdsTextPill {
   }
 }
 
-export function fnLiquidGlassGradient(strong: boolean = false, pressed: boolean = false): LinearGradientOptions {
+export function fnLiquidGlassGradient(
+  strong: boolean = false,
+  pressed: boolean = false,
+  active: boolean = false
+): LinearGradientOptions {
   return {
     angle: pressed ? 118 : 132,
     colors: [
-      [strong ? '#B8FFFFFF' : '#82FFFFFF', 0.00],
-      [pressed ? '#58FFFFFF' : (strong ? '#3DFFFFFF' : '#26FFFFFF'), 0.22],
-      ['#12FFFFFF', 0.46],
+      [active ? '#A8D4E8FF' : (strong ? '#B8FFFFFF' : '#82FFFFFF'), 0.00],
+      [pressed ? '#58FFFFFF' : (active ? '#664A8BFF' : (strong ? '#3DFFFFFF' : '#26FFFFFF')), 0.22],
+      [active ? '#334A8BFF' : '#12FFFFFF', 0.46],
       [pressed ? '#34FFFFFF' : '#18FFFFFF', 0.72],
       ['#00FFFFFF', 1.00]
     ]
@@ -488,6 +581,7 @@ export function fnLiquidGlassGradient(strong: boolean = false, pressed: boolean 
 export struct FnFloatingTopPillButton {
   @Prop text: ResourceStr = '';
   @Prop prominent: boolean = false;
+  @Prop active: boolean = false;
   action: () => void = () => {};
 
   build() {
@@ -497,7 +591,9 @@ export struct FnFloatingTopPillButton {
       heightValue: FN_FLOATING_TOP_CONTROL_SIZE_VP,
       radiusValue: FN_FLOATING_TOP_CONTROL_RADIUS_VP,
       fontSizeValue: GALLERY_TOP_BAR_BUTTON_FONT_VP,
-      fontColorValue: this.prominent ? $r('app.color.brand_primary') : $r('app.color.button_secondary_fg'),
+      fontColorValue: $r('app.color.button_secondary_fg'),
+      prominent: this.prominent,
+      active: this.active,
       action: this.action
     })
   }
@@ -518,7 +614,8 @@ export struct FnFloatingTopCircleButton {
       heightValue: FN_FLOATING_TOP_CONTROL_SIZE_VP,
       radiusValue: FN_FLOATING_TOP_CONTROL_RADIUS_VP,
       fontSizeValue: 17,
-      fontColorValue: this.active ? this.activeBg : this.fontColor,
+      fontColorValue: this.fontColor,
+      active: this.active,
       action: this.action
     })
   }

@@ -37,6 +37,7 @@ import { FnHttpClientGalleryHost, FnHttpClientUploadHost, VideoDecodePlayInfo, V
 import {
   AiPersonData,
   AiPersonDetailData,
+  ExploreGeosData,
   FnClientResult,
   FnJsonValue,
   GalleryGetListData,
@@ -48,6 +49,10 @@ import {
   LoginResultData,
   LogoutResultData,
   MagicSearchData,
+  MapPreviewBoundaryData,
+  MapPreviewAllPointData,
+  MapPreviewCenterData,
+  MapTimelineData,
   MediaCategoryData,
   MediaCategoryItem,
   PersonInPhotoData,
@@ -991,6 +996,61 @@ export class FnHttpClient {
 
   async getRecentTimeline(extraParams?: Record<string, string | number | boolean>): Promise<FnClientResult<GalleryTimelineData>> {
     return this.galleryOps.getRecentTimeline(extraParams);
+  }
+
+  async getMapPreviewCenter(timeoutMs: number = 15000): Promise<FnClientResult<MapPreviewCenterData>> {
+    return this.galleryOps.getMapPreviewCenter(timeoutMs);
+  }
+
+  async getMapPreviewBoundary(timeoutMs: number = 15000): Promise<FnClientResult<MapPreviewBoundaryData>> {
+    return this.galleryOps.getMapPreviewBoundary(timeoutMs);
+  }
+
+  async getMapPreviewAllPoint(
+    north: number,
+    east: number,
+    south: number,
+    west: number,
+    lonVert: number = 0,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<MapPreviewAllPointData>> {
+    return this.galleryOps.getMapPreviewAllPoint(north, east, south, west, lonVert, timeoutMs);
+  }
+
+  async getMapTimeline(extraParams?: Record<string, string | number | boolean>, timeoutMs: number = 20000): Promise<FnClientResult<MapTimelineData>> {
+    return this.galleryOps.getMapTimeline(extraParams, timeoutMs);
+  }
+
+  async getMapPhotoList(
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number,
+    extraParams?: Record<string, string | number | boolean>,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    return this.galleryOps.getMapPhotoList(startTime, endTime, limit, offset, extraParams, timeoutMs);
+  }
+
+  async getMapPhotoIds(extraParams?: Record<string, string | number | boolean>, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.getMapPhotoIds(extraParams, timeoutMs);
+  }
+
+  async getMapPhotoListByBounds(
+    boundsParams: Record<string, string | number | boolean>,
+    limit: number,
+    offset: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    return this.galleryOps.getMapPhotoListByBounds(boundsParams, limit, offset, timeoutMs);
+  }
+
+  async getExploreGeos(offset: number = 0, limit: number = -1, timeoutMs: number = 20000): Promise<FnClientResult<ExploreGeosData>> {
+    return this.galleryOps.getExploreGeos(offset, limit, timeoutMs);
+  }
+
+  async searchResultsByLocation(country: string, city: string, timeoutMs: number = 20000): Promise<FnClientResult<GalleryListItem[]>> {
+    return this.galleryOps.searchResultsByLocation(country, city, timeoutMs);
   }
 
   async doMagicSearch(keyword: string, timeoutMs: number = 20000): Promise<FnClientResult<MagicSearchData>> {

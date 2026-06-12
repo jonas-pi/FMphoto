@@ -217,6 +217,34 @@ struct MePanel {
     })
   }
 
+  @Builder
+  private feedbackBoard() {
+    Column({ space: 8 }) {
+      Text('帮助 FMphoto 变得更好')
+        .fontSize(17)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+
+      Text('请多多在应用市场反馈你需要的功能以及发现的 BUG。如果觉得好用，也欢迎给个好评，助我破鼎。')
+        .fontSize(13)
+        .lineHeight(20)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(18)
+    .backgroundColor($r('app.color.immersive_panel_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .backgroundEffect(fnImmersiveBackgroundEffect())
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(24)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .shadow({ radius: 24, color: '#14001A33', offsetX: 0, offsetY: 10 })
+    .clip(true)
+  }
+
   build() {
     Column() {
       Row() {
@@ -293,6 +321,12 @@ struct MePanel {
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
         .visibility(Visibility.None)
+
+        this.feedbackBoard()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
 
         this.immersiveSwitchRow()
 
@@ -1009,6 +1043,13 @@ struct Home {
   }
 
   @Builder
+  private floatingDockSideButtonSpacer() {
+    Blank()
+      .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+  }
+
+  @Builder
   private renderBottomDock() {
     if (this.gallerySelectionDockActive) {
       Row() {
@@ -1025,13 +1066,7 @@ struct Home {
       .margin({ bottom: this.bottomDockBottomGap() })
     } else {
       Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
-        if (this.shouldShowGalleryDockSideButtons()) {
-          this.floatingDockSideButton(true)
-        } else {
-          Blank()
-            .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-            .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-        }
+        this.floatingDockSideButtonSpacer()
 
         if (this.canUseHds()) {
           this.floatingDockHdsTabs()

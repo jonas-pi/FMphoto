@@ -69,6 +69,43 @@ export const PERSON_IN_PHOTO_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/ai-person/personInPhoto`,
   '/api/v1/ai-person/personInPhoto'
 ];
+/** 地图：官方 Web 端 mapApi / map/photoList 接口 */
+export const MAP_PREVIEW_CENTER_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/preview/initCenter`;
+export const MAP_PREVIEW_CENTER_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/map/preview/initCenter`,
+  '/api/v1/map/preview/initCenter'
+];
+export const MAP_PREVIEW_BOUNDARY_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/preview/mapBoundary`;
+export const MAP_PREVIEW_BOUNDARY_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/map/preview/mapBoundary`,
+  '/api/v1/map/preview/mapBoundary'
+];
+export const MAP_PREVIEW_ALL_POINT_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/previewAllPoint`;
+export const MAP_PREVIEW_ALL_POINT_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/map/previewAllPoint`,
+  '/api/v1/map/previewAllPoint'
+];
+export const MAP_TIMELINE_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/timeLine`;
+export const MAP_TIMELINE_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/map/timeLine`,
+  '/api/v1/map/timeLine'
+];
+export const MAP_PHOTO_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/photoList`;
+export const MAP_PHOTO_LIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/map/photoList`,
+  '/api/v1/map/photoList'
+];
+export const MAP_GET_IDS_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/getIds`;
+export const MAP_GET_IDS_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/map/getIds`,
+  '/api/v1/map/getIds'
+];
+/** 地理位置列表：官方 Web 端 /geo 使用 exploreApi.getGeos */
+export const EXPLORE_GEOS_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/explore/geos`;
+export const EXPLORE_GEOS_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/explore/geos`,
+  '/api/v1/explore/geos'
+];
 
 /** 疑似证书类错误码（NetStack） */
 export const CERT_CODES: number[] = [2300060, 2300058, 2300059, 2300077];
@@ -530,4 +567,3 @@ export function resolveLocation(baseUrl: string, pathOrUrl: string): ResolvedLoc
   const r4: ResolvedLocation = { newBase: origin, newPath: `/${loc}` };
   return r4;
 }
-

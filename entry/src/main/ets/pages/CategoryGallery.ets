@@ -126,6 +126,11 @@ struct CategoryGallery {
   private cgDeferredSnapshotApplyTimer: number = -1;
   private cgLastSnapshotApplyAtMs: number = 0;
   private cgInitialSlidePending: boolean = false;
+  /** 本页打开时的会话 token，仅同步属于自己的 NavStore 更新。 */
+  private pageSessionToken: number = -1;
+  private pageSourceKind: string = '';
+  private pageCategoryKey: string = '';
+  private pageUseCreatedAtGrouping: boolean = false;
 
   private recycleThumbCache(aggressive: boolean = false): void {
     const recentAddedAggressive = this.isRecentAddedStreamingMode() &&
@@ -134,12 +139,20 @@ struct CategoryGallery {
   }
 
   onBackPress(): boolean {
+    this.navigateBack();
+    return true;
+  }
+
+  onPageHide(): void {
+    this.stopStoreObserver();
+  }
+
+  private navigateBack(): void {
     if (this.selectionMode) {
       this.exitCgSelection();
-      return true;
+      return;
     }
     this.getUIContext().getRouter().back();
-    return true;
   }
 
   private vpToPx(value: number): number {
@@ -165,14 +178,14 @@ struct CategoryGallery {
   }
 
   private isRecentAddedStreamingMode(): boolean {
-    return CategoryGalleryNavStore.useCreatedAtGrouping && CategoryGalleryNavStore.categoryKey.length === 0;
+    return this.pageUseCreatedAtGrouping && this.pageCategoryKey.length === 0;
   }
 
   private emptyStateText(): string {
-    if (CategoryGalleryNavStore.sourceKind === 'collect') {
+    if (this.pageSourceKind === 'collect') {
       return '收藏夹为空';
     }
-    if (CategoryGalleryNavStore.sourceKind === 'recent') {
+    if (this.pageSourceKind === 'recent') {
       return '最近添加为空';
     }
     return '暂无媒体';
@@ -206,6 +219,7 @@ struct CategoryGallery {
   }
 
   onPageShow(): void {
+    this.startStoreObserver();
     this.applyDeleteSyncIfNeeded();
     this.syncFromNavStore();
     this.isDarkTheme = this.colorMode === 1;
@@ -237,7 +251,6 @@ struct CategoryGallery {
     if (client !== null) {
       client.cancelPendingRequests();
     }
-    CategoryGalleryNavStore.clear();
   }
 
   private toast(msg: string): void {
@@ -443,6 +456,10 @@ struct CategoryGallery {
 
   private applyNavStoreSnapshot(): void {
     this.clearCgDeferredSnapshotApplyTimer();
+    this.pageSessionToken = CategoryGalleryNavStore.sessionToken;
+    this.pageSourceKind = CategoryGalleryNavStore.sourceKind;
+    this.pageCategoryKey = CategoryGalleryNavStore.categoryKey;
+    this.pageUseCreatedAtGrouping = CategoryGalleryNavStore.useCreatedAtGrouping;
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
     this.heroImageUri = CategoryGalleryNavStore.heroImageUri;
@@ -474,7 +491,10 @@ struct CategoryGallery {
   }
 
   private async loadRemainingCategoryItems(token: number): Promise<void> {
-    const categoryKey = CategoryGalleryNavStore.categoryKey;
+    if (token !== this.pageSessionToken) {
+      return;
+    }
+    const categoryKey = this.pageCategoryKey;
     const expectedTotal = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
     if (categoryKey.length === 0 || expectedTotal <= this.flatItems.length) {
       return;
@@ -535,11 +555,14 @@ struct CategoryGallery {
   }
 
   private ensureCategoryBackgroundLoad(): void {
-    const token = CategoryGalleryNavStore.currentToken();
+    const token = this.pageSessionToken;
+    if (token < 0 || token !== CategoryGalleryNavStore.currentToken()) {
+      return;
+    }
     if (CategoryGalleryNavStore.backgroundLoading) {
       return;
     }
-    if (CategoryGalleryNavStore.categoryKey.length === 0) {
+    if (this.pageCategoryKey.length === 0) {
       return;
     }
     if (CategoryGalleryNavStore.expectedTotalCount <= this.flatItems.length) {
@@ -550,13 +573,13 @@ struct CategoryGallery {
 
   private scheduleCategoryBackgroundLoad(): void {
     this.clearCgDeferredBackgroundLoadTimer();
-    if (CategoryGalleryNavStore.categoryKey.length === 0) {
+    if (this.pageCategoryKey.length === 0) {
       return;
     }
     if (CategoryGalleryNavStore.expectedTotalCount <= this.flatItems.length) {
       return;
     }
-    const delayMs = CategoryGalleryNavStore.categoryKey === 'photo' ? 240 : 96;
+    const delayMs = this.pageCategoryKey === 'photo' ? 240 : 96;
     this.cgDeferredBackgroundLoadTimer = setTimeout((): void => {
       this.cgDeferredBackgroundLoadTimer = -1;
       this.ensureCategoryBackgroundLoad();
@@ -578,6 +601,9 @@ struct CategoryGallery {
   }
 
   private syncFromNavStore(): void {
+    if (this.pageSessionToken !== CategoryGalleryNavStore.sessionToken) {
+      return;
+    }
     if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
       return;
     }
@@ -1139,7 +1165,7 @@ struct CategoryGallery {
             this.exitCgSelection();
           },
           onBack: (): void => {
-            this.getUIContext().getRouter().back();
+            this.navigateBack();
           },
           onToggleMode: (): void => {
             this.toggleToolbarMode();

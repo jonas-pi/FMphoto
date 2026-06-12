@@ -30,3 +30,14 @@
 /huawei_ui_design_page.html
 /harmonyos_guides_catalog.json
 /hmos_dp1.json
+
+# 本地评审/测试用大图（不入库；应用内隐私政策走 pages/PrivacyPolicy，不依赖此处资源）
+/docs/review-test-photos/
+/docs/review-test-photos-cn-celebrities/
+/docs/review-test-photos-no-people/
+/docs/review-test-photos-contact-sheet.jpg
+/docs/review-test-photos-cn-celebrities-contact-sheet.jpg
+/docs/review-test-photos-no-people-contact-sheet.jpg
+/docs/review-test-photos-face-groups.jpg
+/docs/logo_split/fmphoto_*.png
+/docs/screenshots/review-1080x1920/

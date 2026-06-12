@@ -106,8 +106,12 @@ struct GalleryPreview {
   }
 
   onBackPress(): boolean {
-    this.getUIContext().getRouter().back();
+    this.navigateBack();
     return true;
+  }
+
+  private navigateBack(): void {
+    this.getUIContext().getRouter().back();
   }
 
   aboutToAppear(): void {
@@ -422,7 +426,7 @@ struct GalleryPreview {
       currentItem(): GalleryListItem | null { return self.currentItem(); }
       currentItemId(): string { return self.currentItemId(); }
       toast(msg: string): void { self.toast(msg); }
-      routerBack(): void { self.getUIContext().getRouter().back(); }
+      routerBack(): void { self.navigateBack(); }
     }
     return new PreviewActionsHostBridge();
   }
@@ -483,7 +487,7 @@ struct GalleryPreview {
               onVerticalDragProgress: (p: number): void => {
                 this.dismissDragProgress = Math.max(0, Math.min(1, p));
               },
-              onVerticalDismiss: (): void => { this.getUIContext().getRouter().back(); },
+              onVerticalDismiss: (): void => { this.navigateBack(); },
               onOriginalLoaded: (): void => {
                 if (this.originalPreviewEnabled) {
                   this.originalShowing = true;
@@ -555,6 +559,7 @@ struct GalleryPreview {
         fgColor: this.fgColor(),
         showOriginalAction: this.currentHasOriginal(),
         originalShowing: this.originalPreviewEnabled,
+        detailsShowing: this.detailsVisible,
         sharing: this.sharing,
         downloading: this.downloading,
         downloadProgressPct: this.downloadProgressPct,
@@ -564,7 +569,7 @@ struct GalleryPreview {
         starFilled: this.starFilled(),
         favoriteStarTint: this.favoriteStarTint(),
         onBack: (): void => {
-          this.getUIContext().getRouter().back();
+          this.navigateBack();
         },
         onLoadOriginal: (): void => {
           this.toggleOriginalPreview();

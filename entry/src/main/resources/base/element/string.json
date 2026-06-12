@@ -189,20 +189,36 @@
       "value": "保存 NAS 图片/视频到本机相册时需要写入权限"
     },
     {
-      "name": "legal_notice_title",
-      "value": "!!! 重要免责声明 !!!"
+      "name": "privacy_consent_title",
+      "value": "隐私政策"
     },
     {
-      "name": "legal_notice_message",
-      "value": "此程序未经任何人审核，作者不对程序的功能、安全、合规等作出任何保证；本程序仅供学习交流使用，下载后请于 24 小时内删除，不得私自分发、转载、逆向或破解，否则由行为人自行承担被相关法律主体追责的风险。"
+      "name": "privacy_consent_message",
+      "value": "使用 FMphoto 前，请阅读并同意《隐私政策》。本应用需要你主动填写 NAS 地址、账号和密码后才会连接你的 NAS；登录凭据、会话 token、证书信任记录和相册相关数据会在本机与用户配置的 NAS 之间处理。未同意前，应用不会恢复会话或进入登录流程。"
     },
     {
-      "name": "legal_notice_disagree",
+      "name": "privacy_consent_view",
+      "value": "查看隐私政策"
+    },
+    {
+      "name": "privacy_consent_disagree",
       "value": "不同意并退出"
     },
     {
-      "name": "legal_notice_agree",
+      "name": "privacy_consent_agree",
       "value": "同意并继续"
+    },
+    {
+      "name": "privacy_consent_open_failed",
+      "value": "无法打开隐私政策，请稍后重试"
+    },
+    {
+      "name": "privacy_consent_save_failed",
+      "value": "保存同意状态失败，请重试"
+    },
+    {
+      "name": "privacy_policy_title",
+      "value": "隐私政策"
     }
   ]
 }

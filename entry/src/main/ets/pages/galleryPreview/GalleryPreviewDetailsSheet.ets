@@ -1,11 +1,11 @@
 import {
-  fnImmersiveBackgroundEffect,
-  FnHdsSymbolButton,
+  fnLiquidGlassGradient,
   FnInlineLoading,
   FnStateText
 } from '../../common/FnUiCommon';
 import { GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
 import {
+  galleryPreviewCompactDisplayPath,
   galleryPreviewDetailText,
   galleryPreviewFormatBytes,
   galleryPreviewJoinPair,
@@ -37,15 +37,7 @@ export struct GalleryPreviewDetailsSheet {
       Blank()
         .layoutWeight(1)
 
-      FnHdsSymbolButton({
-        symbol: $r('sys.symbol.xmark'),
-        widthValue: 32,
-        heightValue: 32,
-        radiusValue: 16,
-        fontSizeValue: 16,
-        fontColorValue: this.isDark ? '#FFF2F2F7' : '#FF1C1C1E',
-        action: this.onClose
-      })
+      this.closeButton()
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
@@ -53,6 +45,28 @@ export struct GalleryPreviewDetailsSheet {
     .border({
       width: { bottom: 1 },
       color: this.isDark ? '#1FFFFFFF' : '#12001A33'
+    })
+  }
+
+  @Builder
+  private closeButton() {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph($r('sys.symbol.xmark'))
+        .fontSize(17)
+        .fontColor([this.isDark ? '#FFF2F2F7' : '#FF1C1C1E'])
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width(32)
+    .height(32)
+    .borderRadius(16)
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderWidth(1)
+    .borderColor(this.isDark ? '#1FFFFFFF' : '#12001A33')
+    .clip(true)
+    .onClick((): void => {
+      this.onClose();
     })
   }
 
@@ -122,7 +136,7 @@ export struct GalleryPreviewDetailsSheet {
           .fontColor(this.isDark ? '#FF8E8E93' : '#FF6E6E73')
           .width(92)
         Column({ space: 4 }) {
-          Text(fullPath)
+          Text(galleryPreviewCompactDisplayPath(fullPath))
             .fontSize(13)
             .fontColor(this.isDark ? '#FF78A6FF' : '#FF0A63D8')
             .maxLines(2)

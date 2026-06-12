@@ -296,6 +296,7 @@ import {
   galleryAlbumIsRootPhotosSurfaceVisible,
   galleryAlbumIsRootSurfaceVisible,
   galleryAlbumMainGalleryContentInsetTopVp,
+  galleryAlbumOpenMapPage,
   galleryAlbumOnHomeSurfaceChanged,
   galleryAlbumOpenPersonPage,
   galleryAlbumOpenRecycleBinPage,
@@ -2111,6 +2112,10 @@ export struct GalleryAlbumTab {
     galleryAlbumOpenPersonPage(this.asRootSurfaceHost());
   }
 
+  private openMapPage(): void {
+    galleryAlbumOpenMapPage(this.asRootSurfaceHost());
+  }
+
   private openSmartCategoryPage(): void {
     galleryAlbumOpenSmartCategoryPage(this.asRootSurfaceHost());
   }
@@ -2614,7 +2619,7 @@ export struct GalleryAlbumTab {
             this.openSmartCategoryPage();
           },
           onOpenPlacePlaceholder: (): void => {
-            this.toast('地点功能预留中');
+            this.openMapPage();
           },
           onOpenRecentAdded: (): void => {
             void this.openRecentAdded();

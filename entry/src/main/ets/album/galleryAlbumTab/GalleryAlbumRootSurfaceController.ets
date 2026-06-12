@@ -149,6 +149,15 @@ export function galleryAlbumOpenPersonPage(host: GalleryAlbumRootSurfaceHost): v
   });
 }
 
+export function galleryAlbumOpenMapPage(host: GalleryAlbumRootSurfaceHost): void {
+  host.getUIContext().getRouter().pushUrl({
+    url: 'pages/MapPage',
+    params: { baseUrl: host.baseUrl }
+  }).catch((_e: Error): void => {
+    host.toast('打开地图失败');
+  });
+}
+
 export function galleryAlbumOpenSmartCategoryPage(host: GalleryAlbumRootSurfaceHost): void {
   host.getUIContext().getRouter().pushUrl({
     url: 'pages/SmartCategoryPage',

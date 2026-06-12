@@ -2,23 +2,49 @@
   "app": {
     "signingConfigs": [
       {
-        "name": "default",
+        "name": "debug",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\picha\\.ohos\\config\\default_FNOSforohos_p1rHMTzs1M-_9uKpEZ9Jyhs2c7bl0bdVLKY0guuboiA=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001B07D2F6A375561FF6CBFF8619B58715FAC68BC4D5BD5498AC13160BA62E3BF79E34F61B5D32A650",
-          "profile": "C:\\Users\\picha\\.ohos\\config\\default_FNOSforohos_p1rHMTzs1M-_9uKpEZ9Jyhs2c7bl0bdVLKY0guuboiA=.p7b",
+          "storeFile": "D:/证书/飞马相册/debug/fmphoto_debug.p12",
+          "storePassword": "00000018DD172E105D4F7C975DC9F1A7A7A06A24C7165CE62360DACE61572770F8D258F80C9FF9AE",
+          "keyAlias": "tiaoshi",
+          "keyPassword": "000000185EC138624D03C6F884E2D7690788910C1F141F4F92C614DB4B65C3706951B7345ACE2AB1",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\picha\\.ohos\\config\\default_FNOSforohos_p1rHMTzs1M-_9uKpEZ9Jyhs2c7bl0bdVLKY0guuboiA=.p12",
-          "storePassword": "0000001BD2EDF2A38456A227DB52EBDF4E18CD9B3F59F0B34806C94596249758F5221DB1D41D0EA564EFBB"
+          "profile": "D:/证书/飞马相册/debug/fmphoto_debug_profile.p7b",
+          "certpath": "D:/证书/飞马相册/debug/fmphoto_debug.cer"
+        }
+      },
+      {
+        "name": "release",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "D:/证书/飞马相册/release/fmphoto_release.p12",
+          "storePassword": "000000184345B125604196A055B23E2DBB9CBEA41BEFAE18CE256D8F9F7782790A0DAEDFD1826E3D",
+          "keyAlias": "fmphoto",
+          "keyPassword": "00000018BCA213F63F1277810D8D19265B6022661D6FE54181663D0E0C77AD8558726AF7251E0CD2",
+          "signAlg": "SHA256withECDSA",
+          "profile": "D:/证书/飞马相册/release/fmphoto_release_profile.p7b",
+          "certpath": "D:/证书/飞马相册/release/fmphoto_release.cer"
         }
       }
     ],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
+        "signingConfig": "debug",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.0.2(22)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      },
+      {
+        "name": "release",
+        "signingConfig": "release",
         "targetSdkVersion": "6.1.0(23)",
         "compatibleSdkVersion": "6.0.2(22)",
         "runtimeOS": "HarmonyOS",
@@ -47,7 +73,8 @@
         {
           "name": "default",
           "applyToProducts": [
-            "default"
+            "default",
+            "release"
           ]
         }
       ]

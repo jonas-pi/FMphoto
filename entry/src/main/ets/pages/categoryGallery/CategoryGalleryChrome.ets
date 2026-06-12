@@ -82,6 +82,7 @@ export struct CategoryGalleryChrome {
         Row() {
           FnFloatingTopPillButton({
             text: this.selectionMode ? '完成' : $r('app.string.gallery_multiselect'),
+            active: this.selectionMode,
             action: this.onToggleMode
           })
         }
