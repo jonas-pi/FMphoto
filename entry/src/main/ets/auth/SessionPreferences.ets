@@ -16,7 +16,7 @@ const K_LOGIN_VIA_WS = 'login_via_ws';
 const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
 const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
-const K_LEGAL_ACCEPTED = 'legal_notice_accepted';
+const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
 
 export interface StoredSession {
   baseUrl: string;
@@ -89,14 +89,14 @@ function parseTrustedHostsSafe(raw: string): string[] {
 }
 
 export class SessionPreferences {
-  static async isLegalNoticeAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
+  static async isPrivacyPolicyAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
     const p = await openPrefs(ctx);
-    return (await prefsGetString(p, K_LEGAL_ACCEPTED, '0')) === '1';
+    return (await prefsGetString(p, K_PRIVACY_ACCEPTED, '0')) === '1';
   }
 
-  static async setLegalNoticeAccepted(ctx: common.UIAbilityContext, accepted: boolean): Promise<void> {
+  static async setPrivacyPolicyAccepted(ctx: common.UIAbilityContext, accepted: boolean): Promise<void> {
     const p = await openPrefs(ctx);
-    await prefsPutString(p, K_LEGAL_ACCEPTED, accepted ? '1' : '0');
+    await prefsPutString(p, K_PRIVACY_ACCEPTED, accepted ? '1' : '0');
     await prefsFlush(p);
   }
 

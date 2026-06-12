@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Index",
+    "pages/PrivacyPolicy",
     "pages/Login",
     "pages/Home",
     "pages/GalleryPreview",
@@ -8,6 +9,7 @@
     "pages/MediaCategoryPage",
     "pages/SmartCategoryPage",
     "pages/PersonPage",
+    "pages/MapPage",
     "pages/RecycleBinPage",
     "pages/Settings"
   ]

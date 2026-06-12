@@ -14,7 +14,7 @@
 #   .\scripts\deploy-phone.ps1 -TconnHost 192.168.0.18 -TconnPort 8710
 #
 # DevEco embedded SDK (legacy):
-#   $env:DEVECO_SDK_HOME = "<DevEco>\sdk\default"
+#   $env:DEVECO_SDK_HOME = "<DevEco>\sdk"
 #   $env:OHOS_BASE_SDK_HOME = "<DevEco>\sdk\default\openharmony"   # optional; script sets if omitted
 param(
   # 为 true 时跳过 assembleHap，直接安装当前 outputs 下已有 signed hap（用于快速重装同一次构建产物）
@@ -40,7 +40,7 @@ if (-not $env:HOS_COMMAND_LINE_TOOLS) {
   }
 }
 
-$DevEcoSdkDefault = "D:\Program Files\Huawei\DevEco Studio\sdk\default"
+$DevEcoSdkDefault = "D:\Program Files\Huawei\DevEco Studio\sdk"
 $NodeDevEco = "D:\Program Files\Huawei\DevEco Studio\tools\node\node.exe"
 $HvigorDevEco = "D:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js"
 $HdcDevEco = "D:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe"
@@ -50,7 +50,7 @@ if ($env:HOS_COMMAND_LINE_TOOLS) {
   $CltRoot = $env:HOS_COMMAND_LINE_TOOLS.TrimEnd('\', '/')
 }
 
-# SDK root for hvigor: command-line-tools uses ...\sdk ; DevEco often uses ...\sdk\default
+# SDK root for hvigor: command-line-tools uses ...\sdk ; DevEco Hvigor expects ...\sdk
 $SdkHome = ''
 if ($env:DEVECO_SDK_HOME) {
   $SdkHome = $env:DEVECO_SDK_HOME.TrimEnd('\', '/')
@@ -73,7 +73,7 @@ elseif ($CltRoot.Length -gt 0) { Join-Path $CltRoot 'hvigor\bin\hvigorw.js' }
 else { $HvigorDevEco }
 
 $SignedHap = Join-Path $RepoRoot "entry\build\default\outputs\default\entry-default-signed.hap"
-$BundleName = "com.example.fnosforohos"
+$BundleName = "com.jonas.fmphoto"
 $AbilityName = "EntryAbility"
 
 function Test-SdkMarkerOk {
@@ -89,6 +89,27 @@ function Resolve-OhosBaseSdk {
     return (Join-Path $SdkRoot 'default\openharmony')
   }
   return (Join-Path $SdkRoot 'openharmony')
+}
+
+function Get-HapBundleName {
+  param([string]$HapPath)
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($HapPath)
+  try {
+    $entry = $zip.GetEntry('pack.info')
+    if ($null -eq $entry) {
+      return ''
+    }
+    $reader = [System.IO.StreamReader]::new($entry.Open())
+    try {
+      $packInfo = $reader.ReadToEnd() | ConvertFrom-Json
+      return [string]$packInfo.summary.app.bundleName
+    } finally {
+      $reader.Dispose()
+    }
+  } finally {
+    $zip.Dispose()
+  }
 }
 
 function Ensure-JavaOnPath {
@@ -171,6 +192,11 @@ if (-not $SkipBuild) {
 
 if (-not (Test-Path $SignedHap)) {
   throw "Signed HAP not found: $SignedHap. Run without -SkipBuild to compile first, or build in DevEco."
+}
+
+$ActualBundleName = Get-HapBundleName -HapPath $SignedHap
+if ($ActualBundleName -ne $BundleName) {
+  throw "Signed HAP bundleName mismatch: expected $BundleName, got $ActualBundleName. Rebuild with matching SigningConfigs before install or release."
 }
 
 if ($TconnHost -and $TconnHost.Trim().Length -gt 0) {

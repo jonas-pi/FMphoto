@@ -281,7 +281,7 @@ export async function loadCollectGalleryItems(
   }
   const days = collectTimelineDays(tl.data.list ?? []);
   if (days.length === 0) {
-    return { items: [], error: '暂无收藏' };
+    return { items: [], error: '' };
   }
 
   const merged: GalleryListItem[] = [];
@@ -327,7 +327,7 @@ export async function loadCollectGalleryItems(
 
   return {
     items: merged,
-    error: merged.length > 0 ? '' : '收藏暂无可预览媒体'
+    error: ''
   };
 }
 

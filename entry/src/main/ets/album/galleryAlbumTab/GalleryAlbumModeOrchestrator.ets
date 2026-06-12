@@ -556,10 +556,8 @@ export async function galleryAlbumOpenCollectGallery(host: GalleryAlbumModeOrche
     if (!isActive()) {
       return;
     }
-    if (result.items.length <= 0) {
-      if (result.error.length > 0) {
-        host.toast(result.error);
-      }
+    if (result.items.length <= 0 && result.error.length > 0) {
+      host.toast(result.error);
       return;
     }
     CategoryGalleryNavStore.open(

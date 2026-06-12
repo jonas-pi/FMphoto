@@ -26,6 +26,8 @@ export const FN_PHOTO_H5_ALBUM = '/album';
 export const FN_PHOTO_H5_PERSONS = '/persons';
 /** 智能分类 */
 export const FN_PHOTO_H5_SMART_CATEGORY = '/smart_category';
+/** 地图 */
+export const FN_PHOTO_H5_MAP = '/map';
 
 /** 单条 H5 路由说明（供后续 Tab / Web 跳转使用） */
 export interface FnPhotoH5RouteItem {
@@ -38,7 +40,8 @@ export const FN_PHOTO_H5_ROUTE_LIST: FnPhotoH5RouteItem[] = [
   { path: FN_PHOTO_H5_FOLDERVIEW, label: '文件夹' },
   { path: FN_PHOTO_H5_ALBUM, label: '相册' },
   { path: FN_PHOTO_H5_PERSONS, label: '人物' },
-  { path: FN_PHOTO_H5_SMART_CATEGORY, label: '智能分类' }
+  { path: FN_PHOTO_H5_SMART_CATEGORY, label: '智能分类' },
+  { path: FN_PHOTO_H5_MAP, label: '地图' }
 ];
 
 /**
@@ -52,6 +55,7 @@ export function fnPhotoH5Path(subPath: string): string {
 
 /** 相册主界面（常用入口，等价于 fnPhotoH5Path(FN_PHOTO_H5_ALBUM)） */
 export const FN_PHOTO_H5_ALBUM_PAGE = fnPhotoH5Path(FN_PHOTO_H5_ALBUM);
+export const FN_PHOTO_H5_MAP_PAGE = fnPhotoH5Path(FN_PHOTO_H5_MAP);
 
 /**
  * 可交给 Web 加载的完整 URL（base 无尾斜杠，如 https://[host]:5666）
@@ -74,6 +78,8 @@ export function fnPhotoCookieUrls(baseNoSlash: string): string[] {
     '/p/',
     FN_PHOTO_H5_ALBUM_PAGE,
     `${FN_PHOTO_H5_ALBUM_PAGE}/`,
+    FN_PHOTO_H5_MAP_PAGE,
+    `${FN_PHOTO_H5_MAP_PAGE}/`,
     '/p/v1',
     '/p/v1/'
   ];

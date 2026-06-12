@@ -43,6 +43,7 @@ export struct GalleryPreviewChrome {
   @Prop fgColor: ResourceColor = Color.White;
   @Prop showOriginalAction: boolean = false;
   @Prop originalShowing: boolean = false;
+  @Prop detailsShowing: boolean = false;
   @Prop sharing: boolean = false;
   @Prop downloading: boolean = false;
   @Prop downloadProgressPct: number = 0;
@@ -283,6 +284,7 @@ export struct GalleryPreviewChrome {
     FnFloatingTopCircleButton({
       symbol: icon,
       active: selected,
+      fontColor: this.fgColor,
       action: action
     })
   }
@@ -323,7 +325,7 @@ export struct GalleryPreviewChrome {
             if (this.showOriginalAction) {
               this.topCircleAction($r('sys.symbol.picture'), this.onLoadOriginal, this.originalShowing)
             }
-            this.topCircleAction($r('sys.symbol.more'), this.onOpenDetails)
+            this.topCircleAction($r('sys.symbol.info_circle'), this.onOpenDetails, this.detailsShowing)
           }
         }
         .layoutWeight(1)

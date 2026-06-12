@@ -801,19 +801,15 @@ export struct GalleryAlbumAlbumsHomeView {
 
   @Builder
   private placeModulePreview() {
-    Column({ space: 6 }) {
-      Text('地')
-        .fontSize(28)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-      Text('预留')
-        .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
+    Image($r('app.media.map_entry_cover'))
+      .width('100%')
+      .height('100%')
+      .objectFit(ImageFit.Cover)
+      .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
+      .clip(true)
+      .backgroundColor($r('app.color.gallery_material_surface_bg'))
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+      .draggable(false)
   }
 
   @Builder
@@ -854,7 +850,7 @@ export struct GalleryAlbumAlbumsHomeView {
       .width('100%')
       .aspectRatio(1)
 
-      Text('地点')
+      Text('地图')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
@@ -862,7 +858,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
-      Text('预留')
+      Text('照片足迹')
         .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
         .maxLines(1)

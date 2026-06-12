@@ -180,13 +180,24 @@ export function galleryPreviewCompactFolderTitle(folderPath: string): string {
   if (parts.length === 0) {
     return path;
   }
-  if (parts.length <= 3) {
+  if (parts.length <= 2) {
     return `/${parts.join('/')}`;
   }
   const first = parts[0];
-  const last1 = parts[parts.length - 2];
-  const last2 = parts[parts.length - 1];
-  return `/${first}/.../${last1}/${last2}`;
+  const last = parts[parts.length - 1];
+  return `/${first}/.../${last}`;
+}
+
+export function galleryPreviewCompactDisplayPath(fullPath: string): string {
+  const path = fullPath.trim();
+  if (path.length === 0) {
+    return '';
+  }
+  const folderPath = galleryPreviewParentFolderPath(path);
+  if (folderPath.length > 0) {
+    return galleryPreviewCompactFolderTitle(folderPath);
+  }
+  return galleryPreviewCompactFolderTitle(path);
 }
 
 export function galleryPreviewPersonInPhotoLineText(p: PersonInPhotoItem): string {

@@ -1,9 +1,9 @@
 /**
  * 分类相册页导航数据中转站。
- * 在打开 pages/CategoryGallery 前写入，页面内只读。
+ * 仅在打开 pages/CategoryGallery 前写入；各页面实例绑定自己的 sessionToken，原路 back 即可。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { UIContext } from '@kit.ArkUI';
+import { router, UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './GalleryAlbumEntityData';
 
@@ -17,6 +17,21 @@ export interface CategoryGalleryOpenMeta {
   heroImageUri?: string;
   columnsPerRow?: number;
   sourceKind?: string;
+}
+
+interface CategoryGallerySessionBackup {
+  baseUrl: string;
+  title: string;
+  items: GalleryListItem[];
+  useCreatedAtGrouping: boolean;
+  backgroundLoading: boolean;
+  sessionToken: number;
+  expectedTotalCount: number;
+  categoryKey: string;
+  heroImageUri: string;
+  columnsPerRow: number;
+  sourceKind: string;
+  version: number;
 }
 
 export class CategoryGalleryNavStore {
@@ -33,6 +48,38 @@ export class CategoryGalleryNavStore {
   static columnsPerRow: number = 3;
   static sourceKind: string = '';
 
+  private static captureSession(): CategoryGallerySessionBackup {
+    return {
+      baseUrl: CategoryGalleryNavStore.baseUrl,
+      title: CategoryGalleryNavStore.title,
+      items: CategoryGalleryNavStore.items.slice(),
+      useCreatedAtGrouping: CategoryGalleryNavStore.useCreatedAtGrouping,
+      backgroundLoading: CategoryGalleryNavStore.backgroundLoading,
+      sessionToken: CategoryGalleryNavStore.sessionToken,
+      expectedTotalCount: CategoryGalleryNavStore.expectedTotalCount,
+      categoryKey: CategoryGalleryNavStore.categoryKey,
+      heroImageUri: CategoryGalleryNavStore.heroImageUri,
+      columnsPerRow: CategoryGalleryNavStore.columnsPerRow,
+      sourceKind: CategoryGalleryNavStore.sourceKind,
+      version: CategoryGalleryNavStore.version
+    };
+  }
+
+  private static restoreSession(backup: CategoryGallerySessionBackup): void {
+    CategoryGalleryNavStore.baseUrl = backup.baseUrl;
+    CategoryGalleryNavStore.title = backup.title;
+    CategoryGalleryNavStore.items = backup.items.slice();
+    CategoryGalleryNavStore.useCreatedAtGrouping = backup.useCreatedAtGrouping;
+    CategoryGalleryNavStore.backgroundLoading = backup.backgroundLoading;
+    CategoryGalleryNavStore.sessionToken = backup.sessionToken;
+    CategoryGalleryNavStore.expectedTotalCount = backup.expectedTotalCount;
+    CategoryGalleryNavStore.categoryKey = backup.categoryKey;
+    CategoryGalleryNavStore.heroImageUri = backup.heroImageUri;
+    CategoryGalleryNavStore.columnsPerRow = backup.columnsPerRow;
+    CategoryGalleryNavStore.sourceKind = backup.sourceKind;
+    CategoryGalleryNavStore.version = backup.version;
+  }
+
   static open(
     baseUrl: string,
     title: string,
@@ -41,7 +88,8 @@ export class CategoryGalleryNavStore {
     useCreatedAtGrouping: boolean = false,
     meta?: CategoryGalleryOpenMeta
   ): Promise<boolean> {
-    if (items.length === 0) {
+    const allowEmptyPage = meta?.sourceKind === 'collect';
+    if (items.length === 0 && !allowEmptyPage) {
       hilog.warn(DOMAIN, TAG, 'open skipped: empty items');
       return Promise.resolve(false);
     }
@@ -53,6 +101,7 @@ export class CategoryGalleryNavStore {
     const initialItems = shouldCapInitialItems
       ? items.slice(0, initialRenderCap)
       : items.slice();
+    const backup = CategoryGalleryNavStore.captureSession();
     CategoryGalleryNavStore.sessionToken++;
     CategoryGalleryNavStore.baseUrl = baseUrl;
     CategoryGalleryNavStore.title = title;
@@ -81,11 +130,14 @@ export class CategoryGalleryNavStore {
       CategoryGalleryNavStore.columnsPerRow
     );
     CategoryGalleryNavStore.version++;
-    return uiCtx.getRouter().pushUrl({ url: 'pages/CategoryGallery' }).then((): boolean => {
+    return uiCtx.getRouter().pushUrl(
+      { url: 'pages/CategoryGallery' },
+      router.RouterMode.Standard
+    ).then((): boolean => {
       return true;
     }).catch((e: Error): boolean => {
       hilog.error(DOMAIN, TAG, 'pushUrl CategoryGallery: %{public}s', String(e));
-      CategoryGalleryNavStore.clear();
+      CategoryGalleryNavStore.restoreSession(backup);
       return false;
     });
   }

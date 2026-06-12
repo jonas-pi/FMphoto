@@ -176,6 +176,156 @@ export interface GalleryGetListData {
   total?: number;
 }
 
+/** GET /p/api/v1/map/preview/initCenter 返回 data，字段随服务端版本做宽松兼容 */
+export interface MapPreviewCenterData {
+  latitude?: string | number;
+  longitude?: string | number;
+  lat?: string | number;
+  lng?: string | number;
+  centerLat?: string | number;
+  centerLng?: string | number;
+  centerLatitude?: string | number;
+  centerLongitude?: string | number;
+  zoom?: string | number;
+}
+
+/** GET /p/api/v1/map/preview/mapBoundary 返回 data */
+export interface MapPreviewBoundaryData {
+  minLat?: string | number;
+  maxLat?: string | number;
+  minLng?: string | number;
+  minLon?: string | number;
+  maxLng?: string | number;
+  maxLon?: string | number;
+  southWest?: Object;
+  northEast?: Object;
+  list?: Object[];
+  items?: Object[];
+  points?: Object[];
+}
+
+/** GET /p/api/v1/map/previewAllPoint single map photo point */
+export interface MapPreviewAllPointItem {
+  id?: string | number;
+  lat?: string | number;
+  lon?: string | number;
+  lng?: string | number;
+  latitude?: string | number;
+  longitude?: string | number;
+  count?: string | number;
+  itemCount?: string | number;
+  item_count?: string | number;
+  photoCount?: string | number;
+  photo_count?: string | number;
+  poster?: GalleryListItem;
+  cover?: string;
+  posterUrl?: string;
+  thumb?: string;
+  thumbnail?: string;
+  list?: GalleryListItem[];
+  items?: GalleryListItem[];
+  photos?: GalleryListItem[];
+  records?: GalleryListItem[];
+}
+
+/** GET /p/api/v1/map/previewAllPoint returns data */
+export interface MapPreviewAllPointData {
+  list?: MapPreviewAllPointItem[];
+  items?: MapPreviewAllPointItem[];
+  records?: MapPreviewAllPointItem[];
+  rows?: MapPreviewAllPointItem[];
+  points?: MapPreviewAllPointItem[];
+  markers?: MapPreviewAllPointItem[];
+  clusters?: MapPreviewAllPointItem[];
+  total?: number;
+}
+
+/** GET /p/api/v1/map/timeLine 单条地点/聚合记录 */
+export interface MapTimelineItem {
+  id?: string | number;
+  mapId?: string | number;
+  locationId?: string | number;
+  clusterId?: string | number;
+  name?: string;
+  title?: string;
+  address?: string;
+  country?: string;
+  province?: string;
+  city?: string;
+  district?: string;
+  latitude?: string | number;
+  longitude?: string | number;
+  lat?: string | number;
+  lng?: string | number;
+  geoLatitude?: string | number;
+  geoLongitude?: string | number;
+  year?: string | number;
+  month?: string | number;
+  day?: string | number;
+  dateKey?: string;
+  startTime?: string;
+  endTime?: string;
+  start_time?: string;
+  end_time?: string;
+  itemCount?: string | number;
+  item_count?: string | number;
+  count?: string | number;
+  total?: string | number;
+  photoCount?: string | number;
+  photo_count?: string | number;
+  list?: GalleryListItem[];
+  items?: GalleryListItem[];
+  photos?: GalleryListItem[];
+  records?: GalleryListItem[];
+}
+
+/** GET /p/api/v1/map/timeLine 返回 data */
+export interface MapTimelineData {
+  list?: MapTimelineItem[];
+  items?: MapTimelineItem[];
+  records?: MapTimelineItem[];
+  rows?: MapTimelineItem[];
+  points?: MapTimelineItem[];
+  markers?: MapTimelineItem[];
+  clusters?: MapTimelineItem[];
+  total?: number;
+}
+
+/** GET /p/api/v1/explore/geos 单条地理位置分组 */
+export interface ExploreGeoItem {
+  id?: string | number;
+  country?: string;
+  province?: string;
+  city?: string;
+  district?: string;
+  name?: string;
+  title?: string;
+  posterUrl?: string;
+  poster?: string;
+  cover?: string;
+  thumb?: string;
+  imageUrl?: string;
+  itemCount?: string | number;
+  item_count?: string | number;
+  count?: string | number;
+  total?: string | number;
+  photoCount?: string | number;
+  photo_count?: string | number;
+  list?: GalleryListItem[];
+  items?: GalleryListItem[];
+  photos?: GalleryListItem[];
+  records?: GalleryListItem[];
+}
+
+/** GET /p/api/v1/explore/geos 返回 data */
+export interface ExploreGeosData {
+  list?: ExploreGeoItem[];
+  items?: ExploreGeoItem[];
+  records?: ExploreGeoItem[];
+  rows?: ExploreGeoItem[];
+  total?: number;
+}
+
 /** `GET /p/api/v1/recycle-bin/list` 单条（与 Web 抓包字段对齐） */
 export interface RecycleBinListItem {
   id?: number;

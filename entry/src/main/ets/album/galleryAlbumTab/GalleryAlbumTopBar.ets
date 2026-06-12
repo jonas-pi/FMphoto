@@ -238,6 +238,13 @@ export struct GalleryAlbumTopBar {
   }
 
   @Builder
+  private floatingIconButtonSpacer() {
+    Blank()
+      .width(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+      .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
+  }
+
+  @Builder
   private searchFieldBlankTabBar() {
     Row()
       .width('100%')
@@ -373,7 +380,7 @@ export struct GalleryAlbumTopBar {
             this.floatingPillButton('多选', this.onEnterSelection)
           }
           this.floatingIconButton($r('sys.symbol.magnifyingglass'), (): void => this.openSearchPanelWithAutoFocus())
-          this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
+          this.floatingIconButtonSpacer()
         }
       } else {
         this.floatingPillButton('返回', this.onBackToGallery)
@@ -387,7 +394,7 @@ export struct GalleryAlbumTopBar {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
+        this.floatingIconButtonSpacer()
       }
     }
     .width('100%')

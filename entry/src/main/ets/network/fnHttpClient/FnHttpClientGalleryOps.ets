@@ -11,6 +11,8 @@ import {
   AssetBufferCacheEntry,
   DEFAULT_TIMEOUT,
   DOMAIN,
+  EXPLORE_GEOS_PATH_CANDIDATES,
+  EXPLORE_GEOS_SIGN_PATH,
   GALLERY_FOLDER_FILELIST_PATH_CANDIDATES,
   GALLERY_FOLDER_FILELIST_SIGN_PATH,
   GALLERY_GETLIST_PATH_CANDIDATES,
@@ -21,6 +23,18 @@ import {
   GALLERY_TIMELINE_PATH_CANDIDATES,
   GALLERY_TIMELINE_SIGN_PATH,
   GalleryAssetSignParts,
+  MAP_GET_IDS_PATH_CANDIDATES,
+  MAP_GET_IDS_SIGN_PATH,
+  MAP_PHOTO_LIST_PATH_CANDIDATES,
+  MAP_PHOTO_LIST_SIGN_PATH,
+  MAP_PREVIEW_ALL_POINT_PATH_CANDIDATES,
+  MAP_PREVIEW_ALL_POINT_SIGN_PATH,
+  MAP_PREVIEW_BOUNDARY_PATH_CANDIDATES,
+  MAP_PREVIEW_BOUNDARY_SIGN_PATH,
+  MAP_PREVIEW_CENTER_PATH_CANDIDATES,
+  MAP_PREVIEW_CENTER_SIGN_PATH,
+  MAP_TIMELINE_PATH_CANDIDATES,
+  MAP_TIMELINE_SIGN_PATH,
   PERSON_IN_PHOTO_PATH_CANDIDATES,
   PERSON_IN_PHOTO_SIGN_PATH,
   RECENT_PHOTOS_PATH_CANDIDATES,
@@ -36,6 +50,8 @@ import {
   AiPersonItem,
   AiPersonData,
   AiPersonDetailData,
+  ExploreGeoItem,
+  ExploreGeosData,
   FnClientResult,
   FnJsonValue,
   GalleryGetListData,
@@ -44,6 +60,11 @@ import {
   GalleryTimelineData,
   MagicSearchData,
   MagicSearchDoBody,
+  MapPreviewAllPointData,
+  MapPreviewAllPointItem,
+  MapPreviewBoundaryData,
+  MapPreviewCenterData,
+  MapTimelineData,
   MediaCategoryData,
   MediaCategoryItem,
   PersonInPhotoData,
@@ -702,6 +723,278 @@ export class FnHttpClientGalleryOps {
     return this.requestGalleryGetJson<GalleryTimelineData>(pathCandidates, gallerySign, DEFAULT_TIMEOUT, 3);
   }
 
+  private static buildMapGetPathCandidates(paths: string[], qs: string): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const rel = paths[i];
+      out.push(qs.length > 0 ? `${rel}?${qs}` : rel);
+    }
+    return out;
+  }
+
+  /** 地图初始化中心点：GET /p/api/v1/map/preview/initCenter（官方 mapApi.getCenter） */
+  async getMapPreviewCenter(timeoutMs: number = 15000): Promise<FnClientResult<MapPreviewCenterData>> {
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_PREVIEW_CENTER_SIGN_PATH,
+      queryParams: GALLERY_QUERY_EMPTY
+    };
+    return this.requestGalleryGetJson<MapPreviewCenterData>(
+      MAP_PREVIEW_CENTER_PATH_CANDIDATES,
+      gallerySign,
+      timeoutMs,
+      3
+    );
+  }
+
+  /** 地图边界：GET /p/api/v1/map/preview/mapBoundary（官方 mapApi.getBoundary） */
+  async getMapPreviewBoundary(timeoutMs: number = 15000): Promise<FnClientResult<MapPreviewBoundaryData>> {
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_PREVIEW_BOUNDARY_SIGN_PATH,
+      queryParams: GALLERY_QUERY_EMPTY
+    };
+    return this.requestGalleryGetJson<MapPreviewBoundaryData>(
+      MAP_PREVIEW_BOUNDARY_PATH_CANDIDATES,
+      gallerySign,
+      timeoutMs,
+      3
+    );
+  }
+
+  /** Map photo points: GET /p/api/v1/map/previewAllPoint (official mapApi). */
+  async getMapPreviewAllPoint(
+    north: number,
+    east: number,
+    south: number,
+    west: number,
+    lonVert: number = 0,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<MapPreviewAllPointData>> {
+    const params: Record<string, string | number | boolean> = {};
+    params['north'] = north;
+    params['east'] = east;
+    params['south'] = south;
+    params['west'] = west;
+    params['lonVert'] = lonVert;
+    const qs = buildGallerySortedQuery(params);
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_PREVIEW_ALL_POINT_SIGN_PATH,
+      queryParams: params
+    };
+    const res = await this.requestGalleryGetJson<MapPreviewAllPointData | MapPreviewAllPointItem[]>(
+      FnHttpClientGalleryOps.buildMapGetPathCandidates(MAP_PREVIEW_ALL_POINT_PATH_CANDIDATES, qs),
+      gallerySign,
+      timeoutMs,
+      3
+    );
+    if (!res.success || res.data === undefined) {
+      return res as FnClientResult<MapPreviewAllPointData>;
+    }
+    const payload = res.data as MapPreviewAllPointData | MapPreviewAllPointItem[];
+    if (Array.isArray(payload)) {
+      return {
+        success: true,
+        data: { list: payload },
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    }
+    return {
+      success: true,
+      data: {
+        list: FnHttpClientGalleryOps.mapPreviewPointItemsFromData(payload as Object),
+        total: (payload as MapPreviewAllPointData).total
+      },
+      moveUrl: res.moveUrl,
+      fnosLongToken: res.fnosLongToken
+    };
+  }
+
+  /** 地图时间轴/地点聚合：GET /p/api/v1/map/timeLine（官方 mapApi.getTimeline） */
+  async getMapTimeline(
+    extraParams?: Record<string, string | number | boolean>,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<MapTimelineData>> {
+    const params: Record<string, string | number | boolean> =
+      extraParams !== undefined ? extraParams : GALLERY_QUERY_EMPTY;
+    const qs = buildGallerySortedQuery(params);
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_TIMELINE_SIGN_PATH,
+      queryParams: params
+    };
+    return this.requestGalleryGetJson<MapTimelineData>(
+      FnHttpClientGalleryOps.buildMapGetPathCandidates(MAP_TIMELINE_PATH_CANDIDATES, qs),
+      gallerySign,
+      timeoutMs,
+      3
+    );
+  }
+
+  /**
+   * 地图照片列表：GET /p/api/v1/map/photoList。
+   * 官方 Web 会把 start_time/end_time 转成 startTime/endTime，这里直接按官方最终请求参数发送。
+   */
+  async getMapPhotoList(
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number,
+    extraParams?: Record<string, string | number | boolean>,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    const params: Record<string, string | number | boolean> = {};
+    if (extraParams !== undefined) {
+      const keys = Object.keys(extraParams);
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (k === 'mode' || k === 'start_time' || k === 'end_time' ||
+          k === 'startTime' || k === 'endTime' || k === 'limit' || k === 'offset') {
+          continue;
+        }
+        params[k] = extraParams[k];
+      }
+    }
+    params['startTime'] = startTime;
+    params['endTime'] = endTime;
+    params['offset'] = offset;
+    params['limit'] = limit;
+    const qs = buildGallerySortedQuery(params);
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_PHOTO_LIST_SIGN_PATH,
+      queryParams: params
+    };
+    const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+      FnHttpClientGalleryOps.buildMapGetPathCandidates(MAP_PHOTO_LIST_PATH_CANDIDATES, qs),
+      gallerySign,
+      timeoutMs,
+      3
+    );
+    if (!res.success || res.data === undefined) {
+      return res as FnClientResult<GalleryGetListData>;
+    }
+    const payload = res.data as GalleryGetListData | GalleryListItem[];
+    if (Array.isArray(payload)) {
+      return {
+        success: true,
+        data: { list: payload },
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    }
+    return res as FnClientResult<GalleryGetListData>;
+  }
+
+  async getMapPhotoListByBounds(
+    boundsParams: Record<string, string | number | boolean>,
+    limit: number,
+    offset: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    const params: Record<string, string | number | boolean> = {};
+    const keys = Object.keys(boundsParams);
+    for (let i = 0; i < keys.length; i++) {
+      params[keys[i]] = boundsParams[keys[i]];
+    }
+    params['offset'] = offset;
+    params['limit'] = limit;
+    const qs = buildGallerySortedQuery(params);
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_PHOTO_LIST_SIGN_PATH,
+      queryParams: params
+    };
+    const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+      FnHttpClientGalleryOps.buildMapGetPathCandidates(MAP_PHOTO_LIST_PATH_CANDIDATES, qs),
+      gallerySign,
+      timeoutMs,
+      3
+    );
+    if (!res.success || res.data === undefined) {
+      return res as FnClientResult<GalleryGetListData>;
+    }
+    const payload = res.data as GalleryGetListData | GalleryListItem[];
+    if (Array.isArray(payload)) {
+      return {
+        success: true,
+        data: { list: payload },
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    }
+    const items = FnHttpClientGalleryOps.searchResultItemsFromData(payload as Object);
+    if (items.length > 0) {
+      return {
+        success: true,
+        data: { list: items, total: (payload as GalleryGetListData).total },
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    }
+    return res as FnClientResult<GalleryGetListData>;
+  }
+
+  /** 地图照片 ID 列表：GET /p/api/v1/map/getIds（官方 map/getIds） */
+  async getMapPhotoIds(
+    extraParams?: Record<string, string | number | boolean>,
+    timeoutMs: number = 15000
+  ): Promise<FnClientResult<Object>> {
+    const params: Record<string, string | number | boolean> =
+      extraParams !== undefined ? extraParams : GALLERY_QUERY_EMPTY;
+    const qs = buildGallerySortedQuery(params);
+    const gallerySign: FnGalleryGetSignSpec = {
+      signPathOnly: MAP_GET_IDS_SIGN_PATH,
+      queryParams: params
+    };
+    return this.requestGalleryGetJson<Object>(
+      FnHttpClientGalleryOps.buildMapGetPathCandidates(MAP_GET_IDS_PATH_CANDIDATES, qs),
+      gallerySign,
+      timeoutMs,
+      3
+    );
+  }
+
+  /** 地理位置列表：GET /p/api/v1/explore/geos（官方 /geo 入口） */
+  async getExploreGeos(
+    offset: number = 0,
+    limit: number = -1,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<ExploreGeosData>> {
+    try {
+      const params: Record<string, string | number | boolean> = {};
+      params['offset'] = offset;
+      params['limit'] = limit;
+      const qs = buildGallerySortedQuery(params);
+      const pathCandidates: string[] = [];
+      for (let i = 0; i < EXPLORE_GEOS_PATH_CANDIDATES.length; i++) {
+        pathCandidates.push(`${EXPLORE_GEOS_PATH_CANDIDATES[i]}?${qs}`);
+      }
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: EXPLORE_GEOS_SIGN_PATH,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<ExploreGeosData>(
+        pathCandidates,
+        gallerySign,
+        timeoutMs,
+        3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '地理位置加载失败' };
+      }
+      const payload = res.data as ExploreGeosData;
+      const normList = FnHttpClientGalleryOps.geoItemsFromData(payload as Object);
+      return {
+        success: true,
+        data: {
+          list: normList,
+          total: payload.total
+        },
+        moveUrl: res.moveUrl,
+        fnosLongToken: res.fnosLongToken
+      };
+    } catch (e) {
+      return { success: false, message: String(e) || '地理位置加载异常' };
+    }
+  }
+
   /**
    * 相册图片列表：GET gallery/getList（签名 path 恒为 /p/api/v1/gallery/getList，与 Py 一致）
    * 时间格式须为「年:月:日 时:分:秒」空格分隔（与前端 dayjs / Python _day_time_range_str 一致）。
@@ -1272,6 +1565,59 @@ export class FnHttpClientGalleryOps {
     return result;
   }
 
+  private static geoItemsFromData(dataObj: Object | undefined): ExploreGeoItem[] {
+    if (dataObj === undefined || dataObj === null) {
+      return [];
+    }
+    let rawArr: Object[];
+    if (Array.isArray(dataObj)) {
+      rawArr = dataObj as Object[];
+    } else {
+      const d = dataObj as Record<string, Object | undefined>;
+      const found = d['list'] ?? d['items'] ?? d['records'] ?? d['rows'] ?? d['data'] ?? d['result'];
+      if (!Array.isArray(found)) {
+        return [];
+      }
+      rawArr = found as Object[];
+    }
+    const result: ExploreGeoItem[] = [];
+    for (let i = 0; i < rawArr.length; i++) {
+      const el = rawArr[i];
+      const raw = FnHttpClientGalleryOps.asLooseJsonRecord(el);
+      if (raw !== null) {
+        result.push(raw as ExploreGeoItem);
+      }
+    }
+    return result;
+  }
+
+  private static mapPreviewPointItemsFromData(dataObj: Object | undefined): MapPreviewAllPointItem[] {
+    if (dataObj === undefined || dataObj === null) {
+      return [];
+    }
+    let rawArr: Object[];
+    if (Array.isArray(dataObj)) {
+      rawArr = dataObj as Object[];
+    } else {
+      const d = dataObj as Record<string, Object | undefined>;
+      const found = d['list'] ?? d['items'] ?? d['records'] ?? d['rows'] ??
+        d['points'] ?? d['markers'] ?? d['clusters'] ?? d['data'] ?? d['result'];
+      if (!Array.isArray(found)) {
+        return [];
+      }
+      rawArr = found as Object[];
+    }
+    const result: MapPreviewAllPointItem[] = [];
+    for (let i = 0; i < rawArr.length; i++) {
+      const el = rawArr[i];
+      const raw = FnHttpClientGalleryOps.asLooseJsonRecord(el);
+      if (raw !== null) {
+        result.push(raw as MapPreviewAllPointItem);
+      }
+    }
+    return result;
+  }
+
   private static normalizeAiPersonItem(
     raw: Record<string, Object | string | number | boolean | undefined | null>
   ): AiPersonItem {
@@ -1818,6 +2164,75 @@ export class FnHttpClientGalleryOps {
       return { success: false, message: '分类结果为空' };
     } catch (e) {
       return { success: false, message: String(e) || '分类检索异常' };
+    }
+  }
+
+  /** 地理位置照片：POST /p/api/v2/search/results，filter 与官方 /geo -> /search 一致 */
+  async searchResultsByLocation(
+    country: string,
+    city: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryListItem[]>> {
+    try {
+      const countryVal = country.trim();
+      const cityVal = city.trim();
+      const firstVal = countryVal.length > 0 ? countryVal : cityVal;
+      if (firstVal.length <= 0) {
+        return { success: false, message: '地点参数为空' };
+      }
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const searchResultPaths: string[] = [
+        `${FN_PHOTO_API_V2_PREFIX}/search/results`,
+        `${FN_PHOTO_API_PREFIX}/search/results`,
+      ];
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const firstJson = JSON.stringify(firstVal);
+      const bodyStr = cityVal.length > 0 && countryVal.length > 0
+        ? `{"keyword":"","filters":[{"filterName":"photo_location","filterValue":${firstJson},"subFilters":[{"filterName":${firstJson},"filterValue":${JSON.stringify(cityVal)}}]}],"antiFilters":[]}`
+        : `{"keyword":"","filters":[{"filterName":"photo_location","filterValue":${firstJson}}],"antiFilters":[]}`;
+      for (let pi = 0; pi < searchResultPaths.length; pi++) {
+        const pathTry = searchResultPaths[pi];
+        const authx = await genFnGalleryAuthxPostRaw(pathTry, bodyStr);
+        const headers = this.buildGalleryFetchHeaders(authx, cookie);
+        headers['Content-Type'] = 'application/json';
+        const raw = await this.rawRequest(
+          `${activeBase}${pathTry}`,
+          http.RequestMethod.POST,
+          headers,
+          bodyStr,
+          timeoutMs,
+          CertPolicy.isTrusted(activeBase)
+        );
+        hilog.info(DOMAIN, TAG, 'geoSearch path=%{public}s http=%{public}d body500: %{public}s',
+          pathTry, raw.code, raw.body.substring(0, 500));
+        if (raw.code < 200 || raw.code >= 300) {
+          continue;
+        }
+        let parsed: Record<string, string | number | Object | undefined> | undefined;
+        try {
+          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+        } catch (_e) {
+          parsed = undefined;
+        }
+        if (parsed === undefined || !FnHttpClientGalleryOps.galleryEnvelopeBizOk(parsed)) {
+          continue;
+        }
+        const arr = FnHttpClientGalleryOps.searchResultItemsFromData(
+          FnHttpClientGalleryOps.galleryEnvelopeData(parsed)
+        );
+        if (arr.length > 0) {
+          return {
+            success: true,
+            data: FnHttpClientGalleryOps.normalizeSearchResultGalleryItems(arr)
+          };
+        }
+      }
+      return { success: false, message: '地点结果为空' };
+    } catch (e) {
+      return { success: false, message: String(e) || '地点检索异常' };
     }
   }
 
