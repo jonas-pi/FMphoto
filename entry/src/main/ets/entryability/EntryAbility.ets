@@ -3,6 +3,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
 import {
+  fnApplySplashWindowChrome
+} from '../common/FnSplashTheme';
+import {
   fnLoadImmersiveLightPreference,
   fnSetImmersiveLightEnabled
 } from '../common/FnImmersiveSettings';
@@ -15,6 +18,8 @@ interface AbilityConfigUpdate {
 }
 
 export default class EntryAbility extends UIAbility {
+  private mainWindow: window.Window | null = null;
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
@@ -29,6 +34,9 @@ export default class EntryAbility extends UIAbility {
     try {
       const dark = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
       AppStorage.set<number>('colorMode', dark ? 1 : 0);
+      if (this.mainWindow !== null) {
+        fnApplySplashWindowChrome(this.mainWindow, dark, true);
+      }
       hilog.info(DOMAIN, LOG_TAG, 'onConfigurationUpdate colorMode=%{public}d', dark ? 1 : 0);
     } catch (_e) {}
   }
@@ -42,13 +50,22 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onWindowStageCreate');
 
     // 在加载页面内容前初始化 colorMode，确保第一帧即可正确读取深浅色模式
+    let dark = false;
     try {
-      const dark = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      dark = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
       AppStorage.setOrCreate<number>('colorMode', dark ? 1 : 0);
       fnSetImmersiveLightEnabled(true);
       void fnLoadImmersiveLightPreference(this.context);
       hilog.info(DOMAIN, LOG_TAG, 'initial colorMode=%{public}d', dark ? 1 : 0);
     } catch (_e) {}
+
+    // 窗口背景与 startWindowBackground 一致，避免 StartWindow → 首帧之间露色
+    windowStage.getMainWindow().then((mainWindow: window.Window): void => {
+      this.mainWindow = mainWindow;
+      // 首帧前即全屏无系统栏，与 StartWindow 居中基准一致
+      fnApplySplashWindowChrome(mainWindow, dark, true);
+    }).catch((_e: Error): void => {
+    });
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
@@ -60,6 +77,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    this.mainWindow = null;
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onWindowStageDestroy');
   }
 

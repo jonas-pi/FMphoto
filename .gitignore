@@ -16,6 +16,11 @@
 !entry/build/default/outputs/
 !entry/build/default/outputs/default/
 !entry/build/default/outputs/default/entry-default-unsigned.hap
+!entry/build/release/
+!entry/build/release/outputs/
+!entry/build/release/outputs/default/
+!entry/build/release/outputs/default/entry-default-signed.hap
+!entry/build/release/outputs/default/entry-default-unsigned.hap
 /.hvigor
 .cxx
 /.clangd

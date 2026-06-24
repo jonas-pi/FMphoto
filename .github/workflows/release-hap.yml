@@ -33,7 +33,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # 如标签已存在 release，则自动更新并重新上传资产（开启覆盖）
-          files: entry/build/default/outputs/default/entry-default-unsigned.hap
+          files: |
+            entry/build/release/outputs/default/entry-default-signed.hap
+            entry/build/release/outputs/default/entry-default-unsigned.hap
+            entry/build/default/outputs/default/entry-default-unsigned.hap
           fail_on_unmatched_files: true
           generate_release_notes: true
           overwrite_files: true
