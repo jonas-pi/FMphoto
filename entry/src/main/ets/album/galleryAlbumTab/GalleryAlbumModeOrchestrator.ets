@@ -14,6 +14,9 @@ import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAl
 import { FN_GLOBAL_TAB_SWITCH_OFFSET_VP, FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { CATEGORY_GALLERY_INITIAL_RENDER_CAP, CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
+import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
+import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
+import { runAutoSync, AutoSyncSheetHost } from '../GalleryAutoSyncSheet';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
 import {
   galleryMediaCategoryModeLoader,
@@ -268,6 +271,40 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
   } else {
     host.toast(firstFailMsg.length > 0 ? firstFailMsg : '上传失败，请稍后重试');
   }
+}
+
+/**
+ * 触发自动同步检测（非阻塞）。
+ * 在 bootstrap 完成后调用，检测本地未同步的照片并更新徽章计数。
+ */
+export function galleryAlbumTriggerAutoSync(
+  host: GalleryAlbumModeOrchestratorHost,
+  timelineItems: GalleryListItem[]
+): void {
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  triggerAutoSyncDetection(ctx, timelineItems, (unsyncedCount: number): void => {
+    host.syncBadgeCount = unsyncedCount;
+  });
+}
+
+/**
+ * 执行自动同步（从同步弹窗调用）。
+ */
+export async function galleryAlbumRunAutoSync(
+  host: GalleryAlbumModeOrchestratorHost,
+  photos: import('../GalleryAutoSyncService').LocalPhotoEntry[]
+): Promise<void> {
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  const sheetHost: AutoSyncSheetHost = {
+    syncSheetVisible: false,
+    syncing: false,
+    syncProgressText: '',
+    unsyncedPhotos: photos,
+    toast: (msg: string): void => host.toast(msg),
+    requestBootstrap: (debounced: boolean): void => host.requestBootstrap(debounced)
+  };
+  await runAutoSync(sheetHost, ctx);
+  host.syncBadgeCount = GalleryAutoSyncStore.getUnsyncedCount();
 }
 
 export async function galleryAlbumLoadMediaCategories(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
