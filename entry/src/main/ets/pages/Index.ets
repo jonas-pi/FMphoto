@@ -17,12 +17,18 @@ struct Index {
   @State private hint: string = '正在初始化…';
   @State @Watch('onPrivacyConsentRequiredChanged') private privacyConsentRequired: boolean = false;
   @State private privacyConsentSubmitting: boolean = false;
+  @State private splashOpacity: number = 1.0;
+  @State private splashLoadingVisible: boolean = false;
 
   aboutToAppear(): void {
     this.syncSplashWindowChrome();
     if (this.privacyConsentRequired) {
       return;
     }
+    // 延迟显示 loading 指示器，避免与 StartWindow 视觉冲突
+    setTimeout((): void => {
+      this.splashLoadingVisible = true;
+    }, 400);
     void this.bootstrapFlow();
   }
 
@@ -120,6 +126,17 @@ struct Index {
     }
   }
 
+  /** Splash 淡出后跳转，消除与目标页的硬切跳变。 */
+  private fadeSplashAndNavigate(url: string): void {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.Linear }, (): void => {
+      this.splashOpacity = 0.0;
+    });
+    setTimeout((): void => {
+      this.getUIContext().getRouter().replaceUrl({ url: url }).catch((): void => {
+      });
+    }, 210);
+  }
+
   /** 恢复会话并跳转登录或主页。 */
   private restoreSessionAndRoute(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -128,8 +145,7 @@ struct Index {
         void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
           CertPolicy.loadAll(hosts);
         });
-        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
-        });
+        this.fadeSplashAndNavigate('pages/Login');
         return;
       }
       const client = AppSession.getClient();
@@ -137,27 +153,23 @@ struct Index {
         void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
           CertPolicy.loadAll(hosts);
         });
-        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
-        });
+        this.fadeSplashAndNavigate('pages/Login');
         return;
       }
       if (s.loginViaWebSocket === true) {
-        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
-        });
+        this.fadeSplashAndNavigate('pages/Home');
         return;
       }
       client.getUserInfo(5000, 2).then((r) => {
         if (r.success) {
-          this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
-          });
+          this.fadeSplashAndNavigate('pages/Home');
         } else {
           SessionPreferences.clearToken(ctx).then(() => {
             AppSession.clear();
             void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
               CertPolicy.loadAll(hosts);
             });
-            this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
-            });
+            this.fadeSplashAndNavigate('pages/Login');
           });
         }
       });
@@ -166,8 +178,7 @@ struct Index {
       void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
         CertPolicy.loadAll(hosts);
       });
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
-      });
+      this.fadeSplashAndNavigate('pages/Login');
     });
   }
 
@@ -242,13 +253,24 @@ struct Index {
         .width('100%')
         .height('100%')
         .backgroundColor($r('app.color.start_window_background'))
-      Image($r('app.media.startIcon'))
-        .objectFit(ImageFit.None)
-        .interpolation(ImageInterpolation.High)
-        .syncLoad(true)
+
+      Column({ space: 12 }) {
+        Image($r('app.media.startIcon'))
+          .objectFit(ImageFit.None)
+          .interpolation(ImageInterpolation.High)
+          .syncLoad(true)
+
+        if (this.splashLoadingVisible) {
+          LoadingProgress()
+            .width(28)
+            .height(28)
+            .color($r('app.color.text_secondary'))
+        }
+      }
     }
     .width('100%')
     .height('100%')
+    .opacity(this.splashOpacity)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
