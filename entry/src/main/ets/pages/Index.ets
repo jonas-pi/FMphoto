@@ -2,6 +2,7 @@
  * 启动页：恢复会话并校验 token，跳转登录或主页
  */
 import { common } from '@kit.AbilityKit';
+import { Curve } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
@@ -20,11 +21,30 @@ struct Index {
   @State private hint: string = '正在初始化…';
   @State private privacyConsentRequired: boolean = false;
   @State private privacyConsentSubmitting: boolean = false;
+  @State private startSplashAlpha: number = 1.0;
+  @State private startSplashScale: number = 1.0;
+  @State private startSplashTranslateY: number = 0;
+  @State private contentAlpha: number = 0.0;
+  @State private contentTranslateY: number = 30;
 
   aboutToAppear(): void {
     if (this.privacyConsentRequired) {
       return;
     }
+    // 展示 startIcon 大小的渐隐渐出，平滑衔接系统启动窗口
+    animateTo({ duration: 350, curve: Curve.FastOutSlowIn }, () => {
+      this.startSplashScale = 0.7;
+      this.startSplashTranslateY = -30;
+    });
+    setTimeout(() => {
+      animateTo({ duration: 280, curve: Curve.Linear }, () => {
+        this.startSplashAlpha = 0.0;
+      });
+      animateTo({ duration: 320, curve: Curve.FastOutSlowIn }, () => {
+        this.contentAlpha = 1.0;
+        this.contentTranslateY = 0;
+      });
+    }, 300);
     void this.bootstrapFlow();
   }
 
@@ -255,6 +275,16 @@ struct Index {
     Stack() {
       FnImmersiveBackdrop()
 
+      // 启动图标遮罩层 — 平滑过渡系统 startWindowIcon
+      Image($r('app.media.startIcon'))
+        .width(72)
+        .height(72)
+        .borderRadius(18)
+        .opacity(this.startSplashAlpha)
+        .scale({ x: this.startSplashScale, y: this.startSplashScale })
+        .translate({ y: this.startSplashTranslateY })
+        .syncLoad(true)
+
       Column() {
         if (this.privacyConsentRequired) {
           this.privacyConsentPanel()
@@ -266,6 +296,8 @@ struct Index {
       .height('100%')
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .opacity(this.contentAlpha)
+      .translate({ y: this.contentTranslateY })
     }
     .width('100%')
     .height('100%')

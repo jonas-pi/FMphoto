@@ -689,19 +689,21 @@ struct Home {
       if (session.fnosLongToken.length === 0) {
         const client = AppSession.getClient();
         if (client !== null) {
-          void client.fetchFnosLongTokenProbe(12000).then((token: string): void => {
-            if (token.length <= 0) {
-              return;
-            }
-            const current = AppSession.getStored();
-            if (current === null) {
-              return;
-            }
-            current.fnosLongToken = token;
-            AppSession.apply(current);
-            void SessionPreferences.save(ctx, current);
-            this.albumReloadEpoch++;
-          });
+          setTimeout((): void => {
+            void client.fetchFnosLongTokenProbe(12000).then((token: string): void => {
+              if (token.length <= 0) {
+                return;
+              }
+              const current = AppSession.getStored();
+              if (current === null) {
+                return;
+              }
+              current.fnosLongToken = token;
+              AppSession.apply(current);
+              void SessionPreferences.save(ctx, current);
+              this.albumReloadEpoch++;
+            });
+          }, 0);
         }
       }
     }
