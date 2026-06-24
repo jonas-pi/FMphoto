@@ -109,19 +109,44 @@ export class SessionPreferences {
     if (token.length === 0) {
       return null;
     }
+    const [
+      baseUrl,
+      account,
+      domainInput,
+      useHttpsRaw,
+      albumParentGuid,
+      trustedHostsRaw,
+      fnosLongToken,
+      loginViaWsRaw,
+      wsSignKeyB64,
+      openApiAuthxKey,
+      openApiAuthxSecret
+    ] = await Promise.all([
+      prefsGetString(p, K_BASE_URL, ''),
+      prefsGetString(p, K_ACCOUNT, ''),
+      prefsGetString(p, K_DOMAIN_INPUT, ''),
+      prefsGetString(p, K_USE_HTTPS, '1'),
+      prefsGetString(p, K_ALBUM_PARENT, ''),
+      prefsGetString(p, K_TRUSTED, '[]'),
+      prefsGetString(p, K_FNOS_LONG_TOKEN, ''),
+      prefsGetString(p, K_LOGIN_VIA_WS, '0'),
+      prefsGetString(p, K_WS_SIGN_KEY_B64, ''),
+      prefsGetString(p, K_OPENAPI_AUTHX_KEY, ''),
+      prefsGetString(p, K_OPENAPI_AUTHX_SECRET, '')
+    ]);
     return {
-      baseUrl: await prefsGetString(p, K_BASE_URL, ''),
+      baseUrl: baseUrl,
       token: token,
-      account: await prefsGetString(p, K_ACCOUNT, ''),
-      domainInput: await prefsGetString(p, K_DOMAIN_INPUT, ''),
-      useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1',
-      albumParentGuid: await prefsGetString(p, K_ALBUM_PARENT, ''),
-      trustedHosts: parseTrustedHostsSafe(await prefsGetString(p, K_TRUSTED, '[]')),
-      fnosLongToken: await prefsGetString(p, K_FNOS_LONG_TOKEN, ''),
-      loginViaWebSocket: (await prefsGetString(p, K_LOGIN_VIA_WS, '0')) === '1',
-      wsSignKeyB64: await prefsGetString(p, K_WS_SIGN_KEY_B64, ''),
-      openApiAuthxKey: await prefsGetString(p, K_OPENAPI_AUTHX_KEY, ''),
-      openApiAuthxSecret: await prefsGetString(p, K_OPENAPI_AUTHX_SECRET, '')
+      account: account,
+      domainInput: domainInput,
+      useHttps: useHttpsRaw === '1',
+      albumParentGuid: albumParentGuid,
+      trustedHosts: parseTrustedHostsSafe(trustedHostsRaw),
+      fnosLongToken: fnosLongToken,
+      loginViaWebSocket: loginViaWsRaw === '1',
+      wsSignKeyB64: wsSignKeyB64,
+      openApiAuthxKey: openApiAuthxKey,
+      openApiAuthxSecret: openApiAuthxSecret
     };
   }
 
@@ -174,6 +199,7 @@ export class SessionPreferences {
     const p = await openPrefs(ctx);
     await prefsPutString(p, K_TOKEN, '');
     await prefsPutString(p, K_BASE_URL, '');
+    await prefsPutString(p, K_ALBUM_PARENT, '');
     await prefsPutString(p, K_FNOS_LONG_TOKEN, '');
     await prefsPutString(p, K_LOGIN_VIA_WS, '0');
     await prefsPutString(p, K_WS_SIGN_KEY_B64, '');
