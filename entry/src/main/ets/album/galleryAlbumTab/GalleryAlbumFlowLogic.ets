@@ -289,6 +289,22 @@ export function galleryAlbumCountGalleryListedItems(sections: GalleryAlbumDaySec
   return count;
 }
 
+/** 收集时间轴已加载条目，供本地增量同步指纹对比。 */
+export function galleryAlbumCollectListedTimelineItems(sections: GalleryAlbumDaySectionState[]): GalleryListItem[] {
+  const items: GalleryListItem[] = [];
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+    const offsets = Array.from(section.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
+    for (let j = 0; j < offsets.length; j++) {
+      const item = section.slotByOffset.get(offsets[j]);
+      if (item !== undefined) {
+        items.push(item);
+      }
+    }
+  }
+  return items;
+}
+
 export function galleryAlbumUpsertSection(
   host: GalleryAlbumVisibleLoadHost,
   day: TimelineDayModel,

@@ -17,6 +17,7 @@ import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
 import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
 import { runAutoSync, AutoSyncSheetHost } from '../GalleryAutoSyncSheet';
+import { LocalPhotoEntry } from '../GalleryAutoSyncService';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
 import {
   galleryMediaCategoryModeLoader,
@@ -71,6 +72,7 @@ export interface GalleryAlbumModeOrchestratorHost {
   collectOpening: boolean;
   uploading: boolean;
   uploadText: string;
+  syncBadgeCount: number;
   lastBootstrapSatisfiedRefreshVersion: number;
   exitGallerySelection(): void;
   requestBootstrap(forceImmediate: boolean): void;
@@ -292,17 +294,22 @@ export function galleryAlbumTriggerAutoSync(
  */
 export async function galleryAlbumRunAutoSync(
   host: GalleryAlbumModeOrchestratorHost,
-  photos: import('../GalleryAutoSyncService').LocalPhotoEntry[]
+  photos: LocalPhotoEntry[]
 ): Promise<void> {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  const sheetHost: AutoSyncSheetHost = {
-    syncSheetVisible: false,
-    syncing: false,
-    syncProgressText: '',
-    unsyncedPhotos: photos,
-    toast: (msg: string): void => host.toast(msg),
-    requestBootstrap: (debounced: boolean): void => host.requestBootstrap(debounced)
-  };
+  class AutoSyncSheetHostImpl implements AutoSyncSheetHost {
+    syncSheetVisible: boolean = false;
+    syncing: boolean = false;
+    syncProgressText: string = '';
+    unsyncedPhotos: LocalPhotoEntry[] = photos;
+    toast(msg: string): void {
+      host.toast(msg);
+    }
+    requestBootstrap(debounced: boolean): void {
+      host.requestBootstrap(debounced);
+    }
+  }
+  const sheetHost = new AutoSyncSheetHostImpl();
   await runAutoSync(sheetHost, ctx);
   host.syncBadgeCount = GalleryAutoSyncStore.getUnsyncedCount();
 }

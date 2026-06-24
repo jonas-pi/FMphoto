@@ -95,6 +95,7 @@ export interface GalleryAlbumLoadOrchestratorHost {
   upsertSection(day: TimelineDayModel, list: GalleryListItem[], newOffset: number): void;
   clearBootstrapDebounceTimer(): void;
   loadVisibleItemsImmediate(): void;
+  onMainTimelineReady?(): void;
 }
 
 export function galleryAlbumMarkTimelineRefreshCaughtUp(host: GalleryAlbumLoadOrchestratorHost): void {
@@ -368,6 +369,9 @@ export async function galleryAlbumBootstrap(
       return;
     }
     host.loadVisibleItemsImmediate();
+    if (host.onMainTimelineReady !== undefined) {
+      host.onMainTimelineReady();
+    }
   }, 0);
 }
 

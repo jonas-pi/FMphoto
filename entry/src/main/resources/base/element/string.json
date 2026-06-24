@@ -213,6 +213,10 @@
       "value": "保存 NAS 图片/视频到本机相册时需要写入权限"
     },
     {
+      "name": "perm_read_imagevideo_reason",
+      "value": "检测本机相册中尚未同步到 NAS 的照片时需要读取权限"
+    },
+    {
       "name": "privacy_consent_title",
       "value": "隐私政策"
     },
