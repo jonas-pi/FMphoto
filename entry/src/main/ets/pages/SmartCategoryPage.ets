@@ -1,6 +1,7 @@
 import { AppSession } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
-import { GalleryListItem, GalleryThumbnailBlock, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
+import { SmartCategoryItem } from '../model/FnApiTypes';
+import { loadSmartCategoryGalleryItems } from '../album/SmartCategoryMagicSearch';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { smartCategoryCover } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
@@ -10,57 +11,6 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-
-type SmartMagicRecord = Record<string, Object | string | number | boolean | undefined | null>;
-
-function smartReadFirstString(raw: SmartMagicRecord, keys: string[]): string {
-  for (let i = 0; i < keys.length; i++) {
-    const value = raw[keys[i]];
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      const text = String(value).trim();
-      if (text.length > 0 && text !== 'null') {
-        return text;
-      }
-    }
-  }
-  return '';
-}
-
-function normalizeSmartMagicItem(item: MagicSearchItem): GalleryListItem {
-  const out = item as GalleryListItem;
-  const raw = item as SmartMagicRecord;
-  const id = smartReadFirstString(raw, ['photoId', 'id']);
-  const uuid = smartReadFirstString(raw, ['uuid', 'photoUUID', 'session']);
-  if (id.length === 0 || uuid.length === 0) {
-    return out;
-  }
-
-  const thumbM = `/p/api/v1/stream/p/t/${id}/m/${uuid}`;
-  const thumbS = `/p/api/v1/stream/p/t/${id}/s/${uuid}`;
-  const original = `/p/api/v1/stream/p/t/${id}/o/${uuid}`;
-  const thumbBlock: GalleryThumbnailBlock = {
-    mUrl: thumbM,
-    sUrl: thumbS,
-    xsUrl: thumbS,
-    xxsUrl: thumbS,
-    originalUrl: original
-  };
-
-  out.id = id;
-  out.photoUUID = uuid;
-  out.thumb = thumbM;
-  out.small_thumb = thumbS;
-  out.thumbnail = thumbBlock;
-  if (out.originalUrl === undefined || out.originalUrl.trim().length === 0) {
-    out.originalUrl = original;
-  }
-  if (out.additional === undefined) {
-    out.additional = { thumbnail: thumbBlock };
-  } else {
-    out.additional.thumbnail = thumbBlock;
-  }
-  return out;
-}
 
 @Entry
 @Component
@@ -208,26 +158,26 @@ struct SmartCategoryPage {
         this.toast('未登录');
         return;
       }
-      const res = await client.doMagicSearch(keyword);
-      if (!res.success || res.data === undefined) {
-        this.toast(res.message ?? '加载失败');
+      const mapped = await loadSmartCategoryGalleryItems(client, keyword);
+      if (mapped.errorMessage.length > 0) {
+        this.toast(mapped.errorMessage);
         return;
       }
-      const rawList = res.data.list ?? [];
-      const mapped: GalleryListItem[] = rawList.map((x: MagicSearchItem): GalleryListItem => {
-        return normalizeSmartMagicItem(x);
-      });
-      if (mapped.length === 0) {
+      if (mapped.items.length === 0) {
         this.toast('该分类暂无可预览媒体');
         return;
       }
       const ok = await CategoryGalleryNavStore.open(
         this.baseUrl,
         keyword,
-        mapped,
+        mapped.items,
         this.getUIContext(),
         false,
-        { sourceKind: 'smart-category' }
+        {
+          sourceKind: 'smart-category',
+          smartCategoryKeyword: keyword,
+          expectedTotalCount: mapped.items.length
+        }
       );
       if (!ok) {
         this.toast('打开分类失败');

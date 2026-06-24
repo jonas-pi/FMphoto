@@ -3,6 +3,7 @@ import {
   FN_FLOATING_TOP_CONTROL_SIZE_VP,
   FN_FLOATING_TOP_MARGIN_VP,
   FN_FLOATING_TOP_TITLE_STACK_GAP_VP,
+  FnFloatingTopCircleButton,
   FnFloatingTopPillButton
 } from '../../common/FnUiCommon';
 import {
@@ -20,10 +21,14 @@ export struct CategoryGalleryChrome {
   @Prop title: string = '';
   @Prop totalCount: number = 0;
   @Prop topSafeInsetVp: number = 0;
+  /** 人物/智能分类相册：右侧显示「更多」而非直接露出「多选」 */
+  @Prop personAlbumMode: boolean = false;
+  @Prop moreMenuExpanded: boolean = false;
 
   onCancelSelection: () => void = () => {};
   onBack: () => void = () => {};
   onToggleMode: () => void = () => {};
+  onShowMoreMenu: () => void = () => {};
 
   private titleText(): string {
     if (this.selectionMode) {
@@ -80,11 +85,24 @@ export struct CategoryGalleryChrome {
         .alignItems(HorizontalAlign.Center)
 
         Row() {
-          FnFloatingTopPillButton({
-            text: this.selectionMode ? '完成' : $r('app.string.gallery_multiselect'),
-            active: this.selectionMode,
-            action: this.onToggleMode
-          })
+          if (this.selectionMode) {
+            FnFloatingTopPillButton({
+              text: '完成',
+              active: true,
+              action: this.onToggleMode
+            })
+          } else if (this.personAlbumMode) {
+            FnFloatingTopCircleButton({
+              symbol: $r('sys.symbol.more'),
+              active: this.moreMenuExpanded,
+              action: this.onShowMoreMenu
+            })
+          } else {
+            FnFloatingTopPillButton({
+              text: $r('app.string.gallery_multiselect'),
+              action: this.onToggleMode
+            })
+          }
         }
         .layoutWeight(1)
         .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)

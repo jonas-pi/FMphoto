@@ -12,6 +12,10 @@ import { UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import {
+  GallerySlideshowStreamStore
+} from '../album/slideshow/GallerySlideshowStreamStore';
+import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
@@ -94,10 +98,18 @@ struct GalleryPreview {
   private previewItems: GalleryListItem[] = [];
   private swiperCtrl: SwiperController = new SwiperController();
   private collectSyncGen: number = 0;
+  private slideshowEnabled: boolean = false;
+  private slideshowIntervalMs: number = 5000;
+  private slideshowLibraryTotal: number = 0;
+  private slideshowGlobalIndices: number[] = [];
+  private slideshowTimerId: number = -1;
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBar();
+    if (this.slideshowEnabled) {
+      this.armSlideshowTimer();
+    }
   }
 
   onColorModeChanged(): void {
@@ -130,9 +142,128 @@ struct GalleryPreview {
     }
     this.syncCollectStateFromCurrentItem();
     void this.refreshCollectStateFromGetOne(this.currentItemId());
+    this.slideshowEnabled = GalleryPreviewNavStore.slideshow.enabled;
+    this.slideshowIntervalMs = GalleryPreviewNavStore.slideshow.intervalMs;
+    this.slideshowLibraryTotal = GalleryPreviewNavStore.slideshow.libraryTotalCount;
+    this.slideshowGlobalIndices = GalleryPreviewNavStore.slideshowGlobalIndices.slice();
+    if (!this.slideshowEnabled && routeParams !== undefined && routeParams['slideshow'] === '1') {
+      this.slideshowEnabled = true;
+      if (this.slideshowIntervalMs <= 0) {
+        this.slideshowIntervalMs = 5000;
+      }
+    }
+    if (this.slideshowLibraryTotal <= 0 && GallerySlideshowStreamStore.isActive()) {
+      this.slideshowLibraryTotal = GallerySlideshowStreamStore.getLibraryTotalCount();
+    }
+    if (this.slideshowEnabled) {
+      this.toolbarVisible = false;
+      this.maybePrefetchSlideshowItems();
+    }
+  }
+
+  private clearSlideshowTimer(): void {
+    if (this.slideshowTimerId >= 0) {
+      clearTimeout(this.slideshowTimerId);
+      this.slideshowTimerId = -1;
+    }
+  }
+
+  private shouldPauseSlideshow(): boolean {
+    return this.pinchGestureActive || this.previewZoomLocked || this.detailsVisible ||
+      this.downloading || this.sharing || this.deleting;
+  }
+
+  private advanceSlideshow(): void {
+    if (!this.slideshowEnabled) {
+      return;
+    }
+    if (this.swiperIndex + 1 < this.totalCount) {
+      const next = this.swiperIndex + 1;
+      this.swiperIndex = next;
+      this.swiperCtrl.changeIndex(next, true);
+      this.maybePrefetchSlideshowItems();
+      return;
+    }
+    if (GallerySlideshowStreamStore.isActive()) {
+      void GallerySlideshowStreamStore.prefetchAppend((entries: GallerySlideshowPlaylistEntry[]): void => {
+        if (entries.length === 0) {
+          return;
+        }
+        this.appendSlideshowEntries(entries);
+        const next = this.swiperIndex + 1;
+        if (next < this.totalCount) {
+          this.swiperIndex = next;
+          this.swiperCtrl.changeIndex(next, true);
+          this.maybePrefetchSlideshowItems();
+        }
+      });
+      return;
+    }
+    if (this.totalCount <= 1) {
+      return;
+    }
+    this.swiperIndex = 0;
+    this.swiperCtrl.changeIndex(0, true);
+  }
+
+  private maybePrefetchSlideshowItems(): void {
+    if (!this.slideshowEnabled || !GallerySlideshowStreamStore.isActive()) {
+      return;
+    }
+    const remaining = this.totalCount - this.swiperIndex - 1;
+    if (!GallerySlideshowStreamStore.shouldPrefetch(remaining)) {
+      return;
+    }
+    void GallerySlideshowStreamStore.prefetchAppend((entries: GallerySlideshowPlaylistEntry[]): void => {
+      this.appendSlideshowEntries(entries);
+    });
+  }
+
+  private appendSlideshowEntries(entries: GallerySlideshowPlaylistEntry[]): void {
+    if (entries.length === 0) {
+      return;
+    }
+    const items: GalleryListItem[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      items.push(entries[i].item);
+      this.slideshowGlobalIndices.push(entries[i].globalIndex);
+    }
+    for (let i = 0; i < items.length; i++) {
+      this.previewItems.push(items[i]);
+    }
+    this.itemSource.appendItems(items);
+    this.totalCount = this.previewItems.length;
+    GallerySlideshowStreamStore.rememberEntries(entries);
+  }
+
+  private slideshowGlobalIndexAt(playlistIdx: number): number {
+    if (playlistIdx < 0 || playlistIdx >= this.slideshowGlobalIndices.length) {
+      return -1;
+    }
+    return this.slideshowGlobalIndices[playlistIdx];
+  }
+
+  private armSlideshowTimer(): void {
+    this.clearSlideshowTimer();
+    if (!this.slideshowEnabled || this.slideshowIntervalMs <= 0) {
+      return;
+    }
+    if (this.totalCount <= 1 && !GallerySlideshowStreamStore.isActive()) {
+      return;
+    }
+    this.slideshowTimerId = setTimeout((): void => {
+      this.slideshowTimerId = -1;
+      if (this.shouldPauseSlideshow()) {
+        this.armSlideshowTimer();
+        return;
+      }
+      this.advanceSlideshow();
+      this.armSlideshowTimer();
+    }, this.slideshowIntervalMs);
   }
 
   aboutToDisappear(): void {
+    this.clearSlideshowTimer();
     this.detailsVisible = false;
     this.detailsLoading = false;
     this.detailsError = '';
@@ -256,7 +387,16 @@ struct GalleryPreview {
   }
 
   private titleCounter(): string {
-    return galleryPreviewTitleCounter(this.swiperIndex, this.totalCount);
+    if (this.slideshowEnabled && this.slideshowLibraryTotal > 0) {
+      const globalIdx = this.slideshowGlobalIndexAt(this.swiperIndex);
+      if (globalIdx >= 0) {
+        return galleryPreviewTitleCounter(globalIdx, this.slideshowLibraryTotal);
+      }
+    }
+    const displayTotal = this.slideshowEnabled && this.slideshowLibraryTotal > 0
+      ? this.slideshowLibraryTotal
+      : this.totalCount;
+    return galleryPreviewTitleCounter(this.swiperIndex, displayTotal);
   }
 
   private toolbarAlpha(): number {
@@ -540,6 +680,10 @@ struct GalleryPreview {
             }
           }
           void this.refreshCollectStateFromGetOne(nextId);
+          if (this.slideshowEnabled) {
+            this.armSlideshowTimer();
+            this.maybePrefetchSlideshowItems();
+          }
         })
       } else {
         FnStateText({
