@@ -1002,13 +1002,11 @@ export async function loadFullPix(
 
 @Component
 export struct GalleryThumbSkeleton {
-  @StorageProp('colorMode') private colorMode: number = 0;
-
   build() {
     Column()
       .width('100%')
       .aspectRatio(1)
-      .backgroundColor(this.colorMode === 1 ? '#2C2C2E' : '#E8EAED')
+      .backgroundColor($r('app.color.page_background'))
       .borderRadius(0)
   }
 }
@@ -1021,7 +1019,6 @@ export struct GalleryThumbSkeleton {
 export struct GalleryStaticThumbPlaceholder {
   /** 为 true 时启用轻量呼吸动画（用于滚动中提示“占位加载中”） */
   @Prop @Watch('onAnimatePulseChange') animatePulse: boolean = false;
-  @StorageProp('colorMode') private colorMode: number = 0;
   @State private pulseOpacity: number = 0.88;
   private pulseTimer: number = -1;
   private pulseDim: boolean = false;
@@ -1062,7 +1059,7 @@ export struct GalleryStaticThumbPlaceholder {
     Column()
       .width('100%')
       .aspectRatio(1)
-      .backgroundColor(this.colorMode === 1 ? '#2C2C2E' : '#E8EAED')
+      .backgroundColor($r('app.color.page_background'))
       .opacity(this.pulseOpacity)
       .animation({ duration: 360, curve: Curve.EaseInOut })
       .borderRadius(0)

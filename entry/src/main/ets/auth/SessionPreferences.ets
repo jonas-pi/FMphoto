@@ -109,19 +109,7 @@ export class SessionPreferences {
     if (token.length === 0) {
       return null;
     }
-    const [
-      baseUrl,
-      account,
-      domainInput,
-      useHttpsRaw,
-      albumParentGuid,
-      trustedHostsRaw,
-      fnosLongToken,
-      loginViaWsRaw,
-      wsSignKeyB64,
-      openApiAuthxKey,
-      openApiAuthxSecret
-    ] = await Promise.all([
+    const prefsValues = await Promise.all([
       prefsGetString(p, K_BASE_URL, ''),
       prefsGetString(p, K_ACCOUNT, ''),
       prefsGetString(p, K_DOMAIN_INPUT, ''),
@@ -135,18 +123,18 @@ export class SessionPreferences {
       prefsGetString(p, K_OPENAPI_AUTHX_SECRET, '')
     ]);
     return {
-      baseUrl: baseUrl,
+      baseUrl: prefsValues[0],
       token: token,
-      account: account,
-      domainInput: domainInput,
-      useHttps: useHttpsRaw === '1',
-      albumParentGuid: albumParentGuid,
-      trustedHosts: parseTrustedHostsSafe(trustedHostsRaw),
-      fnosLongToken: fnosLongToken,
-      loginViaWebSocket: loginViaWsRaw === '1',
-      wsSignKeyB64: wsSignKeyB64,
-      openApiAuthxKey: openApiAuthxKey,
-      openApiAuthxSecret: openApiAuthxSecret
+      account: prefsValues[1],
+      domainInput: prefsValues[2],
+      useHttps: prefsValues[3] === '1',
+      albumParentGuid: prefsValues[4],
+      trustedHosts: parseTrustedHostsSafe(prefsValues[5]),
+      fnosLongToken: prefsValues[6],
+      loginViaWebSocket: prefsValues[7] === '1',
+      wsSignKeyB64: prefsValues[8],
+      openApiAuthxKey: prefsValues[9],
+      openApiAuthxSecret: prefsValues[10]
     };
   }
 

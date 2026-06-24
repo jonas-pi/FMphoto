@@ -10,5 +10,13 @@
 !/build/default/outputs/default/
 /build/default/outputs/default/*
 !/build/default/outputs/default/entry-default-unsigned.hap
+!/build/release/
+/build/release/*
+!/build/release/outputs/
+/build/release/outputs/*
+!/build/release/outputs/default/
+/build/release/outputs/default/*
+!/build/release/outputs/default/entry-default-signed.hap
+!/build/release/outputs/default/entry-default-unsigned.hap
 /.cxx
 /.test

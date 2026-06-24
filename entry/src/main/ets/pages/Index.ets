@@ -1,58 +1,57 @@
 /**
- * 启动页：恢复会话并校验 token，跳转登录或主页
+ * 启动页：与系统 StartWindow 视觉一致（纯色 + 居中图标），恢复会话后跳转。
+ * startIcon.png 建议 ≤192px，系统按资源像素原尺寸居中绘制。
  */
 import { common } from '@kit.AbilityKit';
-import { Curve } from '@kit.ArkUI';
+import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
-import {
-  FN_PAGE_ENTER_CURVE,
-  FN_PAGE_ENTER_DURATION,
-  FN_PAGE_EXIT_CURVE,
-  FN_PAGE_EXIT_DURATION
-} from '../common/FnMotion';
 import { FnImmersiveBackdrop } from '../common/FnUiCommon';
+import { fnApplySplashWindowChrome } from '../common/FnSplashTheme';
 
 @Entry
 @Component
 struct Index {
-  @State private busy: boolean = true;
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private hint: string = '正在初始化…';
-  @State private privacyConsentRequired: boolean = false;
+  @State @Watch('onPrivacyConsentRequiredChanged') private privacyConsentRequired: boolean = false;
   @State private privacyConsentSubmitting: boolean = false;
-  @State private startSplashAlpha: number = 1.0;
-  @State private startSplashScale: number = 1.0;
-  @State private startSplashTranslateY: number = 0;
-  @State private contentAlpha: number = 0.0;
-  @State private contentTranslateY: number = 30;
 
   aboutToAppear(): void {
+    this.syncSplashWindowChrome();
     if (this.privacyConsentRequired) {
       return;
     }
-    // 展示 startIcon 大小的渐隐渐出，平滑衔接系统启动窗口
-    animateTo({ duration: 350, curve: Curve.FastOutSlowIn }, () => {
-      this.startSplashScale = 0.7;
-      this.startSplashTranslateY = -30;
-    });
-    setTimeout(() => {
-      animateTo({ duration: 280, curve: Curve.Linear }, () => {
-        this.startSplashAlpha = 0.0;
-      });
-      animateTo({ duration: 320, curve: Curve.FastOutSlowIn }, () => {
-        this.contentAlpha = 1.0;
-        this.contentTranslateY = 0;
-      });
-    }, 300);
     void this.bootstrapFlow();
+  }
+
+  private onColorModeChanged(): void {
+    this.syncSplashWindowChrome();
+  }
+
+  private onPrivacyConsentRequiredChanged(): void {
+    this.syncSplashWindowChrome();
+  }
+
+  /** 启动闪屏与 StartWindow 同几何：全屏无系统栏；隐私弹窗时恢复系统栏。 */
+  private syncSplashWindowChrome(): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const dark = this.colorMode === 1;
+      const immersive = !this.privacyConsentRequired;
+      window.getLastWindow(ctx).then((mainWindow: window.Window): void => {
+        fnApplySplashWindowChrome(mainWindow, dark, immersive);
+      }).catch((_e: Error): void => {
+      });
+    } catch (_e) {
+    }
   }
 
   /** 启动流程：先取得隐私政策同意，再进入既有会话恢复逻辑。 */
   private async bootstrapFlow(): Promise<void> {
     const accepted = await this.ensurePrivacyConsentAccepted();
     if (!accepted) {
-      this.busy = false;
       return;
     }
     this.restoreSessionAndRoute();
@@ -97,7 +96,6 @@ struct Index {
     try {
       await SessionPreferences.setPrivacyPolicyAccepted(ctx, true);
       this.privacyConsentRequired = false;
-      this.busy = true;
       this.hint = '正在初始化…';
       this.restoreSessionAndRoute();
     } catch (_e) {
@@ -130,7 +128,6 @@ struct Index {
         void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
           CertPolicy.loadAll(hosts);
         });
-        this.busy = false;
         this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
         });
         return;
@@ -140,13 +137,11 @@ struct Index {
         void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
           CertPolicy.loadAll(hosts);
         });
-        this.busy = false;
         this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
         });
         return;
       }
       if (s.loginViaWebSocket === true) {
-        this.busy = false;
         this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
         });
         return;
@@ -165,11 +160,9 @@ struct Index {
             });
           });
         }
-        this.busy = false;
       });
     }).catch(() => {
       this.hint = '读取配置失败';
-      this.busy = false;
       void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
         CertPolicy.loadAll(hosts);
       });
@@ -243,69 +236,40 @@ struct Index {
   }
 
   @Builder
-  private launchStatusPanel() {
-    Column({ space: 14 }) {
-      Text('FNOS')
-        .fontSize(28)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-
-      Text('沉浸光感相册')
-        .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
-
-      if (this.busy) {
-        LoadingProgress().width(44).height(44).margin({ top: 18 })
-        Text(this.hint)
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-      }
-    }
-    .width('84%')
-    .padding({ left: 24, right: 24, top: 28, bottom: 28 })
-    .backgroundColor($r('app.color.immersive_panel_bg'))
-    .borderRadius(28)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .shadow({ radius: 28, color: '#16002B55', offsetX: 0, offsetY: 12 })
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  build() {
-    Stack() {
-      FnImmersiveBackdrop()
-
-      // 启动图标遮罩层 — 平滑过渡系统 startWindowIcon
+  private startWindowSplash() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.start_window_background'))
       Image($r('app.media.startIcon'))
-        .width(72)
-        .height(72)
-        .borderRadius(18)
-        .opacity(this.startSplashAlpha)
-        .scale({ x: this.startSplashScale, y: this.startSplashScale })
-        .translate({ y: this.startSplashTranslateY })
+        .objectFit(ImageFit.None)
+        .interpolation(ImageInterpolation.High)
         .syncLoad(true)
-
-      Column() {
-        if (this.privacyConsentRequired) {
-          this.privacyConsentPanel()
-        } else {
-          this.launchStatusPanel()
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .opacity(this.contentAlpha)
-      .translate({ y: this.contentTranslateY })
     }
     .width('100%')
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
-  pageTransition(): void {
-    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE }).opacity(0);
-    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE }).opacity(0);
+  build() {
+    Stack() {
+      if (this.privacyConsentRequired) {
+        FnImmersiveBackdrop()
+
+        Column() {
+          this.privacyConsentPanel()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        this.startWindowSplash()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }
