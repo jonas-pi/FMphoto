@@ -6,9 +6,9 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { AppSession } from '../../auth/AppSession';
-import { GalleryListItem } from '../../model/FnApiTypes';
-import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
+import { AppSession } from '../auth/AppSession';
+import { GalleryListItem } from '../model/FnApiTypes';
+import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncBadge';

@@ -7,13 +7,31 @@
  * - 使用文件名+大小+修改时间作为去重判据（NAS 已有同名同大小文件视为已同步）
  * - 检测结果缓存，避免每次页面切换都重新查询
  */
+import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { AppSession } from '../auth/AppSession';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { queryLocalPhotos, LocalPhotoEntry } from './GalleryAutoSyncService';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
+
+function nasTimelineItemName(item: GalleryListItem): string {
+  return (item.filename ?? item.fileName ?? item.name ?? '').trim();
+}
+
+function nasTimelineItemSize(item: GalleryListItem): number {
+  const raw = item.fileSize ?? 0;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+}
 
 /** 同步检测结果 */
 export interface AutoSyncResult {
@@ -118,8 +136,8 @@ export class GalleryAutoSyncStore {
       // 2. 构建 NAS 已有文件的指纹集合（文件名+大小）
       const nasFingerprints = new Set<string>();
       for (const item of nasTimeline) {
-        const name = (item.filename ?? item.name ?? '').trim();
-        const size = item.size ?? 0;
+        const name = nasTimelineItemName(item);
+        const size = nasTimelineItemSize(item);
         if (name.length > 0) {
           nasFingerprints.add(`${name}:${size}`);
         }

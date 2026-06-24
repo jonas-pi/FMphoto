@@ -31,7 +31,7 @@ export function fnApplySplashWindowChrome(mainWindow: window.Window, isDark: boo
       });
       fnSetSplashSystemBarsVisible(mainWindow, false);
     } else {
-      fnSetSplashSystemBarsVisible(mainWindow, true);
+      fnRestoreAppSystemBars(mainWindow);
       const content = isDark ? '#FFFFFFFF' : '#FF000000';
       const bg = fnSplashWindowBackgroundHex(isDark);
       mainWindow.setWindowSystemBarProperties({
@@ -44,6 +44,11 @@ export function fnApplySplashWindowChrome(mainWindow: window.Window, isDark: boo
     }
   } catch (_e) {
   }
+}
+
+/** 离开启动闪屏后恢复状态栏与导航条。 */
+export function fnRestoreAppSystemBars(mainWindow: window.Window): void {
+  fnSetSplashSystemBarsVisible(mainWindow, true);
 }
 
 /** API 12+：替代已废弃的 setWindowSystemBarEnable */

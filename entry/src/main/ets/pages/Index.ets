@@ -8,7 +8,7 @@ import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
 import { FnImmersiveBackdrop } from '../common/FnUiCommon';
-import { fnApplySplashWindowChrome } from '../common/FnSplashTheme';
+import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 
 @Entry
 @Component
@@ -128,6 +128,14 @@ struct Index {
 
   /** Splash 淡出后跳转，消除与目标页的硬切跳变。 */
   private fadeSplashAndNavigate(url: string): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((mainWindow: window.Window): void => {
+        fnRestoreAppSystemBars(mainWindow);
+      }).catch((_e: Error): void => {
+      });
+    } catch (_e) {
+    }
     this.getUIContext().animateTo({ duration: 200, curve: Curve.Linear }, (): void => {
       this.splashOpacity = 0.0;
     });

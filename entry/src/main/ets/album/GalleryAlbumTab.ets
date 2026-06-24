@@ -117,6 +117,7 @@ import {
 } from './galleryAlbumTab/GalleryAlbumModeData';
 import {
   galleryAlbumCountGalleryListedItems,
+  galleryAlbumCollectListedTimelineItems,
   galleryAlbumFlatItems,
   galleryAlbumGalleryFlowLazyKey,
   galleryAlbumItemIdOf,
@@ -196,6 +197,7 @@ import {
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
   galleryAlbumStartUpload,
+  galleryAlbumTriggerAutoSync,
 } from './galleryAlbumTab/GalleryAlbumModeOrchestrator';
 import {
   GalleryAlbumLoadOrchestratorHost,
@@ -490,6 +492,7 @@ export struct GalleryAlbumTab {
   /** 上传状态 */
   @State private uploading: boolean = false;
   @State private uploadText: string = '';
+  @State private autoSyncBadgeCount: number = 0;
   /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
   @State private gallerySelectionMode: boolean = false;
   @State private gallerySelectedIds: string[] = [];
@@ -1164,6 +1167,8 @@ export struct GalleryAlbumTab {
       set uploading(value: boolean) { self.uploading = value; }
       get uploadText(): string { return self.uploadText; }
       set uploadText(value: string) { self.uploadText = value; }
+      get syncBadgeCount(): number { return self.autoSyncBadgeCount; }
+      set syncBadgeCount(value: number) { self.autoSyncBadgeCount = value; }
       get lastBootstrapSatisfiedRefreshVersion(): number { return self.lastBootstrapSatisfiedRefreshVersion; }
       set lastBootstrapSatisfiedRefreshVersion(value: number) { self.lastBootstrapSatisfiedRefreshVersion = value; }
       exitGallerySelection(): void { galleryAlbumExitSelection(self.asSelectionGestureHost()); }
@@ -1270,6 +1275,15 @@ export struct GalleryAlbumTab {
       clearBootstrapDebounceTimer(): void { self.clearBootstrapDebounceTimer(); }
       loadVisibleItemsImmediate(): void {
         galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost());
+      }
+      onMainTimelineReady(): void {
+        if (self.inSearchMode || self.inCategoryMode || self.inSmartCategoryMode || self.inPersonMode) {
+          return;
+        }
+        galleryAlbumTriggerAutoSync(
+          self.asModeOrchestratorHost(),
+          galleryAlbumCollectListedTimelineItems(self.sections)
+        );
       }
     }
     return new LoadOrchestratorHostBridge();
