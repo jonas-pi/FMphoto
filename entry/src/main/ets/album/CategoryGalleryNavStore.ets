@@ -17,6 +17,10 @@ export interface CategoryGalleryOpenMeta {
   heroImageUri?: string;
   columnsPerRow?: number;
   sourceKind?: string;
+  /** 人物相册来源时的人物 ID */
+  personId?: string;
+  /** 智能分类来源时的 AI 搜索关键词 */
+  smartCategoryKeyword?: string;
 }
 
 interface CategoryGallerySessionBackup {
@@ -31,6 +35,8 @@ interface CategoryGallerySessionBackup {
   heroImageUri: string;
   columnsPerRow: number;
   sourceKind: string;
+  personId: string;
+  smartCategoryKeyword: string;
   version: number;
 }
 
@@ -47,6 +53,8 @@ export class CategoryGalleryNavStore {
   static heroImageUri: string = '';
   static columnsPerRow: number = 3;
   static sourceKind: string = '';
+  static personId: string = '';
+  static smartCategoryKeyword: string = '';
 
   private static captureSession(): CategoryGallerySessionBackup {
     return {
@@ -61,6 +69,8 @@ export class CategoryGalleryNavStore {
       heroImageUri: CategoryGalleryNavStore.heroImageUri,
       columnsPerRow: CategoryGalleryNavStore.columnsPerRow,
       sourceKind: CategoryGalleryNavStore.sourceKind,
+      personId: CategoryGalleryNavStore.personId,
+      smartCategoryKeyword: CategoryGalleryNavStore.smartCategoryKeyword,
       version: CategoryGalleryNavStore.version
     };
   }
@@ -77,6 +87,8 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.heroImageUri = backup.heroImageUri;
     CategoryGalleryNavStore.columnsPerRow = backup.columnsPerRow;
     CategoryGalleryNavStore.sourceKind = backup.sourceKind;
+    CategoryGalleryNavStore.personId = backup.personId;
+    CategoryGalleryNavStore.smartCategoryKeyword = backup.smartCategoryKeyword;
     CategoryGalleryNavStore.version = backup.version;
   }
 
@@ -117,6 +129,8 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.heroImageUri = meta?.heroImageUri ?? '';
     CategoryGalleryNavStore.columnsPerRow = meta?.columnsPerRow === 4 ? 4 : 3;
     CategoryGalleryNavStore.sourceKind = meta?.sourceKind ?? '';
+    CategoryGalleryNavStore.personId = meta?.personId?.trim() ?? '';
+    CategoryGalleryNavStore.smartCategoryKeyword = meta?.smartCategoryKeyword?.trim() ?? '';
     hilog.warn(
       DOMAIN,
       TAG,
@@ -239,6 +253,8 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.heroImageUri = '';
     CategoryGalleryNavStore.columnsPerRow = 3;
     CategoryGalleryNavStore.sourceKind = '';
+    CategoryGalleryNavStore.personId = '';
+    CategoryGalleryNavStore.smartCategoryKeyword = '';
     CategoryGalleryNavStore.version++;
   }
 }

@@ -291,7 +291,11 @@ export async function openPersonAlbumById(
   if (initialChunk.items.length === 0) {
     return { ok: false, errorMessage: '该人物暂无可预览媒体' };
   }
-  const opened = await CategoryGalleryNavStore.open(baseUrl, title, initialChunk.items, uiCtx);
+  const opened = await CategoryGalleryNavStore.open(baseUrl, title, initialChunk.items, uiCtx, false, {
+    sourceKind: 'person',
+    personId: personId,
+    expectedTotalCount: detailItemCount
+  });
   if (!opened) {
     return { ok: false, errorMessage: '打开人物媒体失败' };
   }

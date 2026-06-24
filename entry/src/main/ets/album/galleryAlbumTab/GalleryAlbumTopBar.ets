@@ -203,6 +203,10 @@ export struct GalleryAlbumTopBar {
   }
 
   private leaveSearchMode(): void {
+    if (this.gallerySelectionMode) {
+      this.onExitSelection();
+      return;
+    }
     this.suppressSearchRestoreTemporarily();
     this.onBackToGallery();
   }
@@ -301,7 +305,20 @@ export struct GalleryAlbumTopBar {
 
   build() {
     Row() {
-      if (this.gallerySelectionMode && !this.inSearchMode) {
+      if (this.gallerySelectionMode && this.inSearchMode) {
+        this.floatingPillButton('取消', this.onExitSelection)
+
+        Text(this.selectionText())
+          .layoutWeight(1)
+          .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        this.floatingPillButton('完成', this.onExitSelection)
+      } else if (this.gallerySelectionMode && !this.inSearchMode) {
         Text(this.selectionText())
           .layoutWeight(1)
           .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
@@ -364,6 +381,11 @@ export struct GalleryAlbumTopBar {
             this.searchFieldWidthVp = width;
           }
         })
+
+        Row() {
+          this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
+        }
+        .margin({ left: GALLERY_TOP_BAR_SEARCH_GAP_VP })
       } else if (this.isRootSurfaceMode()) {
         Text(this.rootSurfaceTitle)
           .layoutWeight(1)
@@ -380,7 +402,11 @@ export struct GalleryAlbumTopBar {
             this.floatingPillButton('多选', this.onEnterSelection)
           }
           this.floatingIconButton($r('sys.symbol.magnifyingglass'), (): void => this.openSearchPanelWithAutoFocus())
-          this.floatingIconButtonSpacer()
+          if (!this.isAlbumsHomeSurface()) {
+            this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
+          } else {
+            this.floatingIconButtonSpacer()
+          }
         }
       } else {
         this.floatingPillButton('返回', this.onBackToGallery)

@@ -15,6 +15,7 @@ export interface GalleryAlbumRootSurfaceHost {
   inCategoryMode: boolean;
   inSmartCategoryMode: boolean;
   inPersonMode: boolean;
+  gallerySelectionMode: boolean;
   moreMenuExpanded: boolean;
   categoryLoading: boolean;
   categoryError: string;
@@ -327,6 +328,10 @@ export function galleryAlbumShouldKeepRootPhotosMainMounted(host: GalleryAlbumRo
 export function galleryAlbumTryConsumeSurfaceBack(host: GalleryAlbumRootSurfaceHost): boolean {
   if (host.moreMenuExpanded) {
     host.dismissMoreMenu();
+    return true;
+  }
+  if (host.gallerySelectionMode && host.inSearchMode) {
+    host.exitGallerySelection();
     return true;
   }
   if (!host.inSearchMode && !host.inCategoryMode && !host.inSmartCategoryMode && !host.inPersonMode) {

@@ -35,4 +35,16 @@ export class PreviewItemsDataSource {
       listener.onDataReloaded();
     });
   }
+
+  appendItems(list: GalleryListItem[]): void {
+    if (list.length === 0) {
+      return;
+    }
+    for (let i = 0; i < list.length; i++) {
+      this.items.push(list[i]);
+    }
+    this.listeners.forEach((listener): void => {
+      listener.onDataReloaded();
+    });
+  }
 }

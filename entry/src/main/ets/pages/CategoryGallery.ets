@@ -34,6 +34,14 @@ import {
   CategoryGalleryBatchActionsHost
 } from './categoryGallery/CategoryGalleryBatchActions';
 import { CategoryGalleryChrome } from './categoryGallery/CategoryGalleryChrome';
+import { CategoryGalleryMoreMenu } from './categoryGallery/CategoryGalleryMoreMenu';
+import { gallerySlideshowLaunch } from '../album/slideshow/GallerySlideshowLauncher';
+import {
+  GallerySlideshowConfig,
+  GallerySlideshowScope,
+  GallerySlideshowScopeKind
+} from '../album/slideshow/GallerySlideshowTypes';
+import { GallerySlideshowSettingsSheet } from '../album/slideshow/GallerySlideshowSettingsSheet';
 import {
   categoryGalleryBeginSlideSelectGesture,
   categoryGalleryDomId,
@@ -105,6 +113,9 @@ struct CategoryGallery {
   @State private cgBatchDownloading: boolean = false;
   @State private cgThumbLoadingPaused: boolean = false;
   @State private cgBackgroundLoading: boolean = false;
+  @State private moreMenuExpanded: boolean = false;
+  @State private slideshowSettingsVisible: boolean = false;
+  @State private slideshowPreparing: boolean = false;
 
   private cgLongPressIgnoreUntil: number = 0;
   private listBlocks: Array<CategoryGalleryListBlock> = [];
@@ -130,7 +141,10 @@ struct CategoryGallery {
   private pageSessionToken: number = -1;
   private pageSourceKind: string = '';
   private pageCategoryKey: string = '';
+  private pagePersonId: string = '';
+  private pageSmartCategoryKeyword: string = '';
   private pageUseCreatedAtGrouping: boolean = false;
+  private slideshowRequestSeq: number = 0;
 
   private recycleThumbCache(aggressive: boolean = false): void {
     const recentAddedAggressive = this.isRecentAddedStreamingMode() &&
@@ -148,11 +162,106 @@ struct CategoryGallery {
   }
 
   private navigateBack(): void {
+    if (this.moreMenuExpanded) {
+      this.dismissMoreMenu();
+      return;
+    }
     if (this.selectionMode) {
       this.exitCgSelection();
       return;
     }
     this.getUIContext().getRouter().back();
+  }
+
+  private isPersonAlbumMode(): boolean {
+    return this.pageSourceKind === 'person' && this.pagePersonId.length > 0;
+  }
+
+  private isSmartCategoryMode(): boolean {
+    return this.pageSourceKind === 'smart-category' && this.pageSmartCategoryKeyword.length > 0;
+  }
+
+  private usesMoreMenuMode(): boolean {
+    return this.isPersonAlbumMode() || this.isSmartCategoryMode();
+  }
+
+  private dismissMoreMenu(): void {
+    if (!this.moreMenuExpanded) {
+      return;
+    }
+    this.moreMenuExpanded = false;
+  }
+
+  private toggleMoreMenu(): void {
+    this.moreMenuExpanded = !this.moreMenuExpanded;
+  }
+
+  private enterMultiselectFromMoreMenu(): void {
+    this.dismissMoreMenu();
+    if (!this.selectionMode) {
+      this.toggleToolbarMode();
+    }
+  }
+
+  private openSlideshowSettings(): void {
+    this.dismissMoreMenu();
+    this.slideshowSettingsVisible = true;
+  }
+
+  private dismissSlideshowSettings(): void {
+    this.slideshowSettingsVisible = false;
+  }
+
+  private categorySlideshowScope(): GallerySlideshowScope {
+    if (this.isPersonAlbumMode()) {
+      return {
+        kind: GallerySlideshowScopeKind.PERSON_ALBUM,
+        personId: this.pagePersonId,
+        personName: this.title
+      };
+    }
+    if (this.isSmartCategoryMode()) {
+      return {
+        kind: GallerySlideshowScopeKind.SMART_CATEGORY,
+        smartCategoryKeyword: this.pageSmartCategoryKeyword
+      };
+    }
+    return { kind: GallerySlideshowScopeKind.ALL_GALLERY };
+  }
+
+  private canStartCategorySlideshow(): boolean {
+    return this.isPersonAlbumMode() || this.isSmartCategoryMode();
+  }
+
+  private async startCategorySlideshow(config: GallerySlideshowConfig): Promise<void> {
+    if (this.slideshowPreparing || !this.canStartCategorySlideshow()) {
+      return;
+    }
+    this.slideshowPreparing = true;
+    const seq = ++this.slideshowRequestSeq;
+    const isActive = (): boolean => seq === this.slideshowRequestSeq;
+    const scope = this.categorySlideshowScope();
+    const preloadedItems = this.isSmartCategoryMode() ? this.flatItems : undefined;
+    try {
+      await gallerySlideshowLaunch(
+        this.getUIContext(),
+        this.baseUrl,
+        scope,
+        config,
+        (msg: string): void => {
+          this.toast(msg);
+        },
+        isActive,
+        preloadedItems
+      );
+      if (isActive()) {
+        this.slideshowSettingsVisible = false;
+      }
+    } finally {
+      if (isActive()) {
+        this.slideshowPreparing = false;
+      }
+    }
   }
 
   private vpToPx(value: number): number {
@@ -240,6 +349,7 @@ struct CategoryGallery {
   }
 
   aboutToDisappear(): void {
+    this.slideshowRequestSeq++;
     this.stopStoreObserver();
     this.clearCgThumbResumeTimer();
     this.clearCgDeferredBackgroundLoadTimer();
@@ -276,6 +386,9 @@ struct CategoryGallery {
   }
 
   private toggleToolbarMode(): void {
+    if (!this.selectionMode) {
+      this.dismissMoreMenu();
+    }
     categoryGalleryToggleToolbarMode(this.asSelectionHost());
   }
 
@@ -459,6 +572,10 @@ struct CategoryGallery {
     this.pageSessionToken = CategoryGalleryNavStore.sessionToken;
     this.pageSourceKind = CategoryGalleryNavStore.sourceKind;
     this.pageCategoryKey = CategoryGalleryNavStore.categoryKey;
+    this.pagePersonId = CategoryGalleryNavStore.personId;
+    this.pageSmartCategoryKeyword = CategoryGalleryNavStore.smartCategoryKeyword.length > 0
+      ? CategoryGalleryNavStore.smartCategoryKeyword
+      : (CategoryGalleryNavStore.sourceKind === 'smart-category' ? CategoryGalleryNavStore.title : '');
     this.pageUseCreatedAtGrouping = CategoryGalleryNavStore.useCreatedAtGrouping;
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
@@ -1161,6 +1278,8 @@ struct CategoryGallery {
           title: this.title,
           totalCount: this.totalCount,
           topSafeInsetVp: this.systemTopInsetVp,
+          personAlbumMode: this.usesMoreMenuMode(),
+          moreMenuExpanded: this.moreMenuExpanded,
           onCancelSelection: (): void => {
             this.exitCgSelection();
           },
@@ -1169,6 +1288,9 @@ struct CategoryGallery {
           },
           onToggleMode: (): void => {
             this.toggleToolbarMode();
+          },
+          onShowMoreMenu: (): void => {
+            this.toggleMoreMenu();
           }
         })
 
@@ -1179,6 +1301,52 @@ struct CategoryGallery {
       .width('100%')
       .height('100%')
       .hitTestBehavior(HitTestMode.Transparent)
+
+      if (this.moreMenuExpanded) {
+        CategoryGalleryMoreMenu({
+          expanded: this.moreMenuExpanded,
+          topSafeInsetVp: this.systemTopInsetVp,
+          onDismiss: (): void => {
+            this.dismissMoreMenu();
+          },
+          onEnterMultiselect: (): void => {
+            this.enterMultiselectFromMoreMenu();
+          },
+          onOpenSlideshow: (): void => {
+            this.openSlideshowSettings();
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .zIndex(2)
+      }
+
+      if (this.slideshowSettingsVisible) {
+        GallerySlideshowSettingsSheet({
+          scope: this.categorySlideshowScope(),
+          visible: this.slideshowSettingsVisible,
+          preparing: this.slideshowPreparing,
+          onDismiss: (): void => {
+            this.dismissSlideshowSettings();
+          },
+          onStart: (config: GallerySlideshowConfig): void => {
+            void this.startCategorySlideshow(config);
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .zIndex(20)
+      }
+
+      if (this.slideshowPreparing) {
+        FnFullLoadingMask({
+          text: '正在准备幻灯片...',
+          topOffsetVp: this.contentInsetTopVp()
+        })
+          .width('100%')
+          .height('100%')
+          .zIndex(30)
+      }
     }
     .width('100%')
     .height('100%')

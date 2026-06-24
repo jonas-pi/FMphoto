@@ -85,6 +85,14 @@ import {
   GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP
 } from './galleryAlbumTab/GalleryAlbumTopBar';
 import { GalleryAlbumFloatingTopBarLayer } from './galleryAlbumTab/GalleryAlbumFloatingTopBarLayer';
+import { GalleryAlbumMoreMenu } from './galleryAlbumTab/GalleryAlbumMoreMenu';
+import { gallerySlideshowLaunch } from './slideshow/GallerySlideshowLauncher';
+import {
+  GallerySlideshowConfig,
+  GallerySlideshowScope,
+  GallerySlideshowScopeKind
+} from './slideshow/GallerySlideshowTypes';
+import { GallerySlideshowSettingsSheet } from './slideshow/GallerySlideshowSettingsSheet';
 import { GalleryAlbumAlbumsHomeView } from './galleryAlbumTab/GalleryAlbumAlbumsHomeView';
 import { GalleryAlbumSearchModeView } from './galleryAlbumTab/GalleryAlbumSearchModeView';
 import { GalleryAlbumCategoryModeView } from './galleryAlbumTab/GalleryAlbumCategoryModeView';
@@ -457,6 +465,8 @@ export struct GalleryAlbumTab {
   @State private searchLoading: boolean = false;
   @State private searchError: string = '';
   @State private moreMenuExpanded: boolean = false;
+  @State private slideshowSettingsVisible: boolean = false;
+  @State private slideshowPreparing: boolean = false;
   @State private inCategoryMode: boolean = false;
   @State private categoryLoading: boolean = false;
   @State private categoryOpening: boolean = false;
@@ -1384,6 +1394,8 @@ export struct GalleryAlbumTab {
       set inSmartCategoryMode(value: boolean) { self.inSmartCategoryMode = value; }
       get inPersonMode(): boolean { return self.inPersonMode; }
       set inPersonMode(value: boolean) { self.inPersonMode = value; }
+      get gallerySelectionMode(): boolean { return self.gallerySelectionMode; }
+      set gallerySelectionMode(value: boolean) { self.gallerySelectionMode = value; }
       get moreMenuExpanded(): boolean { return self.moreMenuExpanded; }
       set moreMenuExpanded(value: boolean) { self.moreMenuExpanded = value; }
       get categoryLoading(): boolean { return self.categoryLoading; }
@@ -2272,6 +2284,65 @@ export struct GalleryAlbumTab {
     galleryAlbumToggleMoreMenu(this.asRootSurfaceHost());
   }
 
+  private openSlideshowSettings(): void {
+    this.dismissMoreMenu();
+    if (this.inSearchMode && this.searchQuery.trim().length === 0) {
+      this.toast('请先输入搜索关键词');
+      return;
+    }
+    this.slideshowSettingsVisible = true;
+  }
+
+  private dismissSlideshowSettings(): void {
+    this.slideshowSettingsVisible = false;
+  }
+
+  private gallerySlideshowScope(): GallerySlideshowScope {
+    if (this.inSearchMode) {
+      return {
+        kind: GallerySlideshowScopeKind.SMART_CATEGORY,
+        smartCategoryKeyword: this.searchQuery.trim()
+      };
+    }
+    return { kind: GallerySlideshowScopeKind.ALL_GALLERY };
+  }
+
+  private enterSearchMultiselectFromMoreMenu(): void {
+    this.dismissMoreMenu();
+    galleryAlbumEnterGallerySelectionModeFromToolbar(this.asLifecycleHost());
+  }
+
+  private async startGallerySlideshow(config: GallerySlideshowConfig): Promise<void> {
+    if (this.slideshowPreparing) {
+      return;
+    }
+    this.slideshowPreparing = true;
+    const isActive = this.createNavigationGuard();
+    const preloadedItems = this.inSearchMode && this.searchResults.length > 0
+      ? this.searchResults
+      : undefined;
+    try {
+      await gallerySlideshowLaunch(
+        this.getUIContext(),
+        this.baseUrl,
+        this.gallerySlideshowScope(),
+        config,
+        (msg: string): void => {
+          this.toast(msg);
+        },
+        isActive,
+        preloadedItems
+      );
+      if (isActive()) {
+        this.slideshowSettingsVisible = false;
+      }
+    } finally {
+      if (isActive()) {
+        this.slideshowPreparing = false;
+      }
+    }
+  }
+
   private secondaryModeContentInsetTopVp(): number {
     return galleryAlbumSecondaryModeContentInsetTopVp(this.asRootSurfaceHost());
   }
@@ -2492,42 +2563,40 @@ export struct GalleryAlbumTab {
         }
 
         if (this.moreMenuExpanded) {
-          Stack({ alignContent: Alignment.TopEnd }) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(Color.Transparent)
-              .onClick((): void => {
-                this.dismissMoreMenu();
-              })
-
-            Column({ space: 10 }) {
-              Text(this.isAlbumsHomeSurface() ? '\u76f8\u518c\u83dc\u5355' : '\u56fe\u5e93\u83dc\u5355')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.text_primary'))
-
-              Text('菜单内容暂时清空')
-                .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
+          GalleryAlbumMoreMenu({
+            expanded: this.moreMenuExpanded,
+            topSafeInsetVp: this.topSafeInsetVp,
+            showMultiselect: this.inSearchMode,
+            onDismiss: (): void => {
+              this.dismissMoreMenu();
+            },
+            onEnterMultiselect: (): void => {
+              this.enterSearchMultiselectFromMoreMenu();
+            },
+            onOpenSlideshow: (): void => {
+              this.openSlideshowSettings();
             }
-            .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-            .backgroundColor($r('app.color.gallery_material_surface_bg'))
-            .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-            .backgroundEffect(fnImmersiveBackgroundEffect())
-            .linearGradient(fnLiquidGlassGradient())
-            .borderRadius(22)
-            .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-            .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
-            .clip(true)
-            .margin({
-              top: this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP + 8,
-              right: GALLERY_TOP_BAR_PAD_RIGHT_VP
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .zIndex(2)
+          })
+            .width('100%')
+            .height('100%')
+            .zIndex(2)
+        }
+
+        if (this.slideshowSettingsVisible) {
+          GallerySlideshowSettingsSheet({
+            scope: this.gallerySlideshowScope(),
+            visible: this.slideshowSettingsVisible,
+            preparing: this.slideshowPreparing,
+            onDismiss: (): void => {
+              this.dismissSlideshowSettings();
+            },
+            onStart: (config: GallerySlideshowConfig): void => {
+              void this.startGallerySlideshow(config);
+            }
+          })
+            .width('100%')
+            .height('100%')
+            .zIndex(20)
         }
 
         Stack({ alignContent: Alignment.TopStart }) {
@@ -3052,6 +3121,9 @@ export struct GalleryAlbumTab {
       }
       if (this.categoryOpening) {
         FnFullLoadingMask({ text: this.categoryOpeningText, topOffsetVp: this.loadingMaskTopOffsetVp() })
+      }
+      if (this.slideshowPreparing) {
+        FnFullLoadingMask({ text: '正在准备幻灯片...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
 
       if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
