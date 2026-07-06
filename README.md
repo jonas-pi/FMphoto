@@ -97,6 +97,8 @@ cp build-profile.json5.example build-profile.json5
 - 本地未签名包默认路径：`entry/build/default/outputs/default/entry-default-unsigned.hap`
 - 推送 `v*` 标签后，可通过 GitHub Actions 自动上传 Release 构建产物。
 
+**关于提交 HAP 是否泄露密钥**：不会。未签名 HAP 不含证书；已签名 HAP 仅包含**公钥证书与签名块**，不包含 `.p12` 私钥或 Profile 密码。可放心将 Release 用 HAP 纳入版本库或 GitHub Release。
+
 ## 使用说明
 
 安装后填写 NAS 地址与账号即可登录使用。若部分入口无数据，请先在 NAS 管理端确认相册服务、AI 能力与账户权限已启用。
