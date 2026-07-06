@@ -11,10 +11,21 @@ export struct GalleryAlbumMoreMenu {
   @Prop topSafeInsetVp: number = 0;
   /** 为 true 时展示「多选」入口（如 AI 搜索结果页） */
   @Prop showMultiselect: boolean = false;
+  /** 为 true 时展示「同步本地照片」入口（图库主时间轴） */
+  @Prop showAutoSync: boolean = false;
+  @Prop autoSyncBadgeCount: number = 0;
 
   onDismiss: () => void = (): void => {};
   onEnterMultiselect: () => void = (): void => {};
   onOpenSlideshow: () => void = (): void => {};
+  onStartAutoSync: () => void = (): void => {};
+
+  private autoSyncMenuLabel(): string {
+    if (this.autoSyncBadgeCount > 0) {
+      return `同步本地照片 (${this.autoSyncBadgeCount})`;
+    }
+    return '同步本地照片';
+  }
 
   @Builder
   private menuRow(label: string, action: () => void) {
@@ -44,6 +55,11 @@ export struct GalleryAlbumMoreMenu {
           if (this.showMultiselect) {
             this.menuRow('多选', (): void => {
               this.onEnterMultiselect();
+            })
+          }
+          if (this.showAutoSync) {
+            this.menuRow(this.autoSyncMenuLabel(), (): void => {
+              this.onStartAutoSync();
             })
           }
           this.menuRow('幻灯片', (): void => {

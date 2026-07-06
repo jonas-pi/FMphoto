@@ -19,6 +19,7 @@ export struct GalleryAlbumPersonModeView {
 
   getPersonName: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   getPersonFace: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
+  getPersonIdentity: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   getPersonStatText: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   onOpenPerson: (item: AiPersonItem) => void = (_: AiPersonItem) => {};
 
@@ -81,7 +82,9 @@ export struct GalleryAlbumPersonModeView {
               Column({ space: 8 }) {
                 GalleryNetworkThumb({
                   uri: nasUrl(this.baseUrl, this.getPersonFace(item)),
-                  paused: this.personThumbLoadingPaused
+                  paused: this.personThumbLoadingPaused,
+                  cacheIdentity: this.getPersonIdentity(item),
+                  cacheRank: 3
                 })
                   .width('100%')
                   .aspectRatio(1)
@@ -104,7 +107,10 @@ export struct GalleryAlbumPersonModeView {
                 this.onOpenPerson(item);
               })
             }
-          }, (_item: AiPersonItem, i: number) => `person_${i}`)
+          }, (item: AiPersonItem, i: number) => {
+            const identity = this.getPersonIdentity(item);
+            return identity.length > 0 ? `person_${identity}` : `person_${i}`;
+          })
         }
         .columnsTemplate('1fr 1fr 1fr')
         .columnsGap(8)

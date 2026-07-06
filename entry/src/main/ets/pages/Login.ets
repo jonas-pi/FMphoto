@@ -8,6 +8,14 @@ import { window } from '@kit.ArkUI';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
+import {
+  LOGIN_ENDPOINT_PREF_AUTO,
+  LOGIN_ENDPOINT_PREF_BANDWIDTH,
+  LOGIN_ENDPOINT_PREF_LAN,
+  LOGIN_ENDPOINT_PREF_LATENCY,
+  LOGIN_ENDPOINT_PREF_PUBLIC,
+  selectLoginEndpoint
+} from '../network/LoginEndpointSelector';
 import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
@@ -26,11 +34,14 @@ const LOGIN_TAG = 'Login';
 @Component
 struct Login {
   @State private domainInput: string = '';
+  @State private lanInput: string = '';
+  @State private endpointPreference: string = LOGIN_ENDPOINT_PREF_AUTO;
   @State private username: string = '';
   @State private password: string = '';
   @State private useHttps: boolean = true;
   @State private loading: boolean = false;
   @State private errorText: string = '';
+  @State private probeSummary: string = '';
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
   @State private otpCode: string = '';
@@ -71,6 +82,12 @@ struct Login {
       if (d.domainInput.length > 0) {
         this.domainInput = d.domainInput;
       }
+      if (d.lanInput.length > 0) {
+        this.lanInput = d.lanInput;
+      }
+      if (d.loginEndpointPreference.length > 0) {
+        this.endpointPreference = d.loginEndpointPreference;
+      }
       if (d.username.length > 0) {
         this.username = d.username;
       }
@@ -110,6 +127,8 @@ struct Login {
       token: token,
       account: user,
       domainInput: this.domainInput.trim(),
+      lanInput: this.lanInput.trim(),
+      loginEndpointPreference: this.endpointPreference,
       useHttps: this.useHttps,
       albumParentGuid: '',
       trustedHosts: CertPolicy.dumpAll(),
@@ -276,7 +295,11 @@ struct Login {
 
   private async onLoginClick(): Promise<void> {
     this.errorText = '';
-    const server = normalizeServerUrl(this.domainInput, this.useHttps);
+    this.probeSummary = '';
+    const server = normalizeServerUrl(
+      this.domainInput.trim().length > 0 ? this.domainInput : this.lanInput,
+      this.useHttps
+    );
     if (server.length === 0 || this.username.trim().length === 0 || this.password.length === 0) {
       this.errorText = '请填写服务器地址、用户名和密码';
       return;
@@ -287,7 +310,18 @@ struct Login {
       this.show2faStep = false;
       this.pendingAccessToken = '';
       this.pendingDeviceId = '';
-      await this.attemptLoginWebSocketOnly(ctx, server, this.username.trim(), this.password);
+      const selected = await selectLoginEndpoint(
+        this.domainInput,
+        this.lanInput,
+        this.useHttps,
+        this.endpointPreference
+      );
+      if (selected.server.length === 0) {
+        this.errorText = '请至少填写一个服务器地址';
+        return;
+      }
+      this.probeSummary = selected.summary;
+      await this.attemptLoginWebSocketOnly(ctx, selected.server, this.username.trim(), this.password);
     } catch (e) {
       const msg = this.describeLoginError(e);
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'login flow: %{public}s', msg.length > 0 ? msg : 'unknown');
@@ -349,6 +383,38 @@ struct Login {
     this.errorText = '';
   }
 
+  private endpointPreferenceLabel(value: string): string {
+    if (value === LOGIN_ENDPOINT_PREF_PUBLIC) {
+      return '优先公网';
+    }
+    if (value === LOGIN_ENDPOINT_PREF_LAN) {
+      return '优先内网';
+    }
+    if (value === LOGIN_ENDPOINT_PREF_BANDWIDTH) {
+      return '带宽优先';
+    }
+    if (value === LOGIN_ENDPOINT_PREF_LATENCY) {
+      return '延迟优先';
+    }
+    return '自动综合';
+  }
+
+  @Builder
+  private endpointPreferenceButton(value: string) {
+    Button(this.endpointPreferenceLabel(value))
+      .type(ButtonType.Normal)
+      .height(34)
+      .fontSize(12)
+      .fontColor(this.endpointPreference === value ? Color.White : $r('app.color.text_secondary'))
+      .backgroundColor(this.endpointPreference === value ? $r('app.color.brand_primary') : $r('app.color.card_background'))
+      .borderRadius(17)
+      .padding({ left: 10, right: 10 })
+      .enabled(!this.show2faStep && !this.loading)
+      .onClick((): void => {
+        this.endpointPreference = value;
+      })
+  }
+
   build() {
     Scroll() {
       Column({ space: 16 }) {
@@ -358,7 +424,7 @@ struct Login {
           .width('100%')
           .margin({ top: 48, bottom: 8 })
 
-        TextInput({ placeholder: $r('app.string.hint_server'), text: this.domainInput })
+        TextInput({ placeholder: '公网域名 / 服务器地址', text: this.domainInput })
           .enableAutoFill(false)
           .enableKeyboardOnFocus(false)
           .onChange((v: string) => {
@@ -370,6 +436,19 @@ struct Login {
           .borderRadius($r('app.float.radius_medium'))
           .padding({ left: 12, right: 12 })
 
+        TextInput({ placeholder: '内网 IP（可选）', text: this.lanInput })
+          .enableAutoFill(false)
+          .enableKeyboardOnFocus(false)
+          .onChange((v: string) => {
+            this.lanInput = v;
+          })
+          .width('100%')
+          .height(44)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.radius_medium'))
+          .padding({ left: 12, right: 12 })
+          .enabled(!this.show2faStep)
+
         Row() {
           Text($r('app.string.use_https'))
             .fontSize(16)
@@ -379,6 +458,22 @@ struct Login {
             .onChange((on: boolean) => {
               this.useHttps = on;
             })
+        }
+        .width('100%')
+
+        Column({ space: 8 }) {
+          Text('双地址选择策略')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_AUTO)
+            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_LAN)
+            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_PUBLIC)
+            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_LATENCY)
+            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_BANDWIDTH)
+          }
+          .width('100%')
         }
         .width('100%')
 
@@ -452,6 +547,13 @@ struct Login {
           Text(this.errorText)
             .fontColor(Color.Red)
             .fontSize(14)
+            .width('100%')
+        }
+
+        if (this.probeSummary.length > 0) {
+          Text(this.probeSummary)
+            .fontColor($r('app.color.text_secondary'))
+            .fontSize(13)
             .width('100%')
         }
 

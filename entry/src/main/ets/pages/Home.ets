@@ -2,10 +2,25 @@ import { common } from '@kit.AbilityKit';
 import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import { BlurStrategy, DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
+import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
+import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
 import { AppSession } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
+import { LOGIN_ENDPOINT_PREF_LAN, LOGIN_ENDPOINT_PREF_PUBLIC } from '../network/LoginEndpointSelector';
+import {
+  EndpointConnectionInfo,
+  resolveEndpointConnectionInfo,
+  switchStoredLoginEndpoint
+} from '../network/LoginEndpointSwitch';
+import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
+import {
+  FN_TRANSFER_QUEUE_VERSION,
+  FnTransferQueueStore,
+  FnTransferTaskSnapshot
+} from '../common/FnTransferQueueStore';
+import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
   fnBottomDockBottomGap,
@@ -64,14 +79,95 @@ const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
 const ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP: number = 72;
 const ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP: number = 22;
 const ME_ACTION_GAP_VP: number = 18;
+const ME_CONNECTION_ROW_RADIUS_VP: number = 22;
 
 @Component
 struct MePanel {
   @Prop topSafeInsetVp: number = 0;
+  @Prop @Watch('onPageShowSignalChanged') pageShowSignal: number = 0;
+  onEndpointSwitched: () => void = () => {};
   @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private sdkApiVersion: number = 0;
   @State private immersiveSwitchWidthVp: number = 0;
+  @State private endpointInfo: EndpointConnectionInfo = resolveEndpointConnectionInfo(null);
+  @State private endpointSwitching: boolean = false;
+  @State private transferQueueVisible: boolean = false;
+  @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
+  @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   private lastImmersiveToggleAt: number = 0;
+
+  private refreshTransferQueueTasks(): void {
+    this.transferQueueTasks = FnTransferQueueStore.getTasks();
+  }
+
+  private onTransferQueueVersionChanged(): void {
+    this.refreshTransferQueueTasks();
+  }
+
+  private refreshEndpointInfo(): void {
+    this.endpointInfo = resolveEndpointConnectionInfo(AppSession.getStored());
+  }
+
+  private onPageShowSignalChanged(): void {
+    this.refreshEndpointInfo();
+    this.refreshTransferQueueTasks();
+  }
+
+  private endpointKindBadgeColor(kind: string): ResourceColor {
+    if (kind === LOGIN_ENDPOINT_PREF_LAN) {
+      return '#FF059669';
+    }
+    if (kind === LOGIN_ENDPOINT_PREF_PUBLIC) {
+      return '#FF2563EB';
+    }
+    return $r('app.color.text_secondary');
+  }
+
+  private showEndpointToast(message: string): void {
+    if (message.length === 0) {
+      return;
+    }
+    this.getUIContext().getPromptAction().showToast({ message });
+  }
+
+  private async switchEndpoint(targetKind: string): Promise<void> {
+    if (this.endpointSwitching || !this.endpointInfo.canSwitch) {
+      return;
+    }
+    if (this.endpointInfo.kind === targetKind) {
+      return;
+    }
+    this.endpointSwitching = true;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    let res = await switchStoredLoginEndpoint(ctx, targetKind);
+    if (res.certificateError === true && res.targetUrl !== undefined && res.targetUrl.length > 0) {
+      try {
+        const dlg = await this.getUIContext().getPromptAction().showDialog({
+          title: '证书不可信',
+          message: '切换目标地址证书未信任。是否信任并继续？',
+          buttons: [
+            { text: '取消', color: '#99000000' },
+            { text: '信任并继续', color: '#FF2563EB' }
+          ]
+        });
+        if (dlg.index === 1) {
+          CertPolicy.addTrusted(res.targetUrl);
+          CertPolicy.addTrusted(fnWebViewBaseUrl(res.targetUrl));
+          res = await switchStoredLoginEndpoint(ctx, targetKind);
+        } else {
+          res = { ok: false, message: '已取消信任证书' };
+        }
+      } catch (_e) {
+        res = { ok: false, message: '已取消信任证书' };
+      }
+    }
+    this.endpointSwitching = false;
+    this.refreshEndpointInfo();
+    this.showEndpointToast(res.message);
+    if (res.ok) {
+      this.onEndpointSwitched();
+    }
+  }
 
   private immersiveSupportText(): string {
     if (this.sdkApiVersion <= 0) {
@@ -108,10 +204,137 @@ struct MePanel {
 
   aboutToAppear(): void {
     this.sdkApiVersion = fnCurrentSdkApiVersion();
+    this.refreshEndpointInfo();
+    FnTransferQueueStore.ensureStorage();
+    this.refreshTransferQueueTasks();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void fnLoadImmersiveLightPreference(ctx).then((enabled: boolean): void => {
       this.immersiveLightEnabled = enabled;
     });
+  }
+
+  @Builder
+  private transferQueueSheetBuilder() {
+    FnTransferQueueSheet({ tasks: this.transferQueueTasks })
+  }
+
+  @Builder
+  private transferQueueEntryRow() {
+    Row({ space: 10 }) {
+      Column({ space: 6 }) {
+        Text('\u4f20\u8f93\u961f\u5217')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Text(
+          FnTransferQueueStore.activeCount() > 0
+            ? `${FnTransferQueueStore.activeCount()} \u4e2a\u4efb\u52a1\u8fdb\u884c\u4e2d`
+            : '\u67e5\u770b\u4e0a\u4f20\u3001\u4e0b\u8f7d\u4e0e\u540c\u6b65\u8fdb\u5ea6'
+        )
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+
+      if (FnTransferQueueStore.activeCount() > 0) {
+        Text(`${FnTransferQueueStore.activeCount()}`)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.brand_primary'))
+          .borderRadius(10)
+      }
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.text_secondary')])
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor($r('app.color.card_background'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .onClick((): void => {
+      this.refreshTransferQueueTasks();
+      this.transferQueueVisible = true;
+    })
+  }
+
+  @Builder
+  private endpointSwitchButton(label: string, kind: string) {
+    Button(label)
+      .layoutWeight(1)
+      .height(36)
+      .fontSize(14)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(this.endpointInfo.kind === kind ? Color.White : $r('app.color.text_primary'))
+      .backgroundColor(this.endpointInfo.kind === kind ? $r('app.color.brand_primary') : Color.Transparent)
+      .borderRadius(18)
+      .enabled(!this.endpointSwitching && this.endpointInfo.kind !== kind)
+      .opacity(this.endpointSwitching ? 0.6 : 1)
+      .onClick((): void => {
+        void this.switchEndpoint(kind);
+      })
+  }
+
+  @Builder
+  private connectionStatusRow() {
+    Column({ space: 12 }) {
+      Row({ space: 10 }) {
+        Column({ space: 6 }) {
+          Text('NAS \u8fde\u63a5')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.endpointSwitching ? '\u6b63\u5728\u5207\u6362\u2026' : this.endpointInfo.addressText)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+
+        Text(this.endpointInfo.label)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor(this.endpointKindBadgeColor(this.endpointInfo.kind))
+          .borderRadius(10)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      if (this.endpointInfo.canSwitch) {
+        Row({ space: 8 }) {
+          this.endpointSwitchButton('\u516c\u7f51', LOGIN_ENDPOINT_PREF_PUBLIC)
+          this.endpointSwitchButton('\u5185\u7f51', LOGIN_ENDPOINT_PREF_LAN)
+        }
+        .width('100%')
+        .padding(4)
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(20)
+      }
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor($r('app.color.card_background'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
   }
 
   @Builder
@@ -217,34 +440,6 @@ struct MePanel {
     })
   }
 
-  @Builder
-  private feedbackBoard() {
-    Column({ space: 8 }) {
-      Text('帮助 FMphoto 变得更好')
-        .fontSize(17)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .width('100%')
-
-      Text('请多多在应用市场反馈你需要的功能以及发现的 BUG。如果觉得好用，也欢迎给个好评，助我破鼎。')
-        .fontSize(13)
-        .lineHeight(20)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-    }
-    .width('100%')
-    .padding(18)
-    .backgroundColor($r('app.color.immersive_panel_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .backgroundEffect(fnImmersiveBackgroundEffect())
-    .linearGradient(fnLiquidGlassGradient())
-    .borderRadius(24)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .shadow({ radius: 24, color: '#14001A33', offsetX: 0, offsetY: 10 })
-    .clip(true)
-  }
-
   build() {
     Column() {
       Row() {
@@ -322,7 +517,17 @@ struct MePanel {
         .borderColor($r('app.color.immersive_panel_border'))
         .visibility(Visibility.None)
 
-        this.feedbackBoard()
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.connectionStatusRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.transferQueueEntryRow()
 
         Blank()
           .width('100%')
@@ -342,7 +547,9 @@ struct MePanel {
           fontColorValue: '#E11D48',
           action: (): void => {
             const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-            void SessionPreferences.clearSession(ctx).then(() => {
+            void SessionPreferences.clearSession(ctx).then(async (): Promise<void> => {
+              invalidateAutoSync();
+              await GalleryAutoSyncLedger.clear(ctx);
               AppSession.clear();
               this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
               });
@@ -357,6 +564,15 @@ struct MePanel {
     }
     .width('100%')
     .height('100%')
+    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, {
+      height: '56%',
+      showClose: true,
+      dragBar: true,
+      backgroundColor: $r('app.color.card_background'),
+      onDisappear: (): void => {
+        this.transferQueueVisible = false;
+      }
+    })
   }
 }
 
@@ -1162,7 +1378,16 @@ struct Home {
               .enabled(this.bottomNavIndex !== 2)
               .hitTestBehavior(this.bottomNavIndex !== 2 ? HitTestMode.Default : HitTestMode.None)
 
-            MePanel({ topSafeInsetVp: this.systemTopInsetVp })
+            MePanel({
+              topSafeInsetVp: this.systemTopInsetVp,
+              pageShowSignal: this.pageShowSignal,
+              onEndpointSwitched: (): void => {
+                const stored = AppSession.getStored();
+                this.galleryBaseUrl = stored !== null ? fnWebViewBaseUrl(stored.baseUrl) : '';
+                this.sessionOk = stored !== null;
+                this.albumReloadEpoch++;
+              }
+            })
               .width('100%')
               .height('100%')
               .padding({ bottom: this.dockReserveHeight() })

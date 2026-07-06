@@ -27,6 +27,8 @@ interface CategoryGallerySessionBackup {
   baseUrl: string;
   title: string;
   items: GalleryListItem[];
+  prefetchedRemainder: GalleryListItem[];
+  searchFetchedCount: number;
   useCreatedAtGrouping: boolean;
   backgroundLoading: boolean;
   sessionToken: number;
@@ -55,12 +57,18 @@ export class CategoryGalleryNavStore {
   static sourceKind: string = '';
   static personId: string = '';
   static smartCategoryKeyword: string = '';
+  /** open 时首屏裁剪后、已在 search 响应中的剩余条目（避免丢弃后重复请求） */
+  static prefetchedRemainder: GalleryListItem[] = [];
+  /** 本次打开时 search/open 传入的条目总数，作为 getCategoryPhotos 续拉 offset 起点 */
+  static searchFetchedCount: number = 0;
 
   private static captureSession(): CategoryGallerySessionBackup {
     return {
       baseUrl: CategoryGalleryNavStore.baseUrl,
       title: CategoryGalleryNavStore.title,
       items: CategoryGalleryNavStore.items.slice(),
+      prefetchedRemainder: CategoryGalleryNavStore.prefetchedRemainder.slice(),
+      searchFetchedCount: CategoryGalleryNavStore.searchFetchedCount,
       useCreatedAtGrouping: CategoryGalleryNavStore.useCreatedAtGrouping,
       backgroundLoading: CategoryGalleryNavStore.backgroundLoading,
       sessionToken: CategoryGalleryNavStore.sessionToken,
@@ -79,6 +87,8 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.baseUrl = backup.baseUrl;
     CategoryGalleryNavStore.title = backup.title;
     CategoryGalleryNavStore.items = backup.items.slice();
+    CategoryGalleryNavStore.prefetchedRemainder = backup.prefetchedRemainder.slice();
+    CategoryGalleryNavStore.searchFetchedCount = backup.searchFetchedCount;
     CategoryGalleryNavStore.useCreatedAtGrouping = backup.useCreatedAtGrouping;
     CategoryGalleryNavStore.backgroundLoading = backup.backgroundLoading;
     CategoryGalleryNavStore.sessionToken = backup.sessionToken;
@@ -118,6 +128,10 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.baseUrl = baseUrl;
     CategoryGalleryNavStore.title = title;
     CategoryGalleryNavStore.items = initialItems;
+    CategoryGalleryNavStore.prefetchedRemainder = shouldCapInitialItems
+      ? items.slice(initialRenderCap)
+      : [];
+    CategoryGalleryNavStore.searchFetchedCount = items.length;
     CategoryGalleryNavStore.useCreatedAtGrouping = useCreatedAtGrouping;
     CategoryGalleryNavStore.backgroundLoading = false;
     CategoryGalleryNavStore.expectedTotalCount = Math.max(
@@ -134,10 +148,11 @@ export class CategoryGalleryNavStore {
     hilog.warn(
       DOMAIN,
       TAG,
-      'open title=%{public}s items=%{public}d initialItems=%{public}d expectedTotal=%{public}d categoryKey=%{public}s useCreatedAt=%{public}s columns=%{public}d',
+      'open title=%{public}s items=%{public}d initialItems=%{public}d prefetched=%{public}d expectedTotal=%{public}d categoryKey=%{public}s useCreatedAt=%{public}s columns=%{public}d',
       title,
       items.length,
       CategoryGalleryNavStore.items.length,
+      CategoryGalleryNavStore.prefetchedRemainder.length,
       CategoryGalleryNavStore.expectedTotalCount,
       CategoryGalleryNavStore.categoryKey,
       useCreatedAtGrouping ? 'true' : 'false',
@@ -158,6 +173,18 @@ export class CategoryGalleryNavStore {
 
   static currentToken(): number {
     return CategoryGalleryNavStore.sessionToken;
+  }
+
+  static hasPrefetchedRemainder(): boolean {
+    return CategoryGalleryNavStore.prefetchedRemainder.length > 0;
+  }
+
+  static takePrefetchedBatch(maxCount: number): GalleryListItem[] {
+    const take = Math.max(0, Math.floor(maxCount));
+    if (take <= 0 || CategoryGalleryNavStore.prefetchedRemainder.length === 0) {
+      return [];
+    }
+    return CategoryGalleryNavStore.prefetchedRemainder.splice(0, take);
   }
 
   static setBackgroundLoading(token: number, value: boolean): void {
@@ -255,6 +282,8 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.sourceKind = '';
     CategoryGalleryNavStore.personId = '';
     CategoryGalleryNavStore.smartCategoryKeyword = '';
+    CategoryGalleryNavStore.prefetchedRemainder = [];
+    CategoryGalleryNavStore.searchFetchedCount = 0;
     CategoryGalleryNavStore.version++;
   }
 }

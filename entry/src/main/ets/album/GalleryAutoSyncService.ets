@@ -1,7 +1,5 @@
 /**
- * 本地系统相册查询服务。
- * 利用 photoAccessHelper 查询本机相册中的图片/视频元数据，
- * 用于与 NAS 时间线对比实现「前台增量同步」。
+ * 本地系统相册查询（需 READ_IMAGEVIDEO ACL Profile + 用户授权）。
  */
 import { common } from '@kit.AbilityKit';
 import { dataSharePredicates } from '@kit.ArkData';

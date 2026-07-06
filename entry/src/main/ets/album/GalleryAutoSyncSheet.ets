@@ -1,96 +1,146 @@
 /**
- * 自动同步底部弹窗组件。
- * 显示未同步的本地照片缩略图网格，用户点击「同步」按钮后批量上传到 NAS。
+ * 批量同步上传（后台传输队列，不阻塞 UI）。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
+import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTransferProgress';
+import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { FnHttpClient } from '../network/FnHttpClient';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
-import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
+import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
+import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
+import { mtimeSecFromMillis } from './GalleryAutoSyncOfficialFingerprint';
+import { filterUnsyncedLocalPhotos, GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSheet';
 
-export interface AutoSyncSheetHost {
-  /** 是否显示弹窗 */
-  syncSheetVisible: boolean;
-  /** 是否正在同步 */
-  syncing: boolean;
-  /** 同步进度文本 */
-  syncProgressText: string;
-  /** 未同步照片列表 */
-  unsyncedPhotos: LocalPhotoEntry[];
-  /** toast 回调 */
+export interface AutoSyncRunnerCallbacks {
   toast(msg: string): void;
-  /** 刷新时间线 */
   requestBootstrap(debounced: boolean): void;
 }
 
-/**
- * 执行批量同步上传。
- * @param host 宿主状态
- * @param ctx UIAbilityContext
- */
-export async function runAutoSync(
-  host: AutoSyncSheetHost,
-  ctx: common.UIAbilityContext
-): Promise<void> {
-  if (host.syncing) {
-    return;
-  }
-  const client = AppSession.getClient();
-  if (client === null) {
-    host.toast('未登录');
-    return;
-  }
-  const photos = host.unsyncedPhotos;
-  if (photos.length === 0) {
-    host.toast('没有需要同步的照片');
-    return;
+async function refilterBeforeUpload(
+  ctx: common.UIAbilityContext,
+  client: FnHttpClient,
+  photos: LocalPhotoEntry[]
+): Promise<LocalPhotoEntry[]> {
+  const nasFingerprints = await GalleryAutoSyncNasIndex.getFingerprints(client, true);
+  const ledger = await GalleryAutoSyncLedger.load(ctx);
+  const clientFiltered = filterUnsyncedLocalPhotos(photos, nasFingerprints, ledger).unsynced;
+  if (clientFiltered.length === 0) {
+    return clientFiltered;
   }
 
-  host.syncing = true;
-  host.syncProgressText = `同步中 0/${photos.length}…`;
-  let ok = 0;
-  let failMsg = '';
-  const stored = AppSession.getStored();
-  const albumDirHint =
-    stored !== null && stored.albumParentGuid.trim().length > 0
-      ? stored.albumParentGuid.trim()
-      : undefined;
+  const toUpload: LocalPhotoEntry[] = [];
+  const serverExists: LocalPhotoEntry[] = [];
+  for (let i = 0; i < clientFiltered.length; i++) {
+    const photo = clientFiltered[i];
+    const mtimeSec = mtimeSecFromMillis(photo.dateModifiedMs);
+    const check = await client.checkPhotoUploadExists(photo.fileName, photo.fileSize, mtimeSec);
+    if (check === 'exists') {
+      serverExists.push(photo);
+      continue;
+    }
+    toUpload.push(photo);
+  }
+  if (serverExists.length > 0) {
+    await GalleryAutoSyncLedger.markSynced(ctx, serverExists);
+    GalleryAutoSyncStore.markSynced(serverExists.map((p: LocalPhotoEntry): string => p.uri));
+    hilog.info(DOMAIN, TAG, 'server dedupe skipped=%{public}d', serverExists.length);
+  }
+  return toUpload;
+}
 
-  try {
-    await BackgroundKeepAliveController.withDataTransfer(ctx, 'auto-sync', async (): Promise<void> => {
-      for (let i = 0; i < photos.length; i++) {
-        host.syncProgressText = `同步中 ${i + 1}/${photos.length}…`;
-        try {
-          const res = await client.uploadPhotoByUri(photos[i].uri, 150000, albumDirHint);
-          if (res.success) {
-            ok++;
-            GalleryAutoSyncStore.markSynced([photos[i].uri]);
-          } else if (failMsg.length === 0) {
-            failMsg = res.message ?? '同步失败';
-          }
-        } catch (e) {
-          hilog.warn(DOMAIN, TAG, 'auto-sync upload failed: %{public}s', String(e));
-          if (failMsg.length === 0) {
-            failMsg = '同步失败，请稍后重试';
+export function runAutoSyncInBackground(
+  ctx: common.UIAbilityContext,
+  photos: LocalPhotoEntry[],
+  callbacks: AutoSyncRunnerCallbacks
+): void {
+  void (async (): Promise<void> => {
+    const client = AppSession.getClient();
+    if (client === null) {
+      callbacks.toast('未登录');
+      return;
+    }
+    if (photos.length === 0) {
+      callbacks.toast('没有需要同步的照片');
+      return;
+    }
+    if (FnTransferQueueStore.hasRunning()) {
+      callbacks.toast('已有传输任务进行中');
+      return;
+    }
+
+    const label = fnTransferDirectionLabel(FnTransferDirection.SYNC);
+    const checkTaskId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '检查 NAS 已有照片', 0);
+    const toUpload = await refilterBeforeUpload(ctx, client, photos);
+    FnTransferQueueStore.finish(
+      checkTaskId,
+      true,
+      toUpload.length === 0 ? '均已存在，无需同步' : `待同步 ${toUpload.length} 张`
+    );
+    if (toUpload.length === 0) {
+      callbacks.toast('没有需要同步的照片');
+      GalleryAutoSyncStore.markSynced(photos.map((p: LocalPhotoEntry): string => p.uri));
+      return;
+    }
+
+    const taskId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, label, toUpload.length);
+    let ok = 0;
+    let failMsg = '';
+    const stored = AppSession.getStored();
+    const albumDirHint =
+      stored !== null && stored.albumParentGuid.trim().length > 0
+        ? stored.albumParentGuid.trim()
+        : undefined;
+
+    try {
+      await BackgroundKeepAliveController.withDataTransfer(ctx, 'auto-sync', async (): Promise<void> => {
+        for (let i = 0; i < toUpload.length; i++) {
+          const photo = toUpload[i];
+          FnTransferQueueStore.update(taskId, i + 1, photo.fileName);
+          try {
+            const res = await client.uploadPhotoByUri(photo.uri, 150000, albumDirHint);
+            if (res.success) {
+              ok++;
+              GalleryAutoSyncStore.markSynced([photo.uri]);
+              await GalleryAutoSyncLedger.markSynced(ctx, [photo]);
+              GalleryAutoSyncNasIndex.invalidate();
+            } else if (failMsg.length === 0) {
+              failMsg = res.message ?? '同步失败';
+            }
+          } catch (e) {
+            hilog.warn(DOMAIN, TAG, 'auto-sync upload failed: %{public}s', String(e));
+            if (failMsg.length === 0) {
+              failMsg = '同步失败，请稍后重试';
+            }
           }
         }
-      }
-    });
-  } finally {
-    host.syncing = false;
-    host.syncProgressText = '';
-  }
+      });
+    } finally {
+      const summary = ok > 0 ? `同步完成 ${ok}/${toUpload.length}` : (failMsg.length > 0 ? failMsg : '同步失败');
+      FnTransferQueueStore.finish(taskId, ok > 0, summary);
+    }
 
-  if (ok > 0) {
-    host.toast(`同步完成 ${ok}/${photos.length}`);
-    GalleryTimelineRefreshStore.bump();
-    host.requestBootstrap(false);
-  } else {
-    host.toast(failMsg.length > 0 ? failMsg : '同步失败，请稍后重试');
-  }
+    if (ok > 0) {
+      callbacks.toast(`同步完成 ${ok}/${toUpload.length}`);
+      GalleryTimelineRefreshStore.bump();
+      callbacks.requestBootstrap(false);
+    } else {
+      callbacks.toast(failMsg.length > 0 ? failMsg : '同步失败，请稍后重试');
+    }
+  })();
+}
+
+/** @deprecated 保留兼容；请使用 runAutoSyncInBackground */
+export async function runAutoSync(
+  ctx: common.UIAbilityContext,
+  photos: LocalPhotoEntry[],
+  callbacks: AutoSyncRunnerCallbacks
+): Promise<void> {
+  runAutoSyncInBackground(ctx, photos, callbacks);
 }

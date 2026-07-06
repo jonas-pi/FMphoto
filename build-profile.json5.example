@@ -1,0 +1,83 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "debug",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "path/to/your/debug.p12",
+          "storePassword": "YOUR_STORE_PASSWORD",
+          "keyAlias": "YOUR_KEY_ALIAS",
+          "keyPassword": "YOUR_KEY_PASSWORD",
+          "signAlg": "SHA256withECDSA",
+          "profile": "path/to/your/debug_profile.p7b",
+          "certpath": "path/to/your/debug.cer"
+        }
+      },
+      {
+        "name": "release",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "path/to/your/release.p12",
+          "storePassword": "YOUR_STORE_PASSWORD",
+          "keyAlias": "YOUR_KEY_ALIAS",
+          "keyPassword": "YOUR_KEY_PASSWORD",
+          "signAlg": "SHA256withECDSA",
+          "profile": "path/to/your/release_profile.p7b",
+          "certpath": "path/to/your/release.cer"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "debug",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.0.2(22)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      },
+      {
+        "name": "release",
+        "signingConfig": "release",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.0.2(22)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default",
+            "release"
+          ]
+        }
+      ]
+    }
+  ]
+}

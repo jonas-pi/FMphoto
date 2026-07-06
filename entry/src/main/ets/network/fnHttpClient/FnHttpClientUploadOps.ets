@@ -3,7 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, genFnGalleryAuthxGet, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
-import { FN_PHOTO_API_PREFIX, FN_PHOTO_H5_ALBUM_PAGE } from '../FnPhotoRoutes';
+import { FN_PHOTO_API_PREFIX, FN_PHOTO_API_V2_PREFIX, FN_PHOTO_H5_ALBUM_PAGE } from '../FnPhotoRoutes';
 import { fnWebDefaultUserAgent, mergeGalleryWebCookieIntoNativeHeader } from '../FnWebCookies';
 import { fnWebViewBaseUrl } from '../ServerUrl';
 import { buildFnApiCookieHeader, buildUploadCookieHeader, stripUploadForbiddenCookieKeys } from './FnHttpClientCookie';
@@ -31,6 +31,9 @@ import {
 } from './FnHttpClientCommon';
 import { FnHttpClientUploadHost } from './FnHttpClientTypes';
 import { FnClientResult, GalleryListItem } from '../../model/FnApiTypes';
+
+/** 飞牛官方上传前存在性检查结果 */
+export type PhotoUploadExistCheck = 'exists' | 'missing' | 'unknown';
 
 export class FnHttpClientUploadOps {
   private readonly host: FnHttpClientUploadHost;
@@ -315,6 +318,120 @@ export class FnHttpClientUploadOps {
     return '';
   }
 
+  private static isDuplicateUploadMessage(msg: string): boolean {
+    const text = msg.trim();
+    if (text.length === 0) {
+      return false;
+    }
+    const lower = text.toLowerCase();
+    return lower.indexOf('duplicate') >= 0 || lower.indexOf('already') >= 0 ||
+      text.indexOf('重复') >= 0 || text.indexOf('已存在') >= 0 || text.indexOf('已上传') >= 0;
+  }
+
+  private static parseUploadExistFromBody(rawBody: string): PhotoUploadExistCheck {
+    if (rawBody.length === 0) {
+      return 'unknown';
+    }
+    if (FnHttpClientUploadOps.isDuplicateUploadMessage(rawBody)) {
+      return 'exists';
+    }
+    let parsed: Record<string, string | number | boolean | Object | undefined>;
+    try {
+      parsed = JSON.parse(rawBody) as Record<string, string | number | boolean | Object | undefined>;
+    } catch (_e) {
+      return 'unknown';
+    }
+    const scan = (obj: Record<string, string | number | boolean | Object | undefined>): PhotoUploadExistCheck => {
+      const flags = ['exist', 'exists', 'duplicate', 'duplicated', 'skip', 'skipped', 'isExist', 'is_exists'];
+      for (let i = 0; i < flags.length; i++) {
+        const v = obj[flags[i]];
+        if (v === true || v === 1 || v === '1' || v === 'true') {
+          return 'exists';
+        }
+      }
+      const missFlags = ['needUpload', 'need_upload', 'shouldUpload'];
+      for (let j = 0; j < missFlags.length; j++) {
+        const mv = obj[missFlags[j]];
+        if (mv === true || mv === 1 || mv === '1' || mv === 'true') {
+          return 'missing';
+        }
+      }
+      return 'unknown';
+    };
+    const root = scan(parsed);
+    if (root !== 'unknown') {
+      return root;
+    }
+    const dataObj = parsed['data'];
+    if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+      return scan(dataObj as Record<string, string | number | boolean | Object | undefined>);
+    }
+    return 'unknown';
+  }
+
+  /**
+   * 上传前向 NAS 查询是否已存在（对齐官方 upload/path / upload/check）。
+   * 无法判定时返回 unknown，由客户端指纹索引兜底。
+   */
+  async checkPhotoUploadExists(
+    originalName: string,
+    fileSize: number,
+    mtimeSec: number,
+    timeoutMs: number = 15000
+  ): Promise<PhotoUploadExistCheck> {
+    const name = originalName.trim();
+    if (name.length === 0 || fileSize <= 0) {
+      return 'unknown';
+    }
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const pathBases: string[] = [
+      `${FN_PHOTO_API_V2_PREFIX}/photo/upload/check`,
+      `${FN_PHOTO_API_V2_PREFIX}/photo/upload/exists`,
+      `${FN_PHOTO_API_V2_PREFIX}/photo/upload/path`,
+      `${FN_PHOTO_API_PREFIX}/photo/upload/path`
+    ];
+    const fc = FnHttpClientUploadOps.formatNoticeFileCreateTime(String(mtimeSec));
+    const paramsCandidates: Array<Record<string, string | number | boolean>> = [
+      { 'original_name': name, 'file_size': fileSize, 'file_create_time': fc, 'mtime': mtimeSec },
+      { 'fileName': name, 'fileSize': fileSize, 'mtime': mtimeSec, 'file_create_time': fc },
+      { 'name': name, 'size': fileSize, 'mtime': mtimeSec },
+      { 'filename': name, 'file_size': fileSize },
+      { 'name': name }
+    ];
+    for (let pi = 0; pi < pathBases.length; pi++) {
+      const path = pathBases[pi];
+      for (let i = 0; i < paramsCandidates.length; i++) {
+        try {
+          const oneParams = paramsCandidates[i];
+          const qs = buildGallerySortedQuery(oneParams);
+          const urlPath = qs.length > 0 ? `${path}?${qs}` : path;
+          const authx = await genFnGalleryAuthxGet(path, oneParams);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          const raw = await this.rawRequest(
+            `${activeBase}${urlPath}`,
+            http.RequestMethod.GET,
+            headers,
+            undefined,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            continue;
+          }
+          const exist = FnHttpClientUploadOps.parseUploadExistFromBody(raw.body);
+          if (exist !== 'unknown') {
+            return exist;
+          }
+        } catch (_e) {}
+      }
+    }
+    return 'unknown';
+  }
+
   /**
    * 对齐 Web 侧上传前预请求：
    * GET /p/api/v2 或 v1 /photo/upload/path（不同 NAS 版本只实现其一）。
@@ -524,6 +641,10 @@ export class FnHttpClientUploadOps {
                 ? Math.floor(Number(errCodeRaw))
                 : 0;
               if (errTxt.length > 0 || errCode !== 0) {
+                if (FnHttpClientUploadOps.isDuplicateUploadMessage(errTxt)) {
+                  const dupRes: UploadNoticeResult = { ok: true, message: '已存在' };
+                  return dupRes;
+                }
                 lastMsg = errTxt.length > 0 ? errTxt : `notice errorCode=${errCode}`;
                 continue;
               }
@@ -878,6 +999,9 @@ export class FnHttpClientUploadOps {
       }
     }
     if (!noticed) {
+      if (FnHttpClientUploadOps.isDuplicateUploadMessage(failReason)) {
+        return { success: true, message: '照片已存在' };
+      }
       const verified = await this.verifyUploadedAppeared(fileName, payload.byteLength);
       if (verified) {
         return { success: true, message: '上传成功（已入库）' };

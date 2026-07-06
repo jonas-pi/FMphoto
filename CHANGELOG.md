@@ -2,6 +2,25 @@
 
 本文件记录 FMphoto 各版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 新增
+
+- **全自动相册同步（开发者自用）**：对比本机相册与 NAS 全库指纹，支持待同步角标、一键批量上传；无 `READ_IMAGEVIDEO` 权限时自动回退为系统相册 Picker 手动选图（最多 500 张）。
+- **传输队列**：上传、下载、同步任务统一进度展示。
+- **媒体分类加载修复**：照片/视频/RAW/动图等分类页首屏裁剪后，通过 `prefetchedRemainder` 与 `getCategoryPhotos` 续拉全量，避免只显示部分条目。
+
+### 说明
+
+- **关于全自动同步的开放范围**：功能已在源码中实现，但依赖鸿蒙受控权限 `ohos.permission.READ_IMAGEVIDEO`（须签名 Profile 含 ACL）。**公开发布的安装包无法默认向所有用户开放该能力**；如有需要请自行在华为开发者中心为**你的包名**申请权限并本地签名安装。详见 [README — 本地相册同步与受控权限](README.md#本地相册同步与受控权限)。
+- **仓库安全**：`build-profile.json5` 及 `.p12` / `.p7b` 等签名材料已移出版本库，请使用 `build-profile.json5.example` 在本地配置。
+
+### 改进
+
+- 登录端点选择、会话偏好与分类打开逻辑抽取为共用模块（`MediaCategoryOpenHelper` 等）。
+
+---
+
 ## [1.0.10] - 2026-06-24
 
 ### 新增

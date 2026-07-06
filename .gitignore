@@ -1,6 +1,16 @@
 /node_modules
 /oh_modules
 /local.properties
+
+# 本地签名与密钥（切勿提交）
+/build-profile.json5
+*.p12
+*.p7b
+*.cer
+*.pem
+*.jks
+*.keystore
+*.csr
 /.idea
 /.cursor
 /.cursorrules

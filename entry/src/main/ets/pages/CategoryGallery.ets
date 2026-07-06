@@ -12,6 +12,7 @@ import {
   isVideoItem,
   nasUrl,
   pickThumb,
+  thumbIdentityOfItem,
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
@@ -607,13 +608,37 @@ struct CategoryGallery {
     }
   }
 
+  private appendCategoryItemsDeduped(
+    token: number,
+    seenIds: Set<string>,
+    incoming: GalleryListItem[],
+    pendingAppendItems: GalleryListItem[]
+  ): GalleryListItem[] {
+    const appendItems: GalleryListItem[] = [];
+    for (let i = 0; i < incoming.length; i++) {
+      const one = incoming[i];
+      const id = this.itemIdOf(one);
+      if (id.length > 0 && seenIds.has(id)) {
+        continue;
+      }
+      if (id.length > 0) {
+        seenIds.add(id);
+      }
+      appendItems.push(one);
+    }
+    if (appendItems.length <= 0) {
+      return pendingAppendItems;
+    }
+    return pendingAppendItems.concat(appendItems);
+  }
+
   private async loadRemainingCategoryItems(token: number): Promise<void> {
     if (token !== this.pageSessionToken) {
       return;
     }
     const categoryKey = this.pageCategoryKey;
-    const expectedTotal = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
-    if (categoryKey.length === 0 || expectedTotal <= this.flatItems.length) {
+    const hasPrefetch = CategoryGalleryNavStore.hasPrefetchedRemainder();
+    if (categoryKey.length === 0 && !hasPrefetch) {
       return;
     }
     const client = AppSession.getClient();
@@ -626,7 +651,6 @@ struct CategoryGallery {
       seenIds.add(this.itemIdOf(this.flatItems[i]));
     }
     const pageSize = 200;
-    let offset = this.flatItems.length;
     let pendingAppendItems: GalleryListItem[] = [];
     const flushPendingAppendItems = (): void => {
       if (pendingAppendItems.length <= 0) {
@@ -635,30 +659,53 @@ struct CategoryGallery {
       CategoryGalleryNavStore.appendItems(token, pendingAppendItems);
       pendingAppendItems = [];
     };
+    hilog.warn(
+      DOMAIN,
+      TAG,
+      'loadRemaining start token=%{public}d key=%{public}s flat=%{public}d prefetched=%{public}d searchFetched=%{public}d expected=%{public}d',
+      token,
+      categoryKey,
+      this.flatItems.length,
+      CategoryGalleryNavStore.prefetchedRemainder.length,
+      CategoryGalleryNavStore.searchFetchedCount,
+      CategoryGalleryNavStore.expectedTotalCount
+    );
     try {
-      while (token === CategoryGalleryNavStore.currentToken() && offset < expectedTotal) {
+      while (token === CategoryGalleryNavStore.currentToken() &&
+        CategoryGalleryNavStore.hasPrefetchedRemainder()) {
+        const batch = CategoryGalleryNavStore.takePrefetchedBatch(CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS);
+        if (batch.length <= 0) {
+          break;
+        }
+        pendingAppendItems = this.appendCategoryItemsDeduped(token, seenIds, batch, pendingAppendItems);
+        if (pendingAppendItems.length >= CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS) {
+          flushPendingAppendItems();
+        }
+      }
+      flushPendingAppendItems();
+      if (categoryKey.length === 0) {
+        return;
+      }
+      let offset = Math.max(CategoryGalleryNavStore.searchFetchedCount, CategoryGalleryNavStore.items.length);
+      while (token === CategoryGalleryNavStore.currentToken()) {
         const res = await client.getCategoryPhotos(categoryKey, pageSize, offset);
         if (!res.success || res.data === undefined || res.data.length === 0) {
+          hilog.warn(
+            DOMAIN,
+            TAG,
+            'loadRemaining api stop key=%{public}s offset=%{public}d ok=%{public}s count=%{public}d msg=%{public}s',
+            categoryKey,
+            offset,
+            res.success ? 'true' : 'false',
+            res.data !== undefined ? res.data.length : 0,
+            res.message ?? ''
+          );
           break;
         }
         const incoming = res.data;
-        const appendItems: GalleryListItem[] = [];
-        for (let i = 0; i < incoming.length; i++) {
-          const one = incoming[i];
-          const id = this.itemIdOf(one);
-          if (id.length > 0 && seenIds.has(id)) {
-            continue;
-          }
-          if (id.length > 0) {
-            seenIds.add(id);
-          }
-          appendItems.push(one);
-        }
-        if (appendItems.length > 0) {
-          pendingAppendItems = pendingAppendItems.concat(appendItems);
-          if (pendingAppendItems.length >= CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS) {
-            flushPendingAppendItems();
-          }
+        pendingAppendItems = this.appendCategoryItemsDeduped(token, seenIds, incoming, pendingAppendItems);
+        if (pendingAppendItems.length >= CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS) {
+          flushPendingAppendItems();
         }
         offset += incoming.length > 0 ? incoming.length : pageSize;
         if (incoming.length < pageSize) {
@@ -666,6 +713,14 @@ struct CategoryGallery {
         }
       }
       flushPendingAppendItems();
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'loadRemaining done token=%{public}d total=%{public}d expected=%{public}d',
+        token,
+        CategoryGalleryNavStore.items.length,
+        CategoryGalleryNavStore.expectedTotalCount
+      );
     } finally {
       CategoryGalleryNavStore.setBackgroundLoading(token, false);
     }
@@ -679,10 +734,7 @@ struct CategoryGallery {
     if (CategoryGalleryNavStore.backgroundLoading) {
       return;
     }
-    if (this.pageCategoryKey.length === 0) {
-      return;
-    }
-    if (CategoryGalleryNavStore.expectedTotalCount <= this.flatItems.length) {
+    if (this.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
       return;
     }
     void this.loadRemainingCategoryItems(token);
@@ -690,10 +742,7 @@ struct CategoryGallery {
 
   private scheduleCategoryBackgroundLoad(): void {
     this.clearCgDeferredBackgroundLoadTimer();
-    if (this.pageCategoryKey.length === 0) {
-      return;
-    }
-    if (CategoryGalleryNavStore.expectedTotalCount <= this.flatItems.length) {
+    if (this.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
       return;
     }
     const delayMs = this.pageCategoryKey === 'photo' ? 240 : 96;
@@ -937,6 +986,8 @@ struct CategoryGallery {
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
         paused: this.cgThumbLoadingPaused,
+        cacheIdentity: thumbIdentityOfItem(item),
+        cacheRank: 3
       })
         .width('100%')
         .aspectRatio(1)

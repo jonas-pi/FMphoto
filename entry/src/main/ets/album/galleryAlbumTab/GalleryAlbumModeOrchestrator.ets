@@ -12,13 +12,20 @@ import {
 import { AppSession } from '../../auth/AppSession';
 import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
 import { FN_GLOBAL_TAB_SWITCH_OFFSET_VP, FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { CATEGORY_GALLERY_INITIAL_RENDER_CAP, CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
+import { CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
 import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
-import { runAutoSync, AutoSyncSheetHost } from '../GalleryAutoSyncSheet';
+import { AutoSyncRunnerCallbacks, runAutoSyncInBackground } from '../GalleryAutoSyncSheet';
 import { LocalPhotoEntry } from '../GalleryAutoSyncService';
+import { filterUnsyncedPickerUrisWithFingerprints, fileNameFromPickerUri, fileSizeFromPickerUri } from '../GalleryAutoSyncPicker';
+import { fnEnsureReadImageVideoGranted } from '../../common/FnMediaPermission';
+import { FnTransferDirection, fnTransferDirectionLabel } from '../../common/FnTransferProgress';
+import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
+import { GalleryAutoSyncLedger } from '../GalleryAutoSyncLedger';
+import { GalleryAutoSyncNasIndex } from '../GalleryAutoSyncNasIndex';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
+import { openMediaCategoryGallery, openingTextForCategory } from '../MediaCategoryOpenHelper';
 import {
   galleryMediaCategoryModeLoader,
   galleryPersonModeLoader,
@@ -27,19 +34,14 @@ import {
   loadRecentAddedItems
 } from './GalleryAlbumModeLoaders';
 import {
-  CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP,
-  categoryCount,
-  categoryCover,
-  categoryLocalMediaCount,
   categoryTitle,
-  parseCategoryMedia,
   personId,
   personName
 } from './GalleryAlbumModeData';
-import { nasUrl } from '../GalleryAlbumCommon';
 import { GALLERY_UPLOAD_RECHECK_MS } from './GalleryAlbumTabConstants';
 
-export interface GalleryAlbumModeOrchestratorHost {
+/** 相册模式编排宿主 */
+export interface GalleryAlbumModeOrchestratorHost extends AutoSyncRunnerCallbacks {
   getUIContext(): UIContext;
   baseUrl: string;
   modeSwitchOpacity: number;
@@ -70,16 +72,13 @@ export interface GalleryAlbumModeOrchestratorHost {
   personStatGen: number;
   recentOpening: boolean;
   collectOpening: boolean;
-  uploading: boolean;
-  uploadText: string;
   syncBadgeCount: number;
   lastBootstrapSatisfiedRefreshVersion: number;
   exitGallerySelection(): void;
-  requestBootstrap(forceImmediate: boolean): void;
+  requestBootstrap(debounced: boolean): void;
   bootstrap(showFullBleedSkeleton?: boolean): Promise<void>;
   itemIdOf(item: GalleryListItem): string;
   createNavigationGuard(): () => boolean;
-  toast(msg: string): void;
 }
 
 function clearAllSubModeFlags(host: GalleryAlbumModeOrchestratorHost): void {
@@ -212,7 +211,8 @@ export function galleryAlbumTryConsumeHardwareBack(host: GalleryAlbumModeOrchest
 }
 
 export function galleryAlbumStartUpload(host: GalleryAlbumModeOrchestratorHost): void {
-  if (host.uploading) {
+  if (FnTransferQueueStore.hasRunning()) {
+    host.toast('已有传输任务进行中');
     return;
   }
   host.exitGallerySelection();
@@ -238,46 +238,93 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
   if (uris.length === 0) {
     return;
   }
-  host.uploading = true;
-  host.uploadText = `上传中 0/${uris.length}…`;
-  let ok = 0;
-  let firstFailMsg = '';
-  const stored = AppSession.getStored();
-  const albumDirHint =
-    stored !== null && stored.albumParentGuid.trim().length > 0 ? stored.albumParentGuid.trim() : undefined;
-  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  try {
-    await BackgroundKeepAliveController.withDataTransfer(ctx, 'album-upload', async (): Promise<void> => {
-  for (let i = 0; i < uris.length; i++) {
-    host.uploadText = `上传中 ${i + 1}/${uris.length}…`;
-    const res = await client.uploadPhotoByUri(uris[i], 150000, albumDirHint);
-    if (res.success) {
-      ok++;
-    } else if (firstFailMsg.length === 0) {
-      const em = res.message ?? '';
-      firstFailMsg = em.length > 0 ? em : '上传失败';
-    }
-  }
-    });
-  } finally {
-    host.uploading = false;
-    host.uploadText = '';
-  }
-  if (ok > 0) {
-    host.toast(`上传完成 ${ok}/${uris.length}`);
-    GalleryTimelineRefreshStore.bump();
-    host.requestBootstrap(false);
-    setTimeout((): void => {
-      void host.bootstrap(false);
-    }, GALLERY_UPLOAD_RECHECK_MS);
-  } else {
-    host.toast(firstFailMsg.length > 0 ? firstFailMsg : '上传失败，请稍后重试');
-  }
+  galleryAlbumUploadUriListInBackground(host, uris, FnTransferDirection.UPLOAD, 'album-upload', '上传');
 }
 
 /**
- * 触发自动同步检测（非阻塞）。
- * 在 bootstrap 完成后调用，检测本地未同步的照片并更新徽章计数。
+ * 从「更多」菜单启动本地同步。
+ * 优先全量扫描（READ_IMAGEVIDEO ACL）；无权限时回退 Picker 选图。
+ */
+export function galleryAlbumStartAutoSync(
+  host: GalleryAlbumModeOrchestratorHost,
+  timelineItems: GalleryListItem[]
+): void {
+  if (FnTransferQueueStore.hasRunning()) {
+    host.toast('已有传输任务进行中');
+    return;
+  }
+  host.exitGallerySelection();
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  void (async (): Promise<void> => {
+    try {
+      const client = AppSession.getClient();
+      if (client === null) {
+        host.toast('未登录');
+        return;
+      }
+      const granted = await fnEnsureReadImageVideoGranted(ctx);
+      if (granted) {
+        const checkId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '扫描本地相册', 0);
+        const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
+        FnTransferQueueStore.finish(
+          checkId,
+          true,
+          result.unsynced.length === 0
+            ? `均已同步（跳过 NAS ${result.skippedOnNas} / 账本 ${result.skippedInLedger}）`
+            : `发现 ${result.unsynced.length} 张待同步`
+        );
+        host.syncBadgeCount = result.unsynced.length;
+        if (result.unsynced.length === 0) {
+          host.toast('没有需要同步的照片');
+          return;
+        }
+        galleryAlbumRunAutoSync(host, result.unsynced);
+        return;
+      }
+      host.toast('未获得相册读取权限，请手动选择照片');
+      await galleryAlbumPickAndSync(host);
+    } catch (e) {
+      hilog.warn(0xFF00, 'AutoSync', 'galleryAlbumStartAutoSync failed: %{public}s', String(e));
+      host.toast('同步失败，请稍后重试');
+    }
+  })();
+}
+
+async function galleryAlbumPickAndSync(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
+  const client = AppSession.getClient();
+  if (client === null) {
+    host.toast('未登录');
+    return;
+  }
+  let uris: string[] = [];
+  try {
+    const opt = new photoAccessHelper.PhotoSelectOptions();
+    opt.maxSelectNumber = 500;
+    opt.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_VIDEO_TYPE;
+    const out = await new photoAccessHelper.PhotoViewPicker().select(opt);
+    uris = out.photoUris ?? [];
+  } catch (_e) {
+    return;
+  }
+  if (uris.length === 0) {
+    return;
+  }
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  const nasFingerprints = await GalleryAutoSyncNasIndex.getFingerprints(client, true);
+  const ledger = await GalleryAutoSyncLedger.load(ctx);
+  const toUpload = filterUnsyncedPickerUrisWithFingerprints(uris, nasFingerprints, ledger);
+  if (toUpload.length === 0) {
+    host.toast('所选照片已在 NAS 中');
+    return;
+  }
+  if (toUpload.length < uris.length) {
+    host.toast(`已跳过 ${uris.length - toUpload.length} 张已同步照片`);
+  }
+  galleryAlbumUploadUriListInBackground(host, toUpload, FnTransferDirection.SYNC, 'auto-sync', '同步');
+}
+
+/**
+ * Bootstrap 后后台检测未同步数量（非阻塞）。
  */
 export function galleryAlbumTriggerAutoSync(
   host: GalleryAlbumModeOrchestratorHost,
@@ -289,29 +336,67 @@ export function galleryAlbumTriggerAutoSync(
   });
 }
 
-/**
- * 执行自动同步（从同步弹窗调用）。
- */
-export async function galleryAlbumRunAutoSync(
+export function galleryAlbumRunAutoSync(
   host: GalleryAlbumModeOrchestratorHost,
   photos: LocalPhotoEntry[]
-): Promise<void> {
+): void {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  class AutoSyncSheetHostImpl implements AutoSyncSheetHost {
-    syncSheetVisible: boolean = false;
-    syncing: boolean = false;
-    syncProgressText: string = '';
-    unsyncedPhotos: LocalPhotoEntry[] = photos;
-    toast(msg: string): void {
-      host.toast(msg);
-    }
-    requestBootstrap(debounced: boolean): void {
-      host.requestBootstrap(debounced);
-    }
-  }
-  const sheetHost = new AutoSyncSheetHostImpl();
-  await runAutoSync(sheetHost, ctx);
+  runAutoSyncInBackground(ctx, photos, host);
   host.syncBadgeCount = GalleryAutoSyncStore.getUnsyncedCount();
+}
+
+function galleryAlbumUploadUriListInBackground(
+  host: GalleryAlbumModeOrchestratorHost,
+  uris: string[],
+  direction: FnTransferDirection,
+  keepAliveTag: string,
+  doneVerb: string
+): void {
+  const client = AppSession.getClient();
+  if (client === null) {
+    host.toast('未登录');
+    return;
+  }
+  if (uris.length === 0) {
+    return;
+  }
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  const label = fnTransferDirectionLabel(direction);
+  void (async (): Promise<void> => {
+    const taskId = FnTransferQueueStore.begin(direction, label, uris.length);
+    let ok = 0;
+    let firstFailMsg = '';
+    const stored = AppSession.getStored();
+    const albumDirHint =
+      stored !== null && stored.albumParentGuid.trim().length > 0 ? stored.albumParentGuid.trim() : undefined;
+    try {
+      await BackgroundKeepAliveController.withDataTransfer(ctx, keepAliveTag, async (): Promise<void> => {
+        for (let i = 0; i < uris.length; i++) {
+          FnTransferQueueStore.update(taskId, i + 1, fileNameFromPickerUri(uris[i]));
+          const res = await client.uploadPhotoByUri(uris[i], 150000, albumDirHint);
+          if (res.success) {
+            ok++;
+          } else if (firstFailMsg.length === 0) {
+            const em = res.message ?? '';
+            firstFailMsg = em.length > 0 ? em : `${doneVerb}失败`;
+          }
+        }
+      });
+    } finally {
+      const summary = ok > 0 ? `${doneVerb}完成 ${ok}/${uris.length}` : (firstFailMsg.length > 0 ? firstFailMsg : `${doneVerb}失败`);
+      FnTransferQueueStore.finish(taskId, ok > 0, summary);
+    }
+    if (ok > 0) {
+      host.toast(`${doneVerb}完成 ${ok}/${uris.length}`);
+      GalleryTimelineRefreshStore.bump();
+      host.requestBootstrap(false);
+      setTimeout((): void => {
+        void host.bootstrap(false);
+      }, GALLERY_UPLOAD_RECHECK_MS);
+    } else {
+      host.toast(firstFailMsg.length > 0 ? firstFailMsg : `${doneVerb}失败，请稍后重试`);
+    }
+  })();
 }
 
 export async function galleryAlbumLoadMediaCategories(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
@@ -476,66 +561,15 @@ export async function galleryAlbumOpenCategory(
   }
   host.categoryOpening = true;
   const isActive = host.createNavigationGuard();
-  const title = categoryTitle(cat);
-  const categoryKey = cat.key !== undefined ? cat.key : '';
-  host.categoryOpeningText = categoryKey === 'photo' ? '加载照片中…' : `打开${title}中…`;
-  const initialRenderCap = categoryKey === 'photo'
-    ? CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP
-    : CATEGORY_GALLERY_INITIAL_RENDER_CAP;
-  const localMediaCount = categoryLocalMediaCount(cat);
-  const local = parseCategoryMedia(
-    cat,
-    categoryKey.length > 0 ? initialRenderCap : -1
-  );
-  const heroRel = categoryCover(cat);
-  const heroImageUri = heroRel.length > 0 ? nasUrl(host.baseUrl, heroRel) : '';
-  const expectedTotalCount = Math.max(categoryCount(cat), localMediaCount, local.length);
-  hilog.warn(
-    0xFF00,
-    'GalleryDiag',
-    'openCategory title=%{public}s key=%{public}s localMediaCount=%{public}d localInitial=%{public}d expectedTotal=%{public}d',
-    title,
-    categoryKey,
-    localMediaCount,
-    local.length,
-    expectedTotalCount
-  );
+  const categoryKey = cat.key !== undefined ? cat.key.trim().toLowerCase() : '';
+  host.categoryOpeningText = openingTextForCategory(categoryKey, categoryTitle(cat));
   try {
-    if (local.length > 0) {
-      if (!isActive()) {
-        return;
+    await openMediaCategoryGallery(host.baseUrl, cat, host.getUIContext(), {
+      isActive: isActive,
+      onToast: (msg: string): void => {
+        host.toast(msg);
       }
-      CategoryGalleryNavStore.open(
-        host.baseUrl,
-        title,
-        local,
-        host.getUIContext(),
-        false,
-        { expectedTotalCount, categoryKey, heroImageUri }
-      );
-      return;
-    }
-    const client = AppSession.getClient();
-    if (client === null) {
-      host.toast('未登录');
-      return;
-    }
-    const fetched = await client.searchResultsByCategory(cat);
-    if (!isActive()) {
-      return;
-    }
-    if (!fetched.success || fetched.data === undefined || fetched.data.length === 0) {
-      host.toast(fetched.message ?? '该分类暂无可预览媒体');
-      return;
-    }
-    CategoryGalleryNavStore.open(
-      host.baseUrl,
-      title,
-      fetched.data,
-      host.getUIContext(),
-      false,
-      { expectedTotalCount, categoryKey, heroImageUri }
-    );
+    });
   } finally {
     host.categoryOpening = false;
   }

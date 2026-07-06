@@ -1915,7 +1915,9 @@ export class FnHttpClientGalleryOps {
       }
     }
 
-    const countRaw = raw['count'] ?? raw['total'];
+    const countRaw =
+      raw['count'] ?? raw['total'] ?? raw['itemCount'] ?? raw['item_count'] ??
+      raw['num'] ?? raw['size'] ?? raw['photoCount'] ?? raw['photo_count'];
     if (countRaw !== undefined) {
       const n = Number(countRaw);
       if (Number.isFinite(n) && n >= 0) {

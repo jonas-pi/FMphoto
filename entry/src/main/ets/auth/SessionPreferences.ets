@@ -8,6 +8,8 @@ const K_BASE_URL = 'base_url';
 const K_TOKEN = 'token';
 const K_ACCOUNT = 'account';
 const K_DOMAIN_INPUT = 'domain_input';
+const K_LAN_INPUT = 'lan_input';
+const K_LOGIN_ENDPOINT_PREF = 'login_endpoint_pref';
 const K_USE_HTTPS = 'use_https';
 const K_ALBUM_PARENT = 'album_parent_guid';
 const K_TRUSTED = 'trusted_hosts_json';
@@ -26,6 +28,8 @@ export interface StoredSession {
   token: string;
   account: string;
   domainInput: string;
+  lanInput: string;
+  loginEndpointPreference: string;
   useHttps: boolean;
   albumParentGuid: string;
   trustedHosts: string[];
@@ -38,6 +42,8 @@ export interface StoredSession {
 
 export interface LoginFormDefaults {
   domainInput: string;
+  lanInput: string;
+  loginEndpointPreference: string;
   username: string;
   password: string;
   useHttps: boolean;
@@ -113,6 +119,8 @@ export class SessionPreferences {
       prefsGetString(p, K_BASE_URL, ''),
       prefsGetString(p, K_ACCOUNT, ''),
       prefsGetString(p, K_DOMAIN_INPUT, ''),
+      prefsGetString(p, K_LAN_INPUT, ''),
+      prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       prefsGetString(p, K_USE_HTTPS, '1'),
       prefsGetString(p, K_ALBUM_PARENT, ''),
       prefsGetString(p, K_TRUSTED, '[]'),
@@ -127,14 +135,16 @@ export class SessionPreferences {
       token: token,
       account: prefsValues[1],
       domainInput: prefsValues[2],
-      useHttps: prefsValues[3] === '1',
-      albumParentGuid: prefsValues[4],
-      trustedHosts: parseTrustedHostsSafe(prefsValues[5]),
-      fnosLongToken: prefsValues[6],
-      loginViaWebSocket: prefsValues[7] === '1',
-      wsSignKeyB64: prefsValues[8],
-      openApiAuthxKey: prefsValues[9],
-      openApiAuthxSecret: prefsValues[10]
+      lanInput: prefsValues[3],
+      loginEndpointPreference: prefsValues[4].length > 0 ? prefsValues[4] : 'auto',
+      useHttps: prefsValues[5] === '1',
+      albumParentGuid: prefsValues[6],
+      trustedHosts: parseTrustedHostsSafe(prefsValues[7]),
+      fnosLongToken: prefsValues[8],
+      loginViaWebSocket: prefsValues[9] === '1',
+      wsSignKeyB64: prefsValues[10],
+      openApiAuthxKey: prefsValues[11],
+      openApiAuthxSecret: prefsValues[12]
     };
   }
 
@@ -144,6 +154,8 @@ export class SessionPreferences {
     await prefsPutString(p, K_TOKEN, s.token);
     await prefsPutString(p, K_ACCOUNT, s.account);
     await prefsPutString(p, K_DOMAIN_INPUT, s.domainInput);
+    await prefsPutString(p, K_LAN_INPUT, s.lanInput);
+    await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, s.loginEndpointPreference);
     await prefsPutString(p, K_USE_HTTPS, s.useHttps ? '1' : '0');
     await prefsPutString(p, K_ALBUM_PARENT, s.albumParentGuid);
     await prefsPutString(p, K_TRUSTED, JSON.stringify(s.trustedHosts));
@@ -177,6 +189,8 @@ export class SessionPreferences {
     const p = await openPrefs(ctx);
     return {
       domainInput: await prefsGetString(p, K_DOMAIN_INPUT, ''),
+      lanInput: await prefsGetString(p, K_LAN_INPUT, ''),
+      loginEndpointPreference: await prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       username: await prefsGetString(p, K_ACCOUNT, ''),
       password: await prefsGetString(p, K_LAST_PASSWORD, ''),
       useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1'

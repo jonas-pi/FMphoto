@@ -12,6 +12,7 @@ export {
   collectSmartCategoryItems,
   personName,
   personFace,
+  personCacheIdentity,
   personId,
   personStatText,
   collectPersonItems

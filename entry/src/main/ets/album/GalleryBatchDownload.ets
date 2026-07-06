@@ -7,6 +7,8 @@ import { fileIo, fileUri as fileUriUtil } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { AppSession } from '../auth/AppSession';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
+import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTransferProgress';
+import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { copyGalleryUriContentToAlbumUri } from './GalleryAlbumSaveToAlbum';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from './GalleryAlbumCommon';
@@ -113,6 +115,18 @@ export function galleryItemsMatchingSelectedIds(
  * 批量下载：先拉到应用缓存，再弹系统相册保存确认。
  * 图片仍按原逻辑可选原图/缩略图，视频始终下载原文件。
  */
+export function runBatchDownloadGalleryItemsInBackground(
+  baseUrl: string,
+  items: GalleryListItem[],
+  hostContext: common.UIAbilityContext,
+  toastMsg: (msg: string) => void,
+  askBatchImageQuality: () => Promise<'original' | 'thumb' | 'cancel'>
+): void {
+  void (async (): Promise<void> => {
+    await runBatchDownloadGalleryItems(baseUrl, items, hostContext, toastMsg, askBatchImageQuality);
+  })();
+}
+
 export async function runBatchDownloadGalleryItems(
   baseUrl: string,
   items: GalleryListItem[],
@@ -147,12 +161,15 @@ export async function runBatchDownloadGalleryItems(
   }
 
   BackgroundKeepAliveController.beginDataTransfer(hostContext, 'batch-download');
+  const label = fnTransferDirectionLabel(FnTransferDirection.DOWNLOAD);
+  const taskId = FnTransferQueueStore.begin(FnTransferDirection.DOWNLOAD, label, items.length);
   try {
   const preparedFileUris: string[] = [];
   const preparedConfigs: photoAccessHelper.PhotoCreationConfig[] = [];
   const tempPaths: string[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
+    FnTransferQueueStore.update(taskId, i + 1, suggestedBaseName(it, i));
     const isVideo = isVideoItem(it);
     let url = '';
     if (isVideo) {
@@ -209,6 +226,7 @@ export async function runBatchDownloadGalleryItems(
   }
 
   if (preparedFileUris.length === 0) {
+    FnTransferQueueStore.finish(taskId, false, '没有可下载的项目');
     toastMsg('没有可下载的项目');
     return;
   }
@@ -216,13 +234,16 @@ export async function runBatchDownloadGalleryItems(
   try {
     const savedCount = await copyPreparedFilesToAlbum(preparedFileUris, preparedConfigs, hostContext);
     if (savedCount < 0) {
+      FnTransferQueueStore.finish(taskId, false, '保存失败');
       toastMsg('保存失败，请重试');
       return;
     }
     if (savedCount === 0) {
+      FnTransferQueueStore.finish(taskId, true, '已取消保存');
       toastMsg('已取消保存');
       return;
     }
+    FnTransferQueueStore.finish(taskId, true, `已保存 ${savedCount}/${items.length} 项`);
     toastMsg(`已保存 ${savedCount}/${items.length} 项`);
   } catch (_e) {
     toastMsg('保存失败，请重试');

@@ -9,6 +9,7 @@ import {
   fnLoadImmersiveLightPreference,
   fnSetImmersiveLightEnabled
 } from '../common/FnImmersiveSettings';
+import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 
 /** 应用日志域（与网络模块 FnHttp 同域便于筛选，取值需在 0x0～0xFFFF） */
 const DOMAIN = 0xFF00;
@@ -27,6 +28,7 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, LOG_TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onCreate');
+    FnTransferQueueStore.ensureStorage();
   }
 
   /** 系统深浅色模式切换时同步更新 AppStorage，使所有 @StorageProp('colorMode') 组件立即响应 */

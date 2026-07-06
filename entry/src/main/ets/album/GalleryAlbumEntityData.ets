@@ -155,8 +155,29 @@ export function categoryTitle(item: MediaCategoryItem): string {
 }
 
 export function categoryCount(item: MediaCategoryItem): number {
-  const c = item.count ?? item.total;
-  return c !== undefined && Number.isFinite(Number(c)) ? Math.max(0, Math.floor(Number(c))) : 0;
+  const directVals: Array<number | string | undefined> = [
+    item.count,
+    item.total,
+    (item as LooseGalleryCoverRecord)['itemCount'] as number | string | undefined,
+    (item as LooseGalleryCoverRecord)['item_count'] as number | string | undefined,
+    (item as LooseGalleryCoverRecord)['num'] as number | string | undefined,
+    (item as LooseGalleryCoverRecord)['size'] as number | string | undefined,
+    (item as LooseGalleryCoverRecord)['photoCount'] as number | string | undefined,
+    (item as LooseGalleryCoverRecord)['photo_count'] as number | string | undefined,
+  ];
+  for (let i = 0; i < directVals.length; i++) {
+    const v = directVals[i];
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      return Math.max(0, Math.floor(v));
+    }
+    if (typeof v === 'string') {
+      const n = Number(v);
+      if (Number.isFinite(n)) {
+        return Math.max(0, Math.floor(n));
+      }
+    }
+  }
+  return 0;
 }
 
 export function categoryCover(item: MediaCategoryItem): string {
@@ -338,6 +359,19 @@ export function personId(item: AiPersonItem): string {
     return '';
   }
   return String(id);
+}
+
+export function personCacheIdentity(item: AiPersonItem): string {
+  const pid = personId(item);
+  if (pid.length > 0) {
+    return `person:${pid}`;
+  }
+  const face = personFace(item);
+  if (face.length > 0) {
+    return `face:${face}`;
+  }
+  const name = personName(item).trim();
+  return name.length > 0 ? `name:${name}` : '';
 }
 
 export function personStatText(item: AiPersonItem, overrides: Map<string, string>): string {

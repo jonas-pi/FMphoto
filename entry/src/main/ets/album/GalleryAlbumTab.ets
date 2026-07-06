@@ -109,6 +109,7 @@ import {
   categoryTitle,
   parseCategoryMedia,
   personFace,
+  personCacheIdentity,
   personId,
   personName,
   personStatText,
@@ -197,6 +198,7 @@ import {
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
   galleryAlbumStartUpload,
+  galleryAlbumStartAutoSync,
   galleryAlbumTriggerAutoSync,
 } from './galleryAlbumTab/GalleryAlbumModeOrchestrator';
 import {
@@ -489,9 +491,6 @@ export struct GalleryAlbumTab {
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
-  /** 上传状态 */
-  @State private uploading: boolean = false;
-  @State private uploadText: string = '';
   @State private autoSyncBadgeCount: number = 0;
   /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
   @State private gallerySelectionMode: boolean = false;
@@ -1163,10 +1162,6 @@ export struct GalleryAlbumTab {
       set recentOpening(value: boolean) { self.recentOpening = value; }
       get collectOpening(): boolean { return self.collectOpening; }
       set collectOpening(value: boolean) { self.collectOpening = value; }
-      get uploading(): boolean { return self.uploading; }
-      set uploading(value: boolean) { self.uploading = value; }
-      get uploadText(): string { return self.uploadText; }
-      set uploadText(value: string) { self.uploadText = value; }
       get syncBadgeCount(): number { return self.autoSyncBadgeCount; }
       set syncBadgeCount(value: number) { self.autoSyncBadgeCount = value; }
       get lastBootstrapSatisfiedRefreshVersion(): number { return self.lastBootstrapSatisfiedRefreshVersion; }
@@ -2326,6 +2321,19 @@ export struct GalleryAlbumTab {
     galleryAlbumEnterGallerySelectionModeFromToolbar(this.asLifecycleHost());
   }
 
+  private shouldShowAutoSyncInMoreMenu(): boolean {
+    return this.homeSurface === 'photos' && !this.inSearchMode && !this.inCategoryMode &&
+      !this.inSmartCategoryMode && !this.inPersonMode;
+  }
+
+  private startAutoSyncFromMoreMenu(): void {
+    this.dismissMoreMenu();
+    galleryAlbumStartAutoSync(
+      this.asModeOrchestratorHost(),
+      galleryAlbumCollectListedTimelineItems(this.sections)
+    );
+  }
+
   private async startGallerySlideshow(config: GallerySlideshowConfig): Promise<void> {
     if (this.slideshowPreparing) {
       return;
@@ -2581,11 +2589,16 @@ export struct GalleryAlbumTab {
             expanded: this.moreMenuExpanded,
             topSafeInsetVp: this.topSafeInsetVp,
             showMultiselect: this.inSearchMode,
+            showAutoSync: this.shouldShowAutoSyncInMoreMenu(),
+            autoSyncBadgeCount: this.autoSyncBadgeCount,
             onDismiss: (): void => {
               this.dismissMoreMenu();
             },
             onEnterMultiselect: (): void => {
               this.enterSearchMultiselectFromMoreMenu();
+            },
+            onStartAutoSync: (): void => {
+              this.startAutoSyncFromMoreMenu();
             },
             onOpenSlideshow: (): void => {
               this.openSlideshowSettings();
@@ -2774,6 +2787,7 @@ export struct GalleryAlbumTab {
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           getPersonName: (item: AiPersonItem): string => personName(item),
           getPersonFace: (item: AiPersonItem): string => personFace(item),
+          getPersonIdentity: (item: AiPersonItem): string => personCacheIdentity(item),
           getPersonStatText: (item: AiPersonItem): string => personStatText(item, this.personStatOverrides),
           onOpenPerson: (item: AiPersonItem): void => {
             void galleryAlbumOpenPerson(this.asModeOrchestratorHost(), item);
@@ -3124,9 +3138,6 @@ export struct GalleryAlbumTab {
       if (this.galleryBatchDeleting) {
         FnFullLoadingMask({ text: '移入回收站中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
-      if (this.galleryBatchDownloading) {
-        FnFullLoadingMask({ text: '下载中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
-      }
       if (this.recentOpening) {
         FnFullLoadingMask({ text: '加载最近添加中...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
@@ -3138,15 +3149,6 @@ export struct GalleryAlbumTab {
       }
       if (this.slideshowPreparing) {
         FnFullLoadingMask({ text: '正在准备幻灯片...', topOffsetVp: this.loadingMaskTopOffsetVp() })
-      }
-
-      if (!this.inSearchMode && !this.inCategoryMode && !this.inSmartCategoryMode && !this.inPersonMode) {
-        if (this.uploading) {
-          FnFullLoadingMask({
-            text: this.uploadText.length > 0 ? this.uploadText : '上传中...',
-            topOffsetVp: this.loadingMaskTopOffsetVp()
-          })
-        }
       }
     }
     .width('100%')

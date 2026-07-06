@@ -1136,4 +1136,17 @@ export class FnHttpClient {
   async uploadPhotoByUri(uri: string, timeoutMs: number = 120000, albumUploadDirHint?: string): Promise<FnClientResult<Object>> {
     return this.uploadOps.uploadPhotoByUri(uri, timeoutMs, albumUploadDirHint);
   }
+
+  /**
+   * 上传前查询 NAS 是否已有相同照片（官方 original_name + size + mtime 规则）。
+   * 无法判定时返回 unknown，由客户端指纹索引兜底。
+   */
+  async checkPhotoUploadExists(
+    originalName: string,
+    fileSize: number,
+    mtimeSec: number,
+    timeoutMs: number = 15000
+  ): Promise<'exists' | 'missing' | 'unknown'> {
+    return this.uploadOps.checkPhotoUploadExists(originalName, fileSize, mtimeSec, timeoutMs);
+  }
 }

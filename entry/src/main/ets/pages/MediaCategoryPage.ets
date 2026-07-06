@@ -1,11 +1,6 @@
 import { AppSession } from '../auth/AppSession';
-import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
-import {
-  CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP,
-  categoryLocalMediaCount,
-  parseCategoryMedia
-} from '../album/GalleryAlbumEntityData';
-import { GalleryListItem, MediaCategoryItem } from '../model/FnApiTypes';
+import { openMediaCategoryGallery, openingTextForCategory } from '../album/MediaCategoryOpenHelper';
+import { MediaCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
@@ -151,48 +146,22 @@ struct MediaCategoryPage {
       return;
     }
     this.opening = true;
-    const title = this.titleOf(item);
+    const categoryKey = item.key !== undefined ? item.key.trim().toLowerCase() : '';
+    this.openingText = openingTextForCategory(categoryKey, this.titleOf(item));
     try {
-      const categoryKey = item.key !== undefined ? item.key : '';
-      this.openingText = categoryKey === 'photo' ? '加载照片中…' : `打开${title}中…`;
-      const initialRenderCap = categoryKey === 'photo'
-        ? CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP
-        : -1;
-      const localMediaCount = categoryLocalMediaCount(item);
-      const local = parseCategoryMedia(item, initialRenderCap);
-      const heroImageUri = nasUrl(this.baseUrl, this.coverOf(item));
-      const expectedTotalCount = Math.max(this.countOf(item), localMediaCount, local.length);
-      if (local.length > 0) {
-        const ok = await CategoryGalleryNavStore.open(
-          this.baseUrl,
-          title,
-          local,
-          this.getUIContext(),
-          false,
-          { expectedTotalCount, categoryKey, heroImageUri }
-        );
-        if (!ok) { this.toast('打开分类失败'); }
-        return;
-      }
-      const client = AppSession.getClient();
-      if (client === null) {
-        this.toast('未登录');
-        return;
-      }
-      const fetched = await client.searchResultsByCategory(item);
-      if (!fetched.success || fetched.data === undefined || fetched.data.length === 0) {
-        this.toast(fetched.message ?? '该分类暂无可预览媒体');
-        return;
-      }
-      const ok = await CategoryGalleryNavStore.open(
+      const ok = await openMediaCategoryGallery(
         this.baseUrl,
-        title,
-        fetched.data,
+        item,
         this.getUIContext(),
-        false,
-        { expectedTotalCount, categoryKey, heroImageUri }
+        {
+          onToast: (msg: string): void => {
+            this.toast(msg);
+          }
+        }
       );
-      if (!ok) { this.toast('打开分类失败'); }
+      if (!ok) {
+        this.toast('打开分类失败');
+      }
     } finally {
       this.opening = false;
     }

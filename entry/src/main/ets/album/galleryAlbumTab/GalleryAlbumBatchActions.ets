@@ -2,7 +2,7 @@ import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
 import { GalleryListItem } from '../../model/FnApiTypes';
-import { galleryItemsMatchingSelectedIds, runBatchDownloadGalleryItems } from '../GalleryBatchDownload';
+import { galleryItemsMatchingSelectedIds, runBatchDownloadGalleryItemsInBackground } from '../GalleryBatchDownload';
 import { GalleryDeleteSyncStore } from '../GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
@@ -89,8 +89,8 @@ export async function galleryAlbumAskBatchDownloadImageQuality(
   }
 }
 
-export async function galleryAlbumConfirmAndBatchDownload(host: GalleryAlbumBatchActionsHost): Promise<void> {
-  if (host.gallerySelectedIds.length === 0 || host.galleryBatchDownloading) {
+export function galleryAlbumConfirmAndBatchDownload(host: GalleryAlbumBatchActionsHost): void {
+  if (host.gallerySelectedIds.length === 0) {
     return;
   }
   const list = host.inSearchMode ? host.searchResults : host.flatItems();
@@ -99,20 +99,16 @@ export async function galleryAlbumConfirmAndBatchDownload(host: GalleryAlbumBatc
     host.toast('没有可下载的项');
     return;
   }
-  host.galleryBatchDownloading = true;
-  try {
-    await runBatchDownloadGalleryItems(
-      host.baseUrl,
-      items,
-      host.getUIContext().getHostContext() as common.UIAbilityContext,
-      (msg: string): void => {
-        host.toast(msg);
-      },
-      (): Promise<'original' | 'thumb' | 'cancel'> => galleryAlbumAskBatchDownloadImageQuality(host)
-    );
-  } finally {
-    host.galleryBatchDownloading = false;
-  }
+  host.exitGallerySelection();
+  runBatchDownloadGalleryItemsInBackground(
+    host.baseUrl,
+    items,
+    host.getUIContext().getHostContext() as common.UIAbilityContext,
+    (msg: string): void => {
+      host.toast(msg);
+    },
+    (): Promise<'original' | 'thumb' | 'cancel'> => galleryAlbumAskBatchDownloadImageQuality(host)
+  );
 }
 
 export function galleryAlbumApplyDeleteSyncIfNeeded(host: GalleryAlbumBatchActionsHost): void {
