@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+---
+
+## [1.1] - 2026-07-06
+
 ### 新增
 
 - **全自动相册同步（开发者自用）**：对比本机相册与 NAS 全库指纹，支持待同步角标、一键批量上传；无 `READ_IMAGEVIDEO` 权限时自动回退为系统相册 Picker 手动选图（最多 500 张）。
@@ -61,5 +65,6 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.1]: https://github.com/jonas-pi/FMphoto/compare/v1.0.10...v1.1
 [1.0.10]: https://github.com/jonas-pi/FMphoto/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/jonas-pi/FMphoto/compare/v1.0.8...v1.0.9
