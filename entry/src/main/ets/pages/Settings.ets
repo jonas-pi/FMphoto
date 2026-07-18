@@ -2,24 +2,38 @@
  * 设置：相册 parent_guid、FN ID 说明
  */
 import { common } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
-import { AppSession } from '../auth/AppSession';
+import { LengthMetrics, window } from '@kit.ArkUI';
 import {
-  GALLERY_TOP_BAR_BUTTON_FONT_VP,
-  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_PAD_TOP_VP,
-  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
-  GALLERY_TOP_BAR_TITLE_FONT_VP
-} from '../common/GalleryTopBarLayout';
+  BlurStrategy,
+  HdsNavigation,
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationIconOptions,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarStyle,
+  HdsNavigationTitleMode,
+  TextStyleMode,
+  TitleBarContentOptions
+} from '@kit.UIDesignKit';
+import { AppSession } from '../auth/AppSession';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { FnFloatingTopPillButton } from '../common/FnUiCommon';
+import {
+  fnHdsImmersiveSystemMaterialEffect,
+  fnHdsChromeButtonBackgroundColor,
+  fnHdsChromeButtonFallbackBackgroundColor,
+  fnHdsChromeButtonForegroundColor,
+  fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrollEffectOpts,
+  FN_HDS_NAV_CHROME_HEIGHT_VP
+} from '../common/FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../common/FnImmersiveSettings';
 
 @Entry
 @Component
@@ -27,6 +41,7 @@ struct Settings {
   @State private albumParentGuid: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private systemTopInsetVp: number = 0;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   private pxToVp(value: number): number {
     try {
@@ -83,85 +98,153 @@ struct Settings {
     } catch (_e) {}
   }
 
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private persistAndBack(): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
+    void AppSession.persist(ctx).then(() => {
+      this.getUIContext().getRouter().back();
+    });
+  }
+
+  private titleBarOriginalStyle(): HdsNavigationTitleBarStyle {
+    const buttonBg: ResourceColor = this.canUseHds()
+      ? fnHdsChromeButtonBackgroundColor()
+      : fnHdsChromeButtonFallbackBackgroundColor();
+    const buttonFg: ResourceColor = this.canUseHds()
+      ? fnHdsChromeButtonForegroundColor()
+      : $r('app.color.icon_primary');
+    const textFg: ResourceColor = this.canUseHds()
+      ? $r('app.color.text_primary')
+      : $r('app.color.button_secondary_fg');
+    return {
+      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+      contentStyle: {
+        titleStyle: {
+          mainTitleColor: $r('app.color.text_primary'),
+          subTitleColor: $r('app.color.text_secondary')
+        },
+        menuStyle: {
+          backgroundColor: buttonBg,
+          iconColor: buttonFg,
+          textColor: textFg
+        },
+        backIconStyle: {
+          backgroundColor: buttonBg,
+          iconColor: buttonFg
+        }
+      }
+    };
+  }
+
+  private titleBarContent(): TitleBarContentOptions {
+    const saveContent: HdsNavigationIconOptions = {
+      label: $r('app.string.save'),
+      type: TextStyleMode.NORMAL,
+      action: (): void => {
+        this.persistAndBack();
+      }
+    };
+    const saveItem: HdsNavigationMenuItemOptions = { content: saveContent };
+    const backIcon: HdsNavigationBackButtonItemOptions = {
+      label: $r('app.string.cancel'),
+      isEnabled: true,
+      action: (): void => {
+        this.getUIContext().getRouter().back();
+      }
+    };
+    return {
+      title: { mainTitle: $r('app.string.settings') },
+      menu: { value: [saveItem] },
+      backIcon: backIcon
+    };
+  }
+
+  @Builder
+  private navigationContent() {
+    Column()
+      .width('100%')
+      .height(0)
+  }
+
   build() {
-    Column({ space: 16 }) {
-      Row() {
-        Row() {
-          FnFloatingTopPillButton({
-            text: $r('app.string.cancel'),
-            action: (): void => {
-              this.getUIContext().getRouter().back();
-            }
-          })
+    Column() {
+      Column() {
+        HdsNavigation() {
+          this.navigationContent()
         }
-        .layoutWeight(1)
-        .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-        .justifyContent(FlexAlign.Start)
-
-        Text($r('app.string.settings'))
-          .layoutWeight(2)
-          .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .fontColor($r('app.color.text_primary'))
-
-        Row() {
-          FnFloatingTopPillButton({
-            text: $r('app.string.save'),
-            prominent: true,
-            action: (): void => {
-              const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-              AppSession.updateAlbumParentGuid(this.albumParentGuid.trim());
-              void AppSession.persist(ctx).then(() => {
-                this.getUIContext().getRouter().back();
-              });
+        .width('100%')
+        .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+        .titleMode(HdsNavigationTitleMode.MINI)
+        .hideBackButton(false)
+        .titleBar(this.canUseHds() ? {
+          padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+          avoidLayoutSafeArea: false,
+          enableComponentSafeArea: false,
+          style: {
+            blurStrategy: BlurStrategy.ADAPTIVE,
+            scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+            // @SuppressWarnings compatibility
+            systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+            originalStyle: this.titleBarOriginalStyle(),
+            scrollEffectStyle: {
+              backgroundStyle: fnHdsNavChromeBackgroundStyle()
             }
-          })
-        }
-        .layoutWeight(1)
-        .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-        .justifyContent(FlexAlign.End)
+          },
+          content: this.titleBarContent()
+        } : {
+          padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+          avoidLayoutSafeArea: false,
+          enableComponentSafeArea: false,
+          style: {
+            blurStrategy: BlurStrategy.ADAPTIVE,
+            scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+            originalStyle: this.titleBarOriginalStyle(),
+            scrollEffectStyle: {
+              backgroundStyle: fnHdsNavChromeBackgroundStyle()
+            }
+          },
+          content: this.titleBarContent()
+        })
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({
-        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
-        right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-        top: GALLERY_TOP_BAR_PAD_TOP_VP + this.systemTopInsetVp,
-        bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
-      })
+      .padding({ top: this.systemTopInsetVp })
 
-      Text($r('app.string.album_parent_label'))
-        .fontSize(14)
-        .width('100%')
+      Column({ space: 16 }) {
+        Text($r('app.string.album_parent_label'))
+          .fontSize(14)
+          .width('100%')
 
-      TextInput({ text: this.albumParentGuid, placeholder: 'fv_xxxx...' })
-        .enableKeyboardOnFocus(false)
-        .onChange((v: string) => {
-          this.albumParentGuid = v;
-        })
-        .width('100%')
-        .backgroundColor($r('app.color.card_background'))
-        .borderRadius($r('app.float.radius_small'))
-        .padding({ left: 12, right: 12 })
+        TextInput({ text: this.albumParentGuid, placeholder: 'fv_xxxx...' })
+          .enableKeyboardOnFocus(false)
+          .onChange((v: string) => {
+            this.albumParentGuid = v;
+          })
+          .width('100%')
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.radius_small'))
+          .padding({ left: 12, right: 12 })
 
-      Text($r('app.string.album_parent_hint'))
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
+        Text($r('app.string.album_parent_hint'))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
 
-      Text($r('app.string.fnid_deferred'))
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-        .margin({ top: 24 })
+        Text($r('app.string.fnid_deferred'))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .margin({ top: 24 })
+      }
+      .padding(16)
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
-    .padding(16)
     .width('100%')
     .height('100%')
-    .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('app.color.page_background'))
   }
 

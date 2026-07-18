@@ -1,8 +1,24 @@
-import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
+import { LengthMetrics } from '@kit.ArkUI';
+import {
+  BlurStrategy,
+  DividerMode,
+  HdsNavigation,
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationIconOptions,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarStyle,
+  HdsNavigationTitleMode,
+  HdsTabs,
+  IconStyleMode,
+  TitleBarContentOptions
+} from '@kit.UIDesignKit';
 import {
   fnBottomDockBottomGap,
   fnHdsBottomDockActionTabStyle,
+  fnHdsImmersiveSystemMaterialEffect,
   fnHdsImmersiveTabsFloatingStyle,
+  fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrollEffectOpts,
   fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
@@ -13,23 +29,12 @@ import {
   FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-  FN_FLOATING_TOP_BOTTOM_GAP_VP,
-  FN_FLOATING_TOP_CONTROL_RADIUS_VP,
-  FN_FLOATING_TOP_CONTROL_SIZE_VP,
-  FN_FLOATING_TOP_MARGIN_VP,
-  FnFloatingTopCircleButton,
-  FnFloatingTopPillButton,
-  FnHdsTextPill
+  FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
-import {
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_SUBTITLE_FONT_VP
-} from '../../common/GalleryTopBarLayout';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 
 const GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP: number = 268;
@@ -70,14 +75,6 @@ export struct GalleryPreviewChrome {
     return this.darkMaterial ? '#80FFFFFF' : '#805B6675';
   }
 
-  private topMargin(): number {
-    return FN_FLOATING_TOP_MARGIN_VP + this.topSafeInsetVp;
-  }
-
-  private titlePillWidth(): number {
-    return Math.max(96, Math.min(180, this.titleText.length * 8 + 36));
-  }
-
   private normalizedDownloadProgress(): number {
     return Math.max(0, Math.min(100, this.downloadProgressPct));
   }
@@ -98,6 +95,125 @@ export struct GalleryPreviewChrome {
 
   private canUseHds(): boolean {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private topMenuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
+    const item: HdsNavigationMenuItemOptions = { content: content };
+    return item;
+  }
+
+  private buildTopMenuItems(): HdsNavigationMenuItemOptions[] {
+    const items: HdsNavigationMenuItemOptions[] = [];
+    if (this.showOriginalAction) {
+      const originalContent: HdsNavigationIconOptions = {
+        label: '原图',
+        icon: $r('sys.symbol.picture'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: this.toolbarVisible,
+        action: (): void => {
+          this.onLoadOriginal();
+        }
+      };
+      items.push(this.topMenuItem(originalContent));
+    }
+    const detailsContent: HdsNavigationIconOptions = {
+      label: '详情',
+      icon: $r('sys.symbol.info_circle'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: this.toolbarVisible,
+      action: (): void => {
+        this.onOpenDetails();
+      }
+    };
+    items.push(this.topMenuItem(detailsContent));
+    return items;
+  }
+
+  private topBackIconOptions(): HdsNavigationBackButtonItemOptions {
+    const backIcon: HdsNavigationBackButtonItemOptions = {
+      label: '返回',
+      isEnabled: this.toolbarVisible,
+      action: (): void => {
+        this.onBack();
+      }
+    };
+    return backIcon;
+  }
+
+  private topTitleBarOriginalStyle(): HdsNavigationTitleBarStyle {
+    return {
+      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+      contentStyle: {
+        titleStyle: {
+          mainTitleColor: this.fgColor,
+          subTitleColor: this.fgColor
+        },
+        menuStyle: {
+          backgroundColor: this.buttonBg,
+          iconColor: this.fgColor,
+          textColor: this.fgColor
+        },
+        backIconStyle: {
+          backgroundColor: this.buttonBg,
+          iconColor: this.fgColor
+        }
+      }
+    };
+  }
+
+  private topTitleBarContent(): TitleBarContentOptions {
+    return {
+      title: { mainTitle: this.titleText },
+      menu: { value: this.buildTopMenuItems() },
+      backIcon: this.topBackIconOptions()
+    };
+  }
+
+  @Builder
+  private topNavigationContent() {
+    Column()
+      .width('100%')
+      .height(0)
+  }
+
+  @Builder
+  private previewTopBar() {
+    HdsNavigation() {
+      this.topNavigationContent()
+    }
+    .width('100%')
+    .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(false)
+    .titleBar(this.canUseHds() ? {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        // @SuppressWarnings compatibility
+        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        originalStyle: this.topTitleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.topTitleBarContent()
+    } : {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        originalStyle: this.topTitleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.topTitleBarContent()
+    })
   }
 
   private onPreviewHdsAction(index: number): void {
@@ -279,70 +395,13 @@ export struct GalleryPreviewChrome {
     })
   }
 
-  @Builder
-  private topCircleAction(icon: Resource, action: () => void, selected: boolean = false) {
-    FnFloatingTopCircleButton({
-      symbol: icon,
-      active: selected,
-      fontColor: this.fgColor,
-      action: action
-    })
-  }
-
   build() {
     Column() {
-      Row() {
-        Row() {
-          FnFloatingTopPillButton({
-            text: '\u8fd4\u56de',
-            action: this.onBack
-          })
-        }
-        .layoutWeight(1)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.Start)
-
-        Row() {
-          if (this.titleText.length > 0) {
-            FnHdsTextPill({
-              text: this.titleText,
-              widthValue: this.titlePillWidth(),
-              heightValue: FN_FLOATING_TOP_CONTROL_SIZE_VP,
-              radiusValue: FN_FLOATING_TOP_CONTROL_RADIUS_VP,
-              fontSizeValue: GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
-              fontColorValue: this.fgColor,
-              fontWeightValue: FontWeight.Medium
-            })
-          }
-        }
-        .layoutWeight(2)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-
-        Row() {
-          Row({ space: 8 }) {
-            if (this.showOriginalAction) {
-              this.topCircleAction($r('sys.symbol.picture'), this.onLoadOriginal, this.originalShowing)
-            }
-            this.topCircleAction($r('sys.symbol.info_circle'), this.onOpenDetails, this.detailsShowing)
-          }
-        }
-        .layoutWeight(1)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.End)
+      Column() {
+        this.previewTopBar()
       }
       .width('100%')
-      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-      .alignItems(VerticalAlign.Center)
-      .padding({
-        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
-        right: GALLERY_TOP_BAR_PAD_RIGHT_VP
-      })
-      .margin({
-        top: this.topMargin(),
-        bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
-      })
+      .padding({ top: this.topSafeInsetVp })
       .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 

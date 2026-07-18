@@ -1,18 +1,33 @@
+/**
+ * 媒体分类顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
+ * 多选 / 更多走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
+ */
+import { LengthMetrics } from '@kit.ArkUI';
 import {
-  FN_FLOATING_TOP_BOTTOM_GAP_VP,
-  FN_FLOATING_TOP_CONTROL_SIZE_VP,
-  FN_FLOATING_TOP_MARGIN_VP,
-  FN_FLOATING_TOP_TITLE_STACK_GAP_VP,
-  FnFloatingTopCircleButton,
-  FnFloatingTopPillButton
+  BlurStrategy,
+  HdsNavigation,
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationIconOptions,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarStyle,
+  HdsNavigationTitleMode,
+  IconStyleMode,
+  TextStyleMode,
+  TitleBarContentOptions
+} from '@kit.UIDesignKit';
+import {
+  fnHdsImmersiveSystemMaterialEffect,
+  fnHdsChromeButtonBackgroundColor,
+  fnHdsChromeButtonFallbackBackgroundColor,
+  fnHdsChromeButtonForegroundColor,
+  fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrollEffectOpts,
+  FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../../common/FnUiCommon';
 import {
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
-  GALLERY_TOP_BAR_TITLE_FONT_VP
-} from '../../common/GalleryTopBarLayout';
-import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../../common/FnImmersiveSettings';
 
 @Component
 export struct CategoryGalleryChrome {
@@ -24,100 +39,179 @@ export struct CategoryGalleryChrome {
   /** 人物/智能分类相册：右侧显示「更多」而非直接露出「多选」 */
   @Prop personAlbumMode: boolean = false;
   @Prop moreMenuExpanded: boolean = false;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onCancelSelection: () => void = () => {};
   onBack: () => void = () => {};
   onToggleMode: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
 
-  private titleText(): string {
-    if (this.selectionMode) {
-      return `\u5df2\u9009\u62e9 ${this.selectedCount} \u9879`;
-    }
-    return this.title.length > 0 ? this.title : '\u5a92\u4f53\u5206\u7c7b';
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
-  private countText(): string {
-    return `${this.totalCount} \u9879`;
+  private selectionText(): string {
+    return `已选择 ${this.selectedCount} 项`;
+  }
+
+  private mainTitleText(): string {
+    if (this.selectionMode) {
+      return this.selectionText();
+    }
+    return this.title.length > 0 ? this.title : '媒体分类';
+  }
+
+  private subTitleText(): string {
+    return `${this.totalCount} 项`;
+  }
+
+  private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
+    const item: HdsNavigationMenuItemOptions = { content: content };
+    return item;
+  }
+
+  private buildMenuItems(): HdsNavigationMenuItemOptions[] {
+    if (this.selectionMode) {
+      const doneContent: HdsNavigationIconOptions = {
+        label: '完成',
+        type: TextStyleMode.NORMAL,
+        action: (): void => {
+          this.onToggleMode();
+        }
+      };
+      return [this.menuItem(doneContent)];
+    }
+    if (this.personAlbumMode) {
+      const moreContent: HdsNavigationIconOptions = {
+        label: '更多',
+        icon: $r('sys.symbol.more'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
+        action: (): void => {
+          this.onShowMoreMenu();
+        }
+      };
+      return [this.menuItem(moreContent)];
+    }
+    const multiContent: HdsNavigationIconOptions = {
+      label: $r('app.string.gallery_multiselect'),
+      type: TextStyleMode.NORMAL,
+      action: (): void => {
+        this.onToggleMode();
+      }
+    };
+    return [this.menuItem(multiContent)];
+  }
+
+  private titleBarOriginalStyle(): HdsNavigationTitleBarStyle {
+    const buttonBg: ResourceColor = this.canUseHds()
+      ? fnHdsChromeButtonBackgroundColor()
+      : fnHdsChromeButtonFallbackBackgroundColor();
+    const buttonFg: ResourceColor = this.canUseHds()
+      ? fnHdsChromeButtonForegroundColor()
+      : $r('app.color.icon_primary');
+    const textFg: ResourceColor = this.canUseHds()
+      ? $r('app.color.text_primary')
+      : $r('app.color.button_secondary_fg');
+    return {
+      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+      contentStyle: {
+        titleStyle: {
+          mainTitleColor: $r('app.color.text_primary'),
+          subTitleColor: $r('app.color.text_secondary')
+        },
+        menuStyle: {
+          backgroundColor: buttonBg,
+          iconColor: buttonFg,
+          textColor: textFg
+        },
+        backIconStyle: {
+          backgroundColor: buttonBg,
+          iconColor: buttonFg
+        }
+      }
+    };
+  }
+
+  private backIconOptions(): HdsNavigationBackButtonItemOptions {
+    if (this.selectionMode) {
+      const cancelIcon: HdsNavigationBackButtonItemOptions = {
+        label: '取消',
+        isEnabled: true,
+        action: (): void => {
+          this.onCancelSelection();
+        }
+      };
+      return cancelIcon;
+    }
+    const backIcon: HdsNavigationBackButtonItemOptions = {
+      label: '返回',
+      isEnabled: true,
+      action: (): void => {
+        this.onBack();
+      }
+    };
+    return backIcon;
+  }
+
+  private titleBarContent(): TitleBarContentOptions {
+    return {
+      title: {
+        mainTitle: this.mainTitleText(),
+        subTitle: this.selectionMode ? '' : this.subTitleText()
+      },
+      menu: { value: this.buildMenuItems() },
+      backIcon: this.backIconOptions()
+    };
+  }
+
+  @Builder
+  private navigationContent() {
+    Column()
+      .width('100%')
+      .height(0)
   }
 
   build() {
     Column() {
-      Row() {
-        Row() {
-          if (this.selectionMode) {
-            FnFloatingTopPillButton({
-              text: $r('app.string.gallery_batch_cancel'),
-              action: this.onCancelSelection
-            })
-          } else {
-            FnFloatingTopPillButton({
-              text: '返回',
-              action: this.onBack
-            })
-          }
-        }
-        .layoutWeight(1)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.Start)
-
-        Column({ space: FN_FLOATING_TOP_TITLE_STACK_GAP_VP }) {
-          Text(this.titleText())
-            .fontSize(this.selectionMode ? GALLERY_TOP_BAR_SUBTITLE_FONT_VP : GALLERY_TOP_BAR_TITLE_FONT_VP)
-            .fontWeight(this.selectionMode ? FontWeight.Medium : FontWeight.Bold)
-            .textAlign(TextAlign.Center)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .fontColor($r('app.color.text_primary'))
-
-          if (!this.selectionMode) {
-            Text(this.countText())
-              .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
-              .textAlign(TextAlign.Center)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-        }
-        .layoutWeight(2)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-
-        Row() {
-          if (this.selectionMode) {
-            FnFloatingTopPillButton({
-              text: '完成',
-              active: true,
-              action: this.onToggleMode
-            })
-          } else if (this.personAlbumMode) {
-            FnFloatingTopCircleButton({
-              symbol: $r('sys.symbol.more'),
-              active: this.moreMenuExpanded,
-              action: this.onShowMoreMenu
-            })
-          } else {
-            FnFloatingTopPillButton({
-              text: $r('app.string.gallery_multiselect'),
-              action: this.onToggleMode
-            })
-          }
-        }
-        .layoutWeight(1)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.End)
+      HdsNavigation() {
+        this.navigationContent()
       }
       .width('100%')
-      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
+      .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .hideBackButton(this.selectionMode)
+      .titleBar(this.canUseHds() ? {
+        padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+        avoidLayoutSafeArea: false,
+        enableComponentSafeArea: false,
+        style: {
+          blurStrategy: BlurStrategy.ADAPTIVE,
+          scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+          // @SuppressWarnings compatibility
+          systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+          originalStyle: this.titleBarOriginalStyle(),
+          scrollEffectStyle: {
+            backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          }
+        },
+        content: this.titleBarContent()
+      } : {
+        padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+        avoidLayoutSafeArea: false,
+        enableComponentSafeArea: false,
+        style: {
+          blurStrategy: BlurStrategy.ADAPTIVE,
+          scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+          originalStyle: this.titleBarOriginalStyle(),
+          scrollEffectStyle: {
+            backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          }
+        },
+        content: this.titleBarContent()
+      })
     }
     .width('100%')
-    .margin({
-      top: FN_FLOATING_TOP_MARGIN_VP + this.topSafeInsetVp,
-      bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
-    })
-    .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
+    .padding({ top: this.topSafeInsetVp })
   }
 }

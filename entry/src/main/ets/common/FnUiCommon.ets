@@ -8,12 +8,12 @@
 import { common } from '@kit.AbilityKit';
 import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import {
-  BlurStrategy,
-  DividerMode,
   hdsEffect,
-  HdsTabs,
+  HdsNavigationBackgroundStyle,
   HdsTabsFloatingStyle,
   hdsMaterial,
+  ScrollEffectOptions,
+  ScrollEffectType,
   SystemMaterialParams
 } from '@kit.UIDesignKit';
 
@@ -38,8 +38,47 @@ export const FN_FLOATING_TOP_CONTROL_RADIUS_VP: number = FN_FLOATING_TOP_CONTROL
 export const FN_FLOATING_TOP_PILL_MIN_WIDTH_VP: number = 62;
 export const FN_FLOATING_TOP_META_FONT_VP: number = 11;
 export const FN_FLOATING_TOP_TITLE_STACK_GAP_VP: number = 1;
-export const FN_FLOATING_TOP_TOTAL_HEIGHT_VP: number =
-  FN_FLOATING_TOP_MARGIN_VP + FN_FLOATING_TOP_CONTROL_SIZE_VP + FN_FLOATING_TOP_BOTTOM_GAP_VP;
+/** 官方 HdsNavigation MINI 标题栏内容区高度，顶栏统一对齐该高度 */
+export const FN_HDS_NAV_CHROME_HEIGHT_VP: number = 56;
+export const FN_FLOATING_TOP_TOTAL_HEIGHT_VP: number = FN_HDS_NAV_CHROME_HEIGHT_VP;
+/**
+ * HdsNavigation 菜单/返回按钮背板。
+ * 保持透明，由 systemMaterialEffect 出与底栏同系的半透明深色沉浸材质；
+ * 勿叠浅灰（灰底）或高不透明度深色（不透）。
+ */
+export function fnHdsChromeButtonBackgroundColor(): ResourceColor {
+  return Color.Transparent;
+}
+
+/** 顶栏按钮图标/文字色（跟底栏侧钮一致，走主题主色） */
+export function fnHdsChromeButtonForegroundColor(): ResourceColor {
+  return $r('app.color.icon_primary');
+}
+
+/** 无沉浸光感时的顶栏按钮背板（浅灰玻璃） */
+export function fnHdsChromeButtonFallbackBackgroundColor(): ResourceColor {
+  return $r('app.color.gallery_material_surface_bg');
+}
+
+/**
+ * 顶栏整条背景：强制透明，去掉 HdsNavigation 默认灰底长条。
+ * GRADIENT_BLUR + systemMaterialEffect 且 enableScrollEffect=false 时系统会刷灰底。
+ */
+export function fnHdsNavChromeBackgroundStyle(): HdsNavigationBackgroundStyle {
+  return {
+    backgroundColor: Color.Transparent,
+    blurRadius: 0,
+    maskExtraHeight: 0
+  };
+}
+
+/** 开启滚动动效开关，避免上述灰底默认规则；无绑定时仍停在 originalStyle（透明）。 */
+export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
+  return {
+    enableScrollEffect: true,
+    scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+  };
+}
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;
 export const FN_BOTTOM_DOCK_SIDE_GAP_VP: number = 10;
 export const FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP: number = 54;
@@ -177,7 +216,6 @@ export struct FnHdsPillButton {
   @Prop prominent: boolean = false;
   @Prop active: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
-  @State private measuredWidthVp: number = 0;
   @State private isPressed: boolean = false;
   @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
   action: () => void = () => {};
@@ -185,10 +223,6 @@ export struct FnHdsPillButton {
 
   private shapeRadius(): number {
     return this.radiusValue >= 0 ? this.radiusValue : this.heightValue / 2;
-  }
-
-  private materialWidth(): Length {
-    return this.measuredWidthVp > 1 ? this.measuredWidthVp : this.widthValue;
   }
 
   private triggerAction(): void {
@@ -229,10 +263,19 @@ export struct FnHdsPillButton {
   }
 
   @Builder
-  private blankTabBarContent() {
+  private glassLayer() {
     Row()
       .width('100%')
       .height('100%')
+      .backgroundColor(this.resolvedLightColor())
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient(this.shouldUseHds(), this.isPressed, this.active))
+      .borderRadius(this.shapeRadius())
+      .borderWidth(1)
+      .borderColor(this.resolvedBorderColor())
+      .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -257,51 +300,7 @@ export struct FnHdsPillButton {
 
   build() {
     Stack() {
-      if (this.shouldUseHds()) {
-        HdsTabs({ index: 0 }) {
-          TabContent() {
-            Column()
-              .width('100%')
-              .height('100%')
-          }
-          .tabBar(this.blankTabBarContent)
-        }
-        .width('100%')
-        .height(this.heightValue)
-        .barHeight(this.heightValue)
-        .barOverlap(true)
-        .vertical(false)
-        .barPosition(BarPosition.End)
-        .barWidth(this.materialWidth())
-        // @SuppressWarnings compatibility
-        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.materialWidth(), this.resolvedLightColor()))
-        .scrollable(false)
-        .divider({ mode: DividerMode.NONE })
-        .barBackgroundColor(Color.Transparent)
-        .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: this.heightValue })
-        .blurStrategy(BlurStrategy.ADAPTIVE)
-        .borderRadius(this.shapeRadius())
-        .clip(true)
-        // HdsTabs 仅作材质装饰；点击由外层 Stack.onClick 统一处理，避免偶发吞触摸
-        .hitTestBehavior(HitTestMode.None)
-        .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
-          return false;
-        })
-      } else {
-        Row()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.resolvedLightColor())
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .linearGradient(fnLiquidGlassGradient(false, this.isPressed, this.active))
-          .borderRadius(this.shapeRadius())
-          .borderWidth(1)
-          .borderColor(this.resolvedBorderColor())
-          .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
-          .clip(true)
-          .hitTestBehavior(HitTestMode.None)
-      }
-
+      this.glassLayer()
       this.labelContent()
     }
     .width(this.widthValue)
@@ -309,12 +308,6 @@ export struct FnHdsPillButton {
     .visualEffect(new hdsEffect.HdsEffectBuilder()
       .pressShadow(this.pressShadowType)
       .buildEffect())
-    .onAreaChange((_old: Area, area: Area): void => {
-      const width = area.width as number;
-      if (width > 1 && Math.abs(width - this.measuredWidthVp) > 0.5) {
-        this.measuredWidthVp = width;
-      }
-    })
     .onTouch((event: TouchEvent): void => {
       this.onPressTouch(event);
     })
@@ -386,14 +379,23 @@ export struct FnHdsSymbolButton {
   }
 
   @Builder
-  private blankSymbolTabBar() {
+  private glassLayer() {
     Row()
       .width('100%')
       .height('100%')
+      .backgroundColor(this.resolvedLightColor())
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient(this.shouldUseHds(), this.isPressed, this.active))
+      .borderRadius(this.shapeRadius())
+      .borderWidth(1)
+      .borderColor(this.resolvedBorderColor())
+      .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
-  private tabBarContent() {
+  private symbolContent() {
     Row() {
       SymbolGlyph(this.symbol)
         .fontSize(this.fontSizeValue)
@@ -408,52 +410,8 @@ export struct FnHdsSymbolButton {
 
   build() {
     Stack() {
-      if (this.shouldUseHds()) {
-        HdsTabs({ index: 0 }) {
-          TabContent() {
-            Column()
-              .width('100%')
-              .height('100%')
-          }
-          .tabBar(this.blankSymbolTabBar)
-        }
-        .width(this.widthValue)
-        .height(this.heightValue)
-        .barHeight(this.heightValue)
-        .barOverlap(true)
-        .vertical(false)
-        .barPosition(BarPosition.End)
-        .barWidth(this.widthValue)
-        // @SuppressWarnings compatibility
-        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.resolvedLightColor()))
-        .scrollable(false)
-        .divider({ mode: DividerMode.NONE })
-        .barBackgroundColor(Color.Transparent)
-        .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: this.heightValue })
-        .blurStrategy(BlurStrategy.ADAPTIVE)
-        .borderRadius(this.shapeRadius())
-        .clip(true)
-        // 材质层不参与命中，避免 HdsTabs 偶发吞掉搜索/更多点击
-        .hitTestBehavior(HitTestMode.None)
-        .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
-          return false;
-        })
-      } else {
-        Row()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.resolvedLightColor())
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .linearGradient(fnLiquidGlassGradient(false, this.isPressed, this.active))
-          .borderRadius(this.shapeRadius())
-          .borderWidth(1)
-          .borderColor(this.resolvedBorderColor())
-          .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
-          .clip(true)
-          .hitTestBehavior(HitTestMode.None)
-      }
-
-      this.tabBarContent()
+      this.glassLayer()
+      this.symbolContent()
     }
     .width(this.widthValue)
     .height(this.heightValue)
@@ -490,10 +448,18 @@ export struct FnHdsTextPill {
   }
 
   @Builder
-  private blankTabBarContent() {
+  private glassLayer() {
     Row()
       .width('100%')
       .height('100%')
+      .backgroundColor(this.lightColorValue)
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient(this.shouldUseHds()))
+      .borderRadius(this.shapeRadius())
+      .borderWidth(1)
+      .borderColor($r('app.color.immersive_panel_border'))
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -518,46 +484,7 @@ export struct FnHdsTextPill {
 
   build() {
     Stack() {
-      if (this.shouldUseHds()) {
-        HdsTabs({ index: 0 }) {
-          TabContent() {
-            Column()
-              .width('100%')
-              .height('100%')
-          }
-          .tabBar(this.blankTabBarContent)
-        }
-        .width('100%')
-        .height(this.heightValue)
-        .barHeight(this.heightValue)
-        .barOverlap(true)
-        .vertical(false)
-        .barPosition(BarPosition.End)
-        .barWidth(this.widthValue)
-        // @SuppressWarnings compatibility
-        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(this.heightValue, this.widthValue, this.lightColorValue))
-        .scrollable(false)
-        .divider({ mode: DividerMode.NONE })
-        .barBackgroundColor(Color.Transparent)
-        .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: this.heightValue })
-        .blurStrategy(BlurStrategy.ADAPTIVE)
-        .borderRadius(this.shapeRadius())
-        .clip(true)
-        .hitTestBehavior(HitTestMode.None)
-      } else {
-        Row()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.lightColorValue)
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .linearGradient(fnLiquidGlassGradient())
-          .borderRadius(this.shapeRadius())
-          .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
-          .clip(true)
-          .hitTestBehavior(HitTestMode.None)
-      }
-
+      this.glassLayer()
       this.labelContent()
     }
     .width(this.widthValue)

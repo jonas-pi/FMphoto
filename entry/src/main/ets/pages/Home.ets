@@ -88,7 +88,6 @@ struct MePanel {
   onEndpointSwitched: () => void = () => {};
   @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private sdkApiVersion: number = 0;
-  @State private immersiveSwitchWidthVp: number = 0;
   @State private endpointInfo: EndpointConnectionInfo = resolveEndpointConnectionInfo(null);
   @State private endpointSwitching: boolean = false;
   @State private transferQueueVisible: boolean = false;
@@ -187,10 +186,6 @@ struct MePanel {
 
   private shouldUseHds(): boolean {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
-  }
-
-  private immersiveSwitchMaterialWidth(): Length {
-    return this.immersiveSwitchWidthVp > 1 ? this.immersiveSwitchWidthVp : '100%';
   }
 
   private triggerImmersiveLightToggle(): void {
@@ -338,13 +333,6 @@ struct MePanel {
   }
 
   @Builder
-  private immersiveSwitchTabBarContent() {
-    Row()
-      .width('100%')
-      .height('100%')
-  }
-
-  @Builder
   private immersiveSwitchContent() {
     Row({ space: 12 }) {
       Column({ space: 6 }) {
@@ -377,64 +365,21 @@ struct MePanel {
   @Builder
   private immersiveSwitchRow() {
     Stack() {
-      if (this.shouldUseHds()) {
-        HdsTabs({ index: 0 }) {
-          TabContent() {
-            Column()
-              .width('100%')
-              .height('100%')
-          }
-          .tabBar(this.immersiveSwitchTabBarContent)
-        }
+      Row()
         .width('100%')
-        .height(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
-        .barHeight(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
-        .barOverlap(true)
-        .vertical(false)
-        .barPosition(BarPosition.End)
-        .barWidth(this.immersiveSwitchMaterialWidth())
-        // @SuppressWarnings compatibility
-        .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-          ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP,
-          this.immersiveSwitchMaterialWidth(),
-          $r('app.color.gallery_material_surface_bg')
-        ))
-        .scrollable(false)
-        .divider({ mode: DividerMode.NONE })
-        .barBackgroundColor(Color.Transparent)
-        .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP })
-        .blurStrategy(BlurStrategy.ADAPTIVE)
+        .height('100%')
+        .backgroundColor($r('app.color.card_background'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .linearGradient(fnLiquidGlassGradient(this.shouldUseHds()))
         .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
         .clip(true)
-        .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
-          return false;
-        })
-        .onTabBarClick((_index: number): void => {
-          this.triggerImmersiveLightToggle();
-        })
-      } else {
-        Row()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.card_background'))
-          .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-          .linearGradient(fnLiquidGlassGradient())
-          .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
-          .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
-          .clip(true)
-      }
 
       this.immersiveSwitchContent()
     }
     .width('100%')
     .height(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
-    .onAreaChange((_old: Area, area: Area): void => {
-      const width = area.width as number;
-      if (width > 1 && Math.abs(width - this.immersiveSwitchWidthVp) > 0.5) {
-        this.immersiveSwitchWidthVp = width;
-      }
-    })
     .onClick((): void => {
       this.triggerImmersiveLightToggle();
     })
@@ -930,30 +875,6 @@ struct Home {
   }
 
   @Builder
-  private floatingDockGridGlyph() {
-    Column({ space: 4 }) {
-      Row({ space: 4 }) {
-        ForEach([0, 1], (idx: number) => {
-          Column()
-            .width(8)
-            .height(8)
-            .borderRadius(3)
-            .backgroundColor(idx === 0 ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
-        }, (idx: number) => `dock_grid_top_${idx}`)
-      }
-      Row({ space: 4 }) {
-        ForEach([0, 1], (idx: number) => {
-          Column()
-            .width(8)
-            .height(8)
-            .borderRadius(3)
-            .backgroundColor(idx === 1 ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
-        }, (idx: number) => `dock_grid_bottom_${idx}`)
-      }
-    }
-  }
-
-  @Builder
   private floatingDockHdsTabs() {
     HdsTabs({ controller: this.ensureBottomTabsController(), index: this.bottomNavIndex }) {
       TabContent() {
@@ -989,7 +910,6 @@ struct Home {
         '\u6211\u7684'
       ))
     }
-    .width('100%')
     .layoutWeight(1)
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
@@ -1049,7 +969,6 @@ struct Home {
       this.floatingDockFallbackItem(1, $r('sys.symbol.rectangle_stack'), $r('sys.symbol.square_stack_3d_fill'), '\u76f8\u518c')
       this.floatingDockFallbackItem(2, $r('sys.symbol.person'), $r('sys.symbol.person_fill'), '\u6211\u7684')
     }
-    .width('100%')
     .layoutWeight(1)
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
@@ -1167,12 +1086,7 @@ struct Home {
   }
 
   @Builder
-  private floatingDockLayoutSideButtonTabBar() {
-    this.floatingDockGridGlyph()
-  }
-
-  @Builder
-  private floatingDockViewSideButtonTabBar() {
+  private floatingDockGranularityTabBar() {
     Text(this.currentGalleryGranularityLabel())
       .fontSize(16)
       .fontWeight(FontWeight.Medium)
@@ -1183,14 +1097,15 @@ struct Home {
   }
 
   @Builder
-  private floatingDockSideButtonBase(isLayoutButton: boolean) {
+  private floatingDockSideButtonHds() {
+    // 与底栏同款：真 HdsTabs 悬浮材质 + systemMaterialEffect
     HdsTabs({ index: 0 }) {
       TabContent() {
         Column()
           .width('100%')
           .height('100%')
       }
-      .tabBar(isLayoutButton ? this.floatingDockLayoutSideButtonTabBar : this.floatingDockViewSideButtonTabBar)
+      .tabBar(this.floatingDockGranularityTabBar)
     }
     .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
@@ -1216,47 +1131,40 @@ struct Home {
       return false;
     })
     .onTabBarClick((_index: number): void => {
-      if (isLayoutButton) {
-        this.toast('\u663e\u793a\u6a21\u5f0f\u5207\u6362\u5165\u53e3\u9884\u7559\u4e2d');
-        return;
-      }
       this.toggleGalleryViewGranularity();
     })
   }
 
   @Builder
-  private floatingDockSideButton(isLayoutButton: boolean) {
+  private floatingDockSideButtonFallback() {
+    Stack({ alignContent: Alignment.Center }) {
+      Text(this.currentGalleryGranularityLabel())
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .textAlign(TextAlign.Center)
+    }
+    .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
+    .borderWidth(1)
+    .borderColor(this.dockMaterialBorderColor())
+    .shadow({ radius: 18, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
+    .clip(true)
+    .onClick((): void => {
+      this.toggleGalleryViewGranularity();
+    })
+  }
+
+  @Builder
+  private floatingDockSideButton() {
     if (this.canUseHds()) {
-      this.floatingDockSideButtonBase(isLayoutButton)
+      this.floatingDockSideButtonHds()
     } else {
-      Stack({ alignContent: Alignment.Center }) {
-        if (isLayoutButton) {
-          this.floatingDockGridGlyph()
-        } else {
-          Text(this.currentGalleryGranularityLabel())
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-            .textAlign(TextAlign.Center)
-        }
-      }
-      .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-      .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
-      .borderWidth(1)
-      .borderColor(this.dockMaterialBorderColor())
-      .shadow({ radius: 18, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
-      .clip(true)
-      .onClick((): void => {
-        if (isLayoutButton) {
-          this.toast('\u663e\u793a\u6a21\u5f0f\u5207\u6362\u5165\u53e3\u9884\u7559\u4e2d');
-          return;
-        }
-        this.toggleGalleryViewGranularity();
-      })
+      this.floatingDockSideButtonFallback()
     }
   }
 
@@ -1293,11 +1201,9 @@ struct Home {
         }
 
         if (this.shouldShowGalleryDockSideButtons()) {
-          this.floatingDockSideButton(false)
+          this.floatingDockSideButton()
         } else {
-          Blank()
-            .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-            .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          this.floatingDockSideButtonSpacer()
         }
       }
       .width('100%')

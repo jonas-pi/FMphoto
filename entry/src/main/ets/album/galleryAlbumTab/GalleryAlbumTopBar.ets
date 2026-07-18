@@ -10,11 +10,15 @@ import {
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleMode,
   IconStyleMode,
-  ScrollEffectType,
   TextStyleMode
 } from '@kit.UIDesignKit';
 import {
   fnHdsImmersiveSystemMaterialEffect,
+  fnHdsChromeButtonBackgroundColor,
+  fnHdsChromeButtonFallbackBackgroundColor,
+  fnHdsChromeButtonForegroundColor,
+  fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrollEffectOpts,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 import {
@@ -332,29 +336,29 @@ export struct GalleryAlbumTopBar {
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: {
-          enableScrollEffect: false,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         // @SuppressWarnings compatibility
         systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
         originalStyle: {
-          backgroundStyle: { backgroundColor: Color.Transparent },
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
           contentStyle: {
             titleStyle: {
               mainTitleColor: $r('app.color.text_primary'),
               subTitleColor: $r('app.color.text_secondary')
             },
             menuStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
-              iconColor: $r('app.color.icon_primary'),
-              textColor: $r('app.color.button_secondary_fg')
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor(),
+              textColor: $r('app.color.text_primary')
             },
             backIconStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
-              iconColor: $r('app.color.icon_primary')
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor()
             }
           }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
         }
       },
       content: {
@@ -374,27 +378,27 @@ export struct GalleryAlbumTopBar {
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: {
-          enableScrollEffect: false,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         originalStyle: {
-          backgroundStyle: { backgroundColor: Color.Transparent },
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
           contentStyle: {
             titleStyle: {
               mainTitleColor: $r('app.color.text_primary'),
               subTitleColor: $r('app.color.text_secondary')
             },
             menuStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
               iconColor: $r('app.color.icon_primary'),
               textColor: $r('app.color.button_secondary_fg')
             },
             backIconStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
               iconColor: $r('app.color.icon_primary')
             }
           }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
         }
       },
       content: {
@@ -429,29 +433,29 @@ export struct GalleryAlbumTopBar {
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: {
-          enableScrollEffect: false,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         // @SuppressWarnings compatibility
         systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
         originalStyle: {
-          backgroundStyle: { backgroundColor: Color.Transparent },
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
           contentStyle: {
             titleStyle: {
               mainTitleColor: $r('app.color.text_primary'),
               subTitleColor: $r('app.color.text_secondary')
             },
             menuStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
-              iconColor: $r('app.color.icon_primary'),
-              textColor: $r('app.color.button_secondary_fg')
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor(),
+              textColor: $r('app.color.text_primary')
             },
             backIconStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
-              iconColor: $r('app.color.icon_primary')
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor()
             }
           }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
         }
       },
       content: {
@@ -477,27 +481,27 @@ export struct GalleryAlbumTopBar {
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: {
-          enableScrollEffect: false,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         originalStyle: {
-          backgroundStyle: { backgroundColor: Color.Transparent },
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
           contentStyle: {
             titleStyle: {
               mainTitleColor: $r('app.color.text_primary'),
               subTitleColor: $r('app.color.text_secondary')
             },
             menuStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
               iconColor: $r('app.color.icon_primary'),
               textColor: $r('app.color.button_secondary_fg')
             },
             backIconStyle: {
-              backgroundColor: $r('app.color.gallery_material_surface_bg'),
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
               iconColor: $r('app.color.icon_primary')
             }
           }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
         }
       },
       content: {
