@@ -2,7 +2,7 @@
 import { AppSession } from '../../auth/AppSession';
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../../common/FnMotion';
-import { GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP } from './GalleryAlbumTopBar';
+import { galleryAlbumTopBarChromeHeightVp } from './GalleryAlbumTopBar';
 import { loadMediaCategories as requestMediaCategories, loadPersons as requestPersons, loadSmartCategories as requestSmartCategories } from './GalleryAlbumModeLoaders';
 
 export interface GalleryAlbumRootSurfaceHost {
@@ -381,7 +381,7 @@ export function galleryAlbumToggleMoreMenu(host: GalleryAlbumRootSurfaceHost): v
 }
 
 export function galleryAlbumSecondaryModeContentInsetTopVp(host: GalleryAlbumRootSurfaceHost): number {
-  return host.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP;
+  return host.topSafeInsetVp + galleryAlbumTopBarChromeHeightVp(host.inSearchMode);
 }
 
 export function galleryAlbumMainGalleryContentInsetTopVp(host: GalleryAlbumRootSurfaceHost): number {

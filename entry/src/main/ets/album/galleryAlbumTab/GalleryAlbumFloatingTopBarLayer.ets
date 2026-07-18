@@ -1,5 +1,8 @@
 import { GalleryAlbumTopBar } from './GalleryAlbumTopBar';
 
+/**
+ * 图库浮层顶栏：内容贴顶；全屏透明穿透，避免挡住下方图库。
+ */
 @Component
 export struct GalleryAlbumFloatingTopBarLayer {
   @Prop homeSurface: string = 'photos';
@@ -24,7 +27,7 @@ export struct GalleryAlbumFloatingTopBarLayer {
   onShowMoreMenu: () => void = (): void => {};
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.TopStart }) {
       GalleryAlbumTopBar({
         homeSurface: this.homeSurface,
         inSearchMode: this.inSearchMode,
@@ -47,10 +50,7 @@ export struct GalleryAlbumFloatingTopBarLayer {
         onBackToGallery: this.onBackToGallery,
         onShowMoreMenu: this.onShowMoreMenu
       })
-
-      Blank()
-        .layoutWeight(1)
-        .hitTestBehavior(HitTestMode.None)
+        .width('100%')
     }
     .width('100%')
     .height('100%')

@@ -282,11 +282,10 @@ export struct FnHdsPillButton {
         .blurStrategy(BlurStrategy.ADAPTIVE)
         .borderRadius(this.shapeRadius())
         .clip(true)
+        // HdsTabs 仅作材质装饰；点击由外层 Stack.onClick 统一处理，避免偶发吞触摸
+        .hitTestBehavior(HitTestMode.None)
         .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
           return false;
-        })
-        .onTabBarClick((_index: number): void => {
-          this.triggerAction();
         })
       } else {
         Row()
@@ -300,6 +299,7 @@ export struct FnHdsPillButton {
           .borderColor(this.resolvedBorderColor())
           .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
           .clip(true)
+          .hitTestBehavior(HitTestMode.None)
       }
 
       this.labelContent()
@@ -386,6 +386,13 @@ export struct FnHdsSymbolButton {
   }
 
   @Builder
+  private blankSymbolTabBar() {
+    Row()
+      .width('100%')
+      .height('100%')
+  }
+
+  @Builder
   private tabBarContent() {
     Row() {
       SymbolGlyph(this.symbol)
@@ -396,6 +403,7 @@ export struct FnHdsSymbolButton {
       .height('100%')
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.None)
   }
 
   build() {
@@ -407,7 +415,7 @@ export struct FnHdsSymbolButton {
               .width('100%')
               .height('100%')
           }
-          .tabBar(this.tabBarContent)
+          .tabBar(this.blankSymbolTabBar)
         }
         .width(this.widthValue)
         .height(this.heightValue)
@@ -425,11 +433,10 @@ export struct FnHdsSymbolButton {
         .blurStrategy(BlurStrategy.ADAPTIVE)
         .borderRadius(this.shapeRadius())
         .clip(true)
+        // 材质层不参与命中，避免 HdsTabs 偶发吞掉搜索/更多点击
+        .hitTestBehavior(HitTestMode.None)
         .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
           return false;
-        })
-        .onTabBarClick((_index: number): void => {
-          this.triggerAction();
         })
       } else {
         Row()
@@ -443,11 +450,10 @@ export struct FnHdsSymbolButton {
           .borderColor(this.resolvedBorderColor())
           .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
           .clip(true)
+          .hitTestBehavior(HitTestMode.None)
       }
 
-      if (!this.shouldUseHds()) {
-        this.tabBarContent()
-      }
+      this.tabBarContent()
     }
     .width(this.widthValue)
     .height(this.heightValue)

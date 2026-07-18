@@ -81,8 +81,7 @@ import {
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../common/FnMotion';
 import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../common/GalleryTopBarLayout';
 import {
-  GalleryAlbumTopBar,
-  GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP
+  galleryAlbumTopBarChromeHeightVp
 } from './galleryAlbumTab/GalleryAlbumTopBar';
 import { GalleryAlbumFloatingTopBarLayer } from './galleryAlbumTab/GalleryAlbumFloatingTopBarLayer';
 import { GalleryAlbumMoreMenu } from './galleryAlbumTab/GalleryAlbumMoreMenu';
@@ -2390,7 +2389,7 @@ export struct GalleryAlbumTab {
   }
 
   private loadingMaskTopOffsetVp(): number {
-    return this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP;
+    return this.topSafeInsetVp + galleryAlbumTopBarChromeHeightVp(this.inSearchMode);
   }
 
   private onEpochChange(): void {
@@ -2606,7 +2605,7 @@ export struct GalleryAlbumTab {
           })
             .width('100%')
             .height('100%')
-            .zIndex(2)
+            .zIndex(40)
         }
 
         if (this.slideshowSettingsVisible) {

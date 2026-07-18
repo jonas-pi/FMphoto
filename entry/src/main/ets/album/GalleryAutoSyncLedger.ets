@@ -4,11 +4,16 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
-import { localPhotoOfficialFingerprint } from './GalleryAutoSyncOfficialFingerprint';
+import {
+  localPhotoNameSizeKey,
+  localPhotoOfficialFingerprint,
+  officialFingerprintSetHas
+} from './GalleryAutoSyncOfficialFingerprint';
 
 const PREF_NAME = 'fnos_client_prefs';
 const K_AUTO_SYNC_LEDGER = 'auto_sync_ledger_v2';
 const MAX_LEDGER_ENTRIES: number = 4000;
+const NAME_SIZE_PREFIX = 'ns:';
 
 async function openPrefs(ctx: common.UIAbilityContext): Promise<preferences.Preferences> {
   return await preferences.getPreferences(ctx, PREF_NAME);
@@ -54,13 +59,28 @@ export class GalleryAutoSyncLedger {
     return new Set<string>(GalleryAutoSyncLedger.memory);
   }
 
+  /** 账本是否已记录该本地照片（精确指纹 ±2s，或 name+size 软键） */
+  static hasEntry(ledger: Set<string>, entry: LocalPhotoEntry): boolean {
+    const fp = localPhotoOfficialFingerprint(entry);
+    if (officialFingerprintSetHas(ledger, fp)) {
+      return true;
+    }
+    const soft = localPhotoNameSizeKey(entry);
+    return soft.length > 0 && ledger.has(`${NAME_SIZE_PREFIX}${soft}`);
+  }
+
   static async markSynced(ctx: common.UIAbilityContext, entries: LocalPhotoEntry[]): Promise<void> {
     if (entries.length === 0) {
       return;
     }
     const set = await GalleryAutoSyncLedger.load(ctx);
     for (let i = 0; i < entries.length; i++) {
-      set.add(localPhotoOfficialFingerprint(entries[i]));
+      const entry = entries[i];
+      set.add(localPhotoOfficialFingerprint(entry));
+      const soft = localPhotoNameSizeKey(entry);
+      if (soft.length > 0) {
+        set.add(`${NAME_SIZE_PREFIX}${soft}`);
+      }
     }
     GalleryAutoSyncLedger.memory = set;
     const p = await openPrefs(ctx);

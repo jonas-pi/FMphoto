@@ -6,9 +6,11 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import {
-  buildNasOfficialFingerprints,
+  buildNasDedupeIndex,
   localPhotoOfficialFingerprint,
-  officialFingerprintSetHas
+  mergeNasDedupeIndex,
+  NasDedupeIndex,
+  nasDedupeIndexHasEntry
 } from './GalleryAutoSyncOfficialFingerprint';
 import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
@@ -27,9 +29,9 @@ export function localPhotoLedgerKey(entry: LocalPhotoEntry): string {
   return localPhotoOfficialFingerprint(entry);
 }
 
-/** @deprecated 使用 buildNasOfficialFingerprints */
+/** @deprecated 使用 buildNasDedupeIndex */
 export function buildNasMediaFingerprints(nasTimeline: GalleryListItem[]): Set<string> {
-  return buildNasOfficialFingerprints(nasTimeline);
+  return buildNasDedupeIndex(nasTimeline).fingerprints;
 }
 
 export interface AutoSyncResult {
@@ -39,18 +41,9 @@ export interface AutoSyncResult {
   skippedInLedger: number;
 }
 
-function mergeOfficialFingerprints(base: Set<string>, extra: GalleryListItem[]): Set<string> {
-  const merged = new Set<string>(base);
-  const extraFps = buildNasOfficialFingerprints(extra);
-  extraFps.forEach((fp: string): void => {
-    merged.add(fp);
-  });
-  return merged;
-}
-
 export function filterUnsyncedLocalPhotos(
   localPhotos: LocalPhotoEntry[],
-  nasFingerprints: Set<string>,
+  nasIndex: NasDedupeIndex,
   ledger: Set<string>
 ): AutoSyncResult {
   const unsynced: LocalPhotoEntry[] = [];
@@ -61,12 +54,11 @@ export function filterUnsyncedLocalPhotos(
     if (local.fileName.length === 0 || local.fileSize <= 0) {
       continue;
     }
-    const officialFp = localPhotoOfficialFingerprint(local);
-    if (officialFingerprintSetHas(nasFingerprints, officialFp)) {
+    if (nasDedupeIndexHasEntry(nasIndex, local)) {
       skippedOnNas++;
       continue;
     }
-    if (ledger.has(officialFp)) {
+    if (GalleryAutoSyncLedger.hasEntry(ledger, local)) {
       skippedInLedger++;
       continue;
     }
@@ -159,12 +151,12 @@ export class GalleryAutoSyncStore {
         return GalleryAutoSyncStore.lastResult;
       }
 
-      const nasFingerprints = mergeOfficialFingerprints(
-        await GalleryAutoSyncNasIndex.getFingerprints(client, force),
+      const nasIndex = mergeNasDedupeIndex(
+        await GalleryAutoSyncNasIndex.getIndex(client, force),
         partialTimeline
       );
       const ledger = await GalleryAutoSyncLedger.load(ctx);
-      const filtered = filterUnsyncedLocalPhotos(localPhotos, nasFingerprints, ledger);
+      const filtered = filterUnsyncedLocalPhotos(localPhotos, nasIndex, ledger);
 
       GalleryAutoSyncStore.lastResult = filtered;
       GalleryAutoSyncStore.lastDetectTime = now;
@@ -172,9 +164,10 @@ export class GalleryAutoSyncStore {
       hilog.info(
         DOMAIN,
         TAG,
-        'detectUnsynced official local=%{public}d nasFp=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d',
+        'detectUnsynced official local=%{public}d nasFp=%{public}d nameSize=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d',
         localPhotos.length,
-        nasFingerprints.size,
+        nasIndex.fingerprints.size,
+        nasIndex.nameSizeKeys.size,
         filtered.unsynced.length,
         filtered.skippedOnNas,
         filtered.skippedInLedger

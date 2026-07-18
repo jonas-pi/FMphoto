@@ -5,11 +5,13 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { GalleryListItem } from '../model/FnApiTypes';
 import {
-  buildNasOfficialFingerprints,
-  mtimeSecFromMillis,
-  officialFingerprintSetHas,
+  buildNasDedupeIndex,
+  NasDedupeIndex,
+  nasDedupeIndexHasLocal,
   officialUploadFingerprint
 } from './GalleryAutoSyncOfficialFingerprint';
+import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
+import { LocalPhotoEntry } from './GalleryAutoSyncService';
 
 /** 从 Picker 返回的 URI 解析文件名 */
 export function fileNameFromPickerUri(uri: string): string {
@@ -103,10 +105,22 @@ export function pickerUriOfficialFingerprint(uri: string): string {
   return officialUploadFingerprint(name, size, mt);
 }
 
-/** 过滤 NAS 与账本中尚不存在的本地照片 URI（官方指纹）。 */
-export function filterUnsyncedPickerUrisWithFingerprints(
+/** 将 Picker URI 转为账本条目（与 Trim-Mtim 同源的 fileIo.mtime） */
+export function localPhotoEntryFromPickerUri(uri: string): LocalPhotoEntry {
+  const mtimeSec = mtimeSecFromPickerUri(uri);
+  return {
+    uri: uri,
+    fileName: fileNameFromPickerUri(uri),
+    fileSize: fileSizeFromPickerUri(uri),
+    dateModifiedMs: mtimeSec > 0 ? mtimeSec * 1000 : 0,
+    mimeType: ''
+  };
+}
+
+/** 过滤 NAS 与账本中尚不存在的本地照片 URI（官方指纹 + name/size 软匹配）。 */
+export function filterUnsyncedPickerUrisWithIndex(
   uris: string[],
-  nasFingerprints: Set<string>,
+  nasIndex: NasDedupeIndex,
   ledger: Set<string>
 ): string[] {
   const unsynced: string[] = [];
@@ -117,11 +131,12 @@ export function filterUnsyncedPickerUrisWithFingerprints(
     if (name.length === 0 || size <= 0) {
       continue;
     }
-    const fp = officialUploadFingerprint(name, size, mtimeSecFromPickerUri(uri));
-    if (officialFingerprintSetHas(nasFingerprints, fp)) {
+    const mt = mtimeSecFromPickerUri(uri);
+    if (nasDedupeIndexHasLocal(nasIndex, name, size, mt)) {
       continue;
     }
-    if (ledger.has(fp)) {
+    const entry = localPhotoEntryFromPickerUri(uri);
+    if (GalleryAutoSyncLedger.hasEntry(ledger, entry)) {
       continue;
     }
     unsynced.push(uri);
@@ -129,7 +144,20 @@ export function filterUnsyncedPickerUrisWithFingerprints(
   return unsynced;
 }
 
-/** @deprecated 使用 filterUnsyncedPickerUrisWithFingerprints */
+/** @deprecated 使用 filterUnsyncedPickerUrisWithIndex */
+export function filterUnsyncedPickerUrisWithFingerprints(
+  uris: string[],
+  nasFingerprints: Set<string>,
+  ledger: Set<string>
+): string[] {
+  const index: NasDedupeIndex = {
+    fingerprints: nasFingerprints,
+    nameSizeKeys: new Set<string>()
+  };
+  return filterUnsyncedPickerUrisWithIndex(uris, index, ledger);
+}
+
+/** @deprecated 使用 filterUnsyncedPickerUrisWithIndex */
 export function filterUnsyncedPickerUris(uris: string[], nasTimeline: GalleryListItem[]): string[] {
-  return filterUnsyncedPickerUrisWithFingerprints(uris, buildNasOfficialFingerprints(nasTimeline), new Set<string>());
+  return filterUnsyncedPickerUrisWithIndex(uris, buildNasDedupeIndex(nasTimeline), new Set<string>());
 }
