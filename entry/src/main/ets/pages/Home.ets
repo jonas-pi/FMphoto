@@ -511,6 +511,7 @@ struct MePanel {
     .height('100%')
     .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, {
       height: '56%',
+      title: { title: '传输队列' },
       showClose: true,
       dragBar: true,
       backgroundColor: $r('app.color.card_background'),

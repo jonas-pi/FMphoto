@@ -5,6 +5,10 @@ import {
   FnTransferTaskStatus
 } from './FnTransferQueueStore';
 
+/**
+ * 传输队列半屏内容区。
+ * 标题与关闭按钮由 bindSheet 的 title / showClose 官方能力提供。
+ */
 @Component
 export struct FnTransferQueueSheet {
   @Prop tasks: FnTransferTaskSnapshot[] = [];
@@ -142,13 +146,6 @@ export struct FnTransferQueueSheet {
 
   build() {
     Column({ space: 0 }) {
-      Text('传输队列')
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .width('100%')
-        .padding({ left: 20, right: 20, top: 4, bottom: 12 })
-
       if (this.tasks.length === 0) {
         Column({ space: 8 }) {
           Text('暂无传输任务')
