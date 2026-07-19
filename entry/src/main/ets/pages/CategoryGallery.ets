@@ -119,6 +119,8 @@ struct CategoryGallery {
   @State private slideshowPreparing: boolean = false;
 
   private cgLongPressIgnoreUntil: number = 0;
+  /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
+  private listScroller: Scroller = new Scroller();
   private listBlocks: Array<CategoryGalleryListBlock> = [];
   private listBlockSource: FnListDataSource<CategoryGalleryListBlock> =
     new FnListDataSource<CategoryGalleryListBlock>();
@@ -1202,26 +1204,103 @@ struct CategoryGallery {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      Column() {
-
-      if (this.groups.length === 0) {
-        FnStateText({
-          text: this.emptyStateText(),
-          topOffsetVp: this.contentInsetTopVp()
-        }).layoutWeight(1)
-      } else {
-        Stack() {
-          Column() {
-            List() {
-              LazyForEach(this.listBlockSource, (block: CategoryGalleryListBlock) => {
-                if (block.isHeader) {
-                  this.dayHeaderListItem(block.label ?? '')
-                } else if (block.row !== undefined) {
-                  this.dayRowListItem(block.groupIdx, block.row as RowModel)
+      CategoryGalleryChrome({
+        selectionMode: this.selectionMode,
+        selectedCount: this.selectedIds.length,
+        title: this.title,
+        totalCount: this.totalCount,
+        topSafeInsetVp: this.systemTopInsetVp,
+        personAlbumMode: this.usesMoreMenuMode(),
+        moreMenuExpanded: this.moreMenuExpanded,
+        scrollerList: [this.listScroller],
+        onCancelSelection: (): void => {
+          this.exitCgSelection();
+        },
+        onBack: (): void => {
+          this.navigateBack();
+        },
+        onToggleMode: (): void => {
+          this.toggleToolbarMode();
+        },
+        onShowMoreMenu: (): void => {
+          this.toggleMoreMenu();
+        }
+      }) {
+        Column() {
+          if (this.groups.length === 0) {
+            FnStateText({
+              text: this.emptyStateText(),
+              topOffsetVp: this.contentInsetTopVp()
+            }).layoutWeight(1)
+          } else {
+            Stack() {
+              Column() {
+                List({ scroller: this.listScroller }) {
+                  LazyForEach(this.listBlockSource, (block: CategoryGalleryListBlock) => {
+                    if (block.isHeader) {
+                      this.dayHeaderListItem(block.label ?? '')
+                    } else if (block.row !== undefined) {
+                      this.dayRowListItem(block.groupIdx, block.row as RowModel)
+                    }
+                  }, (block: CategoryGalleryListBlock) => block.key)
+                  if (this.cgBackgroundLoading) {
+                    ListItem() {
+                      Row({ space: 8 }) {
+                        LoadingProgress()
+                          .width(18)
+                          .height(18)
+                        Text('继续加载中')
+                          .fontSize(12)
+                          .fontColor($r('app.color.text_secondary'))
+                      }
+                      .width('100%')
+                      .justifyContent(FlexAlign.Center)
+                      .padding({ top: 8, bottom: 8 })
+                    }
+                  }
+                  ListItem() {
+                    Column() {
+                      Blank()
+                        .width('100%')
+                        .height(this.selectionMode && this.selectedIds.length > 0 ? 88 : 24)
+                    }
+                    .width('100%')
+                  }
                 }
-              }, (block: CategoryGalleryListBlock) => block.key)
-              if (this.cgBackgroundLoading) {
-                ListItem() {
+                .width('100%')
+                .layoutWeight(1)
+                .cachedCount(this.isRecentAddedStreamingMode() ? 1 : 3)
+                .margin({ top: this.contentInsetTopVp() })
+                .scrollBar(BarState.Auto)
+                .backgroundColor(Color.Transparent)
+                .edgeEffect(EdgeEffect.Spring)
+                .divider({ strokeWidth: 0 })
+                .enableScrollInteraction(this.cgScrollEnabled)
+                .onTouch((event: TouchEvent): void => {
+                  if (!this.cgSlideGestureActive) {
+                    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                      this.clearInitialCgSlideGesture();
+                    }
+                    return;
+                  }
+                  if (event.type === TouchType.Move) {
+                    const pt = this.readTouchFingerWindow(event);
+                    if (pt === null) {
+                      return;
+                    }
+                    this.onCgSlideTouchMoveWindow(pt.x, pt.y);
+                    return;
+                  }
+                  if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                    this.clearInitialCgSlideGesture();
+                    this.endCgSlideSelectGesture();
+                  }
+                })
+                .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+                  this.onListScrollStateChange(scrollState);
+                })
+
+                if (false && this.cgBackgroundLoading) {
                   Row({ space: 8 }) {
                     LoadingProgress()
                       .width(18)
@@ -1232,126 +1311,40 @@ struct CategoryGallery {
                   }
                   .width('100%')
                   .justifyContent(FlexAlign.Center)
-                  .padding({ top: 8, bottom: 8 })
+                  .padding({ top: 8, bottom: this.selectionMode && this.selectedIds.length > 0 ? 8 : 0 })
                 }
-              }
-              ListItem() {
-                Column() {
-                  Blank()
-                    .width('100%')
-                    .height(this.selectionMode && this.selectedIds.length > 0 ? 88 : 24)
-                }
-                .width('100%')
-              }
-            }
-            .width('100%')
-            .layoutWeight(1)
-            .cachedCount(this.isRecentAddedStreamingMode() ? 1 : 3)
-            .margin({ top: this.contentInsetTopVp() })
-            .scrollBar(BarState.Auto)
-            .backgroundColor(Color.Transparent)
-            .edgeEffect(EdgeEffect.Spring)
-            .divider({ strokeWidth: 0 })
-            .enableScrollInteraction(this.cgScrollEnabled)
-            .onTouch((event: TouchEvent): void => {
-              if (!this.cgSlideGestureActive) {
-                if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                  this.clearInitialCgSlideGesture();
-                }
-                return;
-              }
-              if (event.type === TouchType.Move) {
-                const pt = this.readTouchFingerWindow(event);
-                if (pt === null) {
-                  return;
-                }
-                this.onCgSlideTouchMoveWindow(pt.x, pt.y);
-                return;
-              }
-              if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                this.clearInitialCgSlideGesture();
-                this.endCgSlideSelectGesture();
-              }
-            })
-            .onDidScroll((_offset: number, scrollState: ScrollState): void => {
-              this.onListScrollStateChange(scrollState);
-            })
 
-            if (false && this.cgBackgroundLoading) {
-              Row({ space: 8 }) {
-                LoadingProgress()
-                  .width(18)
-                  .height(18)
-                Text('继续加载中')
-                  .fontSize(12)
-                  .fontColor($r('app.color.text_secondary'))
+                if (this.selectionMode && this.selectedIds.length > 0) {
+                  GalleryAlbumBatchActionBar({
+                    downloading: this.cgBatchDownloading,
+                    deleting: this.cgBatchDeleting,
+                    onDownload: (): void => {
+                      void this.confirmCgBatchDownload();
+                    },
+                    onDelete: (): void => {
+                      void this.confirmCgBatchDelete();
+                    }
+                  })
+                }
               }
               .width('100%')
-              .justifyContent(FlexAlign.Center)
-              .padding({ top: 8, bottom: this.selectionMode && this.selectedIds.length > 0 ? 8 : 0 })
-            }
+              .height('100%')
 
-            if (this.selectionMode && this.selectedIds.length > 0) {
-              GalleryAlbumBatchActionBar({
-                downloading: this.cgBatchDownloading,
-                deleting: this.cgBatchDeleting,
-                onDownload: (): void => {
-                  void this.confirmCgBatchDownload();
-                },
-                onDelete: (): void => {
-                  void this.confirmCgBatchDelete();
-                }
-              })
+              if (this.cgBatchDeleting || this.cgBatchDownloading) {
+                FnFullLoadingMask({
+                  text: this.cgBatchDeleting ? '移入回收站中…' : '下载中…',
+                  topOffsetVp: this.contentInsetTopVp()
+                })
+              }
             }
-          }
-          .width('100%')
-          .height('100%')
-
-          if (this.cgBatchDeleting || this.cgBatchDownloading) {
-            FnFullLoadingMask({
-              text: this.cgBatchDeleting ? '移入回收站中…' : '下载中…',
-              topOffsetVp: this.contentInsetTopVp()
-            })
+            .layoutWeight(1)
+            .width('100%')
           }
         }
-        .layoutWeight(1)
         .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.page_background'))
       }
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor($r('app.color.page_background'))
-
-      Column() {
-        CategoryGalleryChrome({
-          selectionMode: this.selectionMode,
-          selectedCount: this.selectedIds.length,
-          title: this.title,
-          totalCount: this.totalCount,
-          topSafeInsetVp: this.systemTopInsetVp,
-          personAlbumMode: this.usesMoreMenuMode(),
-          moreMenuExpanded: this.moreMenuExpanded,
-          onCancelSelection: (): void => {
-            this.exitCgSelection();
-          },
-          onBack: (): void => {
-            this.navigateBack();
-          },
-          onToggleMode: (): void => {
-            this.toggleToolbarMode();
-          },
-          onShowMoreMenu: (): void => {
-            this.toggleMoreMenu();
-          }
-        })
-
-        Blank()
-          .layoutWeight(1)
-          .hitTestBehavior(HitTestMode.None)
-      }
-      .width('100%')
-      .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
 
       if (this.moreMenuExpanded) {
         CategoryGalleryMoreMenu({

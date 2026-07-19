@@ -8,6 +8,7 @@ import {
   HdsNavigation,
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
   IconStyleMode,
   TextStyleMode
@@ -46,6 +47,11 @@ export function galleryAlbumTopBarChromeHeightVp(inSearchMode: boolean): number 
   return GALLERY_TOP_BAR_MINI_HEIGHT_VP;
 }
 
+/** pageContent 默认占位：未传入真实内容时渲染空视图，避免 HdsNavigation 内容区为 undefined。 */
+@Builder
+function galleryAlbumTopBarEmptyPageContent() {
+}
+
 @Component
 export struct GalleryAlbumTopBar {
   @Prop homeSurface: string = 'photos';
@@ -58,9 +64,15 @@ export struct GalleryAlbumTopBar {
   @Prop gallerySelectedCount: number = 0;
   @Prop moreMenuExpanded: boolean = false;
   @Prop searchQuery: string = '';
+  /** 系统状态栏高度：内容区顶部留白仍用此值；按钮避让靠 titleBar.avoidLayoutSafeArea。 */
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+
+  /** 真实可滚动内容：图库/相册/分类等页面 Stack，由调用方通过尾随闭包传入。 */
+  @BuilderParam pageContent: () => void = galleryAlbumTopBarEmptyPageContent;
+  /** 联动沉浸滚动光感的 Scroller 列表，随 bindToScrollable 传给 HdsNavigation。 */
+  scrollerList: Scroller[] = [];
 
   onSearchQueryChange: (value: string) => void = (_: string) => {};
   onSearchSubmit: () => void = () => {};
@@ -133,10 +145,6 @@ export struct GalleryAlbumTopBar {
       return true;
     }
     return !this.isRootSurfaceMode();
-  }
-
-  private chromeHeightVp(): number {
-    return galleryAlbumTopBarChromeHeightVp(this.inSearchMode);
   }
 
   private blurSearchInput(): void {
@@ -318,21 +326,10 @@ export struct GalleryAlbumTopBar {
   }
 
   /** 根态 / 子模式 / 多选：官方 titleBar.menu */
-  @Builder
-  private navigationDefault() {
-    HdsNavigation() {
-      // 仅作顶栏浮层：内容区留空，高度收束到 chrome，避免挡住下方图库
-      Column()
-        .width('100%')
-        .height(0)
-    }
-    .width('100%')
-    .height(this.chromeHeightVp())
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .hideBackButton(!this.shouldShowBack())
-    .titleBar(this.canUseHds() ? {
+  private defaultTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return this.canUseHds() ? {
       padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
-      avoidLayoutSafeArea: false,
+      avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
@@ -374,7 +371,7 @@ export struct GalleryAlbumTopBar {
       }
     } : {
       padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
-      avoidLayoutSafeArea: false,
+      avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
@@ -412,24 +409,14 @@ export struct GalleryAlbumTopBar {
           }
         }
       }
-    })
+    };
   }
 
   /** 搜索态：bottomBuilder 放输入框，menu 放更多/完成 */
-  @Builder
-  private navigationSearch() {
-    HdsNavigation() {
-      Column()
-        .width('100%')
-        .height(0)
-    }
-    .width('100%')
-    .height(this.chromeHeightVp())
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .hideBackButton(false)
-    .titleBar(this.canUseHds() ? {
+  private searchTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return this.canUseHds() ? {
       padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
-      avoidLayoutSafeArea: false,
+      avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
@@ -477,7 +464,7 @@ export struct GalleryAlbumTopBar {
       }
     } : {
       padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
-      avoidLayoutSafeArea: false,
+      avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
@@ -521,7 +508,7 @@ export struct GalleryAlbumTopBar {
           height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
         }
       }
-    })
+    };
   }
 
   private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
@@ -616,14 +603,15 @@ export struct GalleryAlbumTopBar {
   }
 
   build() {
-    Column() {
-      if (this.inSearchMode) {
-        this.navigationSearch()
-      } else {
-        this.navigationDefault()
-      }
+    HdsNavigation() {
+      this.pageContent()
     }
     .width('100%')
-    .padding({ top: this.topSafeInsetVp })
+    .height('100%')
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(!this.shouldShowBack())
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .bindToScrollable(this.scrollerList)
+    .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
   }
 }

@@ -101,6 +101,8 @@ struct RecycleBinPage {
   private rbRowBlocks: RecycleBinRowBlock[] = [];
   private rbRowSource: FnListDataSource<RecycleBinRowBlock> = new FnListDataSource<RecycleBinRowBlock>();
   private rbInitialSlidePending: boolean = false;
+  /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
+  private listScroller: Scroller = new Scroller();
 
   onBackPress(): boolean {
     if (this.selectionMode) {
@@ -588,6 +590,21 @@ struct RecycleBinPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      RecycleBinChrome({
+        selectionMode: this.selectionMode,
+        selectedCount: this.selectedIds.length,
+        topSafeInsetVp: this.systemTopInsetVp,
+        scrollerList: [this.listScroller],
+        onCancelSelection: (): void => {
+          this.exitSelection();
+        },
+        onBack: (): void => {
+          this.getUIContext().getRouter().back();
+        },
+        onToggleMode: (): void => {
+          this.toggleToolbarMode();
+        }
+      }) {
       Column() {
 
       if (this.loading) {
@@ -617,7 +634,7 @@ struct RecycleBinPage {
       } else {
         Stack() {
           Column() {
-            List() {
+            List({ scroller: this.listScroller }) {
               LazyForEach(this.rbRowSource, (block: RecycleBinRowBlock) => {
                 ListItem() {
                   Row({ space: 2 }) {
@@ -809,30 +826,7 @@ struct RecycleBinPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.page_background'))
-
-      Column() {
-        RecycleBinChrome({
-          selectionMode: this.selectionMode,
-          selectedCount: this.selectedIds.length,
-          topSafeInsetVp: this.systemTopInsetVp,
-          onCancelSelection: (): void => {
-            this.exitSelection();
-          },
-          onBack: (): void => {
-            this.getUIContext().getRouter().back();
-          },
-          onToggleMode: (): void => {
-            this.toggleToolbarMode();
-          }
-        })
-
-        Blank()
-          .layoutWeight(1)
-          .hitTestBehavior(HitTestMode.None)
       }
-      .width('100%')
-      .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width('100%')
     .height('100%')

@@ -72,11 +72,11 @@ export function fnHdsNavChromeBackgroundStyle(): HdsNavigationBackgroundStyle {
   };
 }
 
-/** 开启滚动动效开关，避免上述灰底默认规则；无绑定时仍停在 originalStyle（透明）。 */
+/** 官方图库沉浸场景：IMMERSIVE_GRADIENT_BLUR + 滚动联动（需 bindToScrollable）。 */
 export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
   return {
     enableScrollEffect: true,
-    scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+    scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
   };
 }
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;

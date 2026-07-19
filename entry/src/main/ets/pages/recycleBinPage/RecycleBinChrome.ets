@@ -9,6 +9,7 @@ import {
   HdsNavigationBackButtonItemOptions,
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
   HdsNavigationTitleBarStyle,
   HdsNavigationTitleMode,
   TextStyleMode,
@@ -20,13 +21,17 @@ import {
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsChromeButtonForegroundColor,
   fnHdsNavChromeBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts,
-  FN_HDS_NAV_CHROME_HEIGHT_VP
+  fnHdsNavChromeScrollEffectOpts
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
+
+/** pageContent 默认占位：未传入真实内容时渲染空视图。 */
+@Builder
+function recycleBinChromeEmptyPageContent() {
+}
 
 @Component
 export struct RecycleBinChrome {
@@ -34,6 +39,11 @@ export struct RecycleBinChrome {
   @Prop selectedCount: number = 0;
   @Prop topSafeInsetVp: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+
+  /** 真实可滚动内容：回收站列表 Stack，由页面通过尾随闭包传入。 */
+  @BuilderParam pageContent: () => void = recycleBinChromeEmptyPageContent;
+  /** 联动沉浸滚动光感的 Scroller 列表。 */
+  scrollerList: Scroller[] = [];
 
   onCancelSelection: () => void = () => {};
   onBack: () => void = () => {};
@@ -135,53 +145,48 @@ export struct RecycleBinChrome {
     };
   }
 
-  @Builder
-  private navigationContent() {
-    Column()
-      .width('100%')
-      .height(0)
+  private titleBarOptions(): HdsNavigationTitleBarOptions {
+    return this.canUseHds() ? {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        // @SuppressWarnings compatibility
+        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        originalStyle: this.titleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.titleBarContent()
+    } : {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        originalStyle: this.titleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.titleBarContent()
+    };
   }
 
   build() {
-    Column() {
-      HdsNavigation() {
-        this.navigationContent()
-      }
-      .width('100%')
-      .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
-      .titleMode(HdsNavigationTitleMode.MINI)
-      .hideBackButton(this.selectionMode)
-      .titleBar(this.canUseHds() ? {
-        padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
-        avoidLayoutSafeArea: false,
-        enableComponentSafeArea: false,
-        style: {
-          blurStrategy: BlurStrategy.ADAPTIVE,
-          scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-          // @SuppressWarnings compatibility
-          systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-          originalStyle: this.titleBarOriginalStyle(),
-          scrollEffectStyle: {
-            backgroundStyle: fnHdsNavChromeBackgroundStyle()
-          }
-        },
-        content: this.titleBarContent()
-      } : {
-        padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
-        avoidLayoutSafeArea: false,
-        enableComponentSafeArea: false,
-        style: {
-          blurStrategy: BlurStrategy.ADAPTIVE,
-          scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-          originalStyle: this.titleBarOriginalStyle(),
-          scrollEffectStyle: {
-            backgroundStyle: fnHdsNavChromeBackgroundStyle()
-          }
-        },
-        content: this.titleBarContent()
-      })
+    HdsNavigation() {
+      this.pageContent()
     }
     .width('100%')
-    .padding({ top: this.topSafeInsetVp })
+    .height('100%')
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(this.selectionMode)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .bindToScrollable(this.scrollerList)
+    .titleBar(this.titleBarOptions())
   }
 }
