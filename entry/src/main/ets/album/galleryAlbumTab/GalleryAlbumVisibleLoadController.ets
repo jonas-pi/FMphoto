@@ -309,8 +309,8 @@ export function galleryAlbumVisibleFlushPendingFlowRebuild(host: GalleryAlbumVis
     return;
   }
   host.pendingFlowRebuild = false;
+  // rebuildFlow 内已 reloadAll；避免二次 notifyDataReload 造成多余整表刷新卡顿
   host.rebuildFlow();
-  host.flowDataSource.notifyDataReload();
   galleryAlbumVisibleForceRefreshVisibleRange(host);
   setTimeout((): void => {
     if (host.visualPlaceholderMode || host.isDraggingOrFling) {

@@ -337,3 +337,98 @@ export function galleryAlbumUpsertSection(
   }
   galleryAlbumRebuildFlow(host);
 }
+
+/**
+ * 官方推荐：下拉刷新用原地改数据 + notifyDataChange，禁止 reloadAll。
+ * 仅合并 section 槽位，不重建整表节点。
+ */
+export function galleryAlbumMergeSectionSilent(
+  host: GalleryAlbumVisibleLoadHost,
+  day: TimelineDayModel,
+  newItems: GalleryListItem[],
+  startOffset: number
+): void {
+  if (newItems.length <= 0) {
+    return;
+  }
+  let section: GalleryAlbumDaySectionState | undefined = undefined;
+  for (let i = 0; i < host.sections.length; i++) {
+    const s = host.sections[i];
+    if (s.year === day.year && s.month === day.month && s.day === day.day) {
+      section = s;
+      break;
+    }
+  }
+  if (section === undefined) {
+    return;
+  }
+  section.itemCount = Math.max(section.itemCount, day.itemCount);
+  for (let i = 0; i < newItems.length; i++) {
+    section.slotByOffset.set(startOffset + i, newItems[i]);
+  }
+  section.nextOffset = Math.max(section.nextOffset, startOffset + newItems.length);
+}
+
+/** 把某日 section 槽位写回已有 row 节点，并按官方路径 notifyDataChange。 */
+export function galleryAlbumNotifyDayRowsChanged(
+  host: GalleryAlbumVisibleLoadHost,
+  year: number,
+  month: number,
+  day: number
+): number {
+  let section: GalleryAlbumDaySectionState | undefined = undefined;
+  for (let i = 0; i < host.sections.length; i++) {
+    const s = host.sections[i];
+    if (s.year === year && s.month === month && s.day === day) {
+      section = s;
+      break;
+    }
+  }
+  if (section === undefined) {
+    return 0;
+  }
+  const mode = host.viewGranularity;
+  const columns = Math.max(1, host.galleryGridColumns);
+  const total = host.flowDataSource.totalCount();
+  let dayStart = -1;
+  for (let i = 0; i < total; i++) {
+    const node = host.flowDataSource.getData(i);
+    if (node.kind !== 'row' || node.year !== year || node.month !== month || node.day !== day) {
+      continue;
+    }
+    if (dayStart < 0 || node.globalPhotoSlotStart < dayStart) {
+      dayStart = node.globalPhotoSlotStart;
+    }
+  }
+  if (dayStart < 0) {
+    return 0;
+  }
+  let notified = 0;
+  for (let i = 0; i < total; i++) {
+    const node = host.flowDataSource.getData(i);
+    if (node.kind !== 'row' || node.year !== year || node.month !== month || node.day !== day) {
+      continue;
+    }
+    const row = Math.floor(Math.max(0, node.globalPhotoSlotStart - dayStart) / columns);
+    const rowStart = row * columns;
+    const slots: (GalleryListItem | null)[] = [];
+    const flats: number[] = [];
+    for (let k = 0; k < Math.max(1, node.rowColumnCount); k++) {
+      const localOff = rowStart + k;
+      const item = section.slotByOffset.get(localOff);
+      if (item !== undefined) {
+        slots.push(item);
+        flats.push(localOff);
+      } else {
+        slots.push(null);
+        flats.push(-1);
+      }
+    }
+    node.rowSlotItems = slots;
+    node.rowSlotFlatIndices = flats;
+    node.key = galleryAlbumBuildRowNodeKey(mode, year, month, day, row, columns, slots);
+    host.flowDataSource.notifyDataChange(i);
+    notified++;
+  }
+  return notified;
+}

@@ -23,6 +23,8 @@ import {
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncNasIdx';
 const CACHE_TTL_MS: number = 30 * 60 * 1000;
+/** 按天拉取 NAS 列表的并发上限，避免全串行过慢、又不过度打满接口。 */
+const NAS_DAY_FETCH_CONCURRENCY: number = 3;
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   if (data === undefined || data === null) {
@@ -160,8 +162,24 @@ export class GalleryAutoSyncNasIndex {
   ): Promise<GalleryListItem[]> {
     const out: GalleryListItem[] = [];
     const days = collectTimelineDays(timeline);
-    for (let i = 0; i < days.length; i++) {
-      await GalleryAutoSyncNasIndex.fetchDayPages(client, days[i], out);
+    for (let i = 0; i < days.length; i += NAS_DAY_FETCH_CONCURRENCY) {
+      const chunkEnd: number = Math.min(i + NAS_DAY_FETCH_CONCURRENCY, days.length);
+      const tasks: Promise<GalleryListItem[]>[] = [];
+      for (let j = i; j < chunkEnd; j++) {
+        const day = days[j];
+        tasks.push((async (): Promise<GalleryListItem[]> => {
+          const part: GalleryListItem[] = [];
+          await GalleryAutoSyncNasIndex.fetchDayPages(client, day, part);
+          return part;
+        })());
+      }
+      const parts: GalleryListItem[][] = await Promise.all(tasks);
+      for (let p = 0; p < parts.length; p++) {
+        const part = parts[p];
+        for (let k = 0; k < part.length; k++) {
+          out.push(part[k]);
+        }
+      }
     }
     return out;
   }

@@ -152,7 +152,8 @@ export class GalleryAutoSyncStore {
       }
 
       const nasIndex = mergeNasDedupeIndex(
-        await GalleryAutoSyncNasIndex.getIndex(client, force),
+        // force 只跳过本地检测节流；NAS 索引在 TTL 内复用，避免每次手动同步全库重拉
+        await GalleryAutoSyncNasIndex.getIndex(client, false),
         partialTimeline
       );
       const ledger = await GalleryAutoSyncLedger.load(ctx);

@@ -268,7 +268,7 @@ export function galleryAlbumStartAutoSync(
       }
       const granted = await fnEnsureReadImageVideoGranted(ctx);
       if (granted) {
-        const checkId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '扫描本地相册', 0);
+        const checkId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '检查待同步照片', 0);
         const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
         FnTransferQueueStore.finish(
           checkId,
@@ -314,7 +314,7 @@ async function galleryAlbumPickAndSync(host: GalleryAlbumModeOrchestratorHost): 
     return;
   }
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  const nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, true);
+  const nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false);
   const ledger = await GalleryAutoSyncLedger.load(ctx);
   const toUpload = filterUnsyncedPickerUrisWithIndex(uris, nasIndex, ledger);
   if (toUpload.length === 0) {

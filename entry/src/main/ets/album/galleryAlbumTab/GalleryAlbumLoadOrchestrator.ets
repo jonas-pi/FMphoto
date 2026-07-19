@@ -37,7 +37,12 @@ import {
   sortDaysDesc,
   TimelineDayModel
 } from './GalleryAlbumTabTypes';
+import {
+  galleryAlbumMergeSectionSilent,
+  galleryAlbumNotifyDayRowsChanged
+} from './GalleryAlbumFlowLogic';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
+import { GalleryAlbumVisibleLoadHost } from './GalleryAlbumVisibleLoadController';
 
 const GALLERY_SCROLL_RELEASE_TRACE_TAG = '[scroll-release-visible]';
 
@@ -95,6 +100,8 @@ export interface GalleryAlbumLoadOrchestratorHost {
   upsertSection(day: TimelineDayModel, list: GalleryListItem[], newOffset: number): void;
   clearBootstrapDebounceTimer(): void;
   loadVisibleItemsImmediate(): void;
+  /** 下拉原地刷新需要访问可见加载宿主（flow 节点 + sections）。 */
+  asVisibleLoadHost(): GalleryAlbumVisibleLoadHost;
   onMainTimelineReady?(): void;
 }
 
@@ -216,6 +223,10 @@ export function galleryAlbumSyncTimelineAtTopForPull(host: GalleryAlbumLoadOrche
   }
 }
 
+/**
+ * 官方下拉刷新：保持列表结构，原地拉已加载日首屏并 notifyDataChange。
+ * 禁止 bootstrap / reloadAll（那是整表重建，会卡 Refresh 动效）。
+ */
 export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOrchestratorHost): Promise<void> {
   galleryAlbumSyncTimelineAtTopForPull(host);
   if (!host.galleryTimelineAtTopForPull || host.gallerySelectionMode) {
@@ -223,9 +234,84 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
     return;
   }
   host.galleryTimelineRefreshing = true;
+  host.clearBootstrapDebounceTimer();
   try {
-    host.clearBootstrapDebounceTimer();
-    await galleryAlbumBootstrap(host, false);
+    if (host.sections.length === 0 || host.orderedDays.length === 0) {
+      await galleryAlbumBootstrap(host, false);
+      return;
+    }
+    GalleryHomeTimelineCache.invalidate();
+    const client = AppSession.getClient();
+    if (client === null) {
+      return;
+    }
+    // 轻量探测时间轴：若顶部出现新日期，才回退全量 bootstrap
+    let tl = await client.getGalleryTimeline();
+    if (tl.success === true && tl.data !== undefined) {
+      const rawList = tl.data.list ?? [];
+      const cellsIn: Array<Record<string, number | undefined>> = [];
+      for (let i = 0; i < rawList.length; i++) {
+        const el = rawList[i];
+        if (typeof el === 'object' && el !== null) {
+          cellsIn.push(el as Record<string, number | undefined>);
+        }
+      }
+      const cells = sortDaysDesc(parseTimelineDayCells(cellsIn)).filter(
+        (c: TimelineDayModel): boolean => c.itemCount > 0
+      );
+      if (cells.length > 0) {
+        const top = cells[0];
+        const cur = host.orderedDays[0];
+        const topChanged = cur === undefined ||
+          top.year !== cur.year || top.month !== cur.month || top.day !== cur.day ||
+          top.itemCount !== cur.itemCount;
+        if (topChanged && (cur === undefined ||
+          top.year !== cur.year || top.month !== cur.month || top.day !== cur.day)) {
+          // 顶部新增日期：结构变了，只能 bootstrap；仍走软刷新保留旧列表至数据就绪
+          await galleryAlbumBootstrap(host, false);
+          return;
+        }
+        // 同步已有日的 itemCount，供后续可见加载使用（不 rebuild）
+        const byKey = new Map<string, TimelineDayModel>();
+        for (let i = 0; i < cells.length; i++) {
+          const d = cells[i];
+          byKey.set(dayKey(d.year, d.month, d.day), d);
+        }
+        for (let i = 0; i < host.orderedDays.length; i++) {
+          const d = host.orderedDays[i];
+          const latest = byKey.get(dayKey(d.year, d.month, d.day));
+          if (latest !== undefined && latest.itemCount !== d.itemCount) {
+            d.itemCount = latest.itemCount;
+          }
+        }
+      }
+    }
+
+    const visible = host.asVisibleLoadHost();
+    const maxDays = Math.min(host.sections.length, 3);
+    for (let i = 0; i < maxDays; i++) {
+      const section = host.sections[i];
+      const day: TimelineDayModel = {
+        year: section.year,
+        month: section.month,
+        day: section.day,
+        itemCount: section.itemCount
+      };
+      const st = fmtDayStart(day.year, day.month, day.day);
+      const et = fmtDayEnd(day.year, day.month, day.day);
+      const res = await client.getGalleryList(st, et, DATE_FEED_BATCH, 0, 'index');
+      if (res.success !== true) {
+        continue;
+      }
+      const list = listFromData(res.data as GalleryGetListData | undefined);
+      if (list.length <= 0) {
+        continue;
+      }
+      galleryAlbumMergeSectionSilent(visible, day, list, 0);
+      galleryAlbumNotifyDayRowsChanged(visible, day.year, day.month, day.day);
+    }
+    galleryAlbumMarkTimelineRefreshCaughtUp(host);
+    host.loadVisibleItemsImmediate();
   } finally {
     host.galleryTimelineRefreshing = false;
     host.galleryPullRefreshThresholdHapticDone = false;
@@ -238,17 +324,28 @@ export async function galleryAlbumBootstrap(
 ): Promise<void> {
   GalleryHomeTimelineCache.invalidate();
   const gen = ++host.loadGen;
+  host.pumpEpoch++;
   host.exhausted = false;
-  host.dayIndex = 0;
-  host.orderedDays = [];
-  host.dayOffsets.clear();
-  host.dayRounds.clear();
-  host.dayEmptyRounds.clear();
-  host.bootLoading = showFullBleedSkeleton;
+  host.loadingMore = false;
   host.loadError = '';
-  host.sections = [];
   host.footText = '';
-  host.rebuildFlow();
+  /**
+   * 软刷新（下拉 / 重试）：保留旧列表，避免 Refresh 动效期间清空+全量 rebuild 卡顿。
+   * 冷启动才立刻清空并展示全屏骨架。
+   */
+  const softRefresh: boolean = !showFullBleedSkeleton && host.sections.length > 0;
+  if (!softRefresh) {
+    host.dayIndex = 0;
+    host.orderedDays = [];
+    host.dayOffsets.clear();
+    host.dayRounds.clear();
+    host.dayEmptyRounds.clear();
+    host.bootLoading = showFullBleedSkeleton;
+    host.sections = [];
+    host.rebuildFlow();
+  } else {
+    host.bootLoading = false;
+  }
 
   const client = AppSession.getClient();
   if (client === null) {
@@ -256,7 +353,9 @@ export async function galleryAlbumBootstrap(
       return;
     }
     host.bootLoading = false;
-    host.loadError = '未登录';
+    if (!softRefresh) {
+      host.loadError = '未登录';
+    }
     return;
   }
 
@@ -306,7 +405,10 @@ export async function galleryAlbumBootstrap(
     const em = tl.message !== undefined && tl.message.length > 0 ? tl.message : '时间轴加载失败';
     hilog.warn(DOMAIN, TAG, 'timeline fail: %{public}s body: %{public}s', em, '');
     host.bootLoading = false;
-    host.loadError = em;
+    // 软刷新失败时保留旧列表，避免整页变错误态
+    if (!softRefresh) {
+      host.loadError = em;
+    }
     return;
   }
 
@@ -323,17 +425,27 @@ export async function galleryAlbumBootstrap(
   );
   if (cells.length === 0) {
     host.bootLoading = false;
+    host.dayIndex = 0;
+    host.orderedDays = [];
+    host.dayOffsets.clear();
+    host.dayRounds.clear();
+    host.dayEmptyRounds.clear();
+    host.sections = [];
     host.footText = '时间轴暂无数据';
     host.rebuildFlow();
     galleryAlbumMarkTimelineRefreshCaughtUp(host);
     return;
   }
 
+  // 软刷新（重试）：保留旧 UI 至数据返回；换游标后由 loadOneBatch->upsertSection 重建
+  host.dayIndex = 0;
+  host.dayOffsets.clear();
+  host.dayRounds.clear();
+  host.dayEmptyRounds.clear();
+  host.sections = [];
   host.orderedDays = cells;
   host.bootLoading = false;
   galleryAlbumMarkTimelineRefreshCaughtUp(host);
-  // Cold bootstrap only seeds the first visible slice. Let visible-band loading
-  // continue on demand instead of background-prefetching the whole timeline.
   host.loadingMore = true;
   let added = 0;
   try {

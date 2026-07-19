@@ -1274,6 +1274,7 @@ export struct GalleryAlbumTab {
       loadVisibleItemsImmediate(): void {
         galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost());
       }
+      asVisibleLoadHost(): GalleryAlbumVisibleLoadHost { return self.asVisibleLoadHost(); }
       onMainTimelineReady(): void {
         if (self.inSearchMode || self.inCategoryMode || self.inSmartCategoryMode || self.inPersonMode) {
           return;
