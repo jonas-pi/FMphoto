@@ -18,7 +18,11 @@ import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
 import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
 import { AutoSyncRunnerCallbacks, runAutoSyncInBackground } from '../GalleryAutoSyncSheet';
 import { LocalPhotoEntry } from '../GalleryAutoSyncService';
-import { filterUnsyncedPickerUrisWithFingerprints, fileNameFromPickerUri, fileSizeFromPickerUri } from '../GalleryAutoSyncPicker';
+import {
+  filterUnsyncedPickerUrisWithIndex,
+  fileNameFromPickerUri,
+  localPhotoEntryFromPickerUri
+} from '../GalleryAutoSyncPicker';
 import { fnEnsureReadImageVideoGranted } from '../../common/FnMediaPermission';
 import { FnTransferDirection, fnTransferDirectionLabel } from '../../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
@@ -264,7 +268,7 @@ export function galleryAlbumStartAutoSync(
       }
       const granted = await fnEnsureReadImageVideoGranted(ctx);
       if (granted) {
-        const checkId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '扫描本地相册', 0);
+        const checkId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '检查待同步照片', 0);
         const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
         FnTransferQueueStore.finish(
           checkId,
@@ -310,9 +314,9 @@ async function galleryAlbumPickAndSync(host: GalleryAlbumModeOrchestratorHost): 
     return;
   }
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  const nasFingerprints = await GalleryAutoSyncNasIndex.getFingerprints(client, true);
+  const nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false);
   const ledger = await GalleryAutoSyncLedger.load(ctx);
-  const toUpload = filterUnsyncedPickerUrisWithFingerprints(uris, nasFingerprints, ledger);
+  const toUpload = filterUnsyncedPickerUrisWithIndex(uris, nasIndex, ledger);
   if (toUpload.length === 0) {
     host.toast('所选照片已在 NAS 中');
     return;
@@ -372,10 +376,16 @@ function galleryAlbumUploadUriListInBackground(
     try {
       await BackgroundKeepAliveController.withDataTransfer(ctx, keepAliveTag, async (): Promise<void> => {
         for (let i = 0; i < uris.length; i++) {
-          FnTransferQueueStore.update(taskId, i + 1, fileNameFromPickerUri(uris[i]));
-          const res = await client.uploadPhotoByUri(uris[i], 150000, albumDirHint);
+          const uri = uris[i];
+          FnTransferQueueStore.update(taskId, i + 1, fileNameFromPickerUri(uri));
+          const res = await client.uploadPhotoByUri(uri, 150000, albumDirHint);
           if (res.success) {
             ok++;
+            // Picker / 手动上传成功后写入账本，避免下次同步再次判定为未同步
+            const entry = localPhotoEntryFromPickerUri(uri);
+            await GalleryAutoSyncLedger.markSynced(ctx, [entry]);
+            GalleryAutoSyncStore.markSynced([uri]);
+            GalleryAutoSyncNasIndex.invalidate();
           } else if (firstFailMsg.length === 0) {
             const em = res.message ?? '';
             firstFailMsg = em.length > 0 ? em : `${doneVerb}失败`;

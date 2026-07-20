@@ -45,6 +45,8 @@ export struct GalleryAlbumAlbumsHomeView {
   @Prop @Watch('onSmartInfoItemsChanged') smartInfoItems: SmartCategoryItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
+  /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
+  scroller: Scroller = new Scroller();
 
   getMediaCategoryTitle: (item: MediaCategoryItem) => string = (_: MediaCategoryItem) => '';
   getMediaCategoryCount: (item: MediaCategoryItem) => number = (_: MediaCategoryItem) => 0;
@@ -1020,7 +1022,7 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   build() {
-    List() {
+    List({ scroller: this.scroller }) {
       if (this.contentInsetTopVp > 0) {
         ListItem() {
           Column() {

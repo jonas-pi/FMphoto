@@ -1,5 +1,4 @@
 import {
-  fnLiquidGlassGradient,
   FnInlineLoading,
   FnStateText
 } from '../../common/FnUiCommon';
@@ -12,6 +11,10 @@ import {
   galleryPreviewPersonInPhotoLineText
 } from './GalleryPreviewDetailsLogic';
 
+/**
+ * 照片详情半屏内容区。
+ * 标题与关闭按钮由 bindSheet 的 title / showClose 官方能力提供。
+ */
 @Component
 export struct GalleryPreviewDetailsSheet {
   @Prop isDark: boolean = false;
@@ -24,51 +27,6 @@ export struct GalleryPreviewDetailsSheet {
 
   onPersonClick: (p: PersonInPhotoItem) => void = (_: PersonInPhotoItem) => {};
   onFolderClick: () => void = () => {};
-  onClose: () => void = () => {};
-
-  @Builder
-  private headerRow() {
-    Row() {
-      Text('照片详情')
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.isDark ? '#FFF2F2F7' : '#FF1C1C1E')
-
-      Blank()
-        .layoutWeight(1)
-
-      this.closeButton()
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: 16, right: 16, top: 4, bottom: 8 })
-    .border({
-      width: { bottom: 1 },
-      color: this.isDark ? '#1FFFFFFF' : '#12001A33'
-    })
-  }
-
-  @Builder
-  private closeButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph($r('sys.symbol.xmark'))
-        .fontSize(17)
-        .fontColor([this.isDark ? '#FFF2F2F7' : '#FF1C1C1E'])
-        .hitTestBehavior(HitTestMode.None)
-    }
-    .width(32)
-    .height(32)
-    .borderRadius(16)
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
-    .borderWidth(1)
-    .borderColor(this.isDark ? '#1FFFFFFF' : '#12001A33')
-    .clip(true)
-    .onClick((): void => {
-      this.onClose();
-    })
-  }
 
   @Builder
   private detailRow(label: string, value: string) {
@@ -158,7 +116,6 @@ export struct GalleryPreviewDetailsSheet {
 
   build() {
     Column() {
-      this.headerRow()
       if (this.detailsLoading) {
         FnInlineLoading({ text: '详情加载中…' })
           .padding({ top: 18, bottom: 20 })

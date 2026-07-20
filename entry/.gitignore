@@ -10,13 +10,8 @@
 !/build/default/outputs/default/
 /build/default/outputs/default/*
 !/build/default/outputs/default/entry-default-unsigned.hap
-!/build/release/
-/build/release/*
-!/build/release/outputs/
-/build/release/outputs/*
-!/build/release/outputs/default/
-/build/release/outputs/default/*
-!/build/release/outputs/default/entry-default-signed.hap
-!/build/release/outputs/default/entry-default-unsigned.hap
+# 签名包严禁入库；release 产物不入库（含未签名），统一用 default 未签名包发布
+/build/release/
+/build/**/*-signed.hap
 /.cxx
 /.test

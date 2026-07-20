@@ -43,6 +43,8 @@ export struct GalleryAlbumSearchModeView {
   @Prop galleryLongPressIgnoreClickUntil: number = 0;
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
+  /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
+  scroller: Scroller = new Scroller();
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
   searchThumbDomId: (flatIndex: number) => string = (_: number) => '';
@@ -412,7 +414,7 @@ export struct GalleryAlbumSearchModeView {
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         Column() {
-          List() {
+          List({ scroller: this.scroller }) {
             LazyForEach(this.searchRowSource, (block: GallerySearchRowBlock) => {
               ListItem() {
                 Row({ space: 2 }) {

@@ -28,9 +28,9 @@ async function refilterBeforeUpload(
   client: FnHttpClient,
   photos: LocalPhotoEntry[]
 ): Promise<LocalPhotoEntry[]> {
-  const nasFingerprints = await GalleryAutoSyncNasIndex.getFingerprints(client, true);
+  const nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false);
   const ledger = await GalleryAutoSyncLedger.load(ctx);
-  const clientFiltered = filterUnsyncedLocalPhotos(photos, nasFingerprints, ledger).unsynced;
+  const clientFiltered = filterUnsyncedLocalPhotos(photos, nasIndex, ledger).unsynced;
   if (clientFiltered.length === 0) {
     return clientFiltered;
   }

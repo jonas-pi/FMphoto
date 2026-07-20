@@ -81,10 +81,9 @@ import {
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../common/FnMotion';
 import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../common/GalleryTopBarLayout';
 import {
-  GalleryAlbumTopBar,
-  GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP
+  galleryAlbumTopBarChromeHeightVp,
+  GalleryAlbumTopBar
 } from './galleryAlbumTab/GalleryAlbumTopBar';
-import { GalleryAlbumFloatingTopBarLayer } from './galleryAlbumTab/GalleryAlbumFloatingTopBarLayer';
 import { GalleryAlbumMoreMenu } from './galleryAlbumTab/GalleryAlbumMoreMenu';
 import { gallerySlideshowLaunch } from './slideshow/GallerySlideshowLauncher';
 import {
@@ -623,6 +622,10 @@ export struct GalleryAlbumTab {
   /** 每天连续空页计数，防止单次空页误切日。 */
   private dayEmptyRounds: Map<string, number> = new Map<string, number>();
   private scrollerRef: Scroller = new Scroller();
+  /** 相册首页 List 的 Scroller，供顶栏 bindToScrollable 联动沉浸滚动效果。 */
+  private albumsScroller: Scroller = new Scroller();
+  /** 搜索结果 List 的 Scroller，供顶栏 bindToScrollable 联动沉浸滚动效果。 */
+  private searchScroller: Scroller = new Scroller();
   /** 上次已处理的删除同步版本号。 */
   private handledDeleteSyncVersion: number = 0;
   /** 长按后在此时间戳之前忽略单击，避免误进预览。 */
@@ -1271,6 +1274,7 @@ export struct GalleryAlbumTab {
       loadVisibleItemsImmediate(): void {
         galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost());
       }
+      asVisibleLoadHost(): GalleryAlbumVisibleLoadHost { return self.asVisibleLoadHost(); }
       onMainTimelineReady(): void {
         if (self.inSearchMode || self.inCategoryMode || self.inSmartCategoryMode || self.inPersonMode) {
           return;
@@ -2390,7 +2394,7 @@ export struct GalleryAlbumTab {
   }
 
   private loadingMaskTopOffsetVp(): number {
-    return this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP;
+    return this.topSafeInsetVp + galleryAlbumTopBarChromeHeightVp(this.inSearchMode);
   }
 
   private onEpochChange(): void {
@@ -2439,151 +2443,6 @@ export struct GalleryAlbumTab {
   build() {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Stack({ alignContent: Alignment.TopStart }) {
-        if (this.isRootPhotosSurfaceLayerVisible()) {
-          Stack() {
-            GalleryAlbumFloatingTopBarLayer({
-              homeSurface: 'photos',
-              inSearchMode: false,
-              inCategoryMode: false,
-              inSmartCategoryMode: false,
-              inPersonMode: false,
-              rootSurfaceTitle: this.rootPhotosScrollTitle,
-              gallerySelectionMode: this.gallerySelectionMode,
-              gallerySelectedCount: this.gallerySelectedIds.length,
-              moreMenuExpanded: this.moreMenuExpanded,
-              searchQuery: this.searchQuery,
-              topSafeInsetVp: this.topSafeInsetVp,
-              pageShowSignal: this.pageShowSignal,
-              onSearchQueryChange: (value: string): void => {
-                this.searchQuery = value;
-              },
-              onSearchSubmit: (): void => {
-                void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
-              },
-              onOpenSearch: (): void => {
-                this.openSearchPanel();
-              },
-              onStartUpload: (): void => {
-                galleryAlbumStartUpload(this.asModeOrchestratorHost());
-              },
-              onExitSelection: (): void => {
-                galleryAlbumExitSelection(this.asSelectionGestureHost());
-              },
-              onEnterSelection: (): void => {
-                this.enterGallerySelectionModeFromToolbar();
-              },
-              onBackToGallery: (): void => {
-                this.returnToHomeSurfaceRoot(true);
-              },
-              onShowMoreMenu: (): void => {
-                this.showMoreMenu();
-              }
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .translate({ x: this.rootPhotosSurfaceTranslateX, y: 0 })
-          .enabled(this.isRootPhotosSurfaceVisible())
-          .hitTestBehavior(this.isRootPhotosSurfaceVisible() ? HitTestMode.Transparent : HitTestMode.None)
-          .zIndex(this.rootPhotosSurfaceZIndex() + 10)
-        }
-
-        if (this.isRootAlbumsSurfaceLayerVisible()) {
-          Stack() {
-            GalleryAlbumFloatingTopBarLayer({
-              homeSurface: 'albums',
-              inSearchMode: false,
-              inCategoryMode: true,
-              inSmartCategoryMode: false,
-              inPersonMode: false,
-              rootSurfaceTitle: '相册',
-              gallerySelectionMode: this.gallerySelectionMode,
-              gallerySelectedCount: this.gallerySelectedIds.length,
-              moreMenuExpanded: this.moreMenuExpanded,
-              searchQuery: this.searchQuery,
-              topSafeInsetVp: this.topSafeInsetVp,
-              pageShowSignal: this.pageShowSignal,
-              onSearchQueryChange: (value: string): void => {
-                this.searchQuery = value;
-              },
-              onSearchSubmit: (): void => {
-                void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
-              },
-              onOpenSearch: (): void => {
-                this.openSearchPanel();
-              },
-              onStartUpload: (): void => {
-                galleryAlbumStartUpload(this.asModeOrchestratorHost());
-              },
-              onExitSelection: (): void => {
-                galleryAlbumExitSelection(this.asSelectionGestureHost());
-              },
-              onEnterSelection: (): void => {
-                this.enterGallerySelectionModeFromToolbar();
-              },
-              onBackToGallery: (): void => {
-                this.returnToHomeSurfaceRoot(true);
-              },
-              onShowMoreMenu: (): void => {
-                this.showMoreMenu();
-              }
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .translate({ x: this.rootAlbumsSurfaceTranslateX, y: 0 })
-          .enabled(this.isRootAlbumsSurfaceVisible())
-          .hitTestBehavior(this.isRootAlbumsSurfaceVisible() ? HitTestMode.Transparent : HitTestMode.None)
-          .zIndex(this.rootAlbumsSurfaceZIndex() + 10)
-        }
-
-        if (!this.isRootPhotosSurfaceLayerVisible() && !this.isRootAlbumsSurfaceLayerVisible()) {
-          Stack() {
-            GalleryAlbumFloatingTopBarLayer({
-              homeSurface: this.isAlbumsHomeSurface() ? 'albums' : 'photos',
-              inSearchMode: this.inSearchMode,
-              inCategoryMode: this.inCategoryMode,
-              inSmartCategoryMode: this.inSmartCategoryMode,
-              inPersonMode: this.inPersonMode,
-              rootSurfaceTitle: this.currentHomeSurfaceTitle(),
-              gallerySelectionMode: this.gallerySelectionMode,
-              gallerySelectedCount: this.gallerySelectedIds.length,
-              moreMenuExpanded: this.moreMenuExpanded,
-              searchQuery: this.searchQuery,
-              topSafeInsetVp: this.topSafeInsetVp,
-              pageShowSignal: this.pageShowSignal,
-              onSearchQueryChange: (value: string): void => {
-                this.searchQuery = value;
-              },
-              onSearchSubmit: (): void => {
-                void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
-              },
-              onOpenSearch: (): void => {
-                this.openSearchPanel();
-              },
-              onStartUpload: (): void => {
-                galleryAlbumStartUpload(this.asModeOrchestratorHost());
-              },
-              onExitSelection: (): void => {
-                galleryAlbumExitSelection(this.asSelectionGestureHost());
-              },
-              onEnterSelection: (): void => {
-                this.enterGallerySelectionModeFromToolbar();
-              },
-              onBackToGallery: (): void => {
-                this.returnToHomeSurfaceRoot(true);
-              },
-              onShowMoreMenu: (): void => {
-                this.showMoreMenu();
-              }
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .hitTestBehavior(HitTestMode.Transparent)
-          .zIndex(11)
-        }
-
         if (this.moreMenuExpanded) {
           GalleryAlbumMoreMenu({
             expanded: this.moreMenuExpanded,
@@ -2606,7 +2465,7 @@ export struct GalleryAlbumTab {
           })
             .width('100%')
             .height('100%')
-            .zIndex(2)
+            .zIndex(40)
         }
 
         if (this.slideshowSettingsVisible) {
@@ -2626,11 +2485,51 @@ export struct GalleryAlbumTab {
             .zIndex(20)
         }
 
+        GalleryAlbumTopBar({
+          homeSurface: this.isAlbumsHomeSurface() ? 'albums' : 'photos',
+          inSearchMode: this.inSearchMode,
+          inCategoryMode: this.inCategoryMode,
+          inSmartCategoryMode: this.inSmartCategoryMode,
+          inPersonMode: this.inPersonMode,
+          rootSurfaceTitle: this.currentHomeSurfaceTitle(),
+          gallerySelectionMode: this.gallerySelectionMode,
+          gallerySelectedCount: this.gallerySelectedIds.length,
+          moreMenuExpanded: this.moreMenuExpanded,
+          searchQuery: this.searchQuery,
+          topSafeInsetVp: this.topSafeInsetVp,
+          pageShowSignal: this.pageShowSignal,
+          scrollerList: [this.scrollerRef, this.albumsScroller, this.searchScroller],
+          onSearchQueryChange: (value: string): void => {
+            this.searchQuery = value;
+          },
+          onSearchSubmit: (): void => {
+            void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
+          },
+          onOpenSearch: (): void => {
+            this.openSearchPanel();
+          },
+          onStartUpload: (): void => {
+            galleryAlbumStartUpload(this.asModeOrchestratorHost());
+          },
+          onExitSelection: (): void => {
+            galleryAlbumExitSelection(this.asSelectionGestureHost());
+          },
+          onEnterSelection: (): void => {
+            this.enterGallerySelectionModeFromToolbar();
+          },
+          onBackToGallery: (): void => {
+            this.returnToHomeSurfaceRoot(true);
+          },
+          onShowMoreMenu: (): void => {
+            this.showMoreMenu();
+          }
+        }) {
         Stack({ alignContent: Alignment.TopStart }) {
       // ── 搜索结果视图 ──────────────────────────────────────────────────────
       if (this.inSearchMode) {
         GalleryAlbumSearchModeView({
           baseUrl: this.baseUrl,
+          scroller: this.searchScroller,
           contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
           contentInsetBottomVp: this.currentBottomDockInsetVp(),
           loading: this.searchLoading,
@@ -2682,6 +2581,7 @@ export struct GalleryAlbumTab {
       if (this.shouldKeepAlbumsHomeMounted()) {
         GalleryAlbumAlbumsHomeView({
           baseUrl: this.baseUrl,
+          scroller: this.albumsScroller,
           pageVisible: this.isRootAlbumsSurfaceLayerVisible(),
           pageShowSignal: this.pageShowSignal,
           contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
@@ -3131,6 +3031,7 @@ export struct GalleryAlbumTab {
             this.rootModeContentWidthVp = width;
           }
         })
+        }
       }
       .width('100%')
       .height('100%')

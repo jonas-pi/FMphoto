@@ -3,7 +3,7 @@ import {
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../../common/GalleryTopBarLayout';
-import { GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP } from './GalleryAlbumTopBar';
+import { galleryAlbumTopBarChromeHeightVp } from './GalleryAlbumTopBar';
 
 @Component
 export struct GalleryAlbumMoreMenu {
@@ -77,7 +77,7 @@ export struct GalleryAlbumMoreMenu {
         .shadow({ radius: 18, color: '#14001A33', offsetX: 0, offsetY: 8 })
         .clip(true)
         .margin({
-          top: this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP + 8,
+          top: this.topSafeInsetVp + galleryAlbumTopBarChromeHeightVp(this.showMultiselect) + 8,
           right: GALLERY_TOP_BAR_PAD_RIGHT_VP
         })
       }

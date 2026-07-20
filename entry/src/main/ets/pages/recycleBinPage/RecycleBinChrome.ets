@@ -1,89 +1,192 @@
+/**
+ * 回收站顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
+ * 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
+ */
+import { LengthMetrics } from '@kit.ArkUI';
 import {
-  FN_FLOATING_TOP_BOTTOM_GAP_VP,
-  FN_FLOATING_TOP_CONTROL_SIZE_VP,
-  FN_FLOATING_TOP_MARGIN_VP,
-  FnFloatingTopPillButton
+  BlurStrategy,
+  HdsNavigation,
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationIconOptions,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleBarStyle,
+  HdsNavigationTitleMode,
+  TextStyleMode,
+  TitleBarContentOptions
+} from '@kit.UIDesignKit';
+import {
+  fnHdsImmersiveSystemMaterialEffect,
+  fnHdsChromeButtonBackgroundColor,
+  fnHdsChromeButtonFallbackBackgroundColor,
+  fnHdsChromeButtonForegroundColor,
+  fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrollEffectOpts
 } from '../../common/FnUiCommon';
 import {
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
-  GALLERY_TOP_BAR_TITLE_FONT_VP
-} from '../../common/GalleryTopBarLayout';
-import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../../common/FnImmersiveSettings';
+
+/** pageContent 默认占位：未传入真实内容时渲染空视图。 */
+@Builder
+function recycleBinChromeEmptyPageContent() {
+}
 
 @Component
 export struct RecycleBinChrome {
   @Prop selectionMode: boolean = false;
   @Prop selectedCount: number = 0;
   @Prop topSafeInsetVp: number = 0;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+
+  /** 真实可滚动内容：回收站列表 Stack，由页面通过尾随闭包传入。 */
+  @BuilderParam pageContent: () => void = recycleBinChromeEmptyPageContent;
+  /** 联动沉浸滚动光感的 Scroller 列表。 */
+  scrollerList: Scroller[] = [];
 
   onCancelSelection: () => void = () => {};
   onBack: () => void = () => {};
   onToggleMode: () => void = () => {};
 
-  private titleText(): string {
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private mainTitleText(): string {
     if (this.selectionMode) {
-      return `\u5df2\u9009\u62e9 ${this.selectedCount} \u9879`;
+      return `已选择 ${this.selectedCount} 项`;
     }
-    return '\u56de\u6536\u7ad9';
+    return '回收站';
+  }
+
+  private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
+    const item: HdsNavigationMenuItemOptions = { content: content };
+    return item;
+  }
+
+  private buildMenuItems(): HdsNavigationMenuItemOptions[] {
+    if (this.selectionMode) {
+      const doneContent: HdsNavigationIconOptions = {
+        label: '完成',
+        type: TextStyleMode.NORMAL,
+        action: (): void => {
+          this.onToggleMode();
+        }
+      };
+      return [this.menuItem(doneContent)];
+    }
+    const multiContent: HdsNavigationIconOptions = {
+      label: $r('app.string.gallery_multiselect'),
+      type: TextStyleMode.NORMAL,
+      action: (): void => {
+        this.onToggleMode();
+      }
+    };
+    return [this.menuItem(multiContent)];
+  }
+
+  private titleBarOriginalStyle(): HdsNavigationTitleBarStyle {
+    const buttonBg: ResourceColor = this.canUseHds()
+      ? fnHdsChromeButtonBackgroundColor()
+      : fnHdsChromeButtonFallbackBackgroundColor();
+    const buttonFg: ResourceColor = this.canUseHds()
+      ? fnHdsChromeButtonForegroundColor()
+      : $r('app.color.icon_primary');
+    const textFg: ResourceColor = this.canUseHds()
+      ? $r('app.color.text_primary')
+      : $r('app.color.button_secondary_fg');
+    return {
+      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+      contentStyle: {
+        titleStyle: {
+          mainTitleColor: $r('app.color.text_primary'),
+          subTitleColor: $r('app.color.text_secondary')
+        },
+        menuStyle: {
+          backgroundColor: buttonBg,
+          iconColor: buttonFg,
+          textColor: textFg
+        },
+        backIconStyle: {
+          backgroundColor: buttonBg,
+          iconColor: buttonFg
+        }
+      }
+    };
+  }
+
+  private backIconOptions(): HdsNavigationBackButtonItemOptions {
+    if (this.selectionMode) {
+      const cancelIcon: HdsNavigationBackButtonItemOptions = {
+        label: '取消',
+        isEnabled: true,
+        action: (): void => {
+          this.onCancelSelection();
+        }
+      };
+      return cancelIcon;
+    }
+    const backIcon: HdsNavigationBackButtonItemOptions = {
+      label: '返回',
+      isEnabled: true,
+      action: (): void => {
+        this.onBack();
+      }
+    };
+    return backIcon;
+  }
+
+  private titleBarContent(): TitleBarContentOptions {
+    return {
+      title: { mainTitle: this.mainTitleText() },
+      menu: { value: this.buildMenuItems() },
+      backIcon: this.backIconOptions()
+    };
+  }
+
+  private titleBarOptions(): HdsNavigationTitleBarOptions {
+    return this.canUseHds() ? {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        // @SuppressWarnings compatibility
+        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        originalStyle: this.titleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.titleBarContent()
+    } : {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        originalStyle: this.titleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.titleBarContent()
+    };
   }
 
   build() {
-    Column() {
-      Row() {
-        Row() {
-          if (this.selectionMode) {
-            FnFloatingTopPillButton({
-              text: $r('app.string.gallery_batch_cancel'),
-              action: this.onCancelSelection
-            })
-          } else {
-            FnFloatingTopPillButton({
-              text: '返回',
-              action: this.onBack
-            })
-          }
-        }
-        .layoutWeight(1)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.Start)
-
-        Row() {
-          Text(this.titleText())
-            .fontSize(this.selectionMode ? GALLERY_TOP_BAR_SUBTITLE_FONT_VP : GALLERY_TOP_BAR_TITLE_FONT_VP)
-            .fontWeight(this.selectionMode ? FontWeight.Medium : FontWeight.Bold)
-            .textAlign(TextAlign.Center)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .fontColor($r('app.color.text_primary'))
-        }
-        .layoutWeight(2)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-
-        Row() {
-          FnFloatingTopPillButton({
-            text: this.selectionMode ? '完成' : $r('app.string.gallery_multiselect'),
-            active: this.selectionMode,
-            action: this.onToggleMode
-          })
-        }
-        .layoutWeight(1)
-        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-        .justifyContent(FlexAlign.End)
-      }
-      .width('100%')
-      .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
+    HdsNavigation() {
+      this.pageContent()
     }
     .width('100%')
-    .margin({
-      top: FN_FLOATING_TOP_MARGIN_VP + this.topSafeInsetVp,
-      bottom: FN_FLOATING_TOP_BOTTOM_GAP_VP
-    })
-    .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
+    .height('100%')
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(this.selectionMode)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .bindToScrollable(this.scrollerList)
+    .titleBar(this.titleBarOptions())
   }
 }

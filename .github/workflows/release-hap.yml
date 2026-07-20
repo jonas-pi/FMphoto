@@ -56,11 +56,9 @@ jobs:
       - name: Upload HAP to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # 如标签已存在 release，则自动更新并重新上传资产（开启覆盖）
+          # 仅上传未签名包；签名包与密钥严禁上传
           body: ${{ steps.changelog.outputs.body }}
           files: |
-            entry/build/release/outputs/default/entry-default-signed.hap
-            entry/build/release/outputs/default/entry-default-unsigned.hap
             entry/build/default/outputs/default/entry-default-unsigned.hap
           fail_on_unmatched_files: true
           generate_release_notes: false

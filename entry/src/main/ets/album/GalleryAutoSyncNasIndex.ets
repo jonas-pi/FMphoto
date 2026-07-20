@@ -5,7 +5,12 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryGetListData, GalleryListItem, GalleryTimelineData } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
-import { buildNasOfficialFingerprints } from './GalleryAutoSyncOfficialFingerprint';
+import {
+  buildNasDedupeIndex,
+  cloneNasDedupeIndex,
+  emptyNasDedupeIndex,
+  NasDedupeIndex
+} from './GalleryAutoSyncOfficialFingerprint';
 import { DATE_FEED_BATCH, DAY_MAX_ROUNDS } from './galleryAlbumTab/GalleryAlbumTabConstants';
 import {
   fmtDayEnd,
@@ -18,6 +23,8 @@ import {
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncNasIdx';
 const CACHE_TTL_MS: number = 30 * 60 * 1000;
+/** 按天拉取 NAS 列表的并发上限，避免全串行过慢、又不过度打满接口。 */
+const NAS_DAY_FETCH_CONCURRENCY: number = 3;
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   if (data === undefined || data === null) {
@@ -43,14 +50,14 @@ function collectTimelineDays(timeline: GalleryTimelineData): TimelineDayModel[] 
 }
 
 export class GalleryAutoSyncNasIndex {
-  private static fingerprints: Set<string> = new Set<string>();
+  private static index: NasDedupeIndex = emptyNasDedupeIndex();
   private static cachedAt: number = 0;
-  private static loading: boolean = false;
+  private static loadingPromise: Promise<NasDedupeIndex> | null = null;
 
   static invalidate(): void {
-    GalleryAutoSyncNasIndex.fingerprints = new Set<string>();
+    GalleryAutoSyncNasIndex.index = emptyNasDedupeIndex();
     GalleryAutoSyncNasIndex.cachedAt = 0;
-    GalleryAutoSyncNasIndex.loading = false;
+    GalleryAutoSyncNasIndex.loadingPromise = null;
   }
 
   static isFresh(force: boolean): boolean {
@@ -64,30 +71,59 @@ export class GalleryAutoSyncNasIndex {
   }
 
   /**
-   * 获取 NAS 全库指纹；force=true 时强制重新拉取。
+   * 获取 NAS 全库去重索引；force=true 时强制重新拉取。
+   * 并发请求会复用同一 in-flight Promise，避免返回空索引。
    */
-  static async getFingerprints(client: FnHttpClient, force: boolean = false): Promise<Set<string>> {
+  static async getIndex(client: FnHttpClient, force: boolean = false): Promise<NasDedupeIndex> {
     if (!force && GalleryAutoSyncNasIndex.isFresh(false)) {
-      return new Set<string>(GalleryAutoSyncNasIndex.fingerprints);
+      return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
     }
-    if (GalleryAutoSyncNasIndex.loading) {
-      return new Set<string>(GalleryAutoSyncNasIndex.fingerprints);
+    if (GalleryAutoSyncNasIndex.loadingPromise !== null) {
+      const shared = await GalleryAutoSyncNasIndex.loadingPromise;
+      if (!force) {
+        return cloneNasDedupeIndex(shared);
+      }
     }
-    GalleryAutoSyncNasIndex.loading = true;
+    const task = GalleryAutoSyncNasIndex.loadIndex(client);
+    GalleryAutoSyncNasIndex.loadingPromise = task;
+    try {
+      return await task;
+    } finally {
+      if (GalleryAutoSyncNasIndex.loadingPromise === task) {
+        GalleryAutoSyncNasIndex.loadingPromise = null;
+      }
+    }
+  }
+
+  /** @deprecated 使用 getIndex */
+  static async getFingerprints(client: FnHttpClient, force: boolean = false): Promise<Set<string>> {
+    const index = await GalleryAutoSyncNasIndex.getIndex(client, force);
+    return index.fingerprints;
+  }
+
+  private static async loadIndex(client: FnHttpClient): Promise<NasDedupeIndex> {
     try {
       const timeline = await client.getGalleryTimeline();
       if (!timeline.success || timeline.data === undefined) {
         hilog.warn(DOMAIN, TAG, 'timeline failed: %{public}s', timeline.message ?? '');
-        return new Set<string>(GalleryAutoSyncNasIndex.fingerprints);
+        return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
       }
       const items = await GalleryAutoSyncNasIndex.fetchAllTimelineItems(client, timeline.data);
-      const fps = buildNasOfficialFingerprints(items);
-      GalleryAutoSyncNasIndex.fingerprints = fps;
+      const built = buildNasDedupeIndex(items);
+      GalleryAutoSyncNasIndex.index = built;
       GalleryAutoSyncNasIndex.cachedAt = Date.now();
-      hilog.info(DOMAIN, TAG, 'nas index items=%{public}d fingerprints=%{public}d', items.length, fps.size);
-      return new Set<string>(fps);
-    } finally {
-      GalleryAutoSyncNasIndex.loading = false;
+      hilog.info(
+        DOMAIN,
+        TAG,
+        'nas index items=%{public}d fingerprints=%{public}d nameSize=%{public}d',
+        items.length,
+        built.fingerprints.size,
+        built.nameSizeKeys.size
+      );
+      return cloneNasDedupeIndex(built);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'loadIndex failed: %{public}s', String(e));
+      return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
     }
   }
 
@@ -126,8 +162,24 @@ export class GalleryAutoSyncNasIndex {
   ): Promise<GalleryListItem[]> {
     const out: GalleryListItem[] = [];
     const days = collectTimelineDays(timeline);
-    for (let i = 0; i < days.length; i++) {
-      await GalleryAutoSyncNasIndex.fetchDayPages(client, days[i], out);
+    for (let i = 0; i < days.length; i += NAS_DAY_FETCH_CONCURRENCY) {
+      const chunkEnd: number = Math.min(i + NAS_DAY_FETCH_CONCURRENCY, days.length);
+      const tasks: Promise<GalleryListItem[]>[] = [];
+      for (let j = i; j < chunkEnd; j++) {
+        const day = days[j];
+        tasks.push((async (): Promise<GalleryListItem[]> => {
+          const part: GalleryListItem[] = [];
+          await GalleryAutoSyncNasIndex.fetchDayPages(client, day, part);
+          return part;
+        })());
+      }
+      const parts: GalleryListItem[][] = await Promise.all(tasks);
+      for (let p = 0; p < parts.length; p++) {
+        const part = parts[p];
+        for (let k = 0; k < part.length; k++) {
+          out.push(part[k]);
+        }
+      }
     }
     return out;
   }

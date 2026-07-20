@@ -1,35 +1,56 @@
+/**
+ * 图库顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
+ * 搜索 / 更多 / 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
+ */
+import { LengthMetrics } from '@kit.ArkUI';
 import {
-  GALLERY_TOP_BAR_BUTTON_FONT_VP,
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_SUBTITLE_FONT_VP,
-  GALLERY_TOP_BAR_TITLE_FONT_VP
-} from '../../common/GalleryTopBarLayout';
-import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
-import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
+  BlurStrategy,
+  HdsNavigation,
+  HdsNavigationIconOptions,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode,
+  IconStyleMode,
+  TextStyleMode
+} from '@kit.UIDesignKit';
 import {
-  fnHdsImmersiveTabsFloatingStyle,
-  fnLiquidGlassGradient,
-  FnFloatingTopCircleButton,
-  FnFloatingTopPillButton
+  fnHdsImmersiveSystemMaterialEffect,
+  fnHdsChromeButtonBackgroundColor,
+  fnHdsChromeButtonFallbackBackgroundColor,
+  fnHdsChromeButtonForegroundColor,
+  fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrollEffectOpts,
+  fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
 
-const GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP: number = 8;
-const GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP: number = 6;
-const GALLERY_TOP_BAR_CONTROL_RADIUS_VP: number = 20;
-const GALLERY_TOP_BAR_ACTION_MIN_WIDTH_VP: number = 62;
-const GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP: number = 40;
-const GALLERY_TOP_BAR_SEARCH_GAP_VP: number = 10;
+/** 官方 MINI 标题栏内容区高度 */
+export const GALLERY_TOP_BAR_MINI_HEIGHT_VP: number = 56;
+/** 搜索模式下 bottomBuilder 高度 */
+export const GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP: number = 44;
+/** 非搜索态顶栏占位（不含状态栏安全区） */
+export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number = GALLERY_TOP_BAR_MINI_HEIGHT_VP;
+
+const GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY: string = 'gallery_album_top_bar_search_input';
 const GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP: number = 15;
 const GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP: number = 4;
-const GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY: string = 'gallery_album_top_bar_search_input';
+const GALLERY_TOP_BAR_CONTROL_RADIUS_VP: number = 20;
 
-export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number =
-  GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP + GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP + GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP;
+/** 内容区顶部 inset：含搜索态 bottomBuilder */
+export function galleryAlbumTopBarChromeHeightVp(inSearchMode: boolean): number {
+  if (inSearchMode) {
+    return GALLERY_TOP_BAR_MINI_HEIGHT_VP + GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP;
+  }
+  return GALLERY_TOP_BAR_MINI_HEIGHT_VP;
+}
+
+/** pageContent 默认占位：未传入真实内容时渲染空视图，避免 HdsNavigation 内容区为 undefined。 */
+@Builder
+function galleryAlbumTopBarEmptyPageContent() {
+}
 
 @Component
 export struct GalleryAlbumTopBar {
@@ -43,9 +64,15 @@ export struct GalleryAlbumTopBar {
   @Prop gallerySelectedCount: number = 0;
   @Prop moreMenuExpanded: boolean = false;
   @Prop searchQuery: string = '';
+  /** 系统状态栏高度：内容区顶部留白仍用此值；按钮避让靠 titleBar.avoidLayoutSafeArea。 */
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+
+  /** 真实可滚动内容：图库/相册/分类等页面 Stack，由调用方通过尾随闭包传入。 */
+  @BuilderParam pageContent: () => void = galleryAlbumTopBarEmptyPageContent;
+  /** 联动沉浸滚动光感的 Scroller 列表，随 bindToScrollable 传给 HdsNavigation。 */
+  scrollerList: Scroller[] = [];
 
   onSearchQueryChange: (value: string) => void = (_: string) => {};
   onSearchSubmit: () => void = () => {};
@@ -58,7 +85,6 @@ export struct GalleryAlbumTopBar {
 
   @State private suppressSearchAutoFocus: boolean = true;
   @State private searchSubmitted: boolean = false;
-  @State private searchFieldWidthVp: number = 0;
   private searchInputCtrl: TextInputController = new TextInputController();
   private suppressSearchFocusTimer: number = -1;
   private searchFocusKickTimer: number = -1;
@@ -94,6 +120,33 @@ export struct GalleryAlbumTopBar {
     return this.rootSurfaceTitle;
   }
 
+  private mainTitleText(): string {
+    if (this.gallerySelectionMode) {
+      return this.selectionText();
+    }
+    if (this.inSearchMode) {
+      return '搜索';
+    }
+    if (this.isRootSurfaceMode()) {
+      return this.rootSurfaceTitle;
+    }
+    return this.secondaryModeTitle();
+  }
+
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private shouldShowBack(): boolean {
+    if (this.gallerySelectionMode && !this.inSearchMode) {
+      return false;
+    }
+    if (this.inSearchMode) {
+      return true;
+    }
+    return !this.isRootSurfaceMode();
+  }
+
   private blurSearchInput(): void {
     try {
       this.searchInputCtrl.stopEditing();
@@ -113,14 +166,6 @@ export struct GalleryAlbumTopBar {
       clearTimeout(this.searchFocusKickTimer);
       this.searchFocusKickTimer = -1;
     }
-  }
-
-  private searchHdsWidth(): Length {
-    return this.searchFieldWidthVp > 1 ? this.searchFieldWidthVp : '100%';
-  }
-
-  private canUseHds(): boolean {
-    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
   private shouldAutoFocusSearchInput(): boolean {
@@ -197,17 +242,16 @@ export struct GalleryAlbumTopBar {
     this.suppressSearchRestoreTemporarily();
   }
 
-  private openSearchPanelWithAutoFocus(): void {
-    this.onOpenSearch();
-    this.activateSearchAutoFocus(48);
-  }
-
-  private leaveSearchMode(): void {
-    if (this.gallerySelectionMode) {
+  private leaveSearchOrBack(): void {
+    if (this.gallerySelectionMode && this.inSearchMode) {
       this.onExitSelection();
       return;
     }
-    this.suppressSearchRestoreTemporarily();
+    if (this.inSearchMode) {
+      this.suppressSearchRestoreTemporarily();
+      this.onBackToGallery();
+      return;
+    }
     this.onBackToGallery();
   }
 
@@ -232,205 +276,342 @@ export struct GalleryAlbumTopBar {
   }
 
   @Builder
-  private floatingPillButton(text: string, action: () => void) {
-    FnFloatingTopPillButton({ text: text, action: action })
-  }
+  private searchBottomBuilder() {
+    Row({ space: 8 }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
+        .fontColor([$r('app.color.gallery_material_search_placeholder')])
 
-  @Builder
-  private floatingIconButton(symbol: Resource, action: () => void, active: boolean = false) {
-    FnFloatingTopCircleButton({ symbol: symbol, active: active, action: action })
-  }
-
-  @Builder
-  private floatingIconButtonSpacer() {
-    Blank()
-      .width(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-      .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-  }
-
-  @Builder
-  private searchFieldBlankTabBar() {
-    Row()
-      .width('100%')
-      .height('100%')
-  }
-
-  @Builder
-  private searchFieldHdsBackground() {
-    if (this.canUseHds()) {
-      HdsTabs({ index: 0 }) {
-        TabContent() {
-          Column()
-            .width('100%')
-            .height('100%')
-        }
-        .tabBar(this.searchFieldBlankTabBar)
-      }
-      .width(this.searchHdsWidth())
-      .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-      .barHeight(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-      .barOverlap(true)
-      .vertical(false)
-      .barPosition(BarPosition.End)
-      .barWidth(this.searchHdsWidth())
-      // @SuppressWarnings compatibility
-      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-        GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP,
-        this.searchHdsWidth(),
-        $r('app.color.gallery_material_surface_bg')
-      ))
-      .scrollable(false)
-      .barMode(BarMode.Fixed)
-      .divider({ mode: DividerMode.NONE })
-      .barBackgroundColor(Color.Transparent)
-      .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP })
-      .blurStrategy(BlurStrategy.ADAPTIVE)
-      .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-      .clip(true)
-      .hitTestBehavior(HitTestMode.None)
-    } else {
-      Row()
-        .width('100%')
-        .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-        .backgroundColor($r('app.color.gallery_material_surface_bg'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .linearGradient(fnLiquidGlassGradient())
-        .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-        .borderWidth(1)
-        .borderColor($r('app.color.immersive_panel_border'))
-        .clip(true)
-        .hitTestBehavior(HitTestMode.None)
+      TextInput({
+        placeholder: 'AI 搜索图库...',
+        text: this.searchQuery,
+        controller: this.searchInputCtrl
+      })
+        .layoutWeight(1)
+        .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
+        .height('100%')
+        .defaultFocus(this.shouldAutoFocusSearchInput())
+        .enableKeyboardOnFocus(true)
+        .enabled(!this.suppressSearchAutoFocus)
+        .backgroundColor(Color.Transparent)
+        .fontSize(13)
+        .fontColor($r('app.color.text_primary'))
+        .caretColor($r('app.color.brand_primary'))
+        .placeholderColor($r('app.color.gallery_material_search_placeholder'))
+        .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
+        .enterKeyType(EnterKeyType.Search)
+        .onChange((value: string): void => {
+          this.onSearchTextChange(value);
+        })
+        .onSubmit((): void => {
+          this.submitSearchAndReleaseFocus();
+        })
+        .onAppear((): void => {
+          if (this.shouldAutoFocusSearchInput()) {
+            this.focusSearchInputSoon(48);
+          }
+        })
     }
+    .width('100%')
+    .height(GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP)
+    .padding({ left: 12, right: 12 })
+    .margin({ left: 12, right: 12, bottom: 4 })
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 根态 / 子模式 / 多选：官方 titleBar.menu */
+  private defaultTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return this.canUseHds() ? {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        // @SuppressWarnings compatibility
+        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        originalStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('app.color.text_primary'),
+              subTitleColor: $r('app.color.text_secondary')
+            },
+            menuStyle: {
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor(),
+              textColor: $r('app.color.text_primary')
+            },
+            backIconStyle: {
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor()
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: {
+        title: { mainTitle: this.mainTitleText() },
+        menu: { value: this.buildDefaultMenuItems() },
+        backIcon: {
+          label: '返回',
+          isEnabled: this.shouldShowBack(),
+          action: (): void => {
+            this.leaveSearchOrBack();
+          }
+        }
+      }
+    } : {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        originalStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('app.color.text_primary'),
+              subTitleColor: $r('app.color.text_secondary')
+            },
+            menuStyle: {
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
+              iconColor: $r('app.color.icon_primary'),
+              textColor: $r('app.color.button_secondary_fg')
+            },
+            backIconStyle: {
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
+              iconColor: $r('app.color.icon_primary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: {
+        title: { mainTitle: this.mainTitleText() },
+        menu: { value: this.buildDefaultMenuItems() },
+        backIcon: {
+          label: '返回',
+          isEnabled: this.shouldShowBack(),
+          action: (): void => {
+            this.leaveSearchOrBack();
+          }
+        }
+      }
+    };
+  }
+
+  /** 搜索态：bottomBuilder 放输入框，menu 放更多/完成 */
+  private searchTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return this.canUseHds() ? {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        // @SuppressWarnings compatibility
+        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        originalStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('app.color.text_primary'),
+              subTitleColor: $r('app.color.text_secondary')
+            },
+            menuStyle: {
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor(),
+              textColor: $r('app.color.text_primary')
+            },
+            backIconStyle: {
+              backgroundColor: fnHdsChromeButtonBackgroundColor(),
+              iconColor: fnHdsChromeButtonForegroundColor()
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: {
+        title: { mainTitle: this.mainTitleText() },
+        menu: { value: this.buildSearchMenuItems() },
+        backIcon: {
+          label: '返回',
+          isEnabled: true,
+          action: (): void => {
+            this.leaveSearchOrBack();
+          }
+        },
+        bottomBuilder: {
+          builder: (): void => {
+            this.searchBottomBuilder();
+          },
+          height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
+        }
+      }
+    } : {
+      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        originalStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('app.color.text_primary'),
+              subTitleColor: $r('app.color.text_secondary')
+            },
+            menuStyle: {
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
+              iconColor: $r('app.color.icon_primary'),
+              textColor: $r('app.color.button_secondary_fg')
+            },
+            backIconStyle: {
+              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
+              iconColor: $r('app.color.icon_primary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: {
+        title: { mainTitle: this.mainTitleText() },
+        menu: { value: this.buildSearchMenuItems() },
+        backIcon: {
+          label: '返回',
+          isEnabled: true,
+          action: (): void => {
+            this.leaveSearchOrBack();
+          }
+        },
+        bottomBuilder: {
+          builder: (): void => {
+            this.searchBottomBuilder();
+          },
+          height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
+        }
+      }
+    };
+  }
+
+  private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
+    const item: HdsNavigationMenuItemOptions = { content: content };
+    return item;
+  }
+
+  private buildSearchMenuItems(): HdsNavigationMenuItemOptions[] {
+    if (this.gallerySelectionMode) {
+      const doneContent: HdsNavigationIconOptions = {
+        label: '完成',
+        type: TextStyleMode.NORMAL,
+        action: (): void => {
+          this.onExitSelection();
+        }
+      };
+      return [this.menuItem(doneContent)];
+    }
+    const moreContent: HdsNavigationIconOptions = {
+      label: '更多',
+      icon: $r('sys.symbol.more'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
+      action: (): void => {
+        this.onShowMoreMenu();
+      }
+    };
+    return [this.menuItem(moreContent)];
+  }
+
+  private buildDefaultMenuItems(): HdsNavigationMenuItemOptions[] {
+    if (this.gallerySelectionMode) {
+      const cancelContent: HdsNavigationIconOptions = {
+        label: '取消',
+        type: TextStyleMode.NORMAL,
+        action: (): void => {
+          this.onExitSelection();
+        }
+      };
+      return [this.menuItem(cancelContent)];
+    }
+    if (!this.isRootSurfaceMode()) {
+      const empty: HdsNavigationMenuItemOptions[] = [];
+      return empty;
+    }
+    const items: HdsNavigationMenuItemOptions[] = [];
+    if (this.isAlbumsHomeSurface()) {
+      const uploadContent: HdsNavigationIconOptions = {
+        label: '上传',
+        icon: $r('sys.symbol.plus'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
+        action: (): void => {
+          this.onStartUpload();
+        }
+      };
+      items.push(this.menuItem(uploadContent));
+    } else {
+      const multiContent: HdsNavigationIconOptions = {
+        label: '多选',
+        type: TextStyleMode.NORMAL,
+        action: (): void => {
+          this.onEnterSelection();
+        }
+      };
+      items.push(this.menuItem(multiContent));
+    }
+    const searchContent: HdsNavigationIconOptions = {
+      label: '搜索',
+      icon: $r('sys.symbol.magnifyingglass'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
+      action: (): void => {
+        this.onOpenSearch();
+        this.activateSearchAutoFocus(48);
+      }
+    };
+    items.push(this.menuItem(searchContent));
+    if (!this.isAlbumsHomeSurface()) {
+      const moreContent: HdsNavigationIconOptions = {
+        label: '更多',
+        icon: $r('sys.symbol.more'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
+        action: (): void => {
+          this.onShowMoreMenu();
+        }
+      };
+      items.push(this.menuItem(moreContent));
+    }
+    return items;
   }
 
   build() {
-    Row() {
-      if (this.gallerySelectionMode && this.inSearchMode) {
-        this.floatingPillButton('取消', this.onExitSelection)
-
-        Text(this.selectionText())
-          .layoutWeight(1)
-          .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        this.floatingPillButton('完成', this.onExitSelection)
-      } else if (this.gallerySelectionMode && !this.inSearchMode) {
-        Text(this.selectionText())
-          .layoutWeight(1)
-          .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        this.floatingPillButton('取消', this.onExitSelection)
-      } else if (this.inSearchMode) {
-        this.floatingPillButton('返回', (): void => this.leaveSearchMode())
-
-        Stack({ alignContent: Alignment.Center }) {
-          this.searchFieldHdsBackground()
-
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.magnifyingglass'))
-              .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
-              .fontColor([$r('app.color.gallery_material_search_placeholder')])
-
-            TextInput({ placeholder: 'AI 搜索图库...', text: this.searchQuery, controller: this.searchInputCtrl })
-              .layoutWeight(1)
-              .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
-              .height('100%')
-              .defaultFocus(this.shouldAutoFocusSearchInput())
-              .enableKeyboardOnFocus(true)
-              .enabled(!this.suppressSearchAutoFocus)
-              .backgroundColor(Color.Transparent)
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .caretColor($r('app.color.brand_primary'))
-              .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-              .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
-              .enterKeyType(EnterKeyType.Search)
-              .onChange((value: string): void => {
-                this.onSearchTextChange(value);
-              })
-              .onSubmit((): void => {
-                this.submitSearchAndReleaseFocus();
-              })
-              .onAppear((): void => {
-                if (this.shouldAutoFocusSearchInput()) {
-                  this.focusSearchInputSoon(48);
-                }
-              })
-          }
-          .width('100%')
-          .height('100%')
-          .padding({ left: 12, right: 12 })
-          .alignItems(VerticalAlign.Center)
-        }
-        .layoutWeight(1)
-        .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-        .margin({ left: GALLERY_TOP_BAR_SEARCH_GAP_VP })
-        .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-        .clip(true)
-        .onAreaChange((_old: Area, area: Area): void => {
-          const width = area.width as number;
-          if (width > 1 && Math.abs(width - this.searchFieldWidthVp) > 0.5) {
-            this.searchFieldWidthVp = width;
-          }
-        })
-
-        Row() {
-          this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
-        }
-        .margin({ left: GALLERY_TOP_BAR_SEARCH_GAP_VP })
-      } else if (this.isRootSurfaceMode()) {
-        Text(this.rootSurfaceTitle)
-          .layoutWeight(1)
-          .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Row({ space: 8 }) {
-          if (this.isAlbumsHomeSurface()) {
-            this.floatingIconButton($r('sys.symbol.plus'), this.onStartUpload)
-          } else {
-            this.floatingPillButton('多选', this.onEnterSelection)
-          }
-          this.floatingIconButton($r('sys.symbol.magnifyingglass'), (): void => this.openSearchPanelWithAutoFocus())
-          if (!this.isAlbumsHomeSurface()) {
-            this.floatingIconButton($r('sys.symbol.more'), this.onShowMoreMenu, this.moreMenuExpanded)
-          } else {
-            this.floatingIconButtonSpacer()
-          }
-        }
-      } else {
-        this.floatingPillButton('返回', this.onBackToGallery)
-
-        Text(this.secondaryModeTitle())
-          .layoutWeight(1)
-          .fontSize(GALLERY_TOP_BAR_SUBTITLE_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        this.floatingIconButtonSpacer()
-      }
+    HdsNavigation() {
+      this.pageContent()
     }
     .width('100%')
-    .height(GALLERY_TOP_BAR_ROOT_ICON_SIZE_VP)
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: GALLERY_TOP_BAR_PAD_LEFT_VP, right: GALLERY_TOP_BAR_PAD_RIGHT_VP })
-    .margin({
-      top: this.topSafeInsetVp + GALLERY_TOP_BAR_FLOATING_MARGIN_TOP_VP,
-      bottom: GALLERY_TOP_BAR_FLOATING_BOTTOM_GAP_VP
-    })
-    .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
+    .height('100%')
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(!this.shouldShowBack())
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .bindToScrollable(this.scrollerList)
+    .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
   }
 }

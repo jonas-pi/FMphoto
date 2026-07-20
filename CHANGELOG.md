@@ -6,6 +6,25 @@
 
 ---
 
+## [1.1.1] - 2026-07-20
+
+### 改进
+
+- **相册顶栏与沉浸滚动**：`GalleryAlbumTopBar` 对齐 HDS 导航样式；相册 / 分类 / 回收站等页统一滚动沉浸效果，移除废弃浮动顶栏层。
+- **传输队列与预览详情**：传输队列、预览详情补充标题并恢复关闭按钮，布局更清晰。
+- **自动同步性能**：NAS 指纹改为去重索引；列表拉取加并发上限；本机相册改用游标迭代，降低内存占用。
+- **同步刷新体验**：下拉刷新时相册分区静默合并并通知变更，减少界面闪烁与重复加载。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> 本版本起 **不再上传签名包**；`.p12` / `.p7b` / `build-profile.json5` 等密钥材料也严禁入库或随 Release 分发。
+
+---
+
 ## [1.1] - 2026-07-06
 
 ### 新增
@@ -65,6 +84,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.1.1]: https://github.com/jonas-pi/FMphoto/compare/v1.1...v1.1.1
 [1.1]: https://github.com/jonas-pi/FMphoto/compare/v1.0.10...v1.1
 [1.0.10]: https://github.com/jonas-pi/FMphoto/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/jonas-pi/FMphoto/compare/v1.0.8...v1.0.9

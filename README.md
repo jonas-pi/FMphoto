@@ -97,9 +97,9 @@ cp build-profile.json5.example build-profile.json5
 ### 产物路径
 
 - 本地未签名包默认路径：`entry/build/default/outputs/default/entry-default-unsigned.hap`
-- 推送 `v*` 标签后，可通过 GitHub Actions 自动上传 Release 构建产物。
+- 推送 `v*` 标签后，可通过 GitHub Actions 自动上传 **未签名** Release 产物。
 
-**关于提交 HAP 是否泄露密钥**：不会。未签名 HAP 不含证书；已签名 HAP 仅包含**公钥证书与签名块**，不包含 `.p12` 私钥或 Profile 密码。可放心将 Release 用 HAP 纳入版本库或 GitHub Release。
+**安全约定**：只提交/发布未签名 HAP。**签名包、`.p12` / `.p7b` / `.cer`、以及含密码的 `build-profile.json5` 一律不得入库或上传 Release。**
 
 ## 使用说明
 

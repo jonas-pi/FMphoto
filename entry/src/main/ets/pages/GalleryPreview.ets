@@ -586,9 +586,6 @@ struct GalleryPreview {
       },
       onFolderClick: (): void => {
         this.openFolderFromDetailPath();
-      },
-      onClose: (): void => {
-        this.closeDetailsPanel();
       }
     })
   }
@@ -754,7 +751,8 @@ struct GalleryPreview {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.detailsVisible, this.detailsSheetBuilder, {
       height: '50%',
-      showClose: false,
+      title: { title: '照片详情' },
+      showClose: true,
       dragBar: true,
       backgroundColor: this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF',
       onDisappear: (): void => {
