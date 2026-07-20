@@ -201,39 +201,64 @@ function isDirectParsedAuthority(p: ParsedAuthority): boolean {
   return isIpv4Literal(p.hostRaw);
 }
 
+/** 是否为 FN Connect 官方域名（中继门户 / *.fnos.net），勿改写为 5666/5667 */
+function isFnosNetAuthority(authority: string): boolean {
+  const a = authority.trim().toLowerCase();
+  const colon = a.lastIndexOf(':');
+  const host = colon > 0 && /^\d+$/.test(a.substring(colon + 1)) ? a.substring(0, colon) : a;
+  return host === 'fnos.net' || host === 'www.fnos.net' || host.endsWith('.fnos.net');
+}
+
+/** 去掉 fnos.net 上误带的常见端口，保留主机名 */
+function stripFnosNetPort(authority: string): string {
+  const colon = authority.lastIndexOf(':');
+  if (colon <= 0 || authority.startsWith('[')) {
+    return authority;
+  }
+  const portStr = authority.substring(colon + 1);
+  if (portStr !== '80' && portStr !== '443' && portStr !== '5666' && portStr !== '5667' &&
+    portStr !== '8000' && portStr !== '8001') {
+    return authority;
+  }
+  return authority.substring(0, colon);
+}
+
 /**
- * 已为 http(s):// 的 URL：补默认端口（若未写端口）
+ * 已为 http(s):// 的 URL：补默认端口（若未写端口）；保留 path（如 fnos.net/{fnId}）
  */
 function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https'): string {
   const prefix = scheme === 'https' ? 'https://' : 'http://';
-  let rest = url.substring(prefix.length);
-  let cut = rest.length;
-  const slash = rest.indexOf('/');
+  const afterScheme = url.substring(prefix.length);
+  let cut = afterScheme.length;
+  const slash = afterScheme.indexOf('/');
   if (slash >= 0 && slash < cut) {
     cut = slash;
   }
-  const query = rest.indexOf('?');
+  const query = afterScheme.indexOf('?');
   if (query >= 0 && query < cut) {
     cut = query;
   }
-  const hash = rest.indexOf('#');
+  const hash = afterScheme.indexOf('#');
   if (hash >= 0 && hash < cut) {
     cut = hash;
   }
-  if (cut < rest.length) {
-    rest = rest.substring(0, cut);
-  }
-  let authority = rest;
+  let authority = afterScheme.substring(0, cut);
+  const pathSuffix = afterScheme.substring(cut);
   if (authority.endsWith('/')) {
     authority = authority.substring(0, authority.length - 1);
   }
   if (authority.length === 0) {
     return trimTrailingSlash(url);
   }
+  // FN Connect 门户 / 中继域名固定 443，不补 NAS 默认端口，并保留 /{fnId}
+  if (isFnosNetAuthority(authority)) {
+    const hostOnly = stripFnosNetPort(authority);
+    return trimTrailingSlash(`${prefix}${hostOnly}${pathSuffix}`);
+  }
   const parsed = parseAuthority(authority);
   const def = defaultPort(scheme === 'https', isDirectParsedAuthority(parsed));
   const newAuth = buildAuthority(parsed, def);
-  return trimTrailingSlash(`${prefix}${newAuth}`);
+  return trimTrailingSlash(`${prefix}${newAuth}${pathSuffix}`);
 }
 
 /**
@@ -272,6 +297,11 @@ export function fnWebUiBaseUrl(apiBaseNoSlash: string, sessionUseHttps: boolean)
   }
   const slash = rest.indexOf('/');
   const authority = slash >= 0 ? rest.substring(0, slash) : rest;
+  // FN Connect：保持 https://fnos.net/{fnId} 或 https://{fnId}.fnos.net
+  if (isFnosNetAuthority(authority)) {
+    const path = slash >= 0 ? rest.substring(slash) : '';
+    return trimTrailingSlash(`https://${stripFnosNetPort(authority)}${path}`);
+  }
   const parsed = parseAuthority(authority);
   const defPort = sessionUseHttps ? FN_DEFAULT_PORT_HTTPS : FN_DEFAULT_PORT_HTTP;
   const newAuth = buildAuthority(parsed, defPort);
@@ -295,6 +325,11 @@ export function fnWebViewBaseUrl(apiBaseNoSlash: string): string {
   }
   const slash = rest.indexOf('/');
   const authority = slash >= 0 ? rest.substring(0, slash) : rest;
+  // FN Connect 门户保留 path，勿改写为 :5667
+  if (isFnosNetAuthority(authority)) {
+    const path = slash >= 0 ? rest.substring(slash) : '';
+    return trimTrailingSlash(`https://${stripFnosNetPort(authority)}${path}`);
+  }
   const parsed = parseAuthority(authority);
   const parsedForBuild: ParsedAuthority = isDirectParsedAuthority(parsed)
     ? { useBracket: parsed.useBracket, hostRaw: parsed.hostRaw, port: null }
@@ -318,3 +353,74 @@ export function normalizeServerUrl(domainInput: string, useHttps: boolean): stri
   const auth = normalizeBareAuthority(t, useHttps);
   return trimTrailingSlash(`${prefix}${auth}`);
 }
+
+export interface ParsedBaseUrlParts {
+  scheme: 'http' | 'https';
+  host: string;
+  port: number | null;
+  useBracket: boolean;
+}
+
+/** 解析已规范化的 baseUrl，取出 scheme / host / port */
+export function parseNormalizedBaseUrl(baseUrl: string): ParsedBaseUrlParts | null {
+  let u = baseUrl.trim();
+  if (u.endsWith('/')) {
+    u = u.substring(0, u.length - 1);
+  }
+  let scheme: 'http' | 'https' = 'https';
+  let rest = u;
+  if (u.startsWith('https://')) {
+    scheme = 'https';
+    rest = u.substring('https://'.length);
+  } else if (u.startsWith('http://')) {
+    scheme = 'http';
+    rest = u.substring('http://'.length);
+  } else {
+    return null;
+  }
+  const slash = rest.indexOf('/');
+  const authority = slash >= 0 ? rest.substring(0, slash) : rest;
+  if (authority.length === 0) {
+    return null;
+  }
+  const parsed = parseAuthority(authority);
+  return {
+    scheme,
+    host: parsed.hostRaw,
+    port: parsed.port,
+    useBracket: parsed.useBracket
+  };
+}
+
+/** 主机是否为 IPv4 / IPv6 字面量 */
+export function isIpLiteralHost(host: string): boolean {
+  const h = host.trim();
+  if (h.length === 0) {
+    return false;
+  }
+  if (isIpv4Literal(h)) {
+    return true;
+  }
+  if (h.indexOf(':') >= 0 || h.indexOf('::') >= 0) {
+    return true;
+  }
+  return false;
+}
+
+/** 用新主机替换 baseUrl 中的 host（保留协议与端口） */
+export function replaceBaseUrlHost(baseUrl: string, newHost: string): string {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null || newHost.trim().length === 0) {
+    return '';
+  }
+  const host = newHost.trim();
+  const useBracket = host.indexOf(':') >= 0 && !isIpv4Literal(host);
+  const auth: ParsedAuthority = {
+    useBracket: useBracket,
+    hostRaw: host,
+    port: parts.port
+  };
+  const def = defaultPort(parts.scheme === 'https', isDirectParsedAuthority(auth));
+  return trimTrailingSlash(`${parts.scheme}://${buildAuthority(auth, def)}`);
+}
+

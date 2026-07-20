@@ -363,9 +363,13 @@ async function resolveWsFailure(
   }
 
   if (isGenericWsConnectFailed(err, message)) {
-    const endpointHint = httpBaseNoSlash.startsWith('https://')
-      ? '请检查服务器地址、5667 端口、证书以及设备到 NAS 的连通性'
-      : '请检查服务器地址、5666 端口以及设备到 NAS 的连通性';
+    let authority = httpBaseNoSlash;
+    if (authority.startsWith('https://')) {
+      authority = authority.substring('https://'.length);
+    } else if (authority.startsWith('http://')) {
+      authority = authority.substring('http://'.length);
+    }
+    const endpointHint = `请检查 ${authority} 是否可达、证书是否可信，以及设备到目标的网络连通性`;
     return {
       message: `WebSocket 连接失败（${endpointHint}）`,
       certificateError: false

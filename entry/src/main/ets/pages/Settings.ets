@@ -1,5 +1,5 @@
 /**
- * 设置：相册 parent_guid、FN ID 说明
+ * 设置：相册 parent_guid
  */
 import { common } from '@kit.AbilityKit';
 import { LengthMetrics, window } from '@kit.ArkUI';

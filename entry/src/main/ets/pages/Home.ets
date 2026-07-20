@@ -136,6 +136,12 @@ struct MePanel {
     if (this.endpointInfo.kind === targetKind) {
       return;
     }
+    if (targetKind === LOGIN_ENDPOINT_PREF_PUBLIC && !this.endpointInfo.hasPublic) {
+      return;
+    }
+    if (targetKind === LOGIN_ENDPOINT_PREF_LAN && !this.endpointInfo.hasLan) {
+      return;
+    }
     this.endpointSwitching = true;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     let res = await switchStoredLoginEndpoint(ctx, targetKind);
@@ -263,62 +269,74 @@ struct MePanel {
   }
 
   @Builder
-  private endpointSwitchButton(label: string, kind: string) {
-    Button(label)
-      .layoutWeight(1)
-      .height(36)
-      .fontSize(14)
-      .fontWeight(FontWeight.Medium)
-      .fontColor(this.endpointInfo.kind === kind ? Color.White : $r('app.color.text_primary'))
-      .backgroundColor(this.endpointInfo.kind === kind ? $r('app.color.brand_primary') : Color.Transparent)
-      .borderRadius(18)
-      .enabled(!this.endpointSwitching && this.endpointInfo.kind !== kind)
-      .opacity(this.endpointSwitching ? 0.6 : 1)
-      .onClick((): void => {
-        void this.switchEndpoint(kind);
-      })
+  private endpointChannelTab(label: string, kind: string, available: boolean) {
+    Column({ space: 6 }) {
+      Text(label)
+        .fontSize(15)
+        .fontWeight(this.endpointInfo.kind === kind ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.endpointInfo.kind === kind ? $r('app.color.brand_primary') :
+          (available ? $r('app.color.text_primary') : $r('app.color.text_secondary')))
+        .opacity(available ? 1 : 0.35)
+
+      Row()
+        .width(22)
+        .height(2)
+        .borderRadius(1)
+        .backgroundColor(this.endpointInfo.kind === kind ? $r('app.color.brand_primary') : Color.Transparent)
+    }
+    .layoutWeight(1)
+    .height(44)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .enabled(available && !this.endpointSwitching && this.endpointInfo.kind !== kind)
+    .opacity(this.endpointSwitching ? 0.55 : 1)
+    .onClick((): void => {
+      if (!available) {
+        return;
+      }
+      void this.switchEndpoint(kind);
+    })
   }
 
   @Builder
   private connectionStatusRow() {
-    Column({ space: 12 }) {
-      Row({ space: 10 }) {
-        Column({ space: 6 }) {
-          Text('NAS \u8fde\u63a5')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+    Column({ space: 14 }) {
+      Text('NAS 连接')
+        .fontSize(13)
+        .fontWeight(FontWeight.Regular)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
 
-          Text(this.endpointSwitching ? '\u6b63\u5728\u5207\u6362\u2026' : this.endpointInfo.addressText)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      if (this.endpointInfo.canSwitch) {
+        Row() {
+          if (this.endpointInfo.hasPublic) {
+            this.endpointChannelTab('公网', LOGIN_ENDPOINT_PREF_PUBLIC, true)
+          }
+          if (this.endpointInfo.hasLan) {
+            this.endpointChannelTab('内网', LOGIN_ENDPOINT_PREF_LAN, true)
+          }
         }
-        .layoutWeight(1)
-
+        .width('100%')
+        .borderRadius(12)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+      } else if (this.endpointInfo.label.length > 0) {
         Text(this.endpointInfo.label)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
           .fontColor(Color.White)
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           .backgroundColor(this.endpointKindBadgeColor(this.endpointInfo.kind))
-          .borderRadius(10)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      if (this.endpointInfo.canSwitch) {
-        Row({ space: 8 }) {
-          this.endpointSwitchButton('\u516c\u7f51', LOGIN_ENDPOINT_PREF_PUBLIC)
-          this.endpointSwitchButton('\u5185\u7f51', LOGIN_ENDPOINT_PREF_LAN)
-        }
-        .width('100%')
-        .padding(4)
-        .backgroundColor($r('app.color.card_background'))
-        .borderRadius(20)
+          .borderRadius(8)
+          .alignSelf(ItemAlign.Start)
       }
     }
     .width('100%')

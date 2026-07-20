@@ -98,7 +98,31 @@
     },
     {
       "name": "fnid_hint",
-      "value": " "
+      "value": "可填 FN ID（自动解析内网/公网）或直接填内网 IP。"
+    },
+    {
+      "name": "hint_fnid",
+      "value": "FN ID 或内网 IP"
+    },
+    {
+      "name": "hint_public_domain",
+      "value": "公网域名（可选）"
+    },
+    {
+      "name": "public_domain_hint",
+      "value": "有自有域名时选填；会同时探测域名与解析出的公网 IP。"
+    },
+    {
+      "name": "hint_lan_ip",
+      "value": "内网 IP（可选）"
+    },
+    {
+      "name": "hint_server_or_fnid",
+      "value": "FN ID 或内网 IP"
+    },
+    {
+      "name": "login_route_pref_title",
+      "value": "选路策略"
     },
     {
       "name": "tab_home",
@@ -142,7 +166,7 @@
     },
     {
       "name": "fnid_deferred",
-      "value": "FN ID（OAuth）登录将在后续版本提供。"
+      "value": "登录页已支持填写 FN ID，经 FN Connect 解析后登录。"
     },
     {
       "name": "home_session_missing",
