@@ -1,5 +1,6 @@
 /**
- * NAS 登录：仅通过 fnOS WebSocket 主通道（wss …/websocket?type=main）
+ * NAS 登录：FN ID（FN Connect 解析公网/内网）或内网 IP 共用一栏，公网域名可选；
+ * 经 fnOS WebSocket 主通道（wss …/websocket?type=main）
  * getRSAPub → encrypted(user.login)；会话持久化 token 与 wsSignKeyB64（后续 WS 帧 HMAC 用）
  */
 import { common } from '@kit.AbilityKit';
@@ -14,8 +15,11 @@ import {
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_LATENCY,
   LOGIN_ENDPOINT_PREF_PUBLIC,
-  selectLoginEndpoint
+  selectAmongEndpoints
 } from '../network/LoginEndpointSelector';
+import { extractFnId, isFnId, isFnRelayBaseUrl, lookupFnConnect } from '../network/FnConnectApi';
+import { preferPublicEndpointUrl, resolvePublicDomainToIpBaseUrl } from '../network/PublicDns';
+import { isIpLiteralHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
 import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
@@ -33,8 +37,8 @@ const LOGIN_TAG = 'Login';
 @Entry
 @Component
 struct Login {
+  @State private fnIdInput: string = '';
   @State private domainInput: string = '';
-  @State private lanInput: string = '';
   @State private endpointPreference: string = LOGIN_ENDPOINT_PREF_AUTO;
   @State private username: string = '';
   @State private password: string = '';
@@ -51,6 +55,12 @@ struct Login {
   private pendingServer: string = '';
   private pendingUser: string = '';
   private pendingPass: string = '';
+  /** 登录成功后写入会话的可切换地址（规范化 baseUrl） */
+  private pendingEndpointPublicUrl: string = '';
+  private pendingEndpointPublicDomainUrl: string = '';
+  private pendingEndpointPublicIpUrl: string = '';
+  private pendingEndpointLanUrl: string = '';
+  private pendingEndpointRelayUrl: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
 
   onPageShow(): void {
@@ -79,11 +89,14 @@ struct Login {
   aboutToAppear(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void SessionPreferences.loadLoginFormDefaults(ctx).then((d) => {
+      // 共用栏：优先 FN ID，否则回填旧版内网 IP
+      if (d.fnIdInput.length > 0) {
+        this.fnIdInput = d.fnIdInput;
+      } else if (d.lanInput.length > 0) {
+        this.fnIdInput = d.lanInput;
+      }
       if (d.domainInput.length > 0) {
         this.domainInput = d.domainInput;
-      }
-      if (d.lanInput.length > 0) {
-        this.lanInput = d.lanInput;
       }
       if (d.loginEndpointPreference.length > 0) {
         this.endpointPreference = d.loginEndpointPreference;
@@ -96,6 +109,25 @@ struct Login {
       }
       this.useHttps = d.useHttps;
     });
+  }
+
+  /**
+   * 共用输入栏：纯 FN ID / fnos.net 形态 → FN Connect；其余按内网地址。
+   * @returns [fnId, lanRaw]
+   */
+  private parseSharedHostInput(raw: string): [string, string] {
+    const t = raw.trim();
+    if (t.length === 0) {
+      return ['', ''];
+    }
+    if (isFnId(t)) {
+      return [t, ''];
+    }
+    const id = extractFnId(t);
+    if (id.length > 0 && t.toLowerCase().indexOf('fnos.net') >= 0) {
+      return [id, ''];
+    }
+    return ['', t];
   }
 
   /** 保存会话并进入主页 */
@@ -122,12 +154,19 @@ struct Login {
         longTok = '';
       }
     }
+    const sharedParsed = this.parseSharedHostInput(this.fnIdInput);
     const stored: StoredSession = {
       baseUrl: base,
       token: token,
       account: user,
+      fnIdInput: sharedParsed[0],
       domainInput: this.domainInput.trim(),
-      lanInput: this.lanInput.trim(),
+      lanInput: sharedParsed[1],
+      endpointPublicUrl: this.pendingEndpointPublicUrl,
+      endpointPublicDomainUrl: this.pendingEndpointPublicDomainUrl,
+      endpointPublicIpUrl: this.pendingEndpointPublicIpUrl,
+      endpointLanUrl: this.pendingEndpointLanUrl,
+      endpointRelayUrl: this.pendingEndpointRelayUrl,
       loginEndpointPreference: this.endpointPreference,
       useHttps: this.useHttps,
       albumParentGuid: '',
@@ -296,12 +335,14 @@ struct Login {
   private async onLoginClick(): Promise<void> {
     this.errorText = '';
     this.probeSummary = '';
-    const server = normalizeServerUrl(
-      this.domainInput.trim().length > 0 ? this.domainInput : this.lanInput,
-      this.useHttps
-    );
-    if (server.length === 0 || this.username.trim().length === 0 || this.password.length === 0) {
-      this.errorText = '请填写服务器地址、用户名和密码';
+    const sharedRaw = this.fnIdInput.trim();
+    const publicDomainRaw = this.domainInput.trim();
+    const sharedParsed = this.parseSharedHostInput(sharedRaw);
+    const fnId = sharedParsed[0];
+    const lanRaw = sharedParsed[1];
+    const hasAddr = fnId.length > 0 || publicDomainRaw.length > 0 || lanRaw.length > 0;
+    if (!hasAddr || this.username.trim().length === 0 || this.password.length === 0) {
+      this.errorText = '请填写 FN ID / 内网 IP 或公网域名，以及用户名和密码';
       return;
     }
     this.loading = true;
@@ -310,17 +351,81 @@ struct Login {
       this.show2faStep = false;
       this.pendingAccessToken = '';
       this.pendingDeviceId = '';
-      const selected = await selectLoginEndpoint(
-        this.domainInput,
-        this.lanInput,
-        this.useHttps,
+      this.pendingEndpointPublicUrl = '';
+      this.pendingEndpointPublicDomainUrl = '';
+      this.pendingEndpointPublicIpUrl = '';
+      this.pendingEndpointLanUrl = '';
+      this.pendingEndpointRelayUrl = '';
+
+      let fnSummary = '';
+
+      // 可选公网域名；误填 FN Connect 门户时忽略
+      if (publicDomainRaw.length > 0) {
+        const domainUrl = normalizeServerUrl(publicDomainRaw, this.useHttps);
+        if (domainUrl.length > 0 && !isFnRelayBaseUrl(domainUrl)) {
+          const hostParts = parseNormalizedBaseUrl(domainUrl);
+          const host = hostParts !== null ? hostParts.host : '';
+          if (host.length > 0 && isIpLiteralHost(host)) {
+            this.pendingEndpointPublicIpUrl = domainUrl;
+          } else {
+            this.pendingEndpointPublicDomainUrl = domainUrl;
+            this.pendingEndpointPublicIpUrl = await resolvePublicDomainToIpBaseUrl(domainUrl);
+          }
+        }
+      }
+
+      if (lanRaw.length > 0) {
+        this.pendingEndpointLanUrl = normalizeServerUrl(lanRaw, this.useHttps);
+      }
+
+      // FN ID：FN Connect 补齐公网 / 内网；手填域名优先于云端 DDNS
+      if (fnId.length > 0) {
+        const looked = await lookupFnConnect(fnId, this.useHttps);
+        const hasAny = looked.publicDomainServer.length > 0 || looked.publicIpServer.length > 0 ||
+          looked.lanServer.length > 0;
+        if (!looked.ok || !hasAny) {
+          this.errorText = looked.message.length > 0 ? looked.message : 'FN ID 解析失败';
+          return;
+        }
+        if (this.pendingEndpointPublicDomainUrl.length === 0 && looked.publicDomainServer.length > 0) {
+          this.pendingEndpointPublicDomainUrl = looked.publicDomainServer;
+        }
+        if (this.pendingEndpointPublicIpUrl.length === 0 && looked.publicIpServer.length > 0) {
+          this.pendingEndpointPublicIpUrl = looked.publicIpServer;
+        }
+        if (this.pendingEndpointLanUrl.length === 0 && looked.lanServer.length > 0) {
+          this.pendingEndpointLanUrl = looked.lanServer;
+        }
+        fnSummary = looked.summary;
+      }
+
+      this.pendingEndpointPublicUrl = preferPublicEndpointUrl(
+        this.pendingEndpointPublicDomainUrl,
+        this.pendingEndpointPublicIpUrl
+      );
+      this.pendingEndpointRelayUrl = '';
+
+      const selected = await selectAmongEndpoints(
+        this.pendingEndpointPublicDomainUrl,
+        this.pendingEndpointPublicIpUrl,
+        this.pendingEndpointLanUrl,
+        '',
         this.endpointPreference
       );
       if (selected.server.length === 0) {
-        this.errorText = '请至少填写一个服务器地址';
+        this.errorText = '请填写可用的 FN ID / 内网 IP 或公网域名';
         return;
       }
-      this.probeSummary = selected.summary;
+      if (selected.preferredPublicUrl.length > 0) {
+        this.pendingEndpointPublicUrl = selected.preferredPublicUrl;
+      }
+      if (fnSummary.length > 0 && selected.summary.length > 0) {
+        this.probeSummary = `${fnSummary}；${selected.summary}`;
+      } else if (fnSummary.length > 0) {
+        this.probeSummary = fnSummary;
+      } else {
+        this.probeSummary = selected.summary;
+      }
       await this.attemptLoginWebSocketOnly(ctx, selected.server, this.username.trim(), this.password);
     } catch (e) {
       const msg = this.describeLoginError(e);
@@ -385,34 +490,38 @@ struct Login {
 
   private endpointPreferenceLabel(value: string): string {
     if (value === LOGIN_ENDPOINT_PREF_PUBLIC) {
-      return '优先公网';
+      return '公网';
     }
     if (value === LOGIN_ENDPOINT_PREF_LAN) {
-      return '优先内网';
+      return '内网';
     }
     if (value === LOGIN_ENDPOINT_PREF_BANDWIDTH) {
-      return '带宽优先';
+      return '带宽';
     }
     if (value === LOGIN_ENDPOINT_PREF_LATENCY) {
-      return '延迟优先';
+      return '延迟';
     }
-    return '自动综合';
+    return '自动';
   }
 
   @Builder
-  private endpointPreferenceButton(value: string) {
-    Button(this.endpointPreferenceLabel(value))
-      .type(ButtonType.Normal)
-      .height(34)
-      .fontSize(12)
-      .fontColor(this.endpointPreference === value ? Color.White : $r('app.color.text_secondary'))
-      .backgroundColor(this.endpointPreference === value ? $r('app.color.brand_primary') : $r('app.color.card_background'))
-      .borderRadius(17)
-      .padding({ left: 10, right: 10 })
-      .enabled(!this.show2faStep && !this.loading)
-      .onClick((): void => {
-        this.endpointPreference = value;
-      })
+  private endpointPreferenceTab(value: string) {
+    Column() {
+      Text(this.endpointPreferenceLabel(value))
+        .fontSize(13)
+        .fontWeight(this.endpointPreference === value ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.endpointPreference === value ? Color.White : $r('app.color.text_secondary'))
+    }
+    .layoutWeight(1)
+    .height(34)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .borderRadius(17)
+    .backgroundColor(this.endpointPreference === value ? $r('app.color.brand_primary') : Color.Transparent)
+    .enabled(!this.show2faStep && !this.loading)
+    .onClick((): void => {
+      this.endpointPreference = value;
+    })
   }
 
   build() {
@@ -424,7 +533,25 @@ struct Login {
           .width('100%')
           .margin({ top: 48, bottom: 8 })
 
-        TextInput({ placeholder: '公网域名 / 服务器地址', text: this.domainInput })
+        TextInput({ placeholder: $r('app.string.hint_fnid'), text: this.fnIdInput })
+          .enableAutoFill(false)
+          .enableKeyboardOnFocus(false)
+          .onChange((v: string) => {
+            this.fnIdInput = v;
+          })
+          .width('100%')
+          .height(44)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.radius_medium'))
+          .padding({ left: 12, right: 12 })
+          .enabled(!this.show2faStep)
+
+        Text($r('app.string.fnid_hint'))
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+
+        TextInput({ placeholder: $r('app.string.hint_public_domain'), text: this.domainInput })
           .enableAutoFill(false)
           .enableKeyboardOnFocus(false)
           .onChange((v: string) => {
@@ -435,19 +562,12 @@ struct Login {
           .backgroundColor($r('app.color.card_background'))
           .borderRadius($r('app.float.radius_medium'))
           .padding({ left: 12, right: 12 })
-
-        TextInput({ placeholder: '内网 IP（可选）', text: this.lanInput })
-          .enableAutoFill(false)
-          .enableKeyboardOnFocus(false)
-          .onChange((v: string) => {
-            this.lanInput = v;
-          })
-          .width('100%')
-          .height(44)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.radius_medium'))
-          .padding({ left: 12, right: 12 })
           .enabled(!this.show2faStep)
+
+        Text($r('app.string.public_domain_hint'))
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
 
         Row() {
           Text($r('app.string.use_https'))
@@ -461,19 +581,24 @@ struct Login {
         }
         .width('100%')
 
-        Column({ space: 8 }) {
-          Text('双地址选择策略')
+        Column({ space: 10 }) {
+          Text($r('app.string.login_route_pref_title'))
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
-          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_AUTO)
-            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_LAN)
-            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_PUBLIC)
-            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_LATENCY)
-            this.endpointPreferenceButton(LOGIN_ENDPOINT_PREF_BANDWIDTH)
+            .textAlign(TextAlign.Center)
+
+          Row({ space: 2 }) {
+            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_AUTO)
+            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_LAN)
+            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_PUBLIC)
+            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_LATENCY)
+            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_BANDWIDTH)
           }
           .width('100%')
+          .padding(3)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.card_background'))
         }
         .width('100%')
 
@@ -587,12 +712,6 @@ struct Login {
             .width('100%')
             .enabled(!this.loading)
         }
-
-        Text($r('app.string.fnid_hint'))
-          .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
-          .margin({ top: 24 })
       }
       .padding({ left: 24, right: 24, bottom: 32 })
       .constraintSize({ minHeight: '100%' })

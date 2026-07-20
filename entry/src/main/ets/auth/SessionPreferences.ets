@@ -8,7 +8,13 @@ const K_BASE_URL = 'base_url';
 const K_TOKEN = 'token';
 const K_ACCOUNT = 'account';
 const K_DOMAIN_INPUT = 'domain_input';
+const K_FN_ID_INPUT = 'fn_id_input';
 const K_LAN_INPUT = 'lan_input';
+const K_ENDPOINT_PUBLIC_URL = 'endpoint_public_url';
+const K_ENDPOINT_PUBLIC_DOMAIN_URL = 'endpoint_public_domain_url';
+const K_ENDPOINT_PUBLIC_IP_URL = 'endpoint_public_ip_url';
+const K_ENDPOINT_LAN_URL = 'endpoint_lan_url';
+const K_ENDPOINT_RELAY_URL = 'endpoint_relay_url';
 const K_LOGIN_ENDPOINT_PREF = 'login_endpoint_pref';
 const K_USE_HTTPS = 'use_https';
 const K_ALBUM_PARENT = 'album_parent_guid';
@@ -27,8 +33,22 @@ export interface StoredSession {
   baseUrl: string;
   token: string;
   account: string;
+  /** 登录表单 FN ID（可选） */
+  fnIdInput: string;
+  /** 登录表单公网域名（可选） */
   domainInput: string;
+  /** 登录表单内网栏原文 */
   lanInput: string;
+  /** 可切换的公网地址（域名优先后的首选） */
+  endpointPublicUrl: string;
+  /** 公网域名 baseUrl（若有） */
+  endpointPublicDomainUrl: string;
+  /** 公网 IP baseUrl（若有） */
+  endpointPublicIpUrl: string;
+  /** 可切换的内网 baseUrl（规范化） */
+  endpointLanUrl: string;
+  /** 可切换的中继 baseUrl（规范化，如 https://fnos.net/{fnId}） */
+  endpointRelayUrl: string;
   loginEndpointPreference: string;
   useHttps: boolean;
   albumParentGuid: string;
@@ -41,6 +61,7 @@ export interface StoredSession {
 }
 
 export interface LoginFormDefaults {
+  fnIdInput: string;
   domainInput: string;
   lanInput: string;
   loginEndpointPreference: string;
@@ -118,8 +139,14 @@ export class SessionPreferences {
     const prefsValues = await Promise.all([
       prefsGetString(p, K_BASE_URL, ''),
       prefsGetString(p, K_ACCOUNT, ''),
+      prefsGetString(p, K_FN_ID_INPUT, ''),
       prefsGetString(p, K_DOMAIN_INPUT, ''),
       prefsGetString(p, K_LAN_INPUT, ''),
+      prefsGetString(p, K_ENDPOINT_PUBLIC_URL, ''),
+      prefsGetString(p, K_ENDPOINT_PUBLIC_DOMAIN_URL, ''),
+      prefsGetString(p, K_ENDPOINT_PUBLIC_IP_URL, ''),
+      prefsGetString(p, K_ENDPOINT_LAN_URL, ''),
+      prefsGetString(p, K_ENDPOINT_RELAY_URL, ''),
       prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       prefsGetString(p, K_USE_HTTPS, '1'),
       prefsGetString(p, K_ALBUM_PARENT, ''),
@@ -134,17 +161,23 @@ export class SessionPreferences {
       baseUrl: prefsValues[0],
       token: token,
       account: prefsValues[1],
-      domainInput: prefsValues[2],
-      lanInput: prefsValues[3],
-      loginEndpointPreference: prefsValues[4].length > 0 ? prefsValues[4] : 'auto',
-      useHttps: prefsValues[5] === '1',
-      albumParentGuid: prefsValues[6],
-      trustedHosts: parseTrustedHostsSafe(prefsValues[7]),
-      fnosLongToken: prefsValues[8],
-      loginViaWebSocket: prefsValues[9] === '1',
-      wsSignKeyB64: prefsValues[10],
-      openApiAuthxKey: prefsValues[11],
-      openApiAuthxSecret: prefsValues[12]
+      fnIdInput: prefsValues[2],
+      domainInput: prefsValues[3],
+      lanInput: prefsValues[4],
+      endpointPublicUrl: prefsValues[5],
+      endpointPublicDomainUrl: prefsValues[6],
+      endpointPublicIpUrl: prefsValues[7],
+      endpointLanUrl: prefsValues[8],
+      endpointRelayUrl: prefsValues[9],
+      loginEndpointPreference: prefsValues[10].length > 0 ? prefsValues[10] : 'auto',
+      useHttps: prefsValues[11] === '1',
+      albumParentGuid: prefsValues[12],
+      trustedHosts: parseTrustedHostsSafe(prefsValues[13]),
+      fnosLongToken: prefsValues[14],
+      loginViaWebSocket: prefsValues[15] === '1',
+      wsSignKeyB64: prefsValues[16],
+      openApiAuthxKey: prefsValues[17],
+      openApiAuthxSecret: prefsValues[18]
     };
   }
 
@@ -153,8 +186,14 @@ export class SessionPreferences {
     await prefsPutString(p, K_BASE_URL, s.baseUrl);
     await prefsPutString(p, K_TOKEN, s.token);
     await prefsPutString(p, K_ACCOUNT, s.account);
+    await prefsPutString(p, K_FN_ID_INPUT, s.fnIdInput);
     await prefsPutString(p, K_DOMAIN_INPUT, s.domainInput);
     await prefsPutString(p, K_LAN_INPUT, s.lanInput);
+    await prefsPutString(p, K_ENDPOINT_PUBLIC_URL, s.endpointPublicUrl);
+    await prefsPutString(p, K_ENDPOINT_PUBLIC_DOMAIN_URL, s.endpointPublicDomainUrl);
+    await prefsPutString(p, K_ENDPOINT_PUBLIC_IP_URL, s.endpointPublicIpUrl);
+    await prefsPutString(p, K_ENDPOINT_LAN_URL, s.endpointLanUrl);
+    await prefsPutString(p, K_ENDPOINT_RELAY_URL, s.endpointRelayUrl);
     await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, s.loginEndpointPreference);
     await prefsPutString(p, K_USE_HTTPS, s.useHttps ? '1' : '0');
     await prefsPutString(p, K_ALBUM_PARENT, s.albumParentGuid);
@@ -187,8 +226,21 @@ export class SessionPreferences {
 
   static async loadLoginFormDefaults(ctx: common.UIAbilityContext): Promise<LoginFormDefaults> {
     const p = await openPrefs(ctx);
+    let fnId = await prefsGetString(p, K_FN_ID_INPUT, '');
+    let domain = await prefsGetString(p, K_DOMAIN_INPUT, '');
+    // 旧版把 FN ID 写在 domain_input：迁移到独立 FN ID 栏
+    if (fnId.length === 0 && domain.length > 0) {
+      const migrated = domain.trim();
+      // 纯 FN ID 形态（无点号等）才迁移，避免误伤真正域名
+      if (/^[a-zA-Z][a-zA-Z0-9-]{4,31}$/.test(migrated) && !migrated.endsWith('-') &&
+        migrated.indexOf('.') < 0) {
+        fnId = migrated;
+        domain = '';
+      }
+    }
     return {
-      domainInput: await prefsGetString(p, K_DOMAIN_INPUT, ''),
+      fnIdInput: fnId,
+      domainInput: domain,
       lanInput: await prefsGetString(p, K_LAN_INPUT, ''),
       loginEndpointPreference: await prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       username: await prefsGetString(p, K_ACCOUNT, ''),
