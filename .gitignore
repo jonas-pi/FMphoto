@@ -20,17 +20,13 @@
 *.iml
 /参考文档
 **/build
-# 仅放行发布用未签名 HAP，其余 build 产物继续忽略，避免仓库膨胀
+# 仅放行发布用未签名 HAP；签名包与密钥一律不入库、不上传 Release
 !entry/build/
 !entry/build/default/
 !entry/build/default/outputs/
 !entry/build/default/outputs/default/
 !entry/build/default/outputs/default/entry-default-unsigned.hap
-!entry/build/release/
-!entry/build/release/outputs/
-!entry/build/release/outputs/default/
-!entry/build/release/outputs/default/entry-default-signed.hap
-!entry/build/release/outputs/default/entry-default-unsigned.hap
+entry/build/**/*-signed.hap
 /.hvigor
 .cxx
 /.clangd
