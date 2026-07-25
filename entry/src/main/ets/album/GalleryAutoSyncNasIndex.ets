@@ -9,8 +9,12 @@ import {
   buildNasDedupeIndex,
   cloneNasDedupeIndex,
   emptyNasDedupeIndex,
+  localPhotoNameSizeKey,
+  localPhotoOfficialFingerprint,
+  localPhotoSizeMtimeKey,
   NasDedupeIndex
 } from './GalleryAutoSyncOfficialFingerprint';
+import { LocalPhotoEntry } from './GalleryAutoSyncService';
 import { DATE_FEED_BATCH, DAY_MAX_ROUNDS } from './galleryAlbumTab/GalleryAlbumTabConstants';
 import {
   fmtDayEnd,
@@ -58,6 +62,24 @@ export class GalleryAutoSyncNasIndex {
     GalleryAutoSyncNasIndex.index = emptyNasDedupeIndex();
     GalleryAutoSyncNasIndex.cachedAt = 0;
     GalleryAutoSyncNasIndex.loadingPromise = null;
+  }
+
+  static addLocalEntries(entries: LocalPhotoEntry[]): void {
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const fingerprint = localPhotoOfficialFingerprint(entry);
+      const sizeMtime = localPhotoSizeMtimeKey(entry);
+      const nameSize = localPhotoNameSizeKey(entry);
+      if (fingerprint.length > 0) {
+        GalleryAutoSyncNasIndex.index.fingerprints.add(fingerprint);
+      }
+      if (sizeMtime.length > 0) {
+        GalleryAutoSyncNasIndex.index.sizeMtimeKeys.add(sizeMtime);
+      }
+      if (nameSize.length > 0) {
+        GalleryAutoSyncNasIndex.index.nameSizeKeys.add(nameSize);
+      }
+    }
   }
 
   static isFresh(force: boolean): boolean {
@@ -115,9 +137,10 @@ export class GalleryAutoSyncNasIndex {
       hilog.info(
         DOMAIN,
         TAG,
-        'nas index items=%{public}d fingerprints=%{public}d nameSize=%{public}d',
+        'nas index items=%{public}d fingerprints=%{public}d sizeMtime=%{public}d nameSize=%{public}d',
         items.length,
         built.fingerprints.size,
+        built.sizeMtimeKeys.size,
         built.nameSizeKeys.size
       );
       return cloneNasDedupeIndex(built);

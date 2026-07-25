@@ -385,7 +385,7 @@ function galleryAlbumUploadUriListInBackground(
             const entry = localPhotoEntryFromPickerUri(uri);
             await GalleryAutoSyncLedger.markSynced(ctx, [entry]);
             GalleryAutoSyncStore.markSynced([uri]);
-            GalleryAutoSyncNasIndex.invalidate();
+            GalleryAutoSyncNasIndex.addLocalEntries([entry]);
           } else if (firstFailMsg.length === 0) {
             const em = res.message ?? '';
             firstFailMsg = em.length > 0 ? em : `${doneVerb}失败`;

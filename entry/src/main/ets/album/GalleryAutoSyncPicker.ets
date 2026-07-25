@@ -152,6 +152,7 @@ export function filterUnsyncedPickerUrisWithFingerprints(
 ): string[] {
   const index: NasDedupeIndex = {
     fingerprints: nasFingerprints,
+    sizeMtimeKeys: new Set<string>(),
     nameSizeKeys: new Set<string>()
   };
   return filterUnsyncedPickerUrisWithIndex(uris, index, ledger);

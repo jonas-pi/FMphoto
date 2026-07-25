@@ -6,8 +6,11 @@
  *
  * 参考：飞牛社区说明「重复判断依据文件大小与修改日期」；Web 上传 notice 携带 original_name + file_create_time。
  *
+ * 匹配强度：
+ * - fingerprint / nameSize：强匹配，可写入本机账本
+ * - sizeMtime：弱匹配（社区口径），仅本轮跳过上传，禁止单独写入账本，避免连拍同秒同大小误永久跳过
+ *
  * 客户端兜底：gallery/getList 常缺 fileSize，且 dateTime 多为拍摄时间 ≠ 文件 mtime。
- * 因此除精确指纹外，额外维护 name+size 软键，避免已入库照片被误判为未同步。
  */
 import { GalleryListItem } from '../model/FnApiTypes';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
@@ -23,12 +26,14 @@ interface OfficialFingerprintParts {
 /** NAS 去重索引：精确指纹 + name:size 软键 */
 export interface NasDedupeIndex {
   fingerprints: Set<string>;
+  sizeMtimeKeys: Set<string>;
   nameSizeKeys: Set<string>;
 }
 
 export function emptyNasDedupeIndex(): NasDedupeIndex {
   return {
     fingerprints: new Set<string>(),
+    sizeMtimeKeys: new Set<string>(),
     nameSizeKeys: new Set<string>()
   };
 }
@@ -36,6 +41,7 @@ export function emptyNasDedupeIndex(): NasDedupeIndex {
 export function cloneNasDedupeIndex(src: NasDedupeIndex): NasDedupeIndex {
   return {
     fingerprints: new Set<string>(src.fingerprints),
+    sizeMtimeKeys: new Set<string>(src.sizeMtimeKeys),
     nameSizeKeys: new Set<string>(src.nameSizeKeys)
   };
 }
@@ -114,6 +120,15 @@ export function officialUploadFingerprint(originalName: string, fileSize: number
   const size = Number.isFinite(fileSize) && fileSize > 0 ? Math.floor(fileSize) : 0;
   const mt = Number.isFinite(mtimeSec) && mtimeSec > 0 ? Math.floor(mtimeSec) : 0;
   return `${name}:${size}:${mt}`;
+}
+
+export function officialSizeMtimeKey(fileSize: number, mtimeSec: number): string {
+  const size = Number.isFinite(fileSize) && fileSize > 0 ? Math.floor(fileSize) : 0;
+  const mt = Number.isFinite(mtimeSec) && mtimeSec > 0 ? Math.floor(mtimeSec) : 0;
+  if (size <= 0 || mt <= 0) {
+    return '';
+  }
+  return `${size}:${mt}`;
 }
 
 /** name+size 软键（列表缺可靠 mtime 时的官方兼容兜底） */
@@ -208,6 +223,10 @@ export function localPhotoOfficialFingerprint(entry: LocalPhotoEntry): string {
   );
 }
 
+export function localPhotoSizeMtimeKey(entry: LocalPhotoEntry): string {
+  return officialSizeMtimeKey(entry.fileSize, mtimeSecFromMillis(entry.dateModifiedMs));
+}
+
 export function localPhotoNameSizeKey(entry: LocalPhotoEntry): string {
   return officialNameSizeKey(entry.fileName, entry.fileSize);
 }
@@ -227,6 +246,11 @@ export function buildNasDedupeIndex(items: GalleryListItem[]): NasDedupeIndex {
     const item = items[i];
     const name = nasItemOriginalName(item);
     const size = nasItemFileSize(item);
+    const mtimeSec = nasItemMtimeSec(item);
+    const sizeMtime = officialSizeMtimeKey(size, mtimeSec);
+    if (sizeMtime.length > 0) {
+      index.sizeMtimeKeys.add(sizeMtime);
+    }
     if (name.length === 0 || size <= 0) {
       continue;
     }
@@ -234,7 +258,7 @@ export function buildNasDedupeIndex(items: GalleryListItem[]): NasDedupeIndex {
     if (soft.length > 0) {
       index.nameSizeKeys.add(soft);
     }
-    const fp = officialUploadFingerprint(name, size, nasItemMtimeSec(item));
+    const fp = officialUploadFingerprint(name, size, mtimeSec);
     if (fp.length > 0) {
       index.fingerprints.add(fp);
     }
@@ -291,31 +315,86 @@ export function officialFingerprintSetHas(set: Set<string>, fingerprint: string)
   return false;
 }
 
+export function officialSizeMtimeSetHas(set: Set<string>, fileSize: number, mtimeSec: number): boolean {
+  const key = officialSizeMtimeKey(fileSize, mtimeSec);
+  if (key.length === 0) {
+    return false;
+  }
+  if (set.has(key)) {
+    return true;
+  }
+  for (let delta = -MTIME_TOLERANCE_SEC; delta <= MTIME_TOLERANCE_SEC; delta++) {
+    if (delta === 0) {
+      continue;
+    }
+    if (set.has(officialSizeMtimeKey(fileSize, mtimeSec + delta))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** NAS 去重命中类型：strong 可入账本，sizeMtime 仅本轮跳过 */
+export type NasDedupeMatchKind = 'fingerprint' | 'nameSize' | 'sizeMtime' | 'none';
+
+export function nasDedupeMatchIsStrong(kind: NasDedupeMatchKind): boolean {
+  return kind === 'fingerprint' || kind === 'nameSize';
+}
+
 /**
- * 判定本地照片是否已在 NAS：精确指纹（±2s）或 name+size 软匹配。
- * 软匹配对齐「大小+文件名」兜底，弥补列表缺可靠 mtime 的官方差异。
+ * 判定本地照片相对 NAS 索引的命中类型。
+ * 优先精确指纹（±2s），再 name+size，最后 size+mtime 弱匹配。
  */
+export function nasDedupeIndexMatchKind(
+  index: NasDedupeIndex,
+  originalName: string,
+  fileSize: number,
+  mtimeSec: number
+): NasDedupeMatchKind {
+  const name = originalName.trim();
+  const size = Number.isFinite(fileSize) && fileSize > 0 ? Math.floor(fileSize) : 0;
+  if (size <= 0) {
+    return 'none';
+  }
+  if (name.length > 0) {
+    const fp = officialUploadFingerprint(name, size, mtimeSec);
+    if (officialFingerprintSetHas(index.fingerprints, fp)) {
+      return 'fingerprint';
+    }
+    const soft = officialNameSizeKey(name, size);
+    if (soft.length > 0 && index.nameSizeKeys.has(soft)) {
+      return 'nameSize';
+    }
+  }
+  if (officialSizeMtimeSetHas(index.sizeMtimeKeys, size, mtimeSec)) {
+    return 'sizeMtime';
+  }
+  return 'none';
+}
+
 export function nasDedupeIndexHasLocal(
   index: NasDedupeIndex,
   originalName: string,
   fileSize: number,
   mtimeSec: number
 ): boolean {
-  const name = originalName.trim();
-  const size = Number.isFinite(fileSize) && fileSize > 0 ? Math.floor(fileSize) : 0;
-  if (name.length === 0 || size <= 0) {
-    return false;
-  }
-  const fp = officialUploadFingerprint(name, size, mtimeSec);
-  if (officialFingerprintSetHas(index.fingerprints, fp)) {
-    return true;
-  }
-  const soft = officialNameSizeKey(name, size);
-  return soft.length > 0 && index.nameSizeKeys.has(soft);
+  return nasDedupeIndexMatchKind(index, originalName, fileSize, mtimeSec) !== 'none';
 }
 
 export function nasDedupeIndexHasEntry(index: NasDedupeIndex, entry: LocalPhotoEntry): boolean {
   return nasDedupeIndexHasLocal(
+    index,
+    entry.fileName,
+    entry.fileSize,
+    mtimeSecFromMillis(entry.dateModifiedMs)
+  );
+}
+
+export function nasDedupeIndexMatchKindForEntry(
+  index: NasDedupeIndex,
+  entry: LocalPhotoEntry
+): NasDedupeMatchKind {
+  return nasDedupeIndexMatchKind(
     index,
     entry.fileName,
     entry.fileSize,
@@ -328,6 +407,9 @@ export function mergeNasDedupeIndex(base: NasDedupeIndex, extra: GalleryListItem
   const add = buildNasDedupeIndex(extra);
   add.fingerprints.forEach((fp: string): void => {
     merged.fingerprints.add(fp);
+  });
+  add.sizeMtimeKeys.forEach((key: string): void => {
+    merged.sizeMtimeKeys.add(key);
   });
   add.nameSizeKeys.forEach((key: string): void => {
     merged.nameSizeKeys.add(key);
