@@ -1,5 +1,5 @@
 /**
- * 前台增量同步：按飞牛官方规则（original_name + size + mtime）对比 NAS 全库与本机账本。
+ * 前台增量同步：账本快筛 → NAS 指纹（强匹配可入账本；size+mtime 弱匹配仅本轮跳过）。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -7,10 +7,13 @@ import { GalleryListItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import {
   buildNasDedupeIndex,
+  emptyNasDedupeIndex,
   localPhotoOfficialFingerprint,
   mergeNasDedupeIndex,
   NasDedupeIndex,
-  nasDedupeIndexHasEntry
+  nasDedupeIndexHasEntry,
+  nasDedupeIndexMatchKindForEntry,
+  nasDedupeMatchIsStrong
 } from './GalleryAutoSyncOfficialFingerprint';
 import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
@@ -151,13 +154,47 @@ export class GalleryAutoSyncStore {
         return GalleryAutoSyncStore.lastResult;
       }
 
+      const ledger = await GalleryAutoSyncLedger.load(ctx);
+      const ledgerFiltered = filterUnsyncedLocalPhotos(localPhotos, emptyNasDedupeIndex(), ledger);
+      if (ledgerFiltered.unsynced.length === 0) {
+        GalleryAutoSyncStore.lastResult = ledgerFiltered;
+        GalleryAutoSyncStore.lastDetectTime = now;
+        return GalleryAutoSyncStore.lastResult;
+      }
+
       const nasIndex = mergeNasDedupeIndex(
-        // force 只跳过本地检测节流；NAS 索引在 TTL 内复用，避免每次手动同步全库重拉
         await GalleryAutoSyncNasIndex.getIndex(client, false),
         partialTimeline
       );
-      const ledger = await GalleryAutoSyncLedger.load(ctx);
-      const filtered = filterUnsyncedLocalPhotos(localPhotos, nasIndex, ledger);
+      const nasFiltered = filterUnsyncedLocalPhotos(
+        ledgerFiltered.unsynced,
+        nasIndex,
+        new Set<string>()
+      );
+      const unsyncedUris = new Set<string>(
+        nasFiltered.unsynced.map((entry: LocalPhotoEntry): string => entry.uri)
+      );
+      const matchedOnNas = ledgerFiltered.unsynced.filter(
+        (entry: LocalPhotoEntry): boolean => !unsyncedUris.has(entry.uri)
+      );
+      // 仅强匹配写入账本；size+mtime 弱匹配只本轮跳过，避免误永久跳过
+      const strongMatches = matchedOnNas.filter(
+        (entry: LocalPhotoEntry): boolean =>
+          nasDedupeMatchIsStrong(nasDedupeIndexMatchKindForEntry(nasIndex, entry))
+      );
+      if (strongMatches.length > 0) {
+        try {
+          await GalleryAutoSyncLedger.markSynced(ctx, strongMatches);
+        } catch (e) {
+          hilog.warn(DOMAIN, TAG, 'persist NAS matches failed: %{public}s', String(e));
+        }
+      }
+      const filtered: AutoSyncResult = {
+        unsynced: nasFiltered.unsynced,
+        detectedAt: Date.now(),
+        skippedOnNas: nasFiltered.skippedOnNas,
+        skippedInLedger: ledgerFiltered.skippedInLedger
+      };
 
       GalleryAutoSyncStore.lastResult = filtered;
       GalleryAutoSyncStore.lastDetectTime = now;
@@ -165,9 +202,10 @@ export class GalleryAutoSyncStore {
       hilog.info(
         DOMAIN,
         TAG,
-        'detectUnsynced official local=%{public}d nasFp=%{public}d nameSize=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d',
+        'detectUnsynced official local=%{public}d nasFp=%{public}d sizeMtime=%{public}d nameSize=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d',
         localPhotos.length,
         nasIndex.fingerprints.size,
+        nasIndex.sizeMtimeKeys.size,
         nasIndex.nameSizeKeys.size,
         filtered.unsynced.length,
         filtered.skippedOnNas,
