@@ -183,6 +183,8 @@ export struct RecycleBinChrome {
     }
     .width('100%')
     .height('100%')
+    // 整页壳禁用 Auto 分栏，避免平板上内容只显示在左半屏
+    .mode(NavigationMode.Stack)
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(this.selectionMode)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])

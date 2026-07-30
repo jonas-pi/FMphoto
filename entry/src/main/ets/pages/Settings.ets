@@ -178,6 +178,8 @@ struct Settings {
         }
         .width('100%')
         .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+        // 顶栏壳固定单栏，避免宽屏 Auto 触发空右栏
+        .mode(NavigationMode.Stack)
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(false)
         .titleBar(this.canUseHds() ? {

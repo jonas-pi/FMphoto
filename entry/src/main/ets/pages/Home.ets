@@ -25,7 +25,6 @@ import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
   fnBottomDockBottomGap,
   fnHdsBottomDockActionTabStyle,
-  fnHdsImmersiveSystemMaterialEffect,
   fnHdsImmersiveTabsFloatingStyle,
   fnImmersiveBackgroundEffect,
   fnLiquidGlassGradient,
@@ -637,6 +636,18 @@ struct Home {
     return fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
+  /** 中栏胶囊可用宽度：两侧 spacer/侧钮 + 边距预留后剩余空间，供 barWidth 显式传入 */
+  private centerDockWidthVp(): number {
+    const total = this.rootContentWidthVp > 0 ? this.rootContentWidthVp : 360;
+    return Math.max(
+      168,
+      total
+        - FN_BOTTOM_DOCK_SIDE_PADDING_VP * 2
+        - FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP * 2
+        - FN_BOTTOM_DOCK_SIDE_GAP_VP * 2
+    );
+  }
+
   private dockReserveHeight(): number {
     if (!this.sessionOk || !this.shouldShowBottomDock()) {
       return 0;
@@ -929,22 +940,20 @@ struct Home {
         '\u6211\u7684'
       ))
     }
-    .layoutWeight(1)
+    // 显式固定宽度 + barWidth，符合官方 HdsTabsFloatingStyle 数值约束，避免默认 76vp×3 撑破 Row
+    .width(this.centerDockWidthVp())
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
+    .barWidth(this.centerDockWidthVp())
     // @SuppressWarnings compatibility
-    .barFloatingStyle({
-      barBottomMargin: 0,
-      gradientMask: {
-        maskColor: Color.Transparent,
-        maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP
-      },
-      lightColor: $r('app.color.gallery_material_surface_bg'),
-      systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
-    })
+    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
+      this.centerDockWidthVp(),
+      $r('app.color.gallery_material_surface_bg')
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .barBackgroundColor(Color.Transparent)
@@ -988,7 +997,7 @@ struct Home {
       this.floatingDockFallbackItem(1, $r('sys.symbol.rectangle_stack'), $r('sys.symbol.square_stack_3d_fill'), '\u76f8\u518c')
       this.floatingDockFallbackItem(2, $r('sys.symbol.person'), $r('sys.symbol.person_fill'), '\u6211\u7684')
     }
-    .layoutWeight(1)
+    .width(this.centerDockWidthVp())
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
     .backgroundColor(this.dockMaterialBackgroundColor())

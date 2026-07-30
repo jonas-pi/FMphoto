@@ -608,6 +608,8 @@ export struct GalleryAlbumTopBar {
     }
     .width('100%')
     .height('100%')
+    // 用作整页壳时必须 Stack：默认 Auto 在宽屏(≥600vp)会 Split，内容只占左栏
+    .mode(NavigationMode.Stack)
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(!this.shouldShowBack())
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
