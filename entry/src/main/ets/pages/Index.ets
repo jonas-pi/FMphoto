@@ -9,6 +9,7 @@ import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
 import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
+import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 
 @Entry
 @Component
@@ -132,6 +133,7 @@ struct Index {
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((mainWindow: window.Window): void => {
         fnRestoreAppSystemBars(mainWindow);
+        fnPublishSystemAvoidArea(mainWindow, this.getUIContext());
       }).catch((_e: Error): void => {
       });
     } catch (_e) {

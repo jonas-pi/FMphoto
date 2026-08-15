@@ -19,6 +19,12 @@ import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlidesh
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { AppSession } from '../auth/AppSession';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
+import {
+  FN_SYSTEM_BOTTOM_INSET_VP_KEY,
+  FN_SYSTEM_TOP_INSET_VP_KEY,
+  fnPublishSystemAvoidArea
+} from '../common/FnSystemAvoidArea';
 import {
   FN_FLOATING_TOP_TOTAL_HEIGHT_VP,
   fnBottomDockBottomGap,
@@ -99,8 +105,8 @@ struct GalleryPreview {
   @State private bottomBarHeight: number = 80;
   @State private originalShowing: boolean = false;
   @State private originalPreviewEnabled: boolean = false;
-  @State private systemTopInsetVp: number = 0;
-  @State private systemBottomInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
 
@@ -116,7 +122,7 @@ struct GalleryPreview {
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.applySystemBar();
+    this.applySystemBar(true);
     if (this.slideshowEnabled) {
       this.armSlideshowTimer();
     }
@@ -124,7 +130,7 @@ struct GalleryPreview {
 
   onColorModeChanged(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.applySystemBar();
+    this.applySystemBar(false);
   }
 
   onBackPress(): boolean {
@@ -295,45 +301,22 @@ struct GalleryPreview {
     this.syncPreviewSheetVisible();
   }
 
-  private applySystemBar(): void {
+  private applySystemBar(relayout: boolean): void {
     try {
       const dark = this.colorMode === 1;
-      const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
-        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
-        this.syncSystemAvoidArea(win);
-        win.setWindowSystemBarProperties({
-          statusBarColor: '#00000000',
-          navigationBarColor: '#00000000',
-          statusBarContentColor: content,
-          navigationBarContentColor: content
-        }).catch((_e: Error): void => {});
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        if (relayout) {
+          win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        }
+        fnApplyImmersiveSystemBarColors(win, dark);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
       }).catch((_e: Error): void => {});
     } catch (_e) {}
   }
 
   private isDark(): boolean {
     return this.isDarkTheme;
-  }
-
-  private pxToVp(value: number): number {
-    try {
-      return this.getUIContext().px2vp(value);
-    } catch (_e) {
-      return value;
-    }
-  }
-
-  private syncSystemAvoidArea(win: window.Window): void {
-    try {
-      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
-      this.systemBottomInsetVp = Math.max(0, this.pxToVp(area.bottomRect.height));
-    } catch (_e) {
-      this.systemTopInsetVp = 0;
-      this.systemBottomInsetVp = 0;
-    }
   }
 
   private pageBg(): string {
@@ -750,7 +733,7 @@ struct GalleryPreview {
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
           setGalleryPreviewToolbarVisible(true);
-          this.applySystemBar();
+          this.applySystemBar(false);
           const nextId = this.currentItemId();
           this.syncCollectStateFromCurrentItem();
           if (nextId.length > 0 && this.detailsPhotoId === nextId && this.detailsData !== undefined) {

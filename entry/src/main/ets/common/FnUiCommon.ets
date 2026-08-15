@@ -5,8 +5,7 @@
  * - FnFullLoadingMask: 统一全屏阻断式加载遮罩
  */
 
-import { common } from '@kit.AbilityKit';
-import { SymbolGlyphModifier, window } from '@kit.ArkUI';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import {
   hdsEffect,
   HdsNavigationBackgroundStyle,
@@ -30,6 +29,7 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
+import { FN_SYSTEM_TOP_INSET_VP_KEY } from './FnSystemAvoidArea';
 
 export const FN_FLOATING_TOP_MARGIN_VP: number = 8;
 export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
@@ -567,37 +567,7 @@ export struct FnTopBar {
   @Prop subtitle: string = '';
   @Prop backText: string = '返回';
   @Prop rightText: string = '';
-  @State private systemTopInsetVp: number = 0;
-
-  private pxToVp(value: number): number {
-    try {
-      return this.getUIContext().px2vp(value);
-    } catch (_e) {
-      return value;
-    }
-  }
-
-  private syncSystemTopInset(): void {
-    try {
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
-        try {
-          const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-          this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
-        } catch (_e) {
-          this.systemTopInsetVp = 0;
-        }
-      }).catch((_e: Error): void => {
-        this.systemTopInsetVp = 0;
-      });
-    } catch (_e) {
-      this.systemTopInsetVp = 0;
-    }
-  }
-
-  aboutToAppear(): void {
-    this.syncSystemTopInset();
-  }
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
 
   build() {
     Row() {

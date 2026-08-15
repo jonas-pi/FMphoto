@@ -24,6 +24,8 @@ import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { FnPrimaryButton } from '../common/FnUiCommon';
+import { fnRestoreAppSystemBars } from '../common/FnSplashTheme';
+import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -77,7 +79,9 @@ struct Login {
       const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        fnRestoreAppSystemBars(win);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
         win.setWindowSystemBarProperties({
           statusBarColor: bg, navigationBarColor: bg,
           statusBarContentColor: content, navigationBarContentColor: content

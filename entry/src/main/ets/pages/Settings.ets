@@ -15,6 +15,8 @@ import {
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { AppSession } from '../auth/AppSession';
+import { fnRestoreAppSystemBars } from '../common/FnSplashTheme';
+import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -40,39 +42,12 @@ import {
 struct Settings {
   @State private albumParentGuid: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
-  @State private systemTopInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
-
-  private pxToVp(value: number): number {
-    try {
-      return this.getUIContext().px2vp(value);
-    } catch (_e) {
-      return value;
-    }
-  }
-
-  private syncSystemTopInset(): void {
-    try {
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
-        try {
-          const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-          this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
-        } catch (_e) {
-          this.systemTopInsetVp = 0;
-        }
-      }).catch((_e: Error): void => {
-        this.systemTopInsetVp = 0;
-      });
-    } catch (_e) {
-      this.systemTopInsetVp = 0;
-    }
-  }
 
   aboutToAppear(): void {
     const s = AppSession.getStored();
     this.albumParentGuid = s !== null ? s.albumParentGuid : '';
-    this.syncSystemTopInset();
   }
 
   onPageShow(): void {
@@ -89,7 +64,9 @@ struct Settings {
       const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
       const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        fnRestoreAppSystemBars(win);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
         win.setWindowSystemBarProperties({
           statusBarColor: bg, navigationBarColor: bg,
           statusBarContentColor: content, navigationBarContentColor: content

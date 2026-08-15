@@ -43,6 +43,12 @@ import {
   FN_BOTTOM_DOCK_SIDE_GAP_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../common/FnUiCommon';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
+import {
+  FN_SYSTEM_BOTTOM_INSET_VP_KEY,
+  FN_SYSTEM_TOP_INSET_VP_KEY,
+  fnPublishSystemAvoidArea
+} from '../common/FnSystemAvoidArea';
 import {
   fnCanUseHdsImmersive,
   fnCurrentSdkApiVersion,
@@ -557,8 +563,8 @@ struct Home {
   @State private mePanelOpacity: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
-  @State private systemTopInsetVp: number = 0;
-  @State private systemBottomInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @State private gallerySelectionDockActive: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   private gallerySelectionDockDownloadAction: () => void = () => {};
@@ -579,7 +585,7 @@ struct Home {
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.applySystemBarTheme();
+    this.applySystemBarTheme(true);
     this.pageShowSignal++;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void proactiveRefreshLongTokenOnForeground(ctx).then((changed: boolean): void => {
@@ -591,44 +597,21 @@ struct Home {
 
   onColorModeChanged(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.applySystemBarTheme();
+    this.applySystemBarTheme(false);
   }
 
-  private applySystemBarTheme(): void {
+  private applySystemBarTheme(relayout: boolean): void {
     try {
       const dark = this.colorMode === 1;
-      const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
-        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
-        this.syncSystemAvoidArea(win);
-        win.setWindowSystemBarProperties({
-          statusBarColor: '#00000000',
-          navigationBarColor: '#00000000',
-          statusBarContentColor: content,
-          navigationBarContentColor: content
-        }).catch((_e: Error): void => {});
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        if (relayout) {
+          win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        }
+        fnApplyImmersiveSystemBarColors(win, dark);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
       }).catch((_e: Error): void => {});
     } catch (_e) {
-    }
-  }
-
-  private pxToVp(value: number): number {
-    try {
-      return this.getUIContext().px2vp(value);
-    } catch (_e) {
-      return value;
-    }
-  }
-
-  private syncSystemAvoidArea(win: window.Window): void {
-    try {
-      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
-      this.systemBottomInsetVp = Math.max(0, this.pxToVp(area.bottomRect.height));
-    } catch (_e) {
-      this.systemTopInsetVp = 0;
-      this.systemBottomInsetVp = 0;
     }
   }
 

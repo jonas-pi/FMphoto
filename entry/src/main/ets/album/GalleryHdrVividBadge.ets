@@ -19,6 +19,6 @@ export struct GalleryHdrVividBadge {
     .padding({ left: 8, right: 10, top: 5, bottom: 5 })
     .backgroundColor('#66000000')
     .borderRadius(8)
-    .hitTestBehavior(HitTestMode.None)
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 }

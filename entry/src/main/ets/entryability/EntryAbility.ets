@@ -3,8 +3,11 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
 import {
-  fnApplySplashWindowChrome
+  fnApplySplashWindowBackground,
+  fnApplySplashWindowChrome,
+  fnRestoreAppSystemBars
 } from '../common/FnSplashTheme';
+import { fnBindSystemAvoidArea, fnPublishSystemAvoidArea, fnUnbindSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import {
   fnLoadImmersiveLightPreference,
   fnSetImmersiveLightEnabled
@@ -37,7 +40,10 @@ export default class EntryAbility extends UIAbility {
       const dark = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
       AppStorage.set<number>('colorMode', dark ? 1 : 0);
       if (this.mainWindow !== null) {
-        fnApplySplashWindowChrome(this.mainWindow, dark, true);
+        // 只换窗体底色并保证系统栏仍可见；切勿再套启动闪屏的隐藏状态栏逻辑
+        fnApplySplashWindowBackground(this.mainWindow, dark);
+        fnRestoreAppSystemBars(this.mainWindow);
+        fnPublishSystemAvoidArea(this.mainWindow);
       }
       hilog.info(DOMAIN, LOG_TAG, 'onConfigurationUpdate colorMode=%{public}d', dark ? 1 : 0);
     } catch (_e) {}
@@ -66,6 +72,7 @@ export default class EntryAbility extends UIAbility {
       this.mainWindow = mainWindow;
       // 首帧前即全屏无系统栏，与 StartWindow 居中基准一致
       fnApplySplashWindowChrome(mainWindow, dark, true);
+      fnBindSystemAvoidArea(mainWindow);
     }).catch((_e: Error): void => {
     });
 
@@ -79,6 +86,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    fnUnbindSystemAvoidArea();
     this.mainWindow = null;
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onWindowStageDestroy');
   }

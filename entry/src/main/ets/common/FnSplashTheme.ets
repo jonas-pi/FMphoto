@@ -51,6 +51,25 @@ export function fnRestoreAppSystemBars(mainWindow: window.Window): void {
   fnSetSplashSystemBarsVisible(mainWindow, true);
 }
 
+/**
+ * 业务页沉浸式系统栏：保持状态栏可见，只更新透明底与前景色。
+ * 主题切换时不要再次 setWindowLayoutFullScreen，避免避让区被读成 0。
+ */
+export function fnApplyImmersiveSystemBarColors(mainWindow: window.Window, isDark: boolean): void {
+  fnRestoreAppSystemBars(mainWindow);
+  const content = isDark ? '#FFFFFFFF' : '#FF000000';
+  try {
+    mainWindow.setWindowSystemBarProperties({
+      statusBarColor: '#00000000',
+      navigationBarColor: '#00000000',
+      statusBarContentColor: content,
+      navigationBarContentColor: content
+    }).catch((_e: Error): void => {
+    });
+  } catch (_e) {
+  }
+}
+
 /** API 12+：替代已废弃的 setWindowSystemBarEnable */
 function fnSetSplashSystemBarsVisible(mainWindow: window.Window, visible: boolean): void {
   mainWindow.setSpecificSystemBarEnabled('status', visible).catch((_e: Error): void => {

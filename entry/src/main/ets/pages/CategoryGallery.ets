@@ -20,6 +20,8 @@ import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { AppSession } from '../auth/AppSession';
 import { FnListDataSource } from '../common/FnListDataSource';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
+import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -102,7 +104,7 @@ struct CategoryGallery {
   @State private columnsPerRow: number = 3;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
-  @State private systemTopInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   private flatItems: GalleryListItem[] = [];
   private groupOffsets: number[] = [];
   private handledDeleteSyncVersion: number = 0;
@@ -276,14 +278,6 @@ struct CategoryGallery {
     }
   }
 
-  private pxToVp(value: number): number {
-    try {
-      return this.getUIContext().px2vp(value);
-    } catch (_e) {
-      return value;
-    }
-  }
-
   private contentInsetTopVp(): number {
     return this.systemTopInsetVp + (this.selectionMode
       ? CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP
@@ -304,29 +298,16 @@ struct CategoryGallery {
     return '暂无媒体';
   }
 
-  private syncSystemAvoidArea(win: window.Window): void {
-    try {
-      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
-    } catch (_e) {
-      this.systemTopInsetVp = 0;
-    }
-  }
-
-  private applySystemBar(): void {
+  private applySystemBar(relayout: boolean): void {
     try {
       const dark = this.isDarkTheme;
-      const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
-        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
-        this.syncSystemAvoidArea(win);
-        win.setWindowSystemBarProperties({
-          statusBarColor: '#00000000',
-          navigationBarColor: '#00000000',
-          statusBarContentColor: content,
-          navigationBarContentColor: content
-        }).catch((_e: Error): void => {});
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        if (relayout) {
+          win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        }
+        fnApplyImmersiveSystemBarColors(win, dark);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
       }).catch((_e: Error): void => {});
     } catch (_e) {}
   }
@@ -336,12 +317,12 @@ struct CategoryGallery {
     this.applyDeleteSyncIfNeeded();
     this.syncFromNavStore();
     this.isDarkTheme = this.colorMode === 1;
-    this.applySystemBar();
+    this.applySystemBar(true);
   }
 
   onColorModeChanged(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.applySystemBar();
+    this.applySystemBar(false);
   }
 
   aboutToAppear(): void {

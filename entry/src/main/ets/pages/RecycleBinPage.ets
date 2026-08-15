@@ -11,6 +11,8 @@ import {
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
 import { FnListDataSource } from '../common/FnListDataSource';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
+import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { RecycleBinListItem } from '../model/FnApiTypes';
 import {
   FnFullLoadingMask,
@@ -86,7 +88,7 @@ struct RecycleBinPage {
   @State private rbScrollEnabled: boolean = true;
   @State private rbThumbLoadingPaused: boolean = false;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
-  @State private systemTopInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
 
   private rbLongPressIgnoreUntil: number = 0;
   private rbThumbHitBounds: Map<string, RbThumbHitRect> = new Map();
@@ -121,14 +123,6 @@ struct RecycleBinPage {
     }
   }
 
-  private pxToVp(value: number): number {
-    try {
-      return this.getUIContext().px2vp(value);
-    } catch (_e) {
-      return value;
-    }
-  }
-
   private armInitialRbSlideGesture(ev: GestureEvent, anchorFlat: number): void {
     this.rbInitialSlidePending = true;
     this.beginRbSlideSelectGesture(ev, anchorFlat);
@@ -142,39 +136,26 @@ struct RecycleBinPage {
     return this.systemTopInsetVp + RECYCLE_BIN_CONTENT_INSET_TOP_VP;
   }
 
-  private syncSystemAvoidArea(win: window.Window): void {
-    try {
-      const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      this.systemTopInsetVp = Math.max(0, this.pxToVp(area.topRect.height));
-    } catch (_e) {
-      this.systemTopInsetVp = 0;
-    }
-  }
-
-  private applySystemBar(): void {
+  private applySystemBar(relayout: boolean): void {
     try {
       const dark = this.colorMode === 1;
-      const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      window.getLastWindow(ctx).then((win): void => {
-        win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
-        this.syncSystemAvoidArea(win);
-        win.setWindowSystemBarProperties({
-          statusBarColor: '#00000000',
-          navigationBarColor: '#00000000',
-          statusBarContentColor: content,
-          navigationBarContentColor: content
-        }).catch((_e: Error): void => {});
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        if (relayout) {
+          win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
+        }
+        fnApplyImmersiveSystemBarColors(win, dark);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
       }).catch((_e: Error): void => {});
     } catch (_e) {}
   }
 
   onColorModeChanged(): void {
-    this.applySystemBar();
+    this.applySystemBar(false);
   }
 
   aboutToAppear(): void {
-    this.applySystemBar();
+    this.applySystemBar(true);
     this.rbThumbLoadingPaused = false;
     this.rebuildRowBlocks();
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;

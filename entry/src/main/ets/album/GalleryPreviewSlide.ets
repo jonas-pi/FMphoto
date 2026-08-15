@@ -807,7 +807,7 @@ export struct GalleryPreviewSlide {
           .height('100%')
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
-          .hitTestBehavior(HitTestMode.None)
+          .hitTestBehavior(HitTestMode.Transparent)
         }
         if (!this.isGif() && this.thumbPix === undefined && !this.fullLoading) {
           Column() {
@@ -820,7 +820,7 @@ export struct GalleryPreviewSlide {
           .height('100%')
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
-          .hitTestBehavior(HitTestMode.None)
+          .hitTestBehavior(HitTestMode.Transparent)
         }
         if (this.fullLoading && !this.isGif()) {
           Column() {
@@ -831,23 +831,21 @@ export struct GalleryPreviewSlide {
           .height('100%')
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
-          .hitTestBehavior(HitTestMode.None)
+          .hitTestBehavior(HitTestMode.Transparent)
         }
       }
 
+      // 外层 Stack 是 TopStart，自定义组件上的 align 不可靠；
+      // 用独立 BottomStart 层定位，Transparent 让预览捏合仍可穿透。
       if (this.showHdrVividBadge()) {
-        Column() {
-          Blank().layoutWeight(1)
-          Row() {
-            GalleryHdrVividBadge()
-              .margin({ left: 16, bottom: this.videoBottomPadding + 12 })
-            Blank().layoutWeight(1)
-          }
-          .width('100%')
+        Stack({ alignContent: Alignment.BottomStart }) {
+          GalleryHdrVividBadge()
+            .margin({ left: 16, bottom: this.videoBottomPadding + 12 })
+            .hitTestBehavior(HitTestMode.Transparent)
         }
         .width('100%')
         .height('100%')
-        .hitTestBehavior(HitTestMode.None)
+        .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .width('100%').height('100%')
