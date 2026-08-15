@@ -1,6 +1,6 @@
 /**
- * 图库多选进入时的触觉反馈。
- * 规范：短时振动（约 10～50ms）+ usage: touch，用于轻触确认类交互；强度由系统按场景映射。
+ * 图库轻触确认类触觉反馈。
+ * 规范：短时振动（约 10～50ms）+ usage: touch；强度由系统按场景映射。
  * 无马达/模拟器/调用失败时静默。
  */
 import vibrator from '@ohos.vibrator';
@@ -21,6 +21,18 @@ export function playGalleryPullRefreshThresholdHaptic(): void {
   try {
     vibrator.startVibration(
       { type: 'time', duration: 42 },
+      { id: 0, usage: 'touch' }
+    );
+  } catch (_e) {
+    // 静默
+  }
+}
+
+/** 实况长按开始播放时的轻微确认 */
+export function playGalleryLivePhotoHaptic(): void {
+  try {
+    vibrator.startVibration(
+      { type: 'time', duration: 22 },
       { id: 0, usage: 'touch' }
     );
   } catch (_e) {

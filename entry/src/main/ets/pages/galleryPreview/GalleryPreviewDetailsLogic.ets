@@ -1,4 +1,5 @@
 import { isVideoItem, itemFileExt, pickOriginal } from '../../album/GalleryAlbumCommon';
+import { isLivePhotoItem } from '../../album/livephoto/LivePhotoDetect';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
 
 export function galleryPreviewResolveCollectStateFromItem(item: GalleryListItem | null): number {
@@ -86,6 +87,20 @@ export function galleryPreviewDetailText(v: string | number | undefined): string
   }
   const s = String(v).trim();
   return s.length > 0 ? s : '';
+}
+
+export function galleryPreviewMediaKindLabel(data: GalleryPhotoDetailData | undefined): string {
+  if (data === undefined) {
+    return '';
+  }
+  if (isLivePhotoItem(data)) {
+    return '实况 / 动态照片';
+  }
+  if (isVideoItem(data)) {
+    return '视频';
+  }
+  const ext = galleryPreviewDetailText(data.fileType);
+  return ext;
 }
 
 export function galleryPreviewFormatBytes(v: string | number | undefined): string {

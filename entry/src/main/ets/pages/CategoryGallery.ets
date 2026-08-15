@@ -15,6 +15,7 @@ import {
   thumbIdentityOfItem,
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
+import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { AppSession } from '../auth/AppSession';
@@ -987,6 +988,7 @@ struct CategoryGallery {
         uri: nasUrl(this.baseUrl, pickThumb(item)),
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
+        isLive: isLivePhotoItem(item),
         paused: this.cgThumbLoadingPaused,
         cacheIdentity: thumbIdentityOfItem(item),
         cacheRank: 3

@@ -12,6 +12,9 @@ import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { copyGalleryUriContentToAlbumUri } from './GalleryAlbumSaveToAlbum';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from './GalleryAlbumCommon';
+import { isLivePhotoItem } from './livephoto/LivePhotoDetect';
+import { createMovingPhotoAsset } from './livephoto/LivePhotoSaveOps';
+import { materializeLivePhotoPair, unlinkLivePhotoPair } from './livephoto/LivePhotoSandbox';
 
 function itemHasOriginalPhoto(it: GalleryListItem): boolean {
   return !isVideoItem(it) && pickOriginal(it).trim().length > 0;
@@ -167,10 +170,34 @@ export async function runBatchDownloadGalleryItems(
   const preparedFileUris: string[] = [];
   const preparedConfigs: photoAccessHelper.PhotoCreationConfig[] = [];
   const tempPaths: string[] = [];
+  let liveSavedCount = 0;
+  let liveFallbackCount = 0;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     FnTransferQueueStore.update(taskId, i + 1, suggestedBaseName(it, i));
     const isVideo = isVideoItem(it);
+    if (!isVideo && isLivePhotoItem(it)) {
+      const pair = await materializeLivePhotoPair(hostContext, baseUrl, it, useOriginalForImages);
+      if (pair !== undefined) {
+        const moved = await createMovingPhotoAsset(hostContext, pair, suggestedBaseName(it, i));
+        if (moved) {
+          liveSavedCount++;
+          await unlinkLivePhotoPair(pair);
+          continue;
+        }
+        liveFallbackCount++;
+        tempPaths.push(pair.imagePath);
+        tempPaths.push(pair.videoPath);
+        preparedFileUris.push(pair.imageUri);
+        const imgExt = itemFileExt(it);
+        preparedConfigs.push({
+          title: suggestedBaseName(it, i),
+          fileNameExtension: imgExt.length > 0 ? imgExt : 'jpg',
+          photoType: photoAccessHelper.PhotoType.IMAGE
+        });
+        continue;
+      }
+    }
     let url = '';
     if (isVideo) {
       url = nasUrl(baseUrl, pickVideo(it));
@@ -226,6 +253,12 @@ export async function runBatchDownloadGalleryItems(
   }
 
   if (preparedFileUris.length === 0) {
+    if (liveSavedCount > 0) {
+      const extra = liveFallbackCount > 0 ? `，${liveFallbackCount} 张仅保存封面` : '';
+      FnTransferQueueStore.finish(taskId, true, `已保存 ${liveSavedCount} 张动态照片${extra}`);
+      toastMsg(`已保存 ${liveSavedCount} 张动态照片${extra}`);
+      return;
+    }
     FnTransferQueueStore.finish(taskId, false, '没有可下载的项目');
     toastMsg('没有可下载的项目');
     return;
@@ -244,7 +277,9 @@ export async function runBatchDownloadGalleryItems(
       return;
     }
     FnTransferQueueStore.finish(taskId, true, `已保存 ${savedCount}/${items.length} 项`);
-    toastMsg(`已保存 ${savedCount}/${items.length} 项`);
+    const liveHint = liveSavedCount > 0 ? `（含 ${liveSavedCount} 张动态照片）` : '';
+    const fallHint = liveFallbackCount > 0 ? `，${liveFallbackCount} 张仅保存封面` : '';
+    toastMsg(`已保存 ${savedCount}/${items.length} 项${liveHint}${fallHint}`);
   } catch (_e) {
     toastMsg('保存失败，请重试');
   } finally {

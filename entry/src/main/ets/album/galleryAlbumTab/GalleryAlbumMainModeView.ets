@@ -14,6 +14,7 @@ import {
   thumbIdentityOfItem,
   setThumbHighThroughputLevel
 } from '../GalleryAlbumCommon';
+import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
 import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
@@ -413,6 +414,7 @@ export struct GalleryAlbumMainModeView {
         uri: nasUrl(this.baseUrl, pickThumbForGridDensity(item, this.currentThumbDensity())),
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
+        isLive: isLivePhotoItem(item),
         paused: this.timelineSidebarDragging || this.isDraggingOrFling,
         fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY,
         cacheIdentity: thumbIdentityOfItem(item),

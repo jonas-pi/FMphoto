@@ -36,12 +36,16 @@ import {
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
+import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
 
 const GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP: number = 268;
 
 @Component
 export struct GalleryPreviewChrome {
-  @Prop toolbarVisible: boolean = true;
+  /** 自己订阅显隐，父页切换工具栏时不会整页重绘 Swiper */
+  @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private toolbarVisible: boolean = true;
+  @Prop dismissDragProgress: number = 0;
   @Prop titleText: string = '';
   @Prop toolbarBg: string = '#FF000000';
   @Prop buttonBg: string = '#33000000';
@@ -73,6 +77,13 @@ export struct GalleryPreviewChrome {
 
   private dimmedColor(): ResourceColor {
     return this.darkMaterial ? '#80FFFFFF' : '#805B6675';
+  }
+
+  private chromeOpacity(): number {
+    if (!this.toolbarVisible) {
+      return 0;
+    }
+    return galleryPreviewToolbarAlpha(this.dismissDragProgress);
   }
 
   private normalizedDownloadProgress(): number {
@@ -428,6 +439,8 @@ export struct GalleryPreviewChrome {
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(HitTestMode.Transparent)
+    .hitTestBehavior(this.toolbarVisible ? HitTestMode.Transparent : HitTestMode.None)
+    .opacity(this.chromeOpacity())
+    .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
   }
 }

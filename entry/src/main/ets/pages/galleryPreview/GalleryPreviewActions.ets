@@ -9,6 +9,8 @@ import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
 import { copyGalleryUriContentToAlbumUri } from '../../album/GalleryAlbumSaveToAlbum';
 import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshStore';
 import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../album/GalleryAlbumCommon';
+import { isLivePhotoItem } from '../../album/livephoto/LivePhotoDetect';
+import { materializeLivePhotoPair } from '../../album/livephoto/LivePhotoSandbox';
 import { openPersonAlbumById } from '../../album/PersonAlbumOpenHelper';
 import { AppSession } from '../../auth/AppSession';
 import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
@@ -49,6 +51,12 @@ export interface GalleryPreviewActionsHost {
   downloadProgressPct: number;
   downloadProgressKnown: boolean;
   sharing: boolean;
+  liveSaveVisible: boolean;
+  liveSaveImageUri: string;
+  liveSaveVideoUri: string;
+  liveSaveImagePath: string;
+  liveSaveVideoPath: string;
+  liveSaveTitle: string;
   previewItems: GalleryListItem[];
   itemSource: PreviewItemsDataSource;
   swiperCtrl: SwiperController;
@@ -551,12 +559,33 @@ export function galleryPreviewDownloadCurrentImage(host: GalleryPreviewActionsHo
   });
 }
 
+async function galleryPreviewDoDownloadLive(
+  host: GalleryPreviewActionsHost,
+  item: GalleryListItem
+): Promise<boolean> {
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  const pair = await materializeLivePhotoPair(ctx, host.baseUrl, item, true);
+  if (pair === undefined) {
+    return false;
+  }
+  host.liveSaveImageUri = pair.imageUri;
+  host.liveSaveVideoUri = pair.videoUri;
+  host.liveSaveImagePath = pair.imagePath;
+  host.liveSaveVideoPath = pair.videoPath;
+  const rawName = item.filename ?? item.fileName ?? item.name ?? item.title ?? '';
+  host.liveSaveTitle = rawName.trim().length > 0 ? rawName.trim() : `live_${Date.now()}`;
+  host.liveSaveVisible = true;
+  return true;
+}
+
 async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promise<void> {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
   await BackgroundKeepAliveController.withDataTransfer(ctx, 'preview-download', async (): Promise<void> => {
   const isVideo = galleryPreviewCurrentItemIsVideo(host);
+  const liveItemEarly = host.currentItem();
+  const isLive = liveItemEarly !== null && isLivePhotoItem(liveItemEarly);
   let useOriginal = false;
-  if (!isVideo && galleryPreviewCurrentHasOriginalFromHost(host)) {
+  if (!isVideo && !isLive && galleryPreviewCurrentHasOriginalFromHost(host)) {
     let originalBytes = galleryPreviewCurrentOriginalSizeBytesFromHost(host);
     let thumbBytes: number | undefined = undefined;
     const prefetchedThumb = await galleryPreviewFetchCurrentImageBuffer(host, false);
@@ -584,6 +613,15 @@ async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promis
   }
 
   host.toast('下载中...');
+
+  const liveItem = host.currentItem();
+  if (liveItem !== null && isLivePhotoItem(liveItem)) {
+    const liveOk = await galleryPreviewDoDownloadLive(host, liveItem);
+    if (liveOk) {
+      return;
+    }
+    host.toast('实况动态未就绪，改为保存封面');
+  }
 
   if (isVideo) {
     const ext = galleryPreviewCurrentVideoExtFromHost(host);

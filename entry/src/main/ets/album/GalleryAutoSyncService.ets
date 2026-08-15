@@ -83,7 +83,8 @@ export async function queryLocalPhotos(
         photoAccessHelper.PhotoKeys.DISPLAY_NAME,
         photoAccessHelper.PhotoKeys.SIZE,
         photoAccessHelper.PhotoKeys.DATE_MODIFIED,
-        photoAccessHelper.PhotoKeys.DATE_MODIFIED_MS
+        photoAccessHelper.PhotoKeys.DATE_MODIFIED_MS,
+        photoAccessHelper.PhotoKeys.PHOTO_SUBTYPE
       ],
       predicates: predicates
     };

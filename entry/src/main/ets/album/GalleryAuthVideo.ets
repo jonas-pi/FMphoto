@@ -17,6 +17,7 @@ import {
   fnImmersiveBackgroundEffect,
   fnLiquidGlassGradient
 } from '../common/FnUiCommon';
+import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from '../pages/galleryPreview/GalleryPreviewToolbarStore';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryAuthVideo';
@@ -69,6 +70,8 @@ export struct GalleryAuthVideo {
   @Prop @Watch('onActiveChanged') active: boolean = true;
   /** 底部额外安全间距，由父页面传入以避开底部工具栏 */
   @Prop bottomPadding: number = 0;
+  /** 预览顶底栏显隐：本地订阅，避免父页因 padding 变化重绘全部 slide */
+  @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private previewToolbarVisible: boolean = true;
   /** 当前视频允许的最大清晰度（p），由上游按原始分辨率估算传入 */
   @Prop maxResolutionP: number = 1080;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
@@ -138,6 +141,10 @@ export struct GalleryAuthVideo {
 
   private controlPanelBackground(): ResourceColor {
     return $r('app.color.immersive_panel_bg');
+  }
+
+  private effectiveBottomPadding(): number {
+    return this.previewToolbarVisible ? this.bottomPadding : 0;
   }
 
   private controlPrimaryTextColor(): ResourceColor {
@@ -1105,7 +1112,7 @@ export struct GalleryAuthVideo {
             .alignItems(VerticalAlign.Center)
           }
           .width('100%')
-          .padding({ left: 12, right: 12, bottom: 18 + this.bottomPadding, top: 12 })
+          .padding({ left: 12, right: 12, bottom: 18 + this.effectiveBottomPadding(), top: 12 })
           .backgroundColor(this.controlPanelBackground())
           .backgroundEffect(fnImmersiveBackgroundEffect(false, this.controlPanelBackground()))
           .linearGradient(fnLiquidGlassGradient())

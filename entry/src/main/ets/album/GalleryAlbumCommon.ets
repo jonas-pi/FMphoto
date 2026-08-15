@@ -1071,6 +1071,8 @@ export struct GalleryNetworkThumb {
   @Prop @Watch('onUriChange') uri: string = '';
   @Prop isVideo: boolean = false;
   @Prop isGif: boolean = false;
+  /** 实况/动态照片：仅右下角标识，封面仍走静帧缩略图 */
+  @Prop isLive: boolean = false;
   /** true 时仅显示骨架占位，不发起真实图加载 */
   @Prop @Watch('onPausedChange') paused: boolean = false;
   @Prop fadeInEnabled: boolean = true;
@@ -1241,6 +1243,38 @@ export struct GalleryNetworkThumb {
           .padding({ left: 5, right: 5, top: 2, bottom: 2 })
           .borderRadius(4)
           .position({ x: 5, y: 5 })
+      }
+      if (this.isLive && !this.isVideo) {
+        Column() {
+          Blank().layoutWeight(1)
+          Row() {
+            Blank().layoutWeight(1)
+            Stack({ alignContent: Alignment.Center }) {
+              Circle()
+                .width(22)
+                .height(22)
+                .fill('#66000000')
+              Circle()
+                .width(14)
+                .height(14)
+                .fill(Color.Transparent)
+                .stroke(Color.White)
+                .strokeWidth(1.4)
+              Circle()
+                .width(6)
+                .height(6)
+                .fill(Color.Transparent)
+                .stroke(Color.White)
+                .strokeWidth(1.4)
+            }
+            .width(22)
+            .height(22)
+            .margin({ right: 6, bottom: 6 })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
       }
     }
     .width('100%')

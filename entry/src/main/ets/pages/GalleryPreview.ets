@@ -31,9 +31,7 @@ import {
   FN_PREVIEW_PAGE_EXIT_CURVE,
   FN_PREVIEW_PAGE_EXIT_DURATION,
   FN_SWIPER_CURVE,
-  FN_SWIPER_DURATION,
-  FN_UI_FADE_TOGGLE_CURVE,
-  FN_UI_FADE_TOGGLE_DURATION
+  FN_SWIPER_DURATION
 } from '../common/FnMotion';
 import {
   GalleryPreviewActionsHost,
@@ -51,13 +49,18 @@ import {
 import { GalleryPreviewChrome } from './galleryPreview/GalleryPreviewChrome';
 import { PreviewItemsDataSource } from './galleryPreview/GalleryPreviewDataSource';
 import { GalleryPreviewDetailsSheet } from './galleryPreview/GalleryPreviewDetailsSheet';
+import { LivePhotoSaveSheet } from '../album/livephoto/LivePhotoSave';
+import { unlinkLivePhotoPair, LivePhotoPairFiles } from '../album/livephoto/LivePhotoSandbox';
 import {
   galleryPreviewCurrentHasOriginal,
   galleryPreviewFavoriteStarTint,
   galleryPreviewStarFilled,
-  galleryPreviewTitleCounter,
-  galleryPreviewToolbarAlpha
+  galleryPreviewTitleCounter
 } from './galleryPreview/GalleryPreviewDetailsLogic';
+import {
+  setGalleryPreviewToolbarVisible,
+  toggleGalleryPreviewToolbarVisible
+} from './galleryPreview/GalleryPreviewToolbarStore';
 
 @Entry
 @Component
@@ -69,12 +72,19 @@ struct GalleryPreview {
   @State private previewZoomLocked: boolean = false;
   @State private totalCount: number = 0;
   @State private dismissDragProgress: number = 0;
-  @State private toolbarVisible: boolean = true;
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
   @State private downloadProgressPct: number = 0;
   @State private downloadProgressKnown: boolean = false;
   @State private sharing: boolean = false;
+  @State private liveSaveVisible: boolean = false;
+  /** 详情与实况保存共用一个 bindSheet；同一节点挂两个会互相挤掉，只剩闪一下 */
+  @State private previewSheetVisible: boolean = false;
+  @State private liveSaveImageUri: string = '';
+  @State private liveSaveVideoUri: string = '';
+  @State private liveSaveImagePath: string = '';
+  @State private liveSaveVideoPath: string = '';
+  @State private liveSaveTitle: string = '';
   @State private deleting: boolean = false;
   @State private detailsVisible: boolean = false;
   @State private detailsLoading: boolean = false;
@@ -155,8 +165,9 @@ struct GalleryPreview {
     if (this.slideshowLibraryTotal <= 0 && GallerySlideshowStreamStore.isActive()) {
       this.slideshowLibraryTotal = GallerySlideshowStreamStore.getLibraryTotalCount();
     }
+    // 工具栏显隐不进本页 @State，避免点击切换时整页（含 Swiper）重绘。
+    setGalleryPreviewToolbarVisible(!this.slideshowEnabled);
     if (this.slideshowEnabled) {
-      this.toolbarVisible = false;
       this.maybePrefetchSlideshowItems();
     }
   }
@@ -280,6 +291,8 @@ struct GalleryPreview {
       client.cancelPendingRequests();
     }
     GalleryPreviewNavStore.clear();
+    setGalleryPreviewToolbarVisible(true);
+    this.syncPreviewSheetVisible();
   }
 
   private applySystemBar(): void {
@@ -349,9 +362,7 @@ struct GalleryPreview {
   }
 
   private videoControlsBottomPadding(): number {
-    if (!this.toolbarVisible) {
-      return 0;
-    }
+    // 始终传底栏占位高度；显隐由视频控件自己读 AppStorage，避免父页因工具栏重绘。
     return this.bottomBarHeight + fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
@@ -399,10 +410,6 @@ struct GalleryPreview {
     return galleryPreviewTitleCounter(this.swiperIndex, displayTotal);
   }
 
-  private toolbarAlpha(): number {
-    return galleryPreviewToolbarAlpha(this.dismissDragProgress);
-  }
-
   private starFilled(): boolean {
     return galleryPreviewStarFilled(
       this.currentCollectState,
@@ -429,9 +436,22 @@ struct GalleryPreview {
   }
 
   private toggleToolbar(): void {
-    this.getUIContext().animateTo({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE }, (): void => {
-      this.toolbarVisible = !this.toolbarVisible;
-    });
+    toggleGalleryPreviewToolbarVisible();
+  }
+
+  private syncPreviewSheetVisible(): void {
+    this.previewSheetVisible = this.detailsVisible || this.liveSaveVisible;
+  }
+
+  private previewSheetTitle(): string {
+    return this.liveSaveVisible ? '保存动态照片' : '照片详情';
+  }
+
+  private previewSheetHeight(): Length {
+    if (this.liveSaveVisible) {
+      return 220;
+    }
+    return '50%';
   }
 
   private toggleOriginalPreview(): void {
@@ -504,7 +524,10 @@ struct GalleryPreview {
       set totalCount(v: number) { self.totalCount = v; }
 
       get detailsVisible(): boolean { return self.detailsVisible; }
-      set detailsVisible(v: boolean) { self.detailsVisible = v; }
+      set detailsVisible(v: boolean) {
+        self.detailsVisible = v;
+        self.syncPreviewSheetVisible();
+      }
 
       get detailsLoading(): boolean { return self.detailsLoading; }
       set detailsLoading(v: boolean) { self.detailsLoading = v; }
@@ -551,6 +574,27 @@ struct GalleryPreview {
       get sharing(): boolean { return self.sharing; }
       set sharing(v: boolean) { self.sharing = v; }
 
+      get liveSaveVisible(): boolean { return self.liveSaveVisible; }
+      set liveSaveVisible(v: boolean) {
+        self.liveSaveVisible = v;
+        self.syncPreviewSheetVisible();
+      }
+
+      get liveSaveImageUri(): string { return self.liveSaveImageUri; }
+      set liveSaveImageUri(v: string) { self.liveSaveImageUri = v; }
+
+      get liveSaveVideoUri(): string { return self.liveSaveVideoUri; }
+      set liveSaveVideoUri(v: string) { self.liveSaveVideoUri = v; }
+
+      get liveSaveImagePath(): string { return self.liveSaveImagePath; }
+      set liveSaveImagePath(v: string) { self.liveSaveImagePath = v; }
+
+      get liveSaveVideoPath(): string { return self.liveSaveVideoPath; }
+      set liveSaveVideoPath(v: string) { self.liveSaveVideoPath = v; }
+
+      get liveSaveTitle(): string { return self.liveSaveTitle; }
+      set liveSaveTitle(v: string) { self.liveSaveTitle = v; }
+
       get previewItems(): GalleryListItem[] { return self.previewItems; }
       set previewItems(v: GalleryListItem[]) { self.previewItems = v; }
 
@@ -569,6 +613,51 @@ struct GalleryPreview {
       routerBack(): void { self.navigateBack(); }
     }
     return new PreviewActionsHostBridge();
+  }
+
+  @Builder
+  private liveSaveSheetBuilder() {
+    LivePhotoSaveSheet({
+      imageUri: this.liveSaveImageUri,
+      videoUri: this.liveSaveVideoUri,
+      imagePath: this.liveSaveImagePath,
+      videoPath: this.liveSaveVideoPath,
+      saveTitle: this.liveSaveTitle,
+      isDark: this.isDark(),
+      onSaved: (): void => {
+        this.toast('已保存为动态照片');
+        this.closeLiveSaveSheet(true);
+      },
+      onFailed: (): void => {
+        this.toast('动态效果未写入，请重试或仅保存封面');
+        this.closeLiveSaveSheet(false);
+      }
+    })
+  }
+
+  private closeLiveSaveSheet(unlinkFiles: boolean): void {
+    if (unlinkFiles) {
+      const pair = new LivePhotoPairFiles();
+      pair.imagePath = this.liveSaveImagePath;
+      pair.videoPath = this.liveSaveVideoPath;
+      void unlinkLivePhotoPair(pair);
+    }
+    this.liveSaveVisible = false;
+    this.syncPreviewSheetVisible();
+    this.liveSaveImageUri = '';
+    this.liveSaveVideoUri = '';
+    this.liveSaveImagePath = '';
+    this.liveSaveVideoPath = '';
+    this.liveSaveTitle = '';
+  }
+
+  @Builder
+  private previewSheetBuilder() {
+    if (this.liveSaveVisible) {
+      this.liveSaveSheetBuilder()
+    } else {
+      this.detailsSheetBuilder()
+    }
   }
 
   @Builder
@@ -660,11 +749,7 @@ struct GalleryPreview {
           this.dismissDragProgress = 0;
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
-          if (!this.toolbarVisible) {
-            this.getUIContext().animateTo({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE }, (): void => {
-              this.toolbarVisible = true;
-            });
-          }
+          setGalleryPreviewToolbarVisible(true);
           this.applySystemBar();
           const nextId = this.currentItemId();
           this.syncCollectStateFromCurrentItem();
@@ -690,7 +775,7 @@ struct GalleryPreview {
       }
 
       GalleryPreviewChrome({
-        toolbarVisible: this.toolbarVisible,
+        dismissDragProgress: this.dismissDragProgress,
         titleText: this.titleCounter(),
         toolbarBg: this.toolbarBg(),
         buttonBg: this.btnBg(),
@@ -734,9 +819,6 @@ struct GalleryPreview {
           this.bottomBarHeight = height;
         }
       })
-      .hitTestBehavior(this.toolbarVisible ? HitTestMode.Transparent : HitTestMode.None)
-      .opacity(this.toolbarVisible ? this.toolbarAlpha() : 0)
-      .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
       if (this.personOpening) {
         FnFullLoadingMask({
@@ -749,14 +831,18 @@ struct GalleryPreview {
     .height('100%')
     .backgroundColor(this.pageBg())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.detailsVisible, this.detailsSheetBuilder, {
-      height: '50%',
-      title: { title: '照片详情' },
+    .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, {
+      height: this.previewSheetHeight(),
+      title: { title: this.previewSheetTitle() },
       showClose: true,
       dragBar: true,
       backgroundColor: this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF',
       onDisappear: (): void => {
-        this.closeDetailsPanel();
+        if (this.liveSaveVisible) {
+          this.closeLiveSaveSheet(true);
+        } else {
+          this.closeDetailsPanel();
+        }
       }
     })
   }

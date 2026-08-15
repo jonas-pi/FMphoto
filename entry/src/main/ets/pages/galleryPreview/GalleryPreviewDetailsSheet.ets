@@ -8,6 +8,7 @@ import {
   galleryPreviewDetailText,
   galleryPreviewFormatBytes,
   galleryPreviewJoinPair,
+  galleryPreviewMediaKindLabel,
   galleryPreviewPersonInPhotoLineText
 } from './GalleryPreviewDetailsLogic';
 
@@ -128,7 +129,7 @@ export struct GalleryPreviewDetailsSheet {
           Column() {
             this.detailRow('文件名', galleryPreviewDetailText(this.detailsData?.fileName))
             this.detailRow('拍摄时间', galleryPreviewDetailText(this.detailsData?.photoDateTime ?? this.detailsData?.dateTime))
-            this.detailRow('文件类型', galleryPreviewDetailText(this.detailsData?.fileType))
+            this.detailRow('文件类型', galleryPreviewMediaKindLabel(this.detailsData))
             this.detailRow('文件大小', galleryPreviewFormatBytes(this.detailsData?.fileSize))
             this.detailRow(
               '分辨率',

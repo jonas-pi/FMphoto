@@ -28,6 +28,7 @@ import { FnTransferDirection, fnTransferDirectionLabel } from '../../common/FnTr
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
 import { GalleryAutoSyncLedger } from '../GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from '../GalleryAutoSyncNasIndex';
+import { uploadUriMaybeMovingPhoto } from '../livephoto/LivePhotoUpload';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
 import { openMediaCategoryGallery, openingTextForCategory } from '../MediaCategoryOpenHelper';
 import {
@@ -378,7 +379,7 @@ function galleryAlbumUploadUriListInBackground(
         for (let i = 0; i < uris.length; i++) {
           const uri = uris[i];
           FnTransferQueueStore.update(taskId, i + 1, fileNameFromPickerUri(uri));
-          const res = await client.uploadPhotoByUri(uri, 150000, albumDirHint);
+          const res = await uploadUriMaybeMovingPhoto(client, ctx, uri, 150000, albumDirHint);
           if (res.success) {
             ok++;
             // Picker / 手动上传成功后写入账本，避免下次同步再次判定为未同步

@@ -37,6 +37,8 @@ export const GALLERY_TOP_BAR_FLOATING_TOTAL_HEIGHT_VP: number = GALLERY_TOP_BAR_
 const GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY: string = 'gallery_album_top_bar_search_input';
 const GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP: number = 15;
 const GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP: number = 4;
+const GALLERY_TOP_BAR_SEARCH_INSET_VP: number = 12;
+const GALLERY_TOP_BAR_SEARCH_GAP_BOTTOM_VP: number = 4;
 const GALLERY_TOP_BAR_CONTROL_RADIUS_VP: number = 20;
 
 /** 内容区顶部 inset：含搜索态 bottomBuilder */
@@ -277,52 +279,63 @@ export struct GalleryAlbumTopBar {
 
   @Builder
   private searchBottomBuilder() {
-    Row({ space: 8 }) {
-      SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
-        .fontColor([$r('app.color.gallery_material_search_placeholder')])
+    // 侧边距用 padding 包一层：width 100% 再叠加左右 margin 会把输入框撑出屏幕
+    Column() {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
+          .fontColor([$r('app.color.gallery_material_search_placeholder')])
+          .flexShrink(0)
 
-      TextInput({
-        placeholder: 'AI 搜索图库...',
-        text: this.searchQuery,
-        controller: this.searchInputCtrl
-      })
-        .layoutWeight(1)
-        .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
-        .height('100%')
-        .defaultFocus(this.shouldAutoFocusSearchInput())
-        .enableKeyboardOnFocus(true)
-        .enabled(!this.suppressSearchAutoFocus)
-        .backgroundColor(Color.Transparent)
-        .fontSize(13)
-        .fontColor($r('app.color.text_primary'))
-        .caretColor($r('app.color.brand_primary'))
-        .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-        .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
-        .enterKeyType(EnterKeyType.Search)
-        .onChange((value: string): void => {
-          this.onSearchTextChange(value);
+        TextInput({
+          placeholder: 'AI 搜索图库...',
+          text: this.searchQuery,
+          controller: this.searchInputCtrl
         })
-        .onSubmit((): void => {
-          this.submitSearchAndReleaseFocus();
-        })
-        .onAppear((): void => {
-          if (this.shouldAutoFocusSearchInput()) {
-            this.focusSearchInputSoon(48);
-          }
-        })
+          .layoutWeight(1)
+          .constraintSize({ minWidth: 0 })
+          .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
+          .height('100%')
+          .defaultFocus(this.shouldAutoFocusSearchInput())
+          .enableKeyboardOnFocus(true)
+          .enabled(!this.suppressSearchAutoFocus)
+          .backgroundColor(Color.Transparent)
+          .fontSize(13)
+          .fontColor($r('app.color.text_primary'))
+          .caretColor($r('app.color.brand_primary'))
+          .placeholderColor($r('app.color.gallery_material_search_placeholder'))
+          .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
+          .enterKeyType(EnterKeyType.Search)
+          .onChange((value: string): void => {
+            this.onSearchTextChange(value);
+          })
+          .onSubmit((): void => {
+            this.submitSearchAndReleaseFocus();
+          })
+          .onAppear((): void => {
+            if (this.shouldAutoFocusSearchInput()) {
+              this.focusSearchInputSoon(48);
+            }
+          })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding({ left: GALLERY_TOP_BAR_SEARCH_INSET_VP, right: GALLERY_TOP_BAR_SEARCH_INSET_VP })
+      .backgroundColor($r('app.color.gallery_material_surface_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient())
+      .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+      .borderWidth(1)
+      .borderColor($r('app.color.immersive_panel_border'))
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .height(GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP)
-    .padding({ left: 12, right: 12 })
-    .margin({ left: 12, right: 12, bottom: 4 })
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
-    .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .alignItems(VerticalAlign.Center)
+    .padding({
+      left: GALLERY_TOP_BAR_SEARCH_INSET_VP,
+      right: GALLERY_TOP_BAR_SEARCH_INSET_VP,
+      bottom: GALLERY_TOP_BAR_SEARCH_GAP_BOTTOM_VP
+    })
   }
 
   /** 根态 / 子模式 / 多选：官方 titleBar.menu */

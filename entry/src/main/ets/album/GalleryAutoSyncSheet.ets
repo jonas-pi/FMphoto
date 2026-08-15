@@ -15,6 +15,7 @@ import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { mtimeSecFromMillis } from './GalleryAutoSyncOfficialFingerprint';
 import { filterUnsyncedLocalPhotos, GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
+import { uploadUriMaybeMovingPhoto } from './livephoto/LivePhotoUpload';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSheet';
@@ -109,7 +110,7 @@ export function runAutoSyncInBackground(
           const photo = toUpload[i];
           FnTransferQueueStore.update(taskId, i + 1, photo.fileName);
           try {
-            const res = await client.uploadPhotoByUri(photo.uri, 150000, albumDirHint);
+            const res = await uploadUriMaybeMovingPhoto(client, ctx, photo.uri, 150000, albumDirHint);
             if (res.success) {
               ok++;
               GalleryAutoSyncStore.markSynced([photo.uri]);

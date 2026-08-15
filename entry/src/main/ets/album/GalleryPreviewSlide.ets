@@ -24,9 +24,19 @@ import {
 } from './GalleryAlbumCommon';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { photoAccessHelper, MovingPhotoView, MovingPhotoViewController } from '@kit.MediaLibraryKit';
 import { GalleryAuthVideo } from './GalleryAuthVideo';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem } from '../model/FnApiTypes';
+import { isLivePhotoItem } from './livephoto/LivePhotoDetect';
+import { playGalleryLivePhotoHaptic } from './GallerySelectionHaptic';
+import { GalleryLivePreviewLayer } from './livephoto/GalleryLivePreviewLayer';
+import {
+  LivePhotoPairFiles,
+  loadMovingPhotoFromPair,
+  materializeLivePhotoPair,
+  unlinkLivePhotoPair
+} from './livephoto/LivePhotoSandbox';
 
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
@@ -45,8 +55,8 @@ interface GalleryPreviewTouchPoint {
 export struct GalleryPreviewSlide {
   @Prop baseUrl: string = '';
   @Prop @Watch('onItemChanged') item: GalleryListItem | null = null;
-  /** 当前是否为 Swiper 可见页（用于控制视频播放器活跃态，避免串音） */
-  @Prop active: boolean = true;
+  /** 当前是否为 Swiper 可见页（用于控制视频/实况播放器活跃态，避免串音） */
+  @Prop @Watch('onActiveChanged') active: boolean = true;
   /** 视频模式下，控件距屏幕底部的额外偏移（避开外部工具栏） */
   @Prop videoBottomPadding: number = 0;
   /** 跟随系统深浅色模式，用于 loading 指示器颜色 */
@@ -80,6 +90,10 @@ export struct GalleryPreviewSlide {
   @State private videoSrc: string = '';
   @State private gifUri: string = '';
   @State private gifTempPath: string = '';
+  @State private movingPhoto: photoAccessHelper.MovingPhoto | undefined = undefined;
+  @State private liveReady: boolean = false;
+  /** 沙箱静帧 URI，缩略图缓存未命中时垫图 */
+  @State private liveStillUri: string = '';
   @State private previewScale: number = 1;
   @State private previewPanX: number = 0;
   @State private previewPanY: number = 0;
@@ -92,7 +106,12 @@ export struct GalleryPreviewSlide {
   private lastPanUpdateMs: number = 0;
   private thumbLoadToken: number = 0;
   private gifLoadToken: number = 0;
+  private liveLoadToken: number = 0;
   private fullLoadToken: number = 0;
+  private livePair: LivePhotoPairFiles | undefined = undefined;
+  private liveLoadInFlight: boolean = false;
+  private liveController: MovingPhotoViewController = new MovingPhotoViewController();
+  private boundItemKey: string = '';
   private pinchParticipationActive: boolean = false;
   private pinchGestureRecognizing: boolean = false;
   private deferredParentGestureResetTimer: number = 0;
@@ -107,6 +126,8 @@ export struct GalleryPreviewSlide {
   private invalidateAsyncLoads(): void {
     this.thumbLoadToken++;
     this.gifLoadToken++;
+    this.liveLoadToken++;
+    this.liveLoadInFlight = false;
     this.fullLoadToken++;
   }
 
@@ -140,7 +161,9 @@ export struct GalleryPreviewSlide {
   }
 
   private disposeTransientMedia(): void {
+    this.stopLivePlayback();
     const oldGifPath = this.gifTempPath;
+    const oldLive = this.livePair;
     this.thumbPix = undefined;
     this.fullPix = undefined;
     this.showingOriginal = false;
@@ -148,15 +171,32 @@ export struct GalleryPreviewSlide {
     this.videoSrc = '';
     this.gifUri = '';
     this.gifTempPath = '';
+    this.movingPhoto = undefined;
+    this.liveReady = false;
+    this.liveStillUri = '';
+    this.liveLoadInFlight = false;
+    this.livePair = undefined;
     if (oldGifPath.length > 0) {
       void fileIo.unlink(oldGifPath).catch((_e: Error): void => {});
     }
+    void unlinkLivePhotoPair(oldLive);
   }
 
   // ── 事件响应 ─────────────────────────────────────────────────────────────
 
   onColorModeChanged(): void {
     this.isDarkTheme = this.colorMode === 1;
+  }
+
+  onActiveChanged(): void {
+    if (!this.isLive()) {
+      return;
+    }
+    if (this.active) {
+      void this.prepareLiveContent();
+    } else {
+      this.stopLivePlayback();
+    }
   }
 
   onLoadOriginalReqChanged(): void {
@@ -174,29 +214,18 @@ export struct GalleryPreviewSlide {
   }
 
   onItemChanged(): void {
-    this.invalidateAsyncLoads();
-    this.disposeTransientMedia();
-    this.previewScale = 1;
-    this.previewPanX = 0;
-    this.previewPanY = 0;
-    this.singleFingerPanActive = false;
-    this.singleFingerPanLastX = 0;
-    this.singleFingerPanLastY = 0;
-    this.pinchGestureRecognizing = false;
-    this.pinchParticipationActive = false;
-    this.scheduleDeferredParentGestureReset();
-    this.onVerticalDragProgress(0);
-    this.prepareContent();
+    this.syncBoundItemAndPrepare();
   }
 
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.prepareContent();
+    this.syncBoundItemAndPrepare();
   }
 
   aboutToDisappear(): void {
     this.invalidateAsyncLoads();
     this.disposeTransientMedia();
+    this.boundItemKey = '';
     this.pinchGestureRecognizing = false;
     this.pinchParticipationActive = false;
     this.scheduleDeferredParentGestureReset();
@@ -215,6 +244,13 @@ export struct GalleryPreviewSlide {
       void this.prepareGifContent();
       return;
     }
+    this.prepareStillThumb();
+    if (this.isLive() && this.active) {
+      void this.prepareLiveContent();
+    }
+  }
+
+  private prepareStillThumb(): void {
     const tUrl = this.thumbUrl();
     if (tUrl.length === 0) { return; }
     const token = ++this.thumbLoadToken;
@@ -231,6 +267,95 @@ export struct GalleryPreviewSlide {
         this.thumbPix = p;
       }
     });
+  }
+
+  private currentItemKey(): string {
+    if (this.item === null || this.item.id === undefined || this.item.id === null) {
+      return '';
+    }
+    return String(this.item.id);
+  }
+
+  /** 点击切工具栏会重绘父页，@Prop item 深拷贝会被当成新对象；同一张不得中断实况加载。 */
+  private syncBoundItemAndPrepare(): void {
+    const key = this.currentItemKey();
+    if (key.length > 0 && key === this.boundItemKey) {
+      return;
+    }
+    if (this.boundItemKey.length > 0) {
+      this.invalidateAsyncLoads();
+      this.disposeTransientMedia();
+      this.previewScale = 1;
+      this.previewPanX = 0;
+      this.previewPanY = 0;
+      this.singleFingerPanActive = false;
+      this.singleFingerPanLastX = 0;
+      this.singleFingerPanLastY = 0;
+      this.pinchGestureRecognizing = false;
+      this.pinchParticipationActive = false;
+      this.scheduleDeferredParentGestureReset();
+      this.onVerticalDragProgress(0);
+    }
+    this.boundItemKey = key;
+    this.prepareContent();
+  }
+
+  private stopLivePlayback(): void {
+    try {
+      this.liveController.stopPlayback();
+    } catch (_e) {
+    }
+    this.movingPhoto = undefined;
+    this.liveReady = false;
+  }
+
+  private async prepareLiveContent(): Promise<void> {
+    if (this.item === null || !this.isLive() || !this.active) {
+      return;
+    }
+    if (this.liveReady && this.movingPhoto !== undefined) {
+      return;
+    }
+    if (this.liveLoadInFlight) {
+      return;
+    }
+    const requestKey = this.currentItemKey();
+    this.liveLoadInFlight = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      let pair = this.livePair;
+      if (pair === undefined) {
+        pair = await materializeLivePhotoPair(ctx, this.baseUrl, this.item as GalleryListItem, false);
+      }
+      if (!this.active || this.currentItemKey() !== requestKey) {
+        if (pair !== undefined && this.livePair === undefined) {
+          void unlinkLivePhotoPair(pair);
+        }
+        return;
+      }
+      if (pair === undefined) {
+        return;
+      }
+      this.livePair = pair;
+      if (pair.imageUri.length > 0) {
+        this.liveStillUri = pair.imageUri;
+      }
+      const moving = await loadMovingPhotoFromPair(ctx, pair);
+      if (!this.active || this.currentItemKey() !== requestKey) {
+        return;
+      }
+      if (moving === undefined) {
+        return;
+      }
+      this.liveController = new MovingPhotoViewController();
+      this.movingPhoto = moving;
+      this.liveReady = true;
+    } catch (_e) {
+    } finally {
+      if (this.currentItemKey() === requestKey) {
+        this.liveLoadInFlight = false;
+      }
+    }
   }
 
   private async prepareGifContent(): Promise<void> {
@@ -309,6 +434,7 @@ export struct GalleryPreviewSlide {
 
   private isVideo(): boolean { return this.item !== null && isVideoItem(this.item); }
   private isGif(): boolean { return this.item !== null && isGifItem(this.item); }
+  private isLive(): boolean { return this.item !== null && isLivePhotoItem(this.item); }
   /**
    * 估算当前视频原始清晰度上限（p）：
    * - 优先使用条目里的 width/height（若服务端下发）；
@@ -503,6 +629,33 @@ export struct GalleryPreviewSlide {
         })
           .width('100%')
           .height('100%')
+      } else if (this.isLive()) {
+        if (this.liveReady && this.movingPhoto !== undefined) {
+          MovingPhotoView({
+            movingPhoto: this.movingPhoto,
+            controller: this.liveController
+          })
+            .width('100%')
+            .height('100%')
+            .autoPlay(false)
+            .repeatPlay(false)
+            .objectFit(ImageFit.Contain)
+            .onStart((): void => {
+              playGalleryLivePhotoHaptic();
+            })
+        } else {
+          GalleryLivePreviewLayer({
+            stillUri: this.liveStillUri,
+            hintColor: this.hintColor(),
+            thumbPix: this.thumbPix,
+            fullPix: this.fullPix,
+            showOriginal: this.showingOriginal,
+            spinnerColor: this.spinnerColor()
+          })
+            .width('100%')
+            .height('100%')
+            .hitTestBehavior(HitTestMode.None)
+        }
       } else {
         Column() {
           Stack({ alignContent: Alignment.Center }) {

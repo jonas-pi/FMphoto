@@ -2011,6 +2011,12 @@ export class FnHttpClientGalleryOps {
         }
       }
       // additional.thumbnail 常为站点相对路径；网格里 nasUrl(base, pickThumb) 会拼完整 URL，此处不重复写
+      const liveVal = rec['isLive'] ?? rec['is_live'];
+      if (typeof liveVal === 'number' && liveVal === 1) {
+        rec['isLive'] = 1;
+      } else if (typeof liveVal === 'string' && (liveVal.trim() === '1' || liveVal.trim().toLowerCase() === 'true')) {
+        rec['isLive'] = 1;
+      }
     }
     return items;
   }

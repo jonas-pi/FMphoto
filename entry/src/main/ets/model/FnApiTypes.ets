@@ -110,6 +110,8 @@ export interface GalleryListItem {
   originalSize?: string | number;
   /** 是否已收藏：1 已收藏（与 getOne / 回收站列表等字段对齐） */
   isCollect?: number;
+  /** 是否实况/动态照片：1 是（getList 部分版本与 getOne 对齐） */
+  isLive?: number;
 }
 
 /** `GET /p/api/v1/gallery/getOne?id=xxx` 的 additional 字段 */
