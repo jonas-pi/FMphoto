@@ -29,6 +29,7 @@ import { GalleryAuthVideo } from './GalleryAuthVideo';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { isLivePhotoItem } from './livephoto/LivePhotoDetect';
+import { GalleryLivePlayState, galleryLiveIsPlaying } from './livephoto/GalleryLivePlayState';
 import { playGalleryLivePhotoHaptic } from './GallerySelectionHaptic';
 import { GalleryLivePreviewLayer } from './livephoto/GalleryLivePreviewLayer';
 import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
@@ -94,6 +95,7 @@ export struct GalleryPreviewSlide {
   @State private gifTempPath: string = '';
   @State private movingPhoto: photoAccessHelper.MovingPhoto | undefined = undefined;
   @State private liveReady: boolean = false;
+  @State private livePlayState: GalleryLivePlayState = GalleryLivePlayState.Idle;
   /** 沙箱静帧 URI，缩略图缓存未命中时垫图 */
   @State private liveStillUri: string = '';
   @State private previewScale: number = 1;
@@ -303,12 +305,62 @@ export struct GalleryPreviewSlide {
   }
 
   private stopLivePlayback(): void {
+    this.haltLivePlayback();
+    this.movingPhoto = undefined;
+    this.liveReady = false;
+    this.livePlayState = GalleryLivePlayState.Idle;
+  }
+
+  /** 仅 Playing 时 stop，对齐官方「非播放态不要空 stop」。 */
+  private haltLivePlayback(): void {
+    if (!galleryLiveIsPlaying(this.livePlayState)) {
+      return;
+    }
     try {
       this.liveController.stopPlayback();
     } catch (_e) {
     }
-    this.movingPhoto = undefined;
-    this.liveReady = false;
+    this.livePlayState = GalleryLivePlayState.Prepared;
+  }
+
+  private onLivePrepared(): void {
+    this.livePlayState = GalleryLivePlayState.Prepared;
+  }
+
+  private onLiveStart(): void {
+    this.livePlayState = GalleryLivePlayState.Playing;
+    playGalleryLivePhotoHaptic();
+  }
+
+  private onLivePlaybackSettled(): void {
+    if (this.liveReady) {
+      this.livePlayState = GalleryLivePlayState.Prepared;
+    } else {
+      this.livePlayState = GalleryLivePlayState.Idle;
+    }
+  }
+
+  private onPreviewPinchStart(): void {
+    this.haltLivePlayback();
+    this.pinchGestureRecognizing = true;
+    this.pinchBaseScale = this.previewScale;
+    this.reportPinchParticipation(true);
+  }
+
+  private onPreviewPinchUpdate(event: GestureEvent): void {
+    const s = Math.min(GALLERY_PREVIEW_SCALE_MAX,
+      Math.max(GALLERY_PREVIEW_SCALE_MIN, this.pinchBaseScale * event.scale));
+    this.previewScale = s;
+    this.previewPanX = this.clampedPanX();
+    this.previewPanY = this.clampedPanY();
+    this.emitZoomLock();
+  }
+
+  private onPreviewPinchEnd(): void {
+    this.pinchGestureRecognizing = false;
+    this.snapOrClamp();
+    this.emitZoomLock();
+    this.reportPinchParticipation(false);
   }
 
   private async prepareLiveContent(): Promise<void> {
@@ -352,6 +404,7 @@ export struct GalleryPreviewSlide {
       this.liveController = new MovingPhotoViewController();
       this.movingPhoto = moving;
       this.liveReady = true;
+      this.livePlayState = GalleryLivePlayState.Idle;
     } catch (_e) {
     } finally {
       if (this.currentItemKey() === requestKey) {
@@ -643,97 +696,100 @@ export struct GalleryPreviewSlide {
         })
           .width('100%')
           .height('100%')
-      } else if (this.isLive()) {
-        Stack({ alignContent: Alignment.BottomEnd }) {
-          if (this.liveReady && this.movingPhoto !== undefined) {
-            MovingPhotoView({
-              movingPhoto: this.movingPhoto,
-              controller: this.liveController
-            })
-              .width('100%')
-              .height('100%')
-              .autoPlay(false)
-              .repeatPlay(false)
-              .objectFit(ImageFit.Contain)
-              .onStart((): void => {
-                playGalleryLivePhotoHaptic();
-              })
-          } else {
-            GalleryLivePreviewLayer({
-              stillUri: this.liveStillUri,
-              hintColor: this.hintColor(),
-              thumbPix: this.thumbPix,
-              fullPix: this.fullPix,
-              showOriginal: this.showingOriginal,
-              spinnerColor: this.spinnerColor()
-            })
-              .width('100%')
-              .height('100%')
-              .hitTestBehavior(HitTestMode.None)
-          }
-          GalleryLivePhotoMark({ sizeVp: 32, animated: true })
-            .margin({ right: 16, bottom: this.videoBottomPadding + 12 })
-        }
-        .width('100%')
-        .height('100%')
       } else {
         Column() {
-          Stack({ alignContent: Alignment.Center }) {
-            if (this.isGif() && this.gifUri.length > 0) {
-              // GIF 已下载完成，直接播放
-              Image(this.gifUri)
-                .width('100%')
-                .height('100%')
-                .objectFit(ImageFit.Contain)
-            } else if (this.isGif()) {
-              Blank()
-                .width('100%')
-                .height('100%')
-            } else if (this.thumbPix === undefined) {
-              Blank()
-                .width('100%')
-                .height('100%')
-            } else {
-              Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
-                .width('100%')
-                .height('100%')
-                .objectFit(ImageFit.Contain)
-                .dynamicRangeMode(DynamicRangeMode.HIGH)
+          if (this.isLive()) {
+            Stack({ alignContent: Alignment.Center }) {
+              if (this.liveReady && this.movingPhoto !== undefined) {
+                MovingPhotoView({
+                  movingPhoto: this.movingPhoto,
+                  controller: this.liveController
+                })
+                  .width('100%')
+                  .height('100%')
+                  .autoPlay(false)
+                  .repeatPlay(false)
+                  .enableAnalyzer(false)
+                  .objectFit(ImageFit.Contain)
+                  .onPrepared((): void => {
+                    this.onLivePrepared();
+                  })
+                  .onStart((): void => {
+                    this.onLiveStart();
+                  })
+                  .onFinish((): void => {
+                    this.onLivePlaybackSettled();
+                  })
+                  .onStop((): void => {
+                    this.onLivePlaybackSettled();
+                  })
+                  .onPause((): void => {
+                    this.onLivePlaybackSettled();
+                  })
+                  .onError((): void => {
+                    this.livePlayState = GalleryLivePlayState.Idle;
+                  })
+              } else {
+                GalleryLivePreviewLayer({
+                  stillUri: this.liveStillUri,
+                  hintColor: this.hintColor(),
+                  thumbPix: this.thumbPix,
+                  fullPix: this.fullPix,
+                  showOriginal: this.showingOriginal,
+                  spinnerColor: this.spinnerColor()
+                })
+                  .width('100%')
+                  .height('100%')
+                  .hitTestBehavior(HitTestMode.Transparent)
+              }
             }
+            .width('100%')
+            .height('100%')
+          } else {
+            Stack({ alignContent: Alignment.Center }) {
+              if (this.isGif() && this.gifUri.length > 0) {
+                Image(this.gifUri)
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Contain)
+              } else if (this.isGif()) {
+                Blank()
+                  .width('100%')
+                  .height('100%')
+              } else if (this.thumbPix === undefined) {
+                Blank()
+                  .width('100%')
+                  .height('100%')
+              } else {
+                Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Contain)
+                  .dynamicRangeMode(DynamicRangeMode.HIGH)
+              }
+            }
+            .width('100%')
+            .height('100%')
           }
-          .width('100%').height('100%')
         }
         .width('100%').height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-        .priorityGesture(
+        .parallelGesture(
           PinchGesture({ fingers: 2, distance: 1 })
             .onActionStart((): void => {
-              this.pinchGestureRecognizing = true;
-              this.pinchBaseScale = this.previewScale;
-              this.reportPinchParticipation(true);
+              this.onPreviewPinchStart();
             })
             .onActionUpdate((event: GestureEvent): void => {
-              const s = Math.min(GALLERY_PREVIEW_SCALE_MAX,
-                Math.max(GALLERY_PREVIEW_SCALE_MIN, this.pinchBaseScale * event.scale));
-              this.previewScale = s;
-              this.previewPanX = this.clampedPanX();
-              this.previewPanY = this.clampedPanY();
-              this.emitZoomLock();
+              this.onPreviewPinchUpdate(event);
             })
             .onActionEnd((): void => {
-              this.pinchGestureRecognizing = false;
-              this.snapOrClamp();
-              this.emitZoomLock();
-              this.reportPinchParticipation(false);
+              this.onPreviewPinchEnd();
             })
             .onActionCancel((): void => {
-              this.pinchGestureRecognizing = false;
-              this.snapOrClamp();
-              this.emitZoomLock();
-                this.reportPinchParticipation(false);
-              })
-        , GestureMask.IgnoreInternal)
+              this.onPreviewPinchEnd();
+            })
+        , this.isLive() ? GestureMask.Normal : GestureMask.IgnoreInternal)
         // 未放大时仅处理纵向下拉关闭（保留 Swiper 左右切页）；
         // 放大后切换为全向拖拽，支持单指左右平移。
         .gesture(
@@ -784,8 +840,14 @@ export struct GalleryPreviewSlide {
             })
         )
         .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+          if (gestureInfo.type === GestureControl.GestureType.LONG_PRESS_GESTURE) {
+            return this.pinchGestureRecognizing ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE;
+          }
           if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
             return GestureJudgeResult.CONTINUE;
+          }
+          if (galleryLiveIsPlaying(this.livePlayState)) {
+            return GestureJudgeResult.REJECT;
           }
           return this.isImageZoomed() ? GestureJudgeResult.CONTINUE : GestureJudgeResult.REJECT;
         })
@@ -833,6 +895,17 @@ export struct GalleryPreviewSlide {
           .alignItems(HorizontalAlign.Center)
           .hitTestBehavior(HitTestMode.Transparent)
         }
+      }
+
+      if (this.isLive()) {
+        Stack({ alignContent: Alignment.BottomEnd }) {
+          GalleryLivePhotoMark({ sizeVp: 32, animated: true })
+            .margin({ right: 16, bottom: this.videoBottomPadding + 12 })
+            .hitTestBehavior(HitTestMode.Transparent)
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
       }
 
       // 外层 Stack 是 TopStart，自定义组件上的 align 不可靠；
