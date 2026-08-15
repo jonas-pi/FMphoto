@@ -522,37 +522,43 @@ export struct GalleryPreviewChrome {
   }
 
   build() {
-    Column() {
-      Column() {
-        this.previewTopBar()
+    Stack() {
+      Stack({ alignContent: Alignment.Top }) {
+        Column() {
+          this.previewTopBar()
+        }
+        .width('100%')
+        .padding({ top: this.topSafeInsetVp })
+        .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
       }
       .width('100%')
-      .padding({ top: this.topSafeInsetVp })
-      .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
-      Blank()
-        .layoutWeight(1)
-        .hitTestBehavior(HitTestMode.None)
-
-      Row() {
-        if (this.canUseHds()) {
-          this.previewBottomHdsTabs()
-        } else {
-          this.previewBottomFallbackTabs()
+      Stack({ alignContent: Alignment.Bottom }) {
+        Row() {
+          if (this.canUseHds()) {
+            this.previewBottomHdsTabs()
+          } else {
+            this.previewBottomFallbackTabs()
+          }
         }
+        .width('100%')
+        .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
+        .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
       }
       .width('100%')
-      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-      .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
-      .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(this.toolbarVisible ? HitTestMode.Transparent : HitTestMode.None)
+    .hitTestBehavior(HitTestMode.Transparent)
     .opacity(this.chromeOpacity())
     .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
   }

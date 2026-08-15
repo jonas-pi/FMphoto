@@ -115,11 +115,19 @@ export struct GalleryVideoOverlayChrome {
   onSelectSpeed: (rate: number) => void = (_rate: number) => {};
   onQuality: () => void = () => {};
   onFullscreen: () => void = () => {};
+  onInteract: () => void = () => {};
   onSeekStart: () => void = () => {};
   onSeekRatio: (ratio: number) => void = (_: number) => {};
   onSeekEnd: () => void = () => {};
   onSeekCancel: () => void = () => {};
   onSeekTapRatio: (ratio: number) => void = (_: number) => {};
+  onSingleTap: () => void = () => {};
+  onDoubleTap: () => void = () => {};
+  onHoldSpeedStart: () => void = () => {};
+  onHoldSpeedEnd: () => void = () => {};
+  onVerticalAdjustStart: (event: GestureEvent) => void = (_: GestureEvent) => {};
+  onVerticalAdjustUpdate: (event: GestureEvent) => void = (_: GestureEvent) => {};
+  onVerticalAdjustEnd: () => void = () => {};
 
   @State private barW: number = 1;
   @State private speedMenuOpen: boolean = false;
@@ -210,10 +218,9 @@ export struct GalleryVideoOverlayChrome {
   }
 
   build() {
-    Stack({ alignContent: Alignment.Bottom }) {
+    Stack() {
       if (this.visible && this.showCenterPlay) {
-        Column() {
-          Blank().layoutWeight(1).hitTestBehavior(HitTestMode.None)
+        Stack({ alignContent: Alignment.Center }) {
           GalleryOverlayHdsCapsule({
             widthValue: OVERLAY_PLAY_SIZE_VP,
             heightValue: OVERLAY_PLAY_SIZE_VP,
@@ -226,7 +233,6 @@ export struct GalleryVideoOverlayChrome {
               this.playLabel();
             }
           })
-          Blank().layoutWeight(1).hitTestBehavior(HitTestMode.None)
         }
         .width('100%')
         .height('100%')
@@ -234,8 +240,9 @@ export struct GalleryVideoOverlayChrome {
       }
 
       if (this.visible) {
-        Column({ space: 10 }) {
-          Stack({ alignContent: Alignment.Center }) {
+        Stack({ alignContent: Alignment.Bottom }) {
+          Column({ space: 10 }) {
+            Stack({ alignContent: Alignment.Center }) {
             Row() {
               GalleryOverlayHdsCapsule({
                 widthValue: OVERLAY_SPEED_WIDTH_VP,
@@ -243,6 +250,7 @@ export struct GalleryVideoOverlayChrome {
                 radiusValue: OVERLAY_PILL_HEIGHT_VP / 2,
                 enableBarClick: true,
                 onBarClick: (): void => {
+                  this.onInteract();
                   this.speedMenuOpen = true;
                 },
                 label: (): void => {
@@ -272,6 +280,7 @@ export struct GalleryVideoOverlayChrome {
                 radiusValue: OVERLAY_LANDSCAPE_SIZE_VP / 2,
                 enableBarClick: true,
                 onBarClick: (): void => {
+                  this.onInteract();
                   this.onFullscreen();
                 },
                 label: (): void => {
@@ -348,10 +357,59 @@ export struct GalleryVideoOverlayChrome {
           right: 16,
           bottom: 8 + this.bottomPadding
         })
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(this.visible ? HitTestMode.Transparent : HitTestMode.None)
+    .hitTestBehavior(HitTestMode.Default)
+    .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+      if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+        return GestureJudgeResult.CONTINUE;
+      }
+      const pan = event as PanGestureEvent;
+      if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
+        return GestureJudgeResult.REJECT;
+      }
+      return GestureJudgeResult.CONTINUE;
+    })
+    .gesture(
+      GestureGroup(GestureMode.Exclusive,
+        PanGesture({ direction: PanDirection.Vertical, distance: 16 })
+          .onActionStart((event: GestureEvent): void => {
+            this.onVerticalAdjustStart(event);
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            this.onVerticalAdjustUpdate(event);
+          })
+          .onActionEnd((): void => {
+            this.onVerticalAdjustEnd();
+          })
+          .onActionCancel((): void => {
+            this.onVerticalAdjustEnd();
+          }),
+        LongPressGesture({ repeat: false })
+          .onAction((): void => {
+            this.onHoldSpeedStart();
+          })
+          .onActionEnd((): void => {
+            this.onHoldSpeedEnd();
+          })
+          .onActionCancel((): void => {
+            this.onHoldSpeedEnd();
+          }),
+        TapGesture({ count: 2 })
+          .onAction((): void => {
+            this.onDoubleTap();
+          }),
+        TapGesture({ count: 1 })
+          .onAction((): void => {
+            this.onSingleTap();
+          })
+      )
+    )
   }
 }

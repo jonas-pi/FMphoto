@@ -15,7 +15,10 @@ import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { FnHdsPillButton } from '../common/FnUiCommon';
-import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY, toggleGalleryPreviewToolbarVisible } from '../pages/galleryPreview/GalleryPreviewToolbarStore';
+import {
+  GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY,
+  setGalleryPreviewToolbarVisible
+} from '../pages/galleryPreview/GalleryPreviewToolbarStore';
 import {
   GALLERY_PREVIEW_VIDEO_TOGGLE_MUTE_SEQ_KEY,
   GALLERY_PREVIEW_VIDEO_TOGGLE_PLAY_SEQ_KEY,
@@ -33,6 +36,8 @@ const DOMAIN = 0xFF00;
 const TAG = 'GalleryAuthVideo';
 const LONG_PRESS_RATE = 2.0;
 const GALLERY_VIDEO_ADJUST_HUD_HIDE_MS = 3000;
+/** 播放中无操作时收起顶底栏与浮层控件 */
+const GALLERY_VIDEO_CHROME_AUTOHIDE_MS = 2500;
 const GALLERY_VIDEO_VOLUME_MAX_FALLBACK = 15;
 
 interface QualityOption {
@@ -142,6 +147,7 @@ export struct GalleryAuthVideo {
   private savedWindowBrightness: number = -1;
   private windowBrightnessDirty: boolean = false;
   private adjustHudHideTimer: number = 0;
+  private chromeHideTimer: number = 0;
 
   private surfaceBackgroundColor(): ResourceColor {
     return this.isDarkTheme ? Color.Black : Color.White;
@@ -226,6 +232,7 @@ export struct GalleryAuthVideo {
     this.lastAvTimeUpdateWallMs = 0;
     this.playbackFalsePositiveGuardUntilMs = 0;
     this.videoLoading = this.active && this.videoUrl.length > 0;
+    this.clearChromeAutoHideTimer();
     this.scheduleStartPlay();
   }
 
@@ -256,6 +263,7 @@ export struct GalleryAuthVideo {
     setGalleryPreviewVideoPlaying(this.isPlaying);
     setGalleryPreviewVideoMuted(this.muted);
     setGalleryPreviewVideoDockExpanded(this.userStartedOnce && !this.playbackEnded);
+    this.bumpChromeAutoHide();
   }
 
   onTogglePlayCmd(): void {
@@ -287,6 +295,7 @@ export struct GalleryAuthVideo {
       setGalleryPreviewVideoActive(false);
       setGalleryPreviewVideoPlaying(false);
       setGalleryPreviewVideoDockExpanded(false);
+      this.clearChromeAutoHideTimer();
       void this.restoreWindowBrightness();
       if (this.landscape) {
         this.landscape = false;
@@ -317,6 +326,7 @@ export struct GalleryAuthVideo {
   aboutToDisappear(): void {
     this.playGen++;
     this.clearAdjustHudHideTimer();
+    this.clearChromeAutoHideTimer();
     void this.restoreWindowBrightness();
     if (this.active) {
       setGalleryPreviewVideoActive(false);
@@ -524,6 +534,8 @@ export struct GalleryAuthVideo {
     try {
       if (this.isPlaying) {
         this.isPlaying = false;
+        this.clearChromeAutoHideTimer();
+        setGalleryPreviewToolbarVisible(true);
         await p.pause();
         return;
       }
@@ -531,6 +543,7 @@ export struct GalleryAuthVideo {
       this.playbackEnded = false;
       this.onPlaybackChromeChanged();
       this.isPlaying = true;
+      this.scheduleChromeAutoHide();
       if (this.durationMs > 0 && this.currentMs >= this.durationMs - 400) {
         try {
           p.seek(0, media.SeekMode.SEEK_CLOSEST);
@@ -564,6 +577,42 @@ export struct GalleryAuthVideo {
       this.adjustHudHideTimer = 0;
       this.adjustHudVisible = false;
     }, GALLERY_VIDEO_ADJUST_HUD_HIDE_MS);
+  }
+
+  private clearChromeAutoHideTimer(): void {
+    if (this.chromeHideTimer === 0) {
+      return;
+    }
+    try {
+      clearTimeout(this.chromeHideTimer);
+    } catch (_e) {
+    }
+    this.chromeHideTimer = 0;
+  }
+
+  /** 播放中无操作则收起顶底栏与浮层；暂停/结束保持显示 */
+  private scheduleChromeAutoHide(): void {
+    this.clearChromeAutoHideTimer();
+    if (!this.active || !this.isPlaying) {
+      return;
+    }
+    this.chromeHideTimer = setTimeout((): void => {
+      this.chromeHideTimer = 0;
+      if (this.active && this.isPlaying) {
+        setGalleryPreviewToolbarVisible(false);
+      }
+    }, GALLERY_VIDEO_CHROME_AUTOHIDE_MS);
+  }
+
+  private bumpChromeAutoHide(): void {
+    if (this.active && this.isPlaying) {
+      this.scheduleChromeAutoHide();
+    }
+  }
+
+  private revealPlaybackChrome(): void {
+    this.clearChromeAutoHideTimer();
+    setGalleryPreviewToolbarVisible(true);
   }
 
   private async resolveHostWindow(): Promise<window.Window | undefined> {
@@ -636,7 +685,13 @@ export struct GalleryAuthVideo {
   }
 
   private onVideoSingleTap(): void {
-    toggleGalleryPreviewToolbarVisible();
+    const showing = this.previewToolbarVisible;
+    setGalleryPreviewToolbarVisible(!showing);
+    if (!showing && this.isPlaying) {
+      this.scheduleChromeAutoHide();
+      return;
+    }
+    this.clearChromeAutoHideTimer();
   }
 
   private beginVerticalAdjust(event: GestureEvent): void {
@@ -648,6 +703,7 @@ export struct GalleryAuthVideo {
       return;
     }
     this.clearAdjustHudHideTimer();
+    this.clearChromeAutoHideTimer();
     this.adjustBrightnessBase = this.screenBrightness;
     this.adjustVolumeBase = this.mediaVolume;
     this.adjustIsBrightness = fl[0].localX < this.viewW * 0.5;
@@ -686,6 +742,7 @@ export struct GalleryAuthVideo {
       return;
     }
     this.scheduleHideAdjustHud();
+    this.bumpChromeAutoHide();
   }
 
   private seekByRatio(ratio: number): void {
@@ -709,6 +766,7 @@ export struct GalleryAuthVideo {
     this.dragRatio = this.dragStartRatio;
     this.wasPlayingBeforeSeek = this.isPlaying;
     this.seekResumePending = false;
+    this.clearChromeAutoHideTimer();
     if (p !== null && this.wasPlayingBeforeSeek) {
       try {
         await p.pause();
@@ -1144,6 +1202,7 @@ export struct GalleryAuthVideo {
         this.userStartedOnce = true;
         this.playbackEnded = false;
         this.onPlaybackChromeChanged();
+        this.scheduleChromeAutoHide();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
         if (this.deferPlaybackRateUntilPlaying) {
@@ -1156,6 +1215,7 @@ export struct GalleryAuthVideo {
         this.isPlaying = false;
         this.playbackEnded = true;
         this.onPlaybackChromeChanged();
+        this.revealPlaybackChrome();
         this.syncUiProgressToNaturalEnd(player);
       } else if (state === 'paused' || state === 'stopped') {
         this.isPlaying = false;
@@ -1248,79 +1308,6 @@ export struct GalleryAuthVideo {
         .height(1)
         .hitTestBehavior(HitTestMode.None)
 
-      // 叠在 HUD 之上、底栏之下：全屏 Default 层会挡住后面兄弟，必须是最上层可点区域。
-      Column() {
-        Blank()
-          .width('100%')
-          .height('100%')
-      }
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#01000000')
-        .responseRegion({ x: 0, y: 0, width: '100%', height: '100%' })
-        .id('gallery_video_gesture_layer')
-        .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
-          if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
-            return GestureJudgeResult.CONTINUE;
-          }
-          const pan = event as PanGestureEvent;
-          if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
-            return GestureJudgeResult.REJECT;
-          }
-          return GestureJudgeResult.CONTINUE;
-        })
-        .gesture(
-          GestureGroup(GestureMode.Exclusive,
-            PanGesture({ direction: PanDirection.Vertical, distance: 10 })
-              .onActionStart((event: GestureEvent): void => {
-                this.beginVerticalAdjust(event);
-              })
-              .onActionUpdate((event: GestureEvent): void => {
-                this.updateVerticalAdjust(event);
-              })
-              .onActionEnd((): void => {
-                this.endVerticalAdjust();
-              })
-              .onActionCancel((): void => {
-                this.endVerticalAdjust();
-              }),
-            LongPressGesture({ repeat: false })
-              .onAction((): void => {
-                const p = this.avPlayer;
-                if (p === null) {
-                  return;
-                }
-                this.longPressSpeeding = true;
-                this.applySpeed(p, LONG_PRESS_RATE);
-                this.armPlaybackFalsePositiveGuardForTranscode(LONG_PRESS_RATE);
-              })
-              .onActionEnd((): void => {
-                const p = this.avPlayer;
-                this.longPressSpeeding = false;
-                if (p !== null) {
-                  this.applySpeed(p, this.speedRate);
-                  this.armPlaybackFalsePositiveGuardForTranscode();
-                }
-              })
-              .onActionCancel((): void => {
-                const p = this.avPlayer;
-                this.longPressSpeeding = false;
-                if (p !== null) {
-                  this.applySpeed(p, this.speedRate);
-                  this.armPlaybackFalsePositiveGuardForTranscode();
-                }
-              }),
-            TapGesture({ count: 2 })
-              .onAction((): void => {
-                void this.togglePlayPause();
-              }),
-            TapGesture({ count: 1 })
-              .onAction((): void => {
-                this.onVideoSingleTap();
-              })
-          )
-        )
-
       GalleryVideoOverlayChrome({
         visible: this.previewToolbarVisible,
         showCenterPlay: this.showCenterPlay(),
@@ -1335,15 +1322,22 @@ export struct GalleryAuthVideo {
           void this.togglePlayPause();
         },
         onSelectSpeed: (rate: number): void => {
+          this.bumpChromeAutoHide();
           this.applyPickedSpeed(rate);
         },
         onQuality: (): void => {
+          this.bumpChromeAutoHide();
           void this.chooseQuality();
         },
         onFullscreen: (): void => {
+          this.bumpChromeAutoHide();
           void this.toggleLandscape();
         },
+        onInteract: (): void => {
+          this.bumpChromeAutoHide();
+        },
         onSeekStart: (): void => {
+          this.clearChromeAutoHideTimer();
           void this.beginSeekDrag();
         },
         onSeekRatio: (ratio: number): void => {
@@ -1354,15 +1348,50 @@ export struct GalleryAuthVideo {
         },
         onSeekEnd: (): void => {
           this.endSeekDrag();
+          this.bumpChromeAutoHide();
         },
         onSeekCancel: (): void => {
           this.draggingSeek = false;
           this.seekResumePending = false;
+          this.bumpChromeAutoHide();
         },
         onSeekTapRatio: (ratio: number): void => {
           if (!this.draggingSeek) {
+            this.bumpChromeAutoHide();
             this.seekByRatio(ratio);
           }
+        },
+        onSingleTap: (): void => {
+          this.onVideoSingleTap();
+        },
+        onDoubleTap: (): void => {
+          void this.togglePlayPause();
+        },
+        onHoldSpeedStart: (): void => {
+          const p = this.avPlayer;
+          if (p === null) {
+            return;
+          }
+          this.longPressSpeeding = true;
+          this.applySpeed(p, LONG_PRESS_RATE);
+          this.armPlaybackFalsePositiveGuardForTranscode(LONG_PRESS_RATE);
+        },
+        onHoldSpeedEnd: (): void => {
+          const p = this.avPlayer;
+          this.longPressSpeeding = false;
+          if (p !== null) {
+            this.applySpeed(p, this.speedRate);
+            this.armPlaybackFalsePositiveGuardForTranscode();
+          }
+        },
+        onVerticalAdjustStart: (event: GestureEvent): void => {
+          this.beginVerticalAdjust(event);
+        },
+        onVerticalAdjustUpdate: (event: GestureEvent): void => {
+          this.updateVerticalAdjust(event);
+        },
+        onVerticalAdjustEnd: (): void => {
+          this.endVerticalAdjust();
         }
       })
         .width('100%')

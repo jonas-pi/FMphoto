@@ -743,10 +743,12 @@ struct GalleryPreview {
           if (!this.currentItemIsVideo()) {
             return GestureJudgeResult.CONTINUE;
           }
-          if (current.getType() !== GestureControl.GestureType.TAP_GESTURE) {
+          const gestureType = current.getType();
+          if (gestureType !== GestureControl.GestureType.TAP_GESTURE &&
+            gestureType !== GestureControl.GestureType.LONG_PRESS_GESTURE) {
             return GestureJudgeResult.CONTINUE;
           }
-          // 只拒掉 Swiper 内置单击，放行视频层自定义 Tap
+          // 拒掉 Swiper 内置单击/长按，放行视频层自定义手势
           if (current.isBuiltIn()) {
             return GestureJudgeResult.REJECT;
           }
