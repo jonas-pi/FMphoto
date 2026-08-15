@@ -55,6 +55,14 @@ export class GalleryHomeTimelineCache {
   private static tokenSnapshot: string = '';
   private static ready: boolean = false;
 
+  static retarget(baseUrl: string, token: string): void {
+    if (!GalleryHomeTimelineCache.ready || GalleryHomeTimelineCache.snap === null) {
+      return;
+    }
+    GalleryHomeTimelineCache.baseUrlNorm = baseUrl.trim();
+    GalleryHomeTimelineCache.tokenSnapshot = token;
+  }
+
   /** bump、即将全量 bootstrap 时调用，丢弃快照 */
   static invalidate(): void {
     GalleryHomeTimelineCache.ready = false;

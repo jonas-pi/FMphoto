@@ -1,11 +1,12 @@
 import { common } from '@kit.AbilityKit';
 import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import { BlurStrategy, DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { retargetGalleryAfterEndpointSwitch } from '../album/GalleryEndpointRetarget';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
 import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import {
@@ -680,7 +681,7 @@ struct MePanel {
 @Entry
 @Component
 struct Home {
-  @State private galleryBaseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private galleryBaseUrl: string = '';
   @State private sessionOk: boolean = false;
   @State private albumSearchModeActive: boolean = false;
   @State private bottomNavIndex: number = 0;
@@ -730,9 +731,10 @@ struct Home {
 
   private onHomeEndpointSwitchVersionChanged(): void {
     const stored = AppSession.getStored();
-    this.galleryBaseUrl = stored !== null ? fnWebViewBaseUrl(stored.baseUrl) : '';
     this.sessionOk = stored !== null;
-    this.albumReloadEpoch++;
+    if (stored !== null) {
+      retargetGalleryAfterEndpointSwitch(fnWebViewBaseUrl(stored.baseUrl), stored.token);
+    }
   }
 
   onColorModeChanged(): void {
@@ -1015,7 +1017,6 @@ struct Home {
               current.fnosLongToken = token;
               AppSession.apply(current);
               void SessionPreferences.save(ctx, current);
-              this.albumReloadEpoch++;
             });
           }, 0);
         }
@@ -1443,9 +1444,10 @@ struct Home {
               pageShowSignal: this.pageShowSignal,
               onEndpointSwitched: (): void => {
                 const stored = AppSession.getStored();
-                this.galleryBaseUrl = stored !== null ? fnWebViewBaseUrl(stored.baseUrl) : '';
                 this.sessionOk = stored !== null;
-                this.albumReloadEpoch++;
+                if (stored !== null) {
+                  retargetGalleryAfterEndpointSwitch(fnWebViewBaseUrl(stored.baseUrl), stored.token);
+                }
               }
             })
               .width('100%')

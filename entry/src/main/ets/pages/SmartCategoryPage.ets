@@ -1,4 +1,4 @@
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { SmartCategoryItem } from '../model/FnApiTypes';
 import { loadSmartCategoryGalleryItems } from '../album/SmartCategoryMagicSearch';
@@ -15,7 +15,7 @@ import {
 @Entry
 @Component
 struct SmartCategoryPage {
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private error: string = '';

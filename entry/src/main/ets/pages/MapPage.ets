@@ -1,5 +1,5 @@
 import { webview } from '@kit.ArkWeb';
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryNetworkThumb, nasUrl, pickThumb } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnTopBar } from '../common/FnUiCommon';
@@ -222,7 +222,7 @@ function mapClampScale(value: number): number {
 struct MapPage {
   private webController: webview.WebviewController = new webview.WebviewController();
 
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private officialMapUrl: string = '';
   @State private webBaseUrl: string = '';
   @State private webLoading: boolean = false;

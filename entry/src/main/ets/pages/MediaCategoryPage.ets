@@ -1,4 +1,4 @@
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { openMediaCategoryGallery, openingTextForCategory } from '../album/MediaCategoryOpenHelper';
 import { MediaCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
@@ -13,7 +13,7 @@ import {
 @Entry
 @Component
 struct MediaCategoryPage {
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private openingText: string = '打开中…';

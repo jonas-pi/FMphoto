@@ -18,7 +18,7 @@ import {
 import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
   FN_SYSTEM_BOTTOM_INSET_VP_KEY,
@@ -75,7 +75,7 @@ import {
 @Entry
 @Component
 struct GalleryPreview {
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private swiperIndex: number = 0;
   @State private swiperLocked: boolean = false;
   @State private pinchGestureActive: boolean = false;

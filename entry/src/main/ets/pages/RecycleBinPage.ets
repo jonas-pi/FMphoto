@@ -4,7 +4,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { UIContext, window } from '@kit.ArkUI';
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import {
   GalleryNetworkThumb,
   nasUrl,
@@ -81,7 +81,7 @@ interface RecycleBinRowBlock {
 @Entry
 @Component
 struct RecycleBinPage {
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private loading: boolean = false;
   @State private restoring: boolean = false;
   @State private rbBatchDownloading: boolean = false;

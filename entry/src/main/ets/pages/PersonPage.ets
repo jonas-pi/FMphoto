@@ -1,4 +1,4 @@
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
@@ -14,7 +14,7 @@ import {
 @Entry
 @Component
 struct PersonPage {
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private error: string = '';

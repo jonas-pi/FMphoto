@@ -18,7 +18,7 @@ import {
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
-import { AppSession } from '../auth/AppSession';
+import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { FnListDataSource } from '../common/FnListDataSource';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
@@ -103,7 +103,7 @@ const TAG = 'GalleryDiag';
 struct CategoryGallery {
   @State private groups: DayGroup[] = [];
   @State private title: string = '';
-  @State private baseUrl: string = '';
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private totalCount: number = 0;
   @State private heroImageUri: string = '';
   @State private columnsPerRow: number = 3;

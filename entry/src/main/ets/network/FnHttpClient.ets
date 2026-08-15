@@ -263,6 +263,14 @@ export class FnHttpClient {
     this.token = t;
   }
 
+  setLongToken(token: string): void {
+    this.longToken = token;
+  }
+
+  setWsSignKeyB64(keyB64: string): void {
+    this.wsSignKeyB64 = keyB64;
+  }
+
   getToken(): string {
     return this.token;
   }
