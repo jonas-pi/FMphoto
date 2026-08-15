@@ -1,5 +1,6 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../main/ets/network/ServerUrl';
+import { isUnusableIpv6Host } from '../main/ets/network/FnConnectApi';
 import {
   buildNasDedupeIndex,
   nasDedupeIndexHasLocal,
@@ -50,6 +51,15 @@ export default function localUnitTest() {
       expect(normalizeServerUrl('[fe80::1]', true)).assertEqual('https://[fe80::1]:5667');
       expect(normalizeServerUrl('fe80::1:8080', false)).assertEqual('http://[fe80::1]:8080');
       expect(normalizeServerUrl('http://[::1]/', false)).assertEqual('http://[::1]:5666');
+    });
+
+    it('fnConnect_skips_unusable_ipv6', 0, () => {
+      expect(isUnusableIpv6Host('fe80::1')).assertTrue();
+      expect(isUnusableIpv6Host('[fe80::abcd:1]')).assertTrue();
+      expect(isUnusableIpv6Host('::1')).assertTrue();
+      expect(isUnusableIpv6Host('ff02::1')).assertTrue();
+      expect(isUnusableIpv6Host('fd12:3456::1')).assertFalse();
+      expect(isUnusableIpv6Host('240e:388:9c06:c500::1')).assertFalse();
     });
 
     it('autoSync_sizeMtime_matches_without_name', 0, () => {

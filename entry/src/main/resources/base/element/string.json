@@ -125,6 +125,22 @@
       "value": "选路策略"
     },
     {
+      "name": "login_probe_status",
+      "value": "正在探测可达路径…"
+    },
+    {
+      "name": "login_probe_selected",
+      "value": "已选择"
+    },
+    {
+      "name": "login_probe_current",
+      "value": "当前连接"
+    },
+    {
+      "name": "nas_endpoint_probe_title",
+      "value": "连接路径"
+    },
+    {
       "name": "tab_home",
       "value": "首页"
     },

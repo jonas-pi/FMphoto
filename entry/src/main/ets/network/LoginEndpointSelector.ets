@@ -10,10 +10,30 @@ export const LOGIN_ENDPOINT_PREF_AUTO = 'auto';
 export const LOGIN_ENDPOINT_PREF_PUBLIC = 'public';
 export const LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN = 'public_domain';
 export const LOGIN_ENDPOINT_PREF_PUBLIC_IP = 'public_ip';
+export const LOGIN_ENDPOINT_PREF_PUBLIC_IPV6 = 'public_ipv6';
 export const LOGIN_ENDPOINT_PREF_LAN = 'lan';
+export const LOGIN_ENDPOINT_PREF_LAN_IPV6 = 'lan_ipv6';
 export const LOGIN_ENDPOINT_PREF_RELAY = 'relay';
 export const LOGIN_ENDPOINT_PREF_BANDWIDTH = 'bandwidth';
 export const LOGIN_ENDPOINT_PREF_LATENCY = 'latency';
+
+export interface LoginEndpointPool {
+  lanIpv4Url: string;
+  lanIpv6Url: string;
+  publicDomainUrl: string;
+  publicIpv4Url: string;
+  publicIpv6Url: string;
+}
+
+export function emptyEndpointPool(): LoginEndpointPool {
+  return {
+    lanIpv4Url: '',
+    lanIpv6Url: '',
+    publicDomainUrl: '',
+    publicIpv4Url: '',
+    publicIpv6Url: ''
+  };
+}
 
 /** 连通性探测：短超时，只确认可达（官方竞速思路） */
 const FAST_CONNECT_TIMEOUT_MS = 1600;
@@ -38,16 +58,34 @@ export interface LoginEndpointProbeResult {
   message: string;
 }
 
+export interface LoginEndpointProbeLine {
+  label: string;
+  address: string;
+  baseUrl: string;
+  ok: boolean;
+  latencyMs: number;
+  selected: boolean;
+}
+
 export interface LoginEndpointSelectionResult {
   server: string;
   summary: string;
   /** 「我的」公网切换用：域名优先于 IP */
   preferredPublicUrl: string;
+  selectedKind: string;
+  selectedLabel: string;
+  selectedAddress: string;
+  selectedOk: boolean;
+  selectedLatencyMs: number;
+  probeLines: LoginEndpointProbeLine[];
 }
 
 function endpointLabel(kind: string): string {
   if (kind === LOGIN_ENDPOINT_PREF_LAN) {
     return '内网';
+  }
+  if (kind === LOGIN_ENDPOINT_PREF_LAN_IPV6) {
+    return '内网IPv6';
   }
   if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
     return '中继';
@@ -56,7 +94,10 @@ function endpointLabel(kind: string): string {
     return '公网域名';
   }
   if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
-    return '公网IP';
+    return '公网IPv4';
+  }
+  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6) {
+    return '公网IPv6';
   }
   return '公网';
 }
@@ -65,15 +106,20 @@ function kindPriority(kind: string): number {
   if (kind === LOGIN_ENDPOINT_PREF_LAN) {
     return 0;
   }
-  // 公网域名优于公网 IP
-  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN || kind === LOGIN_ENDPOINT_PREF_PUBLIC) {
+  if (kind === LOGIN_ENDPOINT_PREF_LAN_IPV6) {
     return 1;
   }
-  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
+  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN || kind === LOGIN_ENDPOINT_PREF_PUBLIC) {
     return 2;
   }
-  if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
+  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
     return 3;
+  }
+  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6) {
+    return 4;
+  }
+  if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
+    return 5;
   }
   return 9;
 }
@@ -81,7 +127,12 @@ function kindPriority(kind: string): number {
 function isPublicKind(kind: string): boolean {
   return kind === LOGIN_ENDPOINT_PREF_PUBLIC ||
     kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN ||
-    kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP;
+    kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP ||
+    kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6;
+}
+
+function isLanKind(kind: string): boolean {
+  return kind === LOGIN_ENDPOINT_PREF_LAN || kind === LOGIN_ENDPOINT_PREF_LAN_IPV6;
 }
 
 function byteLengthOfResult(result: string | ArrayBuffer | object | undefined): number {
@@ -206,6 +257,7 @@ function preferDomainIfBothPublicOk(
   }
   let domainOk: LoginEndpointProbeResult | null = null;
   let ipOk: LoginEndpointProbeResult | null = null;
+  let ipv6Ok: LoginEndpointProbeResult | null = null;
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (!r.ok) {
@@ -217,8 +269,14 @@ function preferDomainIfBothPublicOk(
     if (r.candidate.kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
       ipOk = r;
     }
+    if (r.candidate.kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6) {
+      ipv6Ok = r;
+    }
   }
   if (domainOk !== null && ipOk !== null) {
+    return domainOk;
+  }
+  if (domainOk !== null && ipv6Ok !== null) {
     return domainOk;
   }
   return best;
@@ -237,12 +295,7 @@ function describeProbeChoice(best: LoginEndpointProbeResult, all: LoginEndpointP
   return `已选择${endpointLabel(best.candidate.kind)}（${parts.join('，')}）`;
 }
 
-function buildCandidates(
-  publicDomainUrl: string,
-  publicIpUrl: string,
-  lanUrl: string,
-  relayUrl: string
-): LoginEndpointCandidate[] {
+function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidate[] {
   const out: LoginEndpointCandidate[] = [];
   const seen: string[] = [];
   const push = (kind: string, url: string): void => {
@@ -258,73 +311,67 @@ function buildCandidates(
     seen.push(u);
     out.push({ kind, baseUrl: u });
   };
-  push(LOGIN_ENDPOINT_PREF_LAN, lanUrl);
-  push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, publicDomainUrl);
-  push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, publicIpUrl);
-  // 中继暂不参与选路（官方隧道未对第三方开放）
+  push(LOGIN_ENDPOINT_PREF_LAN, pool.lanIpv4Url);
+  push(LOGIN_ENDPOINT_PREF_LAN_IPV6, pool.lanIpv6Url);
+  push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, pool.publicDomainUrl);
+  push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, pool.publicIpv4Url);
+  push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, pool.publicIpv6Url);
   return out;
 }
 
-function pickForced(
+function filterCandidatesByPreference(
   candidates: LoginEndpointCandidate[],
   preference: string
-): LoginEndpointSelectionResult | null {
+): LoginEndpointCandidate[] {
   if (preference === LOGIN_ENDPOINT_PREF_LAN) {
+    const lanOnly: LoginEndpointCandidate[] = [];
     for (let i = 0; i < candidates.length; i++) {
-      if (candidates[i].kind === preference) {
-        return {
-          server: candidates[i].baseUrl,
-          summary: `已按偏好使用${endpointLabel(preference)}地址`,
-          preferredPublicUrl: preferPublicFromCandidates(candidates)
-        };
+      if (isLanKind(candidates[i].kind)) {
+        lanOnly.push(candidates[i]);
       }
     }
+    return lanOnly.length > 0 ? lanOnly : candidates;
   }
   if (preference === LOGIN_ENDPOINT_PREF_PUBLIC) {
-    // 优先公网域名，其次公网 IP
-    for (let i = 0; i < candidates.length; i++) {
-      if (candidates[i].kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN) {
-        return {
-          server: candidates[i].baseUrl,
-          summary: '已按偏好使用公网域名',
-          preferredPublicUrl: candidates[i].baseUrl
-        };
-      }
-    }
+    const publicOnly: LoginEndpointCandidate[] = [];
     for (let j = 0; j < candidates.length; j++) {
-      if (candidates[j].kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
-        return {
-          server: candidates[j].baseUrl,
-          summary: '已按偏好使用公网IP',
-          preferredPublicUrl: candidates[j].baseUrl
-        };
+      if (isPublicKind(candidates[j].kind)) {
+        publicOnly.push(candidates[j]);
       }
     }
+    return publicOnly.length > 0 ? publicOnly : candidates;
   }
-  return null;
+  return candidates;
 }
 
 function preferPublicFromCandidates(candidates: LoginEndpointCandidate[]): string {
   let domain = '';
-  let ip = '';
+  let ipv4 = '';
+  let ipv6 = '';
   for (let i = 0; i < candidates.length; i++) {
     if (candidates[i].kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN) {
       domain = candidates[i].baseUrl;
     }
     if (candidates[i].kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
-      ip = candidates[i].baseUrl;
+      ipv4 = candidates[i].baseUrl;
+    }
+    if (candidates[i].kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6) {
+      ipv6 = candidates[i].baseUrl;
     }
   }
-  return preferPublicEndpointUrl(domain, ip);
+  if (domain.length > 0) {
+    return domain;
+  }
+  return preferPublicEndpointUrl(ipv4, ipv6);
 }
 
 function preferredPublicFromProbes(
   results: LoginEndpointProbeResult[],
-  publicDomainUrl: string,
-  publicIpUrl: string
+  pool: LoginEndpointPool
 ): string {
   let domainOk = false;
-  let ipOk = false;
+  let ipv4Ok = false;
+  let ipv6Ok = false;
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (!r.ok) {
@@ -334,20 +381,177 @@ function preferredPublicFromProbes(
       domainOk = true;
     }
     if (r.candidate.kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP) {
-      ipOk = true;
+      ipv4Ok = true;
+    }
+    if (r.candidate.kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6) {
+      ipv6Ok = true;
     }
   }
   if (domainOk) {
-    return publicDomainUrl.trim();
+    return pool.publicDomainUrl.trim();
   }
-  if (ipOk) {
-    return publicIpUrl.trim();
+  if (ipv4Ok) {
+    return pool.publicIpv4Url.trim();
   }
-  return preferPublicEndpointUrl(publicDomainUrl, publicIpUrl);
+  if (ipv6Ok) {
+    return pool.publicIpv6Url.trim();
+  }
+  return preferPublicFromPool(pool);
+}
+
+function preferPublicFromPool(pool: LoginEndpointPool): string {
+  if (pool.publicDomainUrl.trim().length > 0) {
+    return pool.publicDomainUrl.trim();
+  }
+  return preferPublicEndpointUrl(pool.publicIpv4Url, pool.publicIpv6Url);
+}
+
+export function compactProbeAddress(baseUrl: string): string {
+  let u = baseUrl.trim();
+  if (u.endsWith('/')) {
+    u = u.substring(0, u.length - 1);
+  }
+  if (u.startsWith('https://')) {
+    u = u.substring('https://'.length);
+  } else if (u.startsWith('http://')) {
+    u = u.substring('http://'.length);
+  }
+  return u;
+}
+
+function emptyProbeLines(): LoginEndpointProbeLine[] {
+  return [];
+}
+
+function emptySelection(): LoginEndpointSelectionResult {
+  return {
+    server: '',
+    summary: '',
+    preferredPublicUrl: '',
+    selectedKind: '',
+    selectedLabel: '',
+    selectedAddress: '',
+    selectedOk: false,
+    selectedLatencyMs: 0,
+    probeLines: emptyProbeLines()
+  };
+}
+
+function selectionFromCandidate(
+  kind: string,
+  server: string,
+  preferredPublicUrl: string,
+  summary: string
+): LoginEndpointSelectionResult {
+  const label = endpointLabel(kind);
+  const address = compactProbeAddress(server);
+  const lines: LoginEndpointProbeLine[] = [];
+  if (server.length > 0) {
+    lines.push({
+      label,
+      address,
+      baseUrl: server,
+      ok: true,
+      latencyMs: 0,
+      selected: true
+    });
+  }
+  return {
+    server,
+    summary,
+    preferredPublicUrl,
+    selectedKind: kind,
+    selectedLabel: label,
+    selectedAddress: address,
+    selectedOk: server.length > 0,
+    selectedLatencyMs: 0,
+    probeLines: lines
+  };
+}
+
+function selectionFromProbes(
+  best: LoginEndpointProbeResult,
+  all: LoginEndpointProbeResult[],
+  preferredPublicUrl: string,
+  summary: string
+): LoginEndpointSelectionResult {
+  const lines: LoginEndpointProbeLine[] = [];
+  for (let i = 0; i < all.length; i++) {
+    const r = all[i];
+    const selected = r.candidate.kind === best.candidate.kind &&
+      r.candidate.baseUrl === best.candidate.baseUrl;
+    lines.push({
+      label: endpointLabel(r.candidate.kind),
+      address: compactProbeAddress(r.candidate.baseUrl),
+      baseUrl: r.candidate.baseUrl,
+      ok: r.ok,
+      latencyMs: r.ok ? r.latencyMs : 0,
+      selected
+    });
+  }
+  return {
+    server: best.candidate.baseUrl,
+    summary,
+    preferredPublicUrl,
+    selectedKind: best.candidate.kind,
+    selectedLabel: endpointLabel(best.candidate.kind),
+    selectedAddress: compactProbeAddress(best.candidate.baseUrl),
+    selectedOk: best.ok,
+    selectedLatencyMs: best.ok ? best.latencyMs : 0,
+    probeLines: lines
+  };
 }
 
 /**
- * 在公网域名 / 公网 IP / 内网 / 中继中并行短探测选路。
+ * 在内网 V4/V6、公网域名 / IPv4 / IPv6 中并行短探测选路。
+ */
+export async function selectAmongEndpointPool(
+  pool: LoginEndpointPool,
+  preference: string
+): Promise<LoginEndpointSelectionResult> {
+  const all = buildCandidatesFromPool(pool);
+  const fallbackPublic = preferPublicFromPool(pool);
+  if (all.length === 0) {
+    return emptySelection();
+  }
+  const candidates = filterCandidatesByPreference(all, preference);
+  if (candidates.length === 0) {
+    return emptySelection();
+  }
+  // 单条候选也探测，便于登录页展示路径与延迟
+  const bandwidthMode = preference === LOGIN_ENDPOINT_PREF_BANDWIDTH;
+  const probed = await Promise.all(
+    candidates.map((c: LoginEndpointCandidate) => probeEndpoint(c, bandwidthMode))
+  );
+  const scored = assignScores(probed, preference);
+  let best = pickBest(scored);
+  if (best === null) {
+    const fallbackBest: LoginEndpointProbeResult = scored.length > 0 ? scored[0] : {
+      candidate: candidates[0],
+      ok: false,
+      latencyMs: 0,
+      bytesPerSecond: 0,
+      score: -1,
+      message: ''
+    };
+    return selectionFromProbes(
+      fallbackBest,
+      scored.length > 0 ? scored : [fallbackBest],
+      fallbackPublic,
+      '连通性探测均失败，已按优先级尝试'
+    );
+  }
+  best = preferDomainIfBothPublicOk(scored, best);
+  return selectionFromProbes(
+    best,
+    scored,
+    preferredPublicFromProbes(scored, pool),
+    describeProbeChoice(best, scored)
+  );
+}
+
+/**
+ * 在公网域名 / 公网 IP / 内网中并行短探测选路。
  */
 export async function selectAmongEndpoints(
   publicDomainUrl: string,
@@ -356,42 +560,13 @@ export async function selectAmongEndpoints(
   relayUrl: string,
   preference: string
 ): Promise<LoginEndpointSelectionResult> {
-  const candidates = buildCandidates(publicDomainUrl, publicIpUrl, lanUrl, relayUrl);
-  const fallbackPublic = preferPublicEndpointUrl(publicDomainUrl, publicIpUrl);
-  if (candidates.length === 0) {
-    return { server: '', summary: '', preferredPublicUrl: '' };
-  }
-  if (candidates.length === 1) {
-    return {
-      server: candidates[0].baseUrl,
-      summary: '',
-      preferredPublicUrl: isPublicKind(candidates[0].kind) ? candidates[0].baseUrl : fallbackPublic
-    };
-  }
-  const forced = pickForced(candidates, preference);
-  if (forced !== null) {
-    return forced;
-  }
-
-  const bandwidthMode = preference === LOGIN_ENDPOINT_PREF_BANDWIDTH;
-  const probed = await Promise.all(
-    candidates.map((c: LoginEndpointCandidate) => probeEndpoint(c, bandwidthMode))
-  );
-  const scored = assignScores(probed, preference);
-  let best = pickBest(scored);
-  if (best === null) {
-    return {
-      server: candidates[0].baseUrl,
-      summary: '连通性探测均失败，已按优先级尝试',
-      preferredPublicUrl: fallbackPublic
-    };
-  }
-  best = preferDomainIfBothPublicOk(scored, best);
-  return {
-    server: best.candidate.baseUrl,
-    summary: describeProbeChoice(best, scored),
-    preferredPublicUrl: preferredPublicFromProbes(scored, publicDomainUrl, publicIpUrl)
-  };
+  return selectAmongEndpointPool({
+    lanIpv4Url: lanUrl,
+    lanIpv6Url: '',
+    publicDomainUrl: publicDomainUrl,
+    publicIpv4Url: publicIpUrl,
+    publicIpv6Url: ''
+  }, preference);
 }
 
 /**
@@ -407,14 +582,12 @@ export async function selectLoginEndpoint(
   const publicServer = normalizeServerUrl(publicInput, useHttps);
   const lanServer = normalizeServerUrl(lanInput, useHttps);
   if (lanServer.length === 0 || publicServer === lanServer) {
-    return {
-      server: publicServer.length > 0 ? publicServer : lanServer,
-      summary: '',
-      preferredPublicUrl: publicServer
-    };
+    const server = publicServer.length > 0 ? publicServer : lanServer;
+    const kind = publicServer.length > 0 ? LOGIN_ENDPOINT_PREF_PUBLIC : LOGIN_ENDPOINT_PREF_LAN;
+    return selectionFromCandidate(kind, server, publicServer, '');
   }
   if (publicServer.length === 0) {
-    return { server: lanServer, summary: '', preferredPublicUrl: '' };
+    return selectionFromCandidate(LOGIN_ENDPOINT_PREF_LAN, lanServer, '', '');
   }
   return selectAmongEndpoints(publicServer, '', lanServer, '', preference);
 }

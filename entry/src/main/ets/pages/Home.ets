@@ -8,13 +8,27 @@ import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
 import { AppSession } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
-import { LOGIN_ENDPOINT_PREF_LAN, LOGIN_ENDPOINT_PREF_PUBLIC } from '../network/LoginEndpointSelector';
+import {
+  LOGIN_ENDPOINT_PREF_LAN,
+  LOGIN_ENDPOINT_PREF_PUBLIC,
+  selectAmongEndpointPool
+} from '../network/LoginEndpointSelector';
 import {
   EndpointConnectionInfo,
+  endpointPoolFromStored,
   resolveEndpointConnectionInfo,
   switchStoredLoginEndpoint
 } from '../network/LoginEndpointSwitch';
+import {
+  FN_ENDPOINT_SWITCH_MESSAGE,
+  FN_ENDPOINT_SWITCH_VERSION
+} from '../network/LoginEndpointAutoSwitch';
 import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
+import {
+  buildEndpointProbeDisplay,
+  FnEndpointProbeLineItem,
+  FnEndpointProbeView
+} from '../common/FnEndpointProbeView';
 import {
   FN_TRANSFER_QUEUE_VERSION,
   FnTransferQueueStore,
@@ -95,10 +109,19 @@ struct MePanel {
   @State private sdkApiVersion: number = 0;
   @State private endpointInfo: EndpointConnectionInfo = resolveEndpointConnectionInfo(null);
   @State private endpointSwitching: boolean = false;
+  @State private probeSheetVisible: boolean = false;
+  @State private probeSheetLoading: boolean = false;
+  @State private probeHint: string = '';
+  @State private probeSelectedLabel: string = '';
+  @State private probeSelectedAddress: string = '';
+  @State private probeSelectedLatencyText: string = '';
+  @State private probeOtherItems: FnEndpointProbeLineItem[] = [];
   @State private transferQueueVisible: boolean = false;
   @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
+  @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   private lastImmersiveToggleAt: number = 0;
+  private probeSeq: number = 0;
 
   private refreshTransferQueueTasks(): void {
     this.transferQueueTasks = FnTransferQueueStore.getTasks();
@@ -106,6 +129,14 @@ struct MePanel {
 
   private onTransferQueueVersionChanged(): void {
     this.refreshTransferQueueTasks();
+  }
+
+  private onEndpointSwitchVersionChanged(): void {
+    this.refreshEndpointInfo();
+    const msg = AppStorage.get<string>(FN_ENDPOINT_SWITCH_MESSAGE);
+    if (msg !== undefined && msg.length > 0) {
+      this.showEndpointToast(msg);
+    }
   }
 
   private refreshEndpointInfo(): void {
@@ -132,6 +163,57 @@ struct MePanel {
       return;
     }
     this.getUIContext().getPromptAction().showToast({ message });
+  }
+
+  private clearProbeDisplay(): void {
+    this.probeHint = '';
+    this.probeSelectedLabel = '';
+    this.probeSelectedAddress = '';
+    this.probeSelectedLatencyText = '';
+    this.probeOtherItems = [];
+  }
+
+  private openEndpointProbeSheet(): void {
+    if (this.endpointInfo.addressText.length === 0) {
+      return;
+    }
+    this.probeSheetVisible = true;
+    void this.reloadEndpointProbe();
+  }
+
+  private async reloadEndpointProbe(): Promise<void> {
+    const seq = this.probeSeq + 1;
+    this.probeSeq = seq;
+    this.probeSheetLoading = true;
+    this.clearProbeDisplay();
+    const stored = AppSession.getStored();
+    if (stored === null) {
+      this.probeSheetLoading = false;
+      return;
+    }
+    try {
+      const selected = await selectAmongEndpointPool(
+        endpointPoolFromStored(stored),
+        stored.loginEndpointPreference
+      );
+      if (seq !== this.probeSeq) {
+        return;
+      }
+      const display = buildEndpointProbeDisplay(selected, stored.baseUrl, '');
+      this.probeHint = display.hintText;
+      this.probeSelectedLabel = display.selectedLabel;
+      this.probeSelectedAddress = display.selectedAddress;
+      this.probeSelectedLatencyText = display.selectedLatencyText;
+      this.probeOtherItems = display.otherItems;
+    } catch (_e) {
+      if (seq === this.probeSeq) {
+        this.clearProbeDisplay();
+      }
+    } finally {
+      if (seq === this.probeSeq) {
+        this.probeSheetLoading = false;
+      }
+    }
   }
 
   private async switchEndpoint(targetKind: string): Promise<void> {
@@ -220,6 +302,24 @@ struct MePanel {
   }
 
   @Builder
+  private endpointProbeSheetBuilder() {
+    Column() {
+      FnEndpointProbeView({
+        probing: this.probeSheetLoading,
+        hintText: this.probeHint,
+        selectedTitle: $r('app.string.login_probe_current'),
+        selectedLabel: this.probeSelectedLabel,
+        selectedAddress: this.probeSelectedAddress,
+        selectedLatencyText: this.probeSelectedLatencyText,
+        otherItems: this.probeOtherItems,
+        useCardStyle: false
+      })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
   private transferQueueSheetBuilder() {
     FnTransferQueueSheet({ tasks: this.transferQueueTasks })
   }
@@ -305,54 +405,86 @@ struct MePanel {
 
   @Builder
   private connectionStatusRow() {
-    Column({ space: 14 }) {
-      Text('NAS 连接')
-        .fontSize(13)
-        .fontWeight(FontWeight.Regular)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-
-      Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-
-      if (this.endpointInfo.canSwitch) {
+    Column() {
+      Column({ space: 14 }) {
         Row() {
-          if (this.endpointInfo.hasPublic) {
-            this.endpointChannelTab('公网', LOGIN_ENDPOINT_PREF_PUBLIC, true)
-          }
-          if (this.endpointInfo.hasLan) {
-            this.endpointChannelTab('内网', LOGIN_ENDPOINT_PREF_LAN, true)
-          }
+          Text('NAS 连接')
+            .fontSize(13)
+            .fontWeight(FontWeight.Regular)
+            .fontColor($r('app.color.text_secondary'))
+            .layoutWeight(1)
+
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(16)
+            .fontColor([$r('app.color.text_secondary')])
         }
         .width('100%')
-        .borderRadius(12)
-        .borderWidth(1)
-        .borderColor($r('app.color.immersive_panel_border'))
-      } else if (this.endpointInfo.label.length > 0) {
-        Text(this.endpointInfo.label)
-          .fontSize(12)
+        .alignItems(VerticalAlign.Center)
+        .onClick((): void => {
+          this.openEndpointProbeSheet();
+        })
+
+        Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
+          .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-          .backgroundColor(this.endpointKindBadgeColor(this.endpointInfo.kind))
-          .borderRadius(8)
-          .alignSelf(ItemAlign.Start)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .onClick((): void => {
+            this.openEndpointProbeSheet();
+          })
+
+        if (this.endpointInfo.canSwitch) {
+          Row() {
+            if (this.endpointInfo.hasPublic) {
+              this.endpointChannelTab('公网', LOGIN_ENDPOINT_PREF_PUBLIC, true)
+            }
+            if (this.endpointInfo.hasLan) {
+              this.endpointChannelTab('内网', LOGIN_ENDPOINT_PREF_LAN, true)
+            }
+          }
+          .width('100%')
+          .borderRadius(12)
+          .borderWidth(1)
+          .borderColor($r('app.color.immersive_panel_border'))
+        } else if (this.endpointInfo.label.length > 0) {
+          Text(this.endpointInfo.label)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .backgroundColor(this.endpointKindBadgeColor(this.endpointInfo.kind))
+            .borderRadius(8)
+            .alignSelf(ItemAlign.Start)
+            .onClick((): void => {
+              this.openEndpointProbeSheet();
+            })
+        }
       }
+      .width('100%')
+      .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+      .backgroundColor($r('app.color.card_background'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient())
+      .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+      .borderWidth(1)
+      .borderColor($r('app.color.immersive_panel_border'))
+      .clip(true)
     }
     .width('100%')
-    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-    .backgroundColor($r('app.color.card_background'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
-    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .clip(true)
+    .bindSheet(this.probeSheetVisible, this.endpointProbeSheetBuilder, {
+      height: '50%',
+      title: { title: $r('app.string.nas_endpoint_probe_title') },
+      showClose: true,
+      dragBar: true,
+      backgroundColor: $r('app.color.card_background'),
+      onDisappear: (): void => {
+        this.probeSheetVisible = false;
+        this.probeSeq = this.probeSeq + 1;
+        this.probeSheetLoading = false;
+      }
+    })
   }
 
   @Builder
@@ -565,6 +697,7 @@ struct Home {
   @State private isDarkTheme: boolean = false;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
+  @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onHomeEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   @State private gallerySelectionDockActive: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   private gallerySelectionDockDownloadAction: () => void = () => {};
@@ -593,6 +726,13 @@ struct Home {
         this.albumReloadEpoch++;
       }
     });
+  }
+
+  private onHomeEndpointSwitchVersionChanged(): void {
+    const stored = AppSession.getStored();
+    this.galleryBaseUrl = stored !== null ? fnWebViewBaseUrl(stored.baseUrl) : '';
+    this.sessionOk = stored !== null;
+    this.albumReloadEpoch++;
   }
 
   onColorModeChanged(): void {

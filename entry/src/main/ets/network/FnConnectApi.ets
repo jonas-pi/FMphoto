@@ -29,13 +29,59 @@ export interface FnConnectLookupResult {
   message: string;
   /** 公网域名（DDNS 等） */
   publicDomainServer: string;
-  /** 公网 IP */
+  /** 公网 IP（兼容：IPv4 优先，否则 IPv6） */
   publicIpServer: string;
-  /** 局域网地址 */
+  /** 公网 IPv4 */
+  publicIpv4Server: string;
+  /** 公网 IPv6 */
+  publicIpv6Server: string;
+  /** 局域网地址（兼容：IPv4 优先，否则 IPv6） */
   lanServer: string;
+  /** 内网 IPv4 */
+  lanIpv4Server: string;
+  /** 内网 IPv6（不含链路本地） */
+  lanIpv6Server: string;
   /** FN Connect 中继（暂不使用，固定空串） */
   relayServer: string;
   summary: string;
+}
+
+/** 链路本地 / 回环 / 组播 IPv6 不能作为可达候选 */
+export function isUnusableIpv6Host(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h.length === 0) {
+    return true;
+  }
+  if (h.startsWith('[')) {
+    const close = h.indexOf(']');
+    return isUnusableIpv6Host(close > 1 ? h.substring(1, close) : h.substring(1));
+  }
+  if (h === '::1' || h === '::' || h === '0:0:0:0:0:0:0:1') {
+    return true;
+  }
+  if (h.startsWith('fe80:')) {
+    return true;
+  }
+  if (h.startsWith('ff')) {
+    return true;
+  }
+  return false;
+}
+
+function emptyLookup(message: string): FnConnectLookupResult {
+  return {
+    ok: false,
+    message,
+    publicDomainServer: '',
+    publicIpServer: '',
+    publicIpv4Server: '',
+    publicIpv6Server: '',
+    lanServer: '',
+    lanIpv4Server: '',
+    lanIpv6Server: '',
+    relayServer: '',
+    summary: ''
+  };
 }
 
 function utf8Encode(str: string): Uint8Array {
@@ -331,15 +377,7 @@ async function buildConnectAuthx(bodyStr: string, timestamp: number): Promise<st
 export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<FnConnectLookupResult> {
   const id = fnId.trim();
   if (!isFnId(id)) {
-    return {
-      ok: false,
-      message: 'FN ID 格式不正确',
-      publicDomainServer: '',
-      publicIpServer: '',
-      lanServer: '',
-      relayServer: '',
-      summary: ''
-    };
+    return emptyLookup('FN ID 格式不正确');
   }
 
   const timestamp = Date.now();
@@ -400,10 +438,11 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
       return fallbackFnosNet(id, useHttps, '未解析到可用地址');
     }
 
-    let lanServer = '';
+    let lanIpv4Server = '';
+    let lanIpv6Server = '';
     let publicDomainServer = '';
-    let publicIpServer = '';
-    let relayServer = '';
+    let publicIpv4Server = '';
+    let publicIpv6Server = '';
     const labels: string[] = [];
     for (let i = 0; i < addrs.length; i++) {
       const a = addrs[i];
@@ -422,54 +461,70 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
         }
         continue;
       }
-      if (a.type === 'publicIpv4' || a.type === 'publicIpv6') {
-        if (publicIpServer.length === 0) {
-          publicIpServer = url;
+      if (a.type === 'publicIpv4') {
+        if (publicIpv4Server.length === 0) {
+          publicIpv4Server = url;
         }
         continue;
       }
-      const isLan = a.type === 'ipv4' || a.type === 'ipv6'
-        ? (a.type === 'ipv4' ? isPrivateIpv4(a.host) : true)
-        : false;
-      if (isLan) {
-        if (lanServer.length === 0) {
-          lanServer = url;
+      if (a.type === 'publicIpv6') {
+        if (isUnusableIpv6Host(a.host)) {
+          continue;
         }
-      } else if (a.host.indexOf('.') >= 0 && !isPrivateIpv4(a.host) &&
+        if (publicIpv6Server.length === 0) {
+          publicIpv6Server = url;
+        }
+        continue;
+      }
+      if (a.type === 'ipv6') {
+        if (isUnusableIpv6Host(a.host)) {
+          continue;
+        }
+        if (lanIpv6Server.length === 0) {
+          lanIpv6Server = url;
+        }
+        continue;
+      }
+      if (a.type === 'ipv4') {
+        if (isPrivateIpv4(a.host)) {
+          if (lanIpv4Server.length === 0) {
+            lanIpv4Server = url;
+          }
+        } else if (publicIpv4Server.length === 0) {
+          publicIpv4Server = url;
+        }
+        continue;
+      }
+      if (a.host.indexOf('.') >= 0 && !isPrivateIpv4(a.host) &&
         !/^\d+\.\d+\.\d+\.\d+$/.test(a.host)) {
-        // 其它带域名形态的公网地址
         if (publicDomainServer.length === 0) {
           publicDomainServer = url;
         }
-      } else if (publicIpServer.length === 0) {
-        publicIpServer = url;
+      } else if (publicIpv4Server.length === 0) {
+        publicIpv4Server = url;
       }
     }
-    // 暂不使用 FN Connect 中继（门户 / 专有隧道无法给第三方做 WSS）
-    relayServer = '';
+    const lanServer = lanIpv4Server.length > 0 ? lanIpv4Server : lanIpv6Server;
+    const publicIpServer = publicIpv4Server.length > 0 ? publicIpv4Server : publicIpv6Server;
     if (publicDomainServer.length === 0 && publicIpServer.length === 0 &&
       lanServer.length === 0) {
-      return {
-        ok: false,
-        message: 'FN Connect 未返回可用的公网或内网地址',
-        publicDomainServer: '',
-        publicIpServer: '',
-        lanServer: '',
-        relayServer: '',
-        summary: ''
-      };
+      return emptyLookup('FN Connect 未返回可用的公网或内网地址');
     }
     const summary = `FN Connect 已解析 ${id}（${labels.join('/')}）`;
     hilog.info(DOMAIN, TAG,
-      'lookup ok fnId=%{public}s domain=%{public}s ip=%{public}s lan=%{public}s',
-      id, publicDomainServer, publicIpServer, lanServer);
+      'lookup ok fnId=%{public}s domain=%{public}s v4=%{public}s v6=%{public}s lan4=%{public}s lan6=%{public}s',
+      id, publicDomainServer, publicIpv4Server, publicIpv6Server, lanIpv4Server, lanIpv6Server);
     return {
       ok: true,
       message: '',
       publicDomainServer,
       publicIpServer,
+      publicIpv4Server,
+      publicIpv6Server,
       lanServer,
-      relayServer,
+      lanIpv4Server,
+      lanIpv6Server,
+      relayServer: '',
       summary
     };
   } catch (e) {
@@ -486,13 +541,5 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
 /** 云端失败：不再回退到中继门户（第三方无法用其做 NAS 登录） */
 function fallbackFnosNet(fnId: string, _useHttps: boolean, reason: string): FnConnectLookupResult {
   hilog.warn(DOMAIN, TAG, 'fallback fail fnId=%{public}s reason=%{public}s', fnId, reason);
-  return {
-    ok: false,
-    message: reason,
-    publicDomainServer: '',
-    publicIpServer: '',
-    lanServer: '',
-    relayServer: '',
-    summary: ''
-  };
+  return emptyLookup(reason);
 }

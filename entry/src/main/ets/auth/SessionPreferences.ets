@@ -14,6 +14,8 @@ const K_ENDPOINT_PUBLIC_URL = 'endpoint_public_url';
 const K_ENDPOINT_PUBLIC_DOMAIN_URL = 'endpoint_public_domain_url';
 const K_ENDPOINT_PUBLIC_IP_URL = 'endpoint_public_ip_url';
 const K_ENDPOINT_LAN_URL = 'endpoint_lan_url';
+const K_ENDPOINT_LAN_IPV6_URL = 'endpoint_lan_ipv6_url';
+const K_ENDPOINT_PUBLIC_IPV6_URL = 'endpoint_public_ipv6_url';
 const K_ENDPOINT_RELAY_URL = 'endpoint_relay_url';
 const K_LOGIN_ENDPOINT_PREF = 'login_endpoint_pref';
 const K_USE_HTTPS = 'use_https';
@@ -45,8 +47,12 @@ export interface StoredSession {
   endpointPublicDomainUrl: string;
   /** 公网 IP baseUrl（若有） */
   endpointPublicIpUrl: string;
-  /** 可切换的内网 baseUrl（规范化） */
+  /** 可切换的内网 IPv4 baseUrl（规范化） */
   endpointLanUrl: string;
+  /** 可切换的内网 IPv6 baseUrl（规范化） */
+  endpointLanIpv6Url: string;
+  /** 可切换的公网 IPv6 baseUrl（规范化） */
+  endpointPublicIpv6Url: string;
   /** 可切换的中继 baseUrl（规范化，如 https://fnos.net/{fnId}） */
   endpointRelayUrl: string;
   loginEndpointPreference: string;
@@ -155,7 +161,9 @@ export class SessionPreferences {
       prefsGetString(p, K_LOGIN_VIA_WS, '0'),
       prefsGetString(p, K_WS_SIGN_KEY_B64, ''),
       prefsGetString(p, K_OPENAPI_AUTHX_KEY, ''),
-      prefsGetString(p, K_OPENAPI_AUTHX_SECRET, '')
+      prefsGetString(p, K_OPENAPI_AUTHX_SECRET, ''),
+      prefsGetString(p, K_ENDPOINT_LAN_IPV6_URL, ''),
+      prefsGetString(p, K_ENDPOINT_PUBLIC_IPV6_URL, '')
     ]);
     return {
       baseUrl: prefsValues[0],
@@ -177,7 +185,9 @@ export class SessionPreferences {
       loginViaWebSocket: prefsValues[15] === '1',
       wsSignKeyB64: prefsValues[16],
       openApiAuthxKey: prefsValues[17],
-      openApiAuthxSecret: prefsValues[18]
+      openApiAuthxSecret: prefsValues[18],
+      endpointLanIpv6Url: prefsValues[19],
+      endpointPublicIpv6Url: prefsValues[20]
     };
   }
 
@@ -193,6 +203,8 @@ export class SessionPreferences {
     await prefsPutString(p, K_ENDPOINT_PUBLIC_DOMAIN_URL, s.endpointPublicDomainUrl);
     await prefsPutString(p, K_ENDPOINT_PUBLIC_IP_URL, s.endpointPublicIpUrl);
     await prefsPutString(p, K_ENDPOINT_LAN_URL, s.endpointLanUrl);
+    await prefsPutString(p, K_ENDPOINT_LAN_IPV6_URL, s.endpointLanIpv6Url);
+    await prefsPutString(p, K_ENDPOINT_PUBLIC_IPV6_URL, s.endpointPublicIpv6Url);
     await prefsPutString(p, K_ENDPOINT_RELAY_URL, s.endpointRelayUrl);
     await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, s.loginEndpointPreference);
     await prefsPutString(p, K_USE_HTTPS, s.useHttps ? '1' : '0');

@@ -15,7 +15,8 @@ import {
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_LATENCY,
   LOGIN_ENDPOINT_PREF_PUBLIC,
-  selectAmongEndpoints
+  LoginEndpointSelectionResult,
+  selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
 import { extractFnId, isFnId, isFnRelayBaseUrl, lookupFnConnect } from '../network/FnConnectApi';
 import { preferPublicEndpointUrl, resolvePublicDomainToIpBaseUrl } from '../network/PublicDns';
@@ -24,6 +25,11 @@ import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { FnPrimaryButton } from '../common/FnUiCommon';
+import {
+  buildEndpointProbeDisplay,
+  FnEndpointProbeLineItem,
+  FnEndpointProbeView
+} from '../common/FnEndpointProbeView';
 import { fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import {
@@ -47,7 +53,12 @@ struct Login {
   @State private useHttps: boolean = true;
   @State private loading: boolean = false;
   @State private errorText: string = '';
-  @State private probeSummary: string = '';
+  @State private probeStatus: string = '';
+  @State private probeFnHint: string = '';
+  @State private probeSelectedLabel: string = '';
+  @State private probeSelectedAddress: string = '';
+  @State private probeSelectedLatencyText: string = '';
+  @State private probeOtherItems: FnEndpointProbeLineItem[] = [];
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
   @State private otpCode: string = '';
@@ -62,6 +73,8 @@ struct Login {
   private pendingEndpointPublicDomainUrl: string = '';
   private pendingEndpointPublicIpUrl: string = '';
   private pendingEndpointLanUrl: string = '';
+  private pendingEndpointLanIpv6Url: string = '';
+  private pendingEndpointPublicIpv6Url: string = '';
   private pendingEndpointRelayUrl: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
 
@@ -170,6 +183,8 @@ struct Login {
       endpointPublicDomainUrl: this.pendingEndpointPublicDomainUrl,
       endpointPublicIpUrl: this.pendingEndpointPublicIpUrl,
       endpointLanUrl: this.pendingEndpointLanUrl,
+      endpointLanIpv6Url: this.pendingEndpointLanIpv6Url,
+      endpointPublicIpv6Url: this.pendingEndpointPublicIpv6Url,
       endpointRelayUrl: this.pendingEndpointRelayUrl,
       loginEndpointPreference: this.endpointPreference,
       useHttps: this.useHttps,
@@ -336,9 +351,27 @@ struct Login {
     return fallback !== '[object Object]' ? fallback : '';
   }
 
+  private clearProbeDisplay(): void {
+    this.probeStatus = '';
+    this.probeFnHint = '';
+    this.probeSelectedLabel = '';
+    this.probeSelectedAddress = '';
+    this.probeSelectedLatencyText = '';
+    this.probeOtherItems = [];
+  }
+
+  private applyProbeSelection(fnHint: string, selected: LoginEndpointSelectionResult): void {
+    const display = buildEndpointProbeDisplay(selected, '', fnHint);
+    this.probeStatus = '';
+    this.probeFnHint = display.hintText;
+    this.probeSelectedLabel = display.selectedLabel;
+    this.probeSelectedAddress = display.selectedAddress;
+    this.probeSelectedLatencyText = display.selectedLatencyText;
+    this.probeOtherItems = display.otherItems;
+  }
+
   private async onLoginClick(): Promise<void> {
     this.errorText = '';
-    this.probeSummary = '';
     const sharedRaw = this.fnIdInput.trim();
     const publicDomainRaw = this.domainInput.trim();
     const sharedParsed = this.parseSharedHostInput(sharedRaw);
@@ -350,6 +383,8 @@ struct Login {
       return;
     }
     this.loading = true;
+    this.clearProbeDisplay();
+    this.probeStatus = '正在探测可达路径…';
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       this.show2faStep = false;
@@ -359,6 +394,8 @@ struct Login {
       this.pendingEndpointPublicDomainUrl = '';
       this.pendingEndpointPublicIpUrl = '';
       this.pendingEndpointLanUrl = '';
+      this.pendingEndpointLanIpv6Url = '';
+      this.pendingEndpointPublicIpv6Url = '';
       this.pendingEndpointRelayUrl = '';
 
       let fnSummary = '';
@@ -379,10 +416,18 @@ struct Login {
       }
 
       if (lanRaw.length > 0) {
-        this.pendingEndpointLanUrl = normalizeServerUrl(lanRaw, this.useHttps);
+        const lanUrl = normalizeServerUrl(lanRaw, this.useHttps);
+        if (lanUrl.length > 0) {
+          const lanParts = parseNormalizedBaseUrl(lanUrl);
+          if (lanParts !== null && lanParts.useBracket) {
+            this.pendingEndpointLanIpv6Url = lanUrl;
+          } else {
+            this.pendingEndpointLanUrl = lanUrl;
+          }
+        }
       }
 
-      // FN ID：FN Connect 补齐公网 / 内网；手填域名优先于云端 DDNS
+      // FN ID：FN Connect 补齐公网 / 内网 V4/V6；手填域名优先于云端 DDNS
       if (fnId.length > 0) {
         const looked = await lookupFnConnect(fnId, this.useHttps);
         const hasAny = looked.publicDomainServer.length > 0 || looked.publicIpServer.length > 0 ||
@@ -394,28 +439,35 @@ struct Login {
         if (this.pendingEndpointPublicDomainUrl.length === 0 && looked.publicDomainServer.length > 0) {
           this.pendingEndpointPublicDomainUrl = looked.publicDomainServer;
         }
-        if (this.pendingEndpointPublicIpUrl.length === 0 && looked.publicIpServer.length > 0) {
-          this.pendingEndpointPublicIpUrl = looked.publicIpServer;
+        if (this.pendingEndpointPublicIpUrl.length === 0 && looked.publicIpv4Server.length > 0) {
+          this.pendingEndpointPublicIpUrl = looked.publicIpv4Server;
         }
-        if (this.pendingEndpointLanUrl.length === 0 && looked.lanServer.length > 0) {
-          this.pendingEndpointLanUrl = looked.lanServer;
+        if (this.pendingEndpointPublicIpv6Url.length === 0 && looked.publicIpv6Server.length > 0) {
+          this.pendingEndpointPublicIpv6Url = looked.publicIpv6Server;
+        }
+        if (this.pendingEndpointLanUrl.length === 0 && looked.lanIpv4Server.length > 0) {
+          this.pendingEndpointLanUrl = looked.lanIpv4Server;
+        }
+        if (this.pendingEndpointLanIpv6Url.length === 0 && looked.lanIpv6Server.length > 0) {
+          this.pendingEndpointLanIpv6Url = looked.lanIpv6Server;
         }
         fnSummary = looked.summary;
       }
 
       this.pendingEndpointPublicUrl = preferPublicEndpointUrl(
         this.pendingEndpointPublicDomainUrl,
-        this.pendingEndpointPublicIpUrl
+        this.pendingEndpointPublicIpUrl.length > 0 ?
+          this.pendingEndpointPublicIpUrl : this.pendingEndpointPublicIpv6Url
       );
       this.pendingEndpointRelayUrl = '';
 
-      const selected = await selectAmongEndpoints(
-        this.pendingEndpointPublicDomainUrl,
-        this.pendingEndpointPublicIpUrl,
-        this.pendingEndpointLanUrl,
-        '',
-        this.endpointPreference
-      );
+      const selected = await selectAmongEndpointPool({
+        lanIpv4Url: this.pendingEndpointLanUrl,
+        lanIpv6Url: this.pendingEndpointLanIpv6Url,
+        publicDomainUrl: this.pendingEndpointPublicDomainUrl,
+        publicIpv4Url: this.pendingEndpointPublicIpUrl,
+        publicIpv6Url: this.pendingEndpointPublicIpv6Url
+      }, this.endpointPreference);
       if (selected.server.length === 0) {
         this.errorText = '请填写可用的 FN ID / 内网 IP 或公网域名';
         return;
@@ -423,13 +475,7 @@ struct Login {
       if (selected.preferredPublicUrl.length > 0) {
         this.pendingEndpointPublicUrl = selected.preferredPublicUrl;
       }
-      if (fnSummary.length > 0 && selected.summary.length > 0) {
-        this.probeSummary = `${fnSummary}；${selected.summary}`;
-      } else if (fnSummary.length > 0) {
-        this.probeSummary = fnSummary;
-      } else {
-        this.probeSummary = selected.summary;
-      }
+      this.applyProbeSelection(fnSummary, selected);
       await this.attemptLoginWebSocketOnly(ctx, selected.server, this.username.trim(), this.password);
     } catch (e) {
       const msg = this.describeLoginError(e);
@@ -437,6 +483,9 @@ struct Login {
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {
       this.loading = false;
+      if (this.probeSelectedLabel.length === 0) {
+        this.probeStatus = '';
+      }
     }
   }
 
@@ -679,11 +728,17 @@ struct Login {
             .width('100%')
         }
 
-        if (this.probeSummary.length > 0) {
-          Text(this.probeSummary)
-            .fontColor($r('app.color.text_secondary'))
-            .fontSize(13)
-            .width('100%')
+        if (this.probeStatus.length > 0 || this.probeSelectedLabel.length > 0) {
+          FnEndpointProbeView({
+            probing: this.probeStatus.length > 0,
+            hintText: this.probeFnHint,
+            selectedTitle: $r('app.string.login_probe_selected'),
+            selectedLabel: this.probeSelectedLabel,
+            selectedAddress: this.probeSelectedAddress,
+            selectedLatencyText: this.probeSelectedLatencyText,
+            otherItems: this.probeOtherItems,
+            useCardStyle: true
+          })
         }
 
         if (this.show2faStep) {

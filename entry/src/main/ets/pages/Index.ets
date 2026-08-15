@@ -7,6 +7,7 @@ import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
+import { scheduleCheck } from '../network/LoginEndpointAutoSwitch';
 import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
@@ -167,11 +168,13 @@ struct Index {
         return;
       }
       if (s.loginViaWebSocket === true) {
+        scheduleCheck();
         this.fadeSplashAndNavigate('pages/Home');
         return;
       }
       client.getUserInfo(5000, 2).then((r) => {
         if (r.success) {
+          scheduleCheck();
           this.fadeSplashAndNavigate('pages/Home');
         } else {
           SessionPreferences.clearToken(ctx).then(() => {

@@ -12,7 +12,9 @@ import { fnWsLogin } from './FnWsLogin';
 import {
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_PUBLIC,
-  LOGIN_ENDPOINT_PREF_RELAY
+  LOGIN_ENDPOINT_PREF_RELAY,
+  LoginEndpointPool,
+  selectAmongEndpointPool
 } from './LoginEndpointSelector';
 import { splitOrigin } from './fnHttpClient/FnHttpClientCommon';
 import { preferPublicEndpointUrl } from './PublicDns';
@@ -43,8 +45,21 @@ export interface EndpointConnectionInfo {
   hasRelay: boolean;
   publicUrl: string;
   lanUrl: string;
+  lanIpv6Url: string;
+  publicIpv6Url: string;
   relayUrl: string;
   activeUrl: string;
+}
+
+export interface StoredEndpointUrls {
+  publicUrl: string;
+  publicDomainUrl: string;
+  publicIpv4Url: string;
+  publicIpv6Url: string;
+  lanIpv4Url: string;
+  lanIpv6Url: string;
+  lanUrl: string;
+  relayUrl: string;
 }
 
 export interface EndpointSwitchResult {
@@ -115,7 +130,9 @@ function resolveKindByUrl(
   publicUrl: string,
   publicDomainUrl: string,
   publicIpUrl: string,
+  publicIpv6Url: string,
   lanUrl: string,
+  lanIpv6Url: string,
   relayUrl: string
 ): string {
   const current = currentUrl.trim();
@@ -123,6 +140,9 @@ function resolveKindByUrl(
     return ENDPOINT_KIND_UNKNOWN;
   }
   if (lanUrl.length > 0 && sameEndpoint(current, lanUrl)) {
+    return LOGIN_ENDPOINT_PREF_LAN;
+  }
+  if (lanIpv6Url.length > 0 && sameEndpoint(current, lanIpv6Url)) {
     return LOGIN_ENDPOINT_PREF_LAN;
   }
   if (relayUrl.length > 0 && sameEndpoint(current, relayUrl)) {
@@ -134,6 +154,9 @@ function resolveKindByUrl(
   if (publicIpUrl.length > 0 && sameEndpoint(current, publicIpUrl)) {
     return LOGIN_ENDPOINT_PREF_PUBLIC;
   }
+  if (publicIpv6Url.length > 0 && sameEndpoint(current, publicIpv6Url)) {
+    return LOGIN_ENDPOINT_PREF_PUBLIC;
+  }
   if (publicUrl.length > 0 && sameEndpoint(current, publicUrl)) {
     return LOGIN_ENDPOINT_PREF_PUBLIC;
   }
@@ -143,20 +166,27 @@ function resolveKindByUrl(
   return ENDPOINT_KIND_UNKNOWN;
 }
 
+function looksLikeIpv6Url(baseUrl: string): boolean {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  return parts !== null && parts.useBracket;
+}
+
 /**
  * 从会话字段或旧版 domain/lan 输入推导可切换地址。
  * 公网首选：域名优先于 IP。
  */
-export function resolveStoredEndpointUrls(stored: StoredSession): [string, string, string, string, string] {
+export function resolveStoredEndpointUrls(stored: StoredSession): StoredEndpointUrls {
   let publicDomainUrl = stored.endpointPublicDomainUrl.trim();
-  let publicIpUrl = stored.endpointPublicIpUrl.trim();
+  let publicIpv4Url = stored.endpointPublicIpUrl.trim();
+  let publicIpv6Url = stored.endpointPublicIpv6Url.trim();
   let publicUrl = stored.endpointPublicUrl.trim();
-  let lanUrl = stored.endpointLanUrl.trim();
+  let lanIpv4Url = stored.endpointLanUrl.trim();
+  let lanIpv6Url = stored.endpointLanIpv6Url.trim();
   let relayUrl = stored.endpointRelayUrl.trim();
 
-  if (publicDomainUrl.length === 0 && publicIpUrl.length === 0 && publicUrl.length === 0 &&
-    lanUrl.length === 0 && relayUrl.length === 0) {
-    // 旧会话回退：按 domain/lan 推断
+  if (publicDomainUrl.length === 0 && publicIpv4Url.length === 0 && publicUrl.length === 0 &&
+    lanIpv4Url.length === 0 && lanIpv6Url.length === 0 && publicIpv6Url.length === 0 &&
+    relayUrl.length === 0) {
     const fromDomain = normalizeServerUrl(stored.domainInput, stored.useHttps);
     const fromLan = normalizeServerUrl(stored.lanInput, stored.useHttps);
     if (fromDomain.length > 0) {
@@ -166,26 +196,64 @@ export function resolveStoredEndpointUrls(stored: StoredSession): [string, strin
         const parts = parseNormalizedBaseUrl(fromDomain);
         const host = parts !== null ? parts.host : '';
         if (host.length > 0 && isIpLiteralHost(host)) {
-          publicIpUrl = fromDomain;
+          if (parts !== null && parts.useBracket) {
+            publicIpv6Url = fromDomain;
+          } else {
+            publicIpv4Url = fromDomain;
+          }
         } else {
           publicDomainUrl = fromDomain;
         }
       }
     }
-    lanUrl = fromLan;
+    if (fromLan.length > 0 && looksLikeIpv6Url(fromLan)) {
+      lanIpv6Url = fromLan;
+    } else {
+      lanIpv4Url = fromLan;
+    }
+  }
+
+  if (publicIpv6Url.length === 0 && publicIpv4Url.length > 0 && looksLikeIpv6Url(publicIpv4Url)) {
+    publicIpv6Url = publicIpv4Url;
+    publicIpv4Url = '';
+  }
+  if (lanIpv6Url.length === 0 && lanIpv4Url.length > 0 && looksLikeIpv6Url(lanIpv4Url)) {
+    lanIpv6Url = lanIpv4Url;
+    lanIpv4Url = '';
   }
 
   if (publicUrl.length === 0) {
-    publicUrl = preferPublicEndpointUrl(publicDomainUrl, publicIpUrl);
+    publicUrl = preferPublicEndpointUrl(publicDomainUrl,
+      publicIpv4Url.length > 0 ? publicIpv4Url : publicIpv6Url);
   }
-  // 兼容旧会话里误存的中继地址：规范化后仍不参与切换
   if (relayUrl.length > 0 && isFnRelayBaseUrl(relayUrl)) {
     relayUrl = normalizeFnRelayBaseUrl(relayUrl);
   }
-  return [publicUrl, publicDomainUrl, publicIpUrl, lanUrl, relayUrl];
+  const lanUrl = lanIpv4Url.length > 0 ? lanIpv4Url : lanIpv6Url;
+  return {
+    publicUrl,
+    publicDomainUrl,
+    publicIpv4Url,
+    publicIpv6Url,
+    lanIpv4Url,
+    lanIpv6Url,
+    lanUrl,
+    relayUrl: ''
+  };
 }
 
-function countDistinctEndpoints(publicUrl: string, lanUrl: string): number {
+export function endpointPoolFromStored(stored: StoredSession): LoginEndpointPool {
+  const urls = resolveStoredEndpointUrls(stored);
+  return {
+    lanIpv4Url: urls.lanIpv4Url,
+    lanIpv6Url: urls.lanIpv6Url,
+    publicDomainUrl: urls.publicDomainUrl,
+    publicIpv4Url: urls.publicIpv4Url,
+    publicIpv6Url: urls.publicIpv6Url
+  };
+}
+
+function countDistinctEndpoints(urls: StoredEndpointUrls): number {
   const seen: string[] = [];
   const pushUnique = (u: string): void => {
     if (u.length === 0) {
@@ -200,8 +268,11 @@ function countDistinctEndpoints(publicUrl: string, lanUrl: string): number {
     }
     seen.push(key);
   };
-  pushUnique(publicUrl);
-  pushUnique(lanUrl);
+  pushUnique(urls.publicDomainUrl);
+  pushUnique(urls.publicIpv4Url);
+  pushUnique(urls.publicIpv6Url);
+  pushUnique(urls.lanIpv4Url);
+  pushUnique(urls.lanIpv6Url);
   return seen.length;
 }
 
@@ -217,21 +288,24 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
       hasRelay: false,
       publicUrl: '',
       lanUrl: '',
+      lanIpv6Url: '',
+      publicIpv6Url: '',
       relayUrl: '',
       activeUrl: ''
     };
   }
   const urls = resolveStoredEndpointUrls(stored);
-  const publicUrl = urls[0];
-  const publicDomainUrl = urls[1];
-  const publicIpUrl = urls[2];
-  const lanUrl = urls[3];
-  // 中继地址保留读取但不参与切换
+  const publicUrl = urls.publicUrl;
+  const publicDomainUrl = urls.publicDomainUrl;
+  const publicIpUrl = urls.publicIpv4Url;
+  const lanUrl = urls.lanUrl;
   const activeUrl = stored.baseUrl.trim();
-  const distinct = countDistinctEndpoints(publicUrl, lanUrl);
+  const distinct = countDistinctEndpoints(urls);
   const canSwitch = distinct >= 2;
-  let kind = resolveKindByUrl(activeUrl, publicUrl, publicDomainUrl, publicIpUrl, lanUrl, '');
-  // 旧会话若停在中继门户，改按公网/内网重新归类
+  let kind = resolveKindByUrl(
+    activeUrl, publicUrl, publicDomainUrl, publicIpUrl, urls.publicIpv6Url,
+    lanUrl, urls.lanIpv6Url, ''
+  );
   if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
     kind = ENDPOINT_KIND_UNKNOWN;
   }
@@ -239,6 +313,8 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
     kind = ENDPOINT_KIND_SINGLE;
   } else if (kind === ENDPOINT_KIND_UNKNOWN) {
     if (lanUrl.length > 0 && sameEndpoint(activeUrl, lanUrl)) {
+      kind = LOGIN_ENDPOINT_PREF_LAN;
+    } else if (urls.lanIpv6Url.length > 0 && sameEndpoint(activeUrl, urls.lanIpv6Url)) {
       kind = LOGIN_ENDPOINT_PREF_LAN;
     } else if (publicUrl.length > 0) {
       kind = LOGIN_ENDPOINT_PREF_PUBLIC;
@@ -251,34 +327,43 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
     const showPublic = publicDomainUrl.length > 0 ? publicDomainUrl : publicUrl;
     addressText = compactAddressFromUrl(showPublic, stored.domainInput);
   } else if (kind === LOGIN_ENDPOINT_PREF_LAN) {
-    addressText = compactAddressFromUrl(lanUrl, stored.lanInput);
+    const showLan = sameEndpoint(activeUrl, urls.lanIpv6Url) ? urls.lanIpv6Url : lanUrl;
+    addressText = compactAddressFromUrl(showLan, stored.lanInput);
   } else if (activeUrl.length > 0) {
     addressText = compactAddressFromUrl(
       activeUrl,
       stored.domainInput.length > 0 ? stored.domainInput : stored.lanInput
     );
   }
+  const hasPublic = publicUrl.length > 0 || publicDomainUrl.length > 0 ||
+    publicIpUrl.length > 0 || urls.publicIpv6Url.length > 0;
+  const hasLan = lanUrl.length > 0 || urls.lanIpv6Url.length > 0;
   return {
     kind,
     label: endpointKindLabel(kind),
     addressText,
     canSwitch,
-    hasPublic: publicUrl.length > 0 || publicDomainUrl.length > 0 || publicIpUrl.length > 0,
-    hasLan: lanUrl.length > 0,
+    hasPublic,
+    hasLan,
     hasRelay: false,
     publicUrl: publicUrl.length > 0 ? publicUrl : preferPublicEndpointUrl(publicDomainUrl, publicIpUrl),
     lanUrl,
+    lanIpv6Url: urls.lanIpv6Url,
+    publicIpv6Url: urls.publicIpv6Url,
     relayUrl: '',
     activeUrl
   };
 }
 
-function targetUrlForKind(info: EndpointConnectionInfo, targetKind: string): string {
+async function pickUrlForKind(stored: StoredSession, targetKind: string): Promise<string> {
+  const pool = endpointPoolFromStored(stored);
   if (targetKind === LOGIN_ENDPOINT_PREF_LAN) {
-    return info.lanUrl;
+    const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_LAN);
+    return selected.server;
   }
   if (targetKind === LOGIN_ENDPOINT_PREF_PUBLIC) {
-    return info.publicUrl;
+    const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_PUBLIC);
+    return selected.server;
   }
   return '';
 }
@@ -317,6 +402,54 @@ async function finishSwitchSession(
   return { ok: true, message: '已切换连接' };
 }
 
+export async function switchStoredLoginEndpointToUrl(
+  ctx: common.UIAbilityContext,
+  nextUrl: string,
+  silentAlreadyCurrent: boolean = false
+): Promise<EndpointSwitchResult> {
+  const stored = AppSession.getStored();
+  if (stored === null) {
+    return { ok: false, message: '未登录' };
+  }
+  const target = nextUrl.trim();
+  if (target.length === 0) {
+    return { ok: false, message: '目标地址无效' };
+  }
+  if (sameEndpoint(stored.baseUrl, target)) {
+    return {
+      ok: true,
+      message: silentAlreadyCurrent ? '' : '当前已是该连接'
+    };
+  }
+  const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
+  const pass = defaults.password;
+  const user = stored.account.length > 0 ? stored.account : defaults.username;
+  if (pass.length === 0 || user.length === 0) {
+    return { ok: false, message: '缺少保存的登录凭据，请重新登录' };
+  }
+  const trusted = CertPolicy.isTrusted(target);
+  const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
+  const wsRes = await fnWsLogin(target, user, pass, trusted, deviceId);
+  if (wsRes.requires2fa === true || wsRes.requires2faSetup === true) {
+    return { ok: false, message: '切换需要双重验证，请返回登录页操作' };
+  }
+  if (wsRes.certificateError === true && !trusted) {
+    return {
+      ok: false,
+      message: '目标地址证书未信任',
+      certificateError: true,
+      targetUrl: target
+    };
+  }
+  if (wsRes.success !== true || wsRes.token === undefined || wsRes.token.length === 0) {
+    const msg = wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : '切换连接失败';
+    return { ok: false, message: msg };
+  }
+  const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
+  const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
+  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt);
+}
+
 export async function switchStoredLoginEndpoint(
   ctx: common.UIAbilityContext,
   targetKind: string
@@ -329,38 +462,9 @@ export async function switchStoredLoginEndpoint(
   if (!info.canSwitch) {
     return { ok: false, message: '未配置多地址，无法切换' };
   }
-  const nextUrl = targetUrlForKind(info, targetKind);
+  const nextUrl = await pickUrlForKind(stored, targetKind);
   if (nextUrl.length === 0) {
     return { ok: false, message: '目标地址无效' };
   }
-  if (sameEndpoint(info.activeUrl, nextUrl)) {
-    return { ok: true, message: '当前已是该连接' };
-  }
-  const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
-  const pass = defaults.password;
-  const user = stored.account.length > 0 ? stored.account : defaults.username;
-  if (pass.length === 0 || user.length === 0) {
-    return { ok: false, message: '缺少保存的登录凭据，请重新登录' };
-  }
-  const trusted = CertPolicy.isTrusted(nextUrl);
-  const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
-  const wsRes = await fnWsLogin(nextUrl, user, pass, trusted, deviceId);
-  if (wsRes.requires2fa === true || wsRes.requires2faSetup === true) {
-    return { ok: false, message: '切换需要双重验证，请返回登录页操作' };
-  }
-  if (wsRes.certificateError === true && !trusted) {
-    return {
-      ok: false,
-      message: '目标地址证书未信任',
-      certificateError: true,
-      targetUrl: nextUrl
-    };
-  }
-  if (wsRes.success !== true || wsRes.token === undefined || wsRes.token.length === 0) {
-    const msg = wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : '切换连接失败';
-    return { ok: false, message: msg };
-  }
-  const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
-  const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-  return finishSwitchSession(ctx, stored, nextUrl, wsRes.token, sk, lt);
+  return switchStoredLoginEndpointToUrl(ctx, nextUrl, false);
 }
