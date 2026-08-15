@@ -4,9 +4,33 @@
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] - 2026-08-15
+
+在 [1.2.0-beta.1] 验证通过后发布的正式版，功能与预发布一致。
+
 ### 新增
 
 - **FN ID 登录**：登录页可直接填写 FN ID（或 `xxx.fnos.net` / `fnos.net/xxx`），经 FN Connect 云端解析后自动选路登录；「我的」页可在公网 / 内网 / 中继间切换。公网支持「域名 + 公网 IP」双探测，都通则优先域名。
+
+### 改进
+
+- **NAS 同步去重**：增强相册自动同步的指纹去重与索引处理，降低重复上传与同步抖动。
+- **「我的」页样式**：优化登录态与端点切换相关界面展示。
+
+### 修复
+
+- **HarmonyOS 7 布局**：修复部分页面在 HarmonyOS 7 下的布局问题（底部 dock 显式设置 `barWidth` / `barSideMargin`，关闭智感握姿偏移）。
+- **ArkTS 编译**：`NavigationMode` 改为使用 ArkUI 内置全局枚举，不再从 `@kit.ArkUI` 错误导入，兼容当前 SDK。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> 本版本仅上传未签名包；`.p12` / `.p7b` / `build-profile.json5` 等密钥材料严禁入库或随 Release 分发。已安装 `1.2.0-beta.1` 的设备可直接覆盖升级（`versionCode` 1002001）。
 
 ---
 
@@ -114,6 +138,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.2.0]: https://github.com/jonas-pi/FMphoto/compare/v1.2.0-beta.1...v1.2.0
 [1.2.0-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.1.1...v1.2.0-beta.1
 [1.1.1]: https://github.com/jonas-pi/FMphoto/compare/v1.1...v1.1.1
 [1.1]: https://github.com/jonas-pi/FMphoto/compare/v1.0.10...v1.1
