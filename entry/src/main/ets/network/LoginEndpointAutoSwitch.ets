@@ -1,5 +1,6 @@
 /**
- * 已登录后按网络变化自动选路：重新解析 FN ID，并行探测内网/公网 V4/V6，切到当前最优地址。
+ * 已登录后按网络变化自动选路：立刻用已存地址并行探测并切换，
+ * FN Connect 刷新放到切换之后，避免云端解析拖慢切网。
  */
 import { common } from '@kit.AbilityKit';
 import { connection } from '@kit.NetworkKit';
@@ -13,12 +14,19 @@ import {
   resolveEndpointConnectionInfo,
   switchStoredLoginEndpointToUrl
 } from './LoginEndpointSwitch';
-import { selectAmongEndpointPool } from './LoginEndpointSelector';
+import {
+  LOGIN_ENDPOINT_PREF_AUTO,
+  LoginEndpointPool,
+  selectAmongEndpointPool
+} from './LoginEndpointSelector';
 import { preferPublicEndpointUrl } from './PublicDns';
 
 const DOMAIN = 0xFF00;
 const TAG = 'LoginEndpointAutoSwitch';
-const DEBOUNCE_MS = 1600;
+/** 等路由就绪；过短会在新网络尚未生效时探测到旧路径 */
+const DEBOUNCE_MS = 280;
+/** 自动切网用更短探测，各候选并行 */
+const AUTO_PROBE_TIMEOUT_MS = 800;
 
 export const FN_ENDPOINT_SWITCH_VERSION: string = 'FN_ENDPOINT_SWITCH_VERSION';
 export const FN_ENDPOINT_SWITCH_MESSAGE: string = 'FN_ENDPOINT_SWITCH_MESSAGE';
@@ -64,15 +72,15 @@ function applyLookupToStored(stored: StoredSession, lookedLan4: string, lookedLa
   );
 }
 
-async function refreshFnConnectAddresses(stored: StoredSession): Promise<void> {
+async function refreshFnConnectAddresses(stored: StoredSession): Promise<boolean> {
   const fnId = stored.fnIdInput.trim();
   if (fnId.length === 0) {
-    return;
+    return false;
   }
   const looked = await lookupFnConnect(fnId, stored.useHttps);
   if (!looked.ok) {
     hilog.warn(DOMAIN, TAG, 'FN Connect refresh skipped: %{public}s', looked.message);
-    return;
+    return false;
   }
   applyLookupToStored(
     stored,
@@ -82,6 +90,30 @@ async function refreshFnConnectAddresses(stored: StoredSession): Promise<void> {
     looked.publicIpv6Server,
     looked.publicDomainServer
   );
+  return true;
+}
+
+function poolKey(pool: LoginEndpointPool): string {
+  return `${pool.lanIpv4Url}|${pool.lanIpv6Url}|${pool.publicDomainUrl}|${pool.publicIpv4Url}|${pool.publicIpv6Url}`;
+}
+
+async function probeAndSwitch(ctx: common.UIAbilityContext, stored: StoredSession): Promise<void> {
+  const pool = endpointPoolFromStored(stored);
+  const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_AUTO, AUTO_PROBE_TIMEOUT_MS);
+  if (selected.server.length === 0) {
+    return;
+  }
+  const res = await switchStoredLoginEndpointToUrl(ctx, selected.server, true, true);
+  if (!res.ok) {
+    hilog.warn(DOMAIN, TAG, 'auto switch failed: %{public}s', res.message);
+    return;
+  }
+  if (res.message.length === 0) {
+    return;
+  }
+  const summary = selected.summary.length > 0 ? selected.summary : '已自动切换连接';
+  hilog.info(DOMAIN, TAG, 'auto switched: %{public}s', summary);
+  notifyEndpointSwitched(summary);
 }
 
 async function runAutoSwitch(): Promise<void> {
@@ -98,28 +130,20 @@ async function runAutoSwitch(): Promise<void> {
     return;
   }
   try {
-    await refreshFnConnectAddresses(stored);
+    await probeAndSwitch(ctx, stored);
+    const beforeKey = poolKey(endpointPoolFromStored(stored));
     const latest = AppSession.getStored();
     if (latest === null) {
       return;
     }
+    const refreshed = await refreshFnConnectAddresses(latest);
+    if (!refreshed) {
+      return;
+    }
     await SessionPreferences.save(ctx, latest);
-    const pool = endpointPoolFromStored(latest);
-    const selected = await selectAmongEndpointPool(pool, latest.loginEndpointPreference);
-    if (selected.server.length === 0) {
-      return;
+    if (poolKey(endpointPoolFromStored(latest)) !== beforeKey) {
+      await probeAndSwitch(ctx, latest);
     }
-    const res = await switchStoredLoginEndpointToUrl(ctx, selected.server, true);
-    if (!res.ok) {
-      hilog.warn(DOMAIN, TAG, 'auto switch failed: %{public}s', res.message);
-      return;
-    }
-    if (res.message.length === 0) {
-      return;
-    }
-    const summary = selected.summary.length > 0 ? selected.summary : '已自动切换连接';
-    hilog.info(DOMAIN, TAG, 'auto switched: %{public}s', summary);
-    notifyEndpointSwitched(summary);
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'auto switch error: %{public}s', String(e));
   }
@@ -171,7 +195,13 @@ export function ensureStarted(ctx: common.UIAbilityContext): void {
     netCon.on('netLost', (_data: connection.NetHandle) => {
       onNetEvent();
     });
+    netCon.on('netUnavailable', () => {
+      onNetEvent();
+    });
     netCon.on('netCapabilitiesChange', (_data: connection.NetCapabilityInfo) => {
+      onNetEvent();
+    });
+    netCon.on('netConnectionPropertiesChange', (_data: connection.NetConnectionPropertyInfo) => {
       onNetEvent();
     });
     netCon.register((err: BusinessError) => {

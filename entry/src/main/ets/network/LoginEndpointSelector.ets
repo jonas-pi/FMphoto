@@ -154,7 +154,8 @@ function byteLengthOfResult(result: string | ArrayBuffer | object | undefined): 
 
 async function probeEndpoint(
   candidate: LoginEndpointCandidate,
-  bandwidthMode: boolean
+  bandwidthMode: boolean,
+  probeTimeoutMs: number = 0
 ): Promise<LoginEndpointProbeResult> {
   const req = http.createHttp();
   const startedAt = Date.now();
@@ -167,11 +168,17 @@ async function probeEndpoint(
     }
   }
   try {
+    let connectTimeout = bandwidthMode ? BW_CONNECT_TIMEOUT_MS : FAST_CONNECT_TIMEOUT_MS;
+    let readTimeout = bandwidthMode ? BW_READ_TIMEOUT_MS : FAST_READ_TIMEOUT_MS;
+    if (probeTimeoutMs > 0 && !bandwidthMode) {
+      connectTimeout = probeTimeoutMs;
+      readTimeout = probeTimeoutMs;
+    }
     const opt: http.HttpRequestOptions = {
       method: http.RequestMethod.GET,
       expectDataType: http.HttpDataType.ARRAY_BUFFER,
-      connectTimeout: bandwidthMode ? BW_CONNECT_TIMEOUT_MS : FAST_CONNECT_TIMEOUT_MS,
-      readTimeout: bandwidthMode ? BW_READ_TIMEOUT_MS : FAST_READ_TIMEOUT_MS,
+      connectTimeout,
+      readTimeout,
       maxLimit: bandwidthMode ? BW_MAX_BYTES : FAST_MAX_BYTES
     };
     opt.remoteValidation = 'skip';
@@ -507,7 +514,8 @@ function selectionFromProbes(
  */
 export async function selectAmongEndpointPool(
   pool: LoginEndpointPool,
-  preference: string
+  preference: string,
+  probeTimeoutMs: number = 0
 ): Promise<LoginEndpointSelectionResult> {
   const all = buildCandidatesFromPool(pool);
   const fallbackPublic = preferPublicFromPool(pool);
@@ -521,7 +529,7 @@ export async function selectAmongEndpointPool(
   // 单条候选也探测，便于登录页展示路径与延迟
   const bandwidthMode = preference === LOGIN_ENDPOINT_PREF_BANDWIDTH;
   const probed = await Promise.all(
-    candidates.map((c: LoginEndpointCandidate) => probeEndpoint(c, bandwidthMode))
+    candidates.map((c: LoginEndpointCandidate) => probeEndpoint(c, bandwidthMode, probeTimeoutMs))
   );
   const scored = assignScores(probed, preference);
   let best = pickBest(scored);

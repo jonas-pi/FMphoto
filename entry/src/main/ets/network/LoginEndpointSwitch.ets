@@ -374,14 +374,15 @@ async function finishSwitchSession(
   newBaseUrl: string,
   token: string,
   signKeyB64: string,
-  longToken?: string
+  longToken?: string,
+  deferLongTokenProbe: boolean = false
 ): Promise<EndpointSwitchResult> {
   if (signKeyB64.length === 0) {
     return { ok: false, message: '切换成功但未拿到签名密钥' };
   }
   CertPolicy.addTrusted(fnWebViewBaseUrl(newBaseUrl));
   let longTok = longToken !== undefined && longToken.length > 0 ? longToken : '';
-  if (longTok.length === 0) {
+  if (longTok.length === 0 && !deferLongTokenProbe) {
     const probeClient = new FnHttpClient(newBaseUrl, token, '', signKeyB64);
     try {
       longTok = await probeClient.fetchFnosLongTokenProbe(14000);
@@ -399,13 +400,42 @@ async function finishSwitchSession(
   AppSession.apply(stored);
   await SessionPreferences.save(ctx, stored);
   hilog.info(DOMAIN, TAG, 'endpoint switched to %{public}s', newBaseUrl);
+  if (longTok.length === 0 && deferLongTokenProbe) {
+    scheduleDeferredLongTokenProbe(ctx, newBaseUrl, token, signKeyB64);
+  }
   return { ok: true, message: '已切换连接' };
+}
+
+function scheduleDeferredLongTokenProbe(
+  ctx: common.UIAbilityContext,
+  baseUrl: string,
+  token: string,
+  signKeyB64: string
+): void {
+  void (async (): Promise<void> => {
+    try {
+      const probeClient = new FnHttpClient(baseUrl, token, '', signKeyB64);
+      const tok = await probeClient.fetchFnosLongTokenProbe(8000);
+      if (tok.length === 0) {
+        return;
+      }
+      const latest = AppSession.getStored();
+      if (latest === null || !sameEndpoint(latest.baseUrl, baseUrl)) {
+        return;
+      }
+      latest.fnosLongToken = tok;
+      AppSession.apply(latest);
+      await SessionPreferences.save(ctx, latest);
+    } catch (_e) {
+    }
+  })();
 }
 
 export async function switchStoredLoginEndpointToUrl(
   ctx: common.UIAbilityContext,
   nextUrl: string,
-  silentAlreadyCurrent: boolean = false
+  silentAlreadyCurrent: boolean = false,
+  deferLongTokenProbe: boolean = false
 ): Promise<EndpointSwitchResult> {
   const stored = AppSession.getStored();
   if (stored === null) {
@@ -447,7 +477,7 @@ export async function switchStoredLoginEndpointToUrl(
   }
   const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
   const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt);
+  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt, deferLongTokenProbe);
 }
 
 export async function switchStoredLoginEndpoint(
