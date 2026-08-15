@@ -21,7 +21,7 @@ import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 import { GalleryViewGranularity, galleryViewGranularityAfterPinch } from './GalleryAlbumGranularity';
-import { GalleryAlbumSelectionOverlay } from './GalleryAlbumSelectionOverlay';
+import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
 import { GalleryPinchScaleUpdater } from './GalleryAlbumPinchScale';
 
 const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
@@ -478,7 +478,9 @@ export struct GalleryAlbumMainModeView {
           .hitTestBehavior(HitTestMode.None)
       }
       GalleryAlbumSelectionOverlay({
-        itemId: this.itemIdOf(item)
+        itemId: this.itemIdOf(item),
+        visualScope: GALLERY_SELECTION_SCOPE_ALBUM,
+        selectionMode: this.gallerySelectionMode
       })
     }
     .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)

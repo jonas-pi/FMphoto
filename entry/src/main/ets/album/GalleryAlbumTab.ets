@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 原生相册 Tab（对齐 fnos_gallery_mobile.py 第 2~4 段主流程）。
  *
  * 数据链路：
@@ -85,7 +85,7 @@ import {
 } from './slideshow/GallerySlideshowTypes';
 import { GallerySlideshowSettingsSheet } from './slideshow/GallerySlideshowSettingsSheet';
 import { GalleryAlbumAlbumsHomeView } from './galleryAlbumTab/GalleryAlbumAlbumsHomeView';
-import { GalleryAlbumSearchModeView } from './galleryAlbumTab/GalleryAlbumSearchModeView';
+import { GALLERY_ALBUM_SEARCH_LIST_DOM_ID, GalleryAlbumSearchModeView } from './galleryAlbumTab/GalleryAlbumSearchModeView';
 import { GalleryAlbumCategoryModeView } from './galleryAlbumTab/GalleryAlbumCategoryModeView';
 import { GalleryAlbumSmartCategoryModeView } from './galleryAlbumTab/GalleryAlbumSmartCategoryModeView';
 import { GalleryAlbumPersonModeView } from './galleryAlbumTab/GalleryAlbumPersonModeView';
@@ -911,6 +911,10 @@ export struct GalleryAlbumTab {
       set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
       get scrollerRef(): Scroller { return self.scrollerRef; }
       set scrollerRef(value: Scroller) { self.scrollerRef = value; }
+      get searchScroller(): Scroller { return self.searchScroller; }
+      set searchScroller(value: Scroller) { self.searchScroller = value; }
+      get searchListDomId(): string { return GALLERY_ALBUM_SEARCH_LIST_DOM_ID; }
+      set searchListDomId(_value: string) {}
       get galleryMainListDomId(): string { return self.galleryMainListDomId; }
       set galleryMainListDomId(value: string) { self.galleryMainListDomId = value; }
       get gallerySlideAutoScrollTimer(): number { return self.gallerySlideAutoScrollTimer; }

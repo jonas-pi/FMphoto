@@ -2,6 +2,11 @@ import { UIContext } from '@kit.ArkUI';
 import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
 import { playGalleryEnterSelectionHaptic } from '../../album/GallerySelectionHaptic';
 import {
+  gallerySlideAutoScrollStop,
+  gallerySlideAutoScrollUpdate,
+  GallerySlideAutoScrollSession
+} from '../../album/GallerySlideAutoScroll';
+import {
   GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
   GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
   pickIndexedFlatForSlidePointer
@@ -10,6 +15,7 @@ import { GalleryListItem, RecycleBinListItem } from '../../model/FnApiTypes';
 import { RbFingerCoordCompat, RbFingerWindowPoint, RbThumbHitRect } from './RecycleBinTypes';
 
 const RECYCLE_BIN_COLUMNS_PER_ROW: number = 4;
+export const RECYCLE_BIN_LIST_DOM_ID: string = 'recycle_bin_main_list';
 
 export interface RecycleBinSelectionHost {
   getUIContext(): UIContext;
@@ -17,6 +23,8 @@ export interface RecycleBinSelectionHost {
   items: RecycleBinListItem[];
   selectionMode: boolean;
   selectedIds: number[];
+  listScroller: Scroller;
+  listDomId: string;
   rbSlideGestureActive: boolean;
   rbScrollEnabled: boolean;
   rbLongPressIgnoreUntil: number;
@@ -30,6 +38,8 @@ export interface RecycleBinSelectionHost {
   rbSlideLastAppliedEndFlat: number;
   toast(msg: string): void;
 }
+
+const rbSlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
 
 export function recycleBinDomId(flatIdx: number): string {
   return `rbcell_${flatIdx}`;
@@ -105,6 +115,16 @@ export function recycleBinPreviewIndexForFlatIndex(items: RecycleBinListItem[], 
     }
   }
   return k;
+}
+
+export function recycleBinSelectedIdStrings(ids: number[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i] >= 0) {
+      out.push(`${ids[i]}`);
+    }
+  }
+  return out;
 }
 
 export function recycleBinSlidePanDistance(active: boolean): number {
@@ -385,6 +405,7 @@ export function recycleBinBeginSlideSelectGesture(
 }
 
 export function recycleBinEndSlideSelectGesture(host: RecycleBinSelectionHost): void {
+  gallerySlideAutoScrollStop();
   if (!host.rbSlideGestureActive && host.rbScrollEnabled) {
     return;
   }
@@ -395,6 +416,47 @@ export function recycleBinEndSlideSelectGesture(host: RecycleBinSelectionHost): 
   host.rbSlideLastEndFlat = -1;
   host.rbSlideLastAppliedEndFlat = -99999;
   host.rbScrollEnabled = true;
+}
+
+function recycleBinShiftHitBoundsY(host: RecycleBinSelectionHost, dyPx: number): void {
+  if (!Number.isFinite(dyPx) || Math.abs(dyPx) < 0.5) {
+    return;
+  }
+  host.rbThumbHitBounds.forEach((rect: RbThumbHitRect): void => {
+    rect.top += dyPx;
+    rect.bottom += dyPx;
+  });
+}
+
+function recycleBinBindSlideAutoScroll(host: RecycleBinSelectionHost): GallerySlideAutoScrollSession {
+  rbSlideAutoScrollSession.uiContext = host.getUIContext();
+  rbSlideAutoScrollSession.scroller = host.listScroller;
+  rbSlideAutoScrollSession.listDomId = host.listDomId;
+  rbSlideAutoScrollSession.topInsetVp = 0;
+  rbSlideAutoScrollSession.bottomInsetVp = 0;
+  rbSlideAutoScrollSession.isActive = (): boolean => host.rbSlideGestureActive;
+  rbSlideAutoScrollSession.shiftHitBoundsY = (dyPx: number): void => {
+    recycleBinShiftHitBoundsY(host, dyPx);
+  };
+  rbSlideAutoScrollSession.followPointer = (xPx: number, yPx: number): void => {
+    recycleBinFollowSlidePointer(host, xPx, yPx);
+  };
+  return rbSlideAutoScrollSession;
+}
+
+function recycleBinFollowSlidePointer(host: RecycleBinSelectionHost, xPx: number, yPx: number): void {
+  if (!host.rbSlideGestureActive) {
+    return;
+  }
+  const hitFlat = recycleBinPickThumbFlatForSlidePointer(host, xPx, yPx);
+  if (hitFlat >= 0) {
+    host.rbSlideLastEndFlat = hitFlat;
+  }
+  recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
+}
+
+function recycleBinUpdateSlideAutoScroll(host: RecycleBinSelectionHost, xPx: number, yPx: number): void {
+  gallerySlideAutoScrollUpdate(recycleBinBindSlideAutoScroll(host), xPx, yPx);
 }
 
 export function recycleBinResolveSlidePointerWindowPx(
@@ -422,11 +484,8 @@ export function recycleBinOnSlidePanUpdate(host: RecycleBinSelectionHost, ev: Ge
   if (pt === null) {
     return;
   }
-  const hitFlat = recycleBinPickThumbFlatForSlidePointer(host, pt.x, pt.y);
-  if (hitFlat >= 0) {
-    host.rbSlideLastEndFlat = hitFlat;
-  }
-  recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
+  recycleBinFollowSlidePointer(host, pt.x, pt.y);
+  recycleBinUpdateSlideAutoScroll(host, pt.x, pt.y);
 }
 
 export function recycleBinOnSlideTouchMoveWindow(
@@ -434,14 +493,8 @@ export function recycleBinOnSlideTouchMoveWindow(
   xPx: number,
   yPx: number
 ): void {
-  if (!host.rbSlideGestureActive) {
-    return;
-  }
-  const hitFlat = recycleBinPickThumbFlatForSlidePointer(host, xPx, yPx);
-  if (hitFlat >= 0) {
-    host.rbSlideLastEndFlat = hitFlat;
-  }
-  recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
+  recycleBinFollowSlidePointer(host, xPx, yPx);
+  recycleBinUpdateSlideAutoScroll(host, xPx, yPx);
 }
 
 export function recycleBinOnThumbLongPress(

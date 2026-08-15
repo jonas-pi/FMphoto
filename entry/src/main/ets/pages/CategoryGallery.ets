@@ -31,6 +31,11 @@ import {
 } from '../common/FnMotion';
 import { GalleryAlbumBatchActionBar } from '../album/GalleryAlbumBatchActionBar';
 import {
+  GALLERY_SELECTION_SCOPE_CATEGORY,
+  GalleryAlbumSelectionOverlay,
+  galleryAlbumSyncSelectionVisualState
+} from '../album/galleryAlbumTab/GalleryAlbumSelectionOverlay';
+import {
   categoryGalleryApplyDeleteSyncIfNeeded,
   categoryGalleryConfirmBatchDelete,
   categoryGalleryConfirmBatchDownload,
@@ -48,11 +53,11 @@ import {
 import { GallerySlideshowSettingsSheet } from '../album/slideshow/GallerySlideshowSettingsSheet';
 import {
   categoryGalleryBeginSlideSelectGesture,
+  CATEGORY_GALLERY_LIST_DOM_ID,
   categoryGalleryDomId,
   categoryGalleryEndSlideSelectGesture,
   categoryGalleryExitSelection,
   categoryGalleryFlatPos,
-  categoryGalleryIsIdSelected,
   categoryGalleryItemIdOf,
   categoryGalleryOnCellClick,
   categoryGalleryOnSlidePanUpdate,
@@ -110,7 +115,8 @@ struct CategoryGallery {
   private handledDeleteSyncVersion: number = 0;
 
   @State private selectionMode: boolean = false;
-  @State private selectedIds: string[] = [];
+  private selectedIds: string[] = [];
+  @State private selectedCount: number = 0;
   @State private cgSlideGestureActive: boolean = false;
   @State private cgScrollEnabled: boolean = true;
   @State private cgBatchDeleting: boolean = false;
@@ -339,6 +345,8 @@ struct CategoryGallery {
     this.clearCgThumbResumeTimer();
     this.clearCgDeferredBackgroundLoadTimer();
     this.clearCgDeferredSnapshotApplyTimer();
+    categoryGalleryEndSlideSelectGesture(this.asSelectionHost());
+    galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_CATEGORY);
     this.recycleThumbCache(true);
     this.listBlocks = [];
     this.listBlockSource.reloadAll([]);
@@ -366,6 +374,22 @@ struct CategoryGallery {
     return categoryGalleryDomId(flatIdx);
   }
 
+  private setSelectionModeState(value: boolean): void {
+    if (this.selectionMode === value) {
+      return;
+    }
+    this.selectionMode = value;
+    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
+  }
+
+  private setSelectedIdsState(value: string[]): void {
+    this.selectedIds = value;
+    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
+    if (this.selectedCount !== value.length) {
+      this.selectedCount = value.length;
+    }
+  }
+
   private exitCgSelection(): void {
     categoryGalleryExitSelection(this.asSelectionHost());
   }
@@ -375,10 +399,6 @@ struct CategoryGallery {
       this.dismissMoreMenu();
     }
     categoryGalleryToggleToolbarMode(this.asSelectionHost());
-  }
-
-  private isCgIdSelected(id: string): boolean {
-    return categoryGalleryIsIdSelected(this.asSelectionHost(), id);
   }
 
   private recordCgThumbRect(flatIdx: number): void {
@@ -880,10 +900,16 @@ struct CategoryGallery {
       set columnsPerRow(v: number) { self.columnsPerRow = v === 4 ? 4 : 3; }
 
       get selectionMode(): boolean { return self.selectionMode; }
-      set selectionMode(v: boolean) { self.selectionMode = v; }
+      set selectionMode(v: boolean) { self.setSelectionModeState(v); }
 
       get selectedIds(): string[] { return self.selectedIds; }
-      set selectedIds(v: string[]) { self.selectedIds = v; }
+      set selectedIds(v: string[]) { self.setSelectedIdsState(v); }
+
+      get listScroller(): Scroller { return self.listScroller; }
+      set listScroller(v: Scroller) { self.listScroller = v; }
+
+      get listDomId(): string { return CATEGORY_GALLERY_LIST_DOM_ID; }
+      set listDomId(_v: string) {}
 
       get cgSlideGestureActive(): boolean { return self.cgSlideGestureActive; }
       set cgSlideGestureActive(v: boolean) { self.cgSlideGestureActive = v; }
@@ -948,7 +974,7 @@ struct CategoryGallery {
       set handledDeleteSyncVersion(v: number) { self.handledDeleteSyncVersion = v; }
 
       get selectedIds(): string[] { return self.selectedIds; }
-      set selectedIds(v: string[]) { self.selectedIds = v; }
+      set selectedIds(v: string[]) { self.setSelectedIdsState(v); }
 
       get cgBatchDeleting(): boolean { return self.cgBatchDeleting; }
       set cgBatchDeleting(v: boolean) { self.cgBatchDeleting = v; }
@@ -976,38 +1002,11 @@ struct CategoryGallery {
       })
         .width('100%')
         .aspectRatio(1)
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#55000000')
-        .opacity(this.selectionMode && this.isCgIdSelected(this.itemIdOf(item)) ? 1 : 0)
-        .hitTestBehavior(HitTestMode.None)
-      Row() {
-        Blank().layoutWeight(1)
-        Column() {
-          if (this.isCgIdSelected(this.itemIdOf(item))) {
-            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-              .fontSize(24)
-              .fontColor([$r('app.color.brand_primary')])
-              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-          } else {
-            Stack({ alignContent: Alignment.Center }) {
-              Circle()
-                .width(22)
-                .height(22)
-                .fill(Color.Transparent)
-                .stroke(Color.White)
-                .strokeWidth(2)
-            }
-            .width(24)
-            .height(24)
-          }
-        }
-        .padding({ top: 6, right: 6 })
-      }
-      .width('100%')
-      .hitTestBehavior(HitTestMode.None)
-      .visibility(this.selectionMode ? Visibility.Visible : Visibility.Hidden)
+      GalleryAlbumSelectionOverlay({
+        itemId: this.itemIdOf(item),
+        visualScope: GALLERY_SELECTION_SCOPE_CATEGORY,
+        selectionMode: this.selectionMode
+      })
     }
     .width('100%')
     .layoutWeight(1)
@@ -1189,7 +1188,7 @@ struct CategoryGallery {
     Stack({ alignContent: Alignment.TopStart }) {
       CategoryGalleryChrome({
         selectionMode: this.selectionMode,
-        selectedCount: this.selectedIds.length,
+        selectedCount: this.selectedCount,
         title: this.title,
         totalCount: this.totalCount,
         topSafeInsetVp: this.systemTopInsetVp,
@@ -1245,13 +1244,14 @@ struct CategoryGallery {
                     Column() {
                       Blank()
                         .width('100%')
-                        .height(this.selectionMode && this.selectedIds.length > 0 ? 88 : 24)
+                        .height(this.selectionMode && this.selectedCount > 0 ? 88 : 24)
                     }
                     .width('100%')
                   }
                 }
                 .width('100%')
                 .layoutWeight(1)
+                .id(CATEGORY_GALLERY_LIST_DOM_ID)
                 .cachedCount(this.isRecentAddedStreamingMode() ? 1 : 3)
                 .margin({ top: this.contentInsetTopVp() })
                 .scrollBar(BarState.Auto)
@@ -1294,10 +1294,10 @@ struct CategoryGallery {
                   }
                   .width('100%')
                   .justifyContent(FlexAlign.Center)
-                  .padding({ top: 8, bottom: this.selectionMode && this.selectedIds.length > 0 ? 8 : 0 })
+                  .padding({ top: 8, bottom: this.selectionMode && this.selectedCount > 0 ? 8 : 0 })
                 }
 
-                if (this.selectionMode && this.selectedIds.length > 0) {
+                if (this.selectionMode && this.selectedCount > 0) {
                   GalleryAlbumBatchActionBar({
                     downloading: this.cgBatchDownloading,
                     deleting: this.cgBatchDeleting,

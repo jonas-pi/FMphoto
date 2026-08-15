@@ -2,6 +2,11 @@ import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { playGalleryEnterSelectionHaptic } from '../../album/GallerySelectionHaptic';
 import {
+  gallerySlideAutoScrollStop,
+  gallerySlideAutoScrollUpdate,
+  GallerySlideAutoScrollSession
+} from '../../album/GallerySlideAutoScroll';
+import {
   GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
   GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
   pickIndexedFlatForSlidePointer
@@ -13,6 +18,8 @@ import {
   RowModel
 } from './CategoryGalleryTypes';
 
+export const CATEGORY_GALLERY_LIST_DOM_ID: string = 'category_gallery_main_list';
+
 export interface CategoryGallerySelectionHost {
   getUIContext(): UIContext;
   flatItems: GalleryListItem[];
@@ -20,6 +27,8 @@ export interface CategoryGallerySelectionHost {
   columnsPerRow: number;
   selectionMode: boolean;
   selectedIds: string[];
+  listScroller: Scroller;
+  listDomId: string;
   cgSlideGestureActive: boolean;
   cgScrollEnabled: boolean;
   cgLongPressIgnoreUntil: number;
@@ -34,6 +43,8 @@ export interface CategoryGallerySelectionHost {
   toast(msg: string): void;
   openItemAtFlat(flatIdx: number): void;
 }
+
+const cgSlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
 
 export function categoryGalleryItemIdOf(it: GalleryListItem): string {
   if (it.id === undefined || it.id === null) {
@@ -351,6 +362,7 @@ export function categoryGalleryBeginSlideSelectGesture(
 }
 
 export function categoryGalleryEndSlideSelectGesture(host: CategoryGallerySelectionHost): void {
+  gallerySlideAutoScrollStop();
   if (!host.cgSlideGestureActive && host.cgScrollEnabled) {
     return;
   }
@@ -361,6 +373,55 @@ export function categoryGalleryEndSlideSelectGesture(host: CategoryGallerySelect
   host.cgSlideLastEndFlat = -1;
   host.cgSlideLastAppliedEndFlat = -99999;
   host.cgScrollEnabled = true;
+}
+
+function categoryGalleryShiftHitBoundsY(host: CategoryGallerySelectionHost, dyPx: number): void {
+  if (!Number.isFinite(dyPx) || Math.abs(dyPx) < 0.5) {
+    return;
+  }
+  host.cgThumbHitBounds.forEach((rect: CgThumbHitRect): void => {
+    rect.top += dyPx;
+    rect.bottom += dyPx;
+  });
+}
+
+function categoryGalleryBindSlideAutoScroll(host: CategoryGallerySelectionHost): GallerySlideAutoScrollSession {
+  cgSlideAutoScrollSession.uiContext = host.getUIContext();
+  cgSlideAutoScrollSession.scroller = host.listScroller;
+  cgSlideAutoScrollSession.listDomId = host.listDomId;
+  cgSlideAutoScrollSession.topInsetVp = 0;
+  cgSlideAutoScrollSession.bottomInsetVp = 0;
+  cgSlideAutoScrollSession.isActive = (): boolean => host.cgSlideGestureActive;
+  cgSlideAutoScrollSession.shiftHitBoundsY = (dyPx: number): void => {
+    categoryGalleryShiftHitBoundsY(host, dyPx);
+  };
+  cgSlideAutoScrollSession.followPointer = (xPx: number, yPx: number): void => {
+    categoryGalleryFollowSlidePointer(host, xPx, yPx);
+  };
+  return cgSlideAutoScrollSession;
+}
+
+function categoryGalleryFollowSlidePointer(
+  host: CategoryGallerySelectionHost,
+  xPx: number,
+  yPx: number
+): void {
+  if (!host.cgSlideGestureActive) {
+    return;
+  }
+  const hitFlat = categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
+  if (hitFlat >= 0) {
+    host.cgSlideLastEndFlat = hitFlat;
+  }
+  categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
+}
+
+function categoryGalleryUpdateSlideAutoScroll(
+  host: CategoryGallerySelectionHost,
+  xPx: number,
+  yPx: number
+): void {
+  gallerySlideAutoScrollUpdate(categoryGalleryBindSlideAutoScroll(host), xPx, yPx);
 }
 
 export function categoryGalleryResolveSlidePointerWindowPx(
@@ -388,11 +449,8 @@ export function categoryGalleryOnSlidePanUpdate(host: CategoryGallerySelectionHo
   if (pt === null) {
     return;
   }
-  const hitFlat = categoryGalleryPickFlatForSlidePointer(host, pt.x, pt.y);
-  if (hitFlat >= 0) {
-    host.cgSlideLastEndFlat = hitFlat;
-  }
-  categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
+  categoryGalleryFollowSlidePointer(host, pt.x, pt.y);
+  categoryGalleryUpdateSlideAutoScroll(host, pt.x, pt.y);
 }
 
 export function categoryGalleryOnSlideTouchMoveWindow(
@@ -400,14 +458,8 @@ export function categoryGalleryOnSlideTouchMoveWindow(
   xPx: number,
   yPx: number
 ): void {
-  if (!host.cgSlideGestureActive) {
-    return;
-  }
-  const hitFlat = categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
-  if (hitFlat >= 0) {
-    host.cgSlideLastEndFlat = hitFlat;
-  }
-  categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
+  categoryGalleryFollowSlidePointer(host, xPx, yPx);
+  categoryGalleryUpdateSlideAutoScroll(host, xPx, yPx);
 }
 
 export function categoryGalleryOnThumbLongPress(

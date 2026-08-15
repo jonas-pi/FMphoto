@@ -35,11 +35,15 @@ import {
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
+  GALLERY_SELECTION_SCOPE_RECYCLE,
+  GalleryAlbumSelectionOverlay,
+  galleryAlbumSyncSelectionVisualState
+} from '../album/galleryAlbumTab/GalleryAlbumSelectionOverlay';
+import {
   recycleBinBeginSlideSelectGesture,
   recycleBinDomId,
   recycleBinEndSlideSelectGesture,
   recycleBinExitSelection,
-  recycleBinIsIdSelected,
   recycleBinNumericIdOf,
   recycleBinOnCellClick,
   recycleBinOnSlidePanUpdate,
@@ -48,9 +52,11 @@ import {
   recycleBinPickThumbFlatForRow,
   recycleBinReadGestureFingerWindow,
   recycleBinRecordThumbRect,
+  recycleBinSelectedIdStrings,
   recycleBinSlidePanDistance,
   recycleBinThumbRelOf,
   recycleBinToggleToolbarMode,
+  RECYCLE_BIN_LIST_DOM_ID,
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
 import { RbFingerWindowPoint, RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
@@ -83,7 +89,8 @@ struct RecycleBinPage {
   @State private error: string = '';
   @State @Watch('onItemsChanged') private items: RecycleBinListItem[] = [];
   @State private selectionMode: boolean = false;
-  @State private selectedIds: number[] = [];
+  private selectedIds: number[] = [];
+  @State private selectedCount: number = 0;
   @State private rbSlideGestureActive: boolean = false;
   @State private rbScrollEnabled: boolean = true;
   @State private rbThumbLoadingPaused: boolean = false;
@@ -167,6 +174,8 @@ struct RecycleBinPage {
 
   aboutToDisappear(): void {
     this.clearRbThumbResumeTimer();
+    recycleBinEndSlideSelectGesture(this.asSelectionHost());
+    galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_RECYCLE);
     this.recycleThumbCache(true);
     this.rbRowBlocks = [];
     this.rbRowSource.reloadAll([]);
@@ -178,6 +187,30 @@ struct RecycleBinPage {
 
   onItemsChanged(): void {
     this.rebuildRowBlocks();
+  }
+
+  private setSelectionModeState(value: boolean): void {
+    if (this.selectionMode === value) {
+      return;
+    }
+    this.selectionMode = value;
+    galleryAlbumSyncSelectionVisualState(
+      this.selectionMode,
+      recycleBinSelectedIdStrings(this.selectedIds),
+      GALLERY_SELECTION_SCOPE_RECYCLE
+    );
+  }
+
+  private setSelectedIdsState(value: number[]): void {
+    this.selectedIds = value;
+    galleryAlbumSyncSelectionVisualState(
+      this.selectionMode,
+      recycleBinSelectedIdStrings(this.selectedIds),
+      GALLERY_SELECTION_SCOPE_RECYCLE
+    );
+    if (this.selectedCount !== value.length) {
+      this.selectedCount = value.length;
+    }
   }
 
   private toast(msg: string): void {
@@ -214,8 +247,8 @@ struct RecycleBinPage {
     return rel.length > 0 ? nasUrl(this.baseUrl, rel) : '';
   }
 
-  private isIdSelected(nid: number): boolean {
-    return recycleBinIsIdSelected(this.asSelectionHost(), nid);
+  private recordRbThumbRect(flatIdx: number): void {
+    recycleBinRecordThumbRect(this.asSelectionHost(), flatIdx);
   }
 
   private readGestureFingerWindow(ev: GestureEvent) {
@@ -233,10 +266,6 @@ struct RecycleBinPage {
       return null;
     }
     return { x, y };
-  }
-
-  private recordRbThumbRect(flatIdx: number): void {
-    recycleBinRecordThumbRect(this.asSelectionHost(), flatIdx);
   }
 
   private pickRbThumbFlatForRow(rowStart: number, xPx: number, yPx: number): number {
@@ -410,10 +439,16 @@ struct RecycleBinPage {
       set items(v: RecycleBinListItem[]) { self.items = v; }
 
       get selectionMode(): boolean { return self.selectionMode; }
-      set selectionMode(v: boolean) { self.selectionMode = v; }
+      set selectionMode(v: boolean) { self.setSelectionModeState(v); }
 
       get selectedIds(): number[] { return self.selectedIds; }
-      set selectedIds(v: number[]) { self.selectedIds = v; }
+      set selectedIds(v: number[]) { self.setSelectedIdsState(v); }
+
+      get listScroller(): Scroller { return self.listScroller; }
+      set listScroller(v: Scroller) { self.listScroller = v; }
+
+      get listDomId(): string { return RECYCLE_BIN_LIST_DOM_ID; }
+      set listDomId(_v: string) {}
 
       get rbSlideGestureActive(): boolean { return self.rbSlideGestureActive; }
       set rbSlideGestureActive(v: boolean) { self.rbSlideGestureActive = v; }
@@ -480,7 +515,7 @@ struct RecycleBinPage {
       set items(v: RecycleBinListItem[]) { self.items = v; }
 
       get selectedIds(): number[] { return self.selectedIds; }
-      set selectedIds(v: number[]) { self.selectedIds = v; }
+      set selectedIds(v: number[]) { self.setSelectedIdsState(v); }
 
       toast(msg: string): void { self.toast(msg); }
       exitSelection(): void { self.exitSelection(); }
@@ -511,38 +546,11 @@ struct RecycleBinPage {
         .justifyContent(FlexAlign.Center)
         .backgroundColor($r('app.color.card_background'))
       }
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#55000000')
-        .opacity(this.selectionMode && nid >= 0 && this.isIdSelected(nid) ? 1 : 0)
-        .hitTestBehavior(HitTestMode.None)
-      Row() {
-        Blank().layoutWeight(1)
-        Column() {
-          if (nid >= 0 && this.isIdSelected(nid)) {
-            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-              .fontSize(24)
-              .fontColor([$r('app.color.brand_primary')])
-              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-          } else {
-            Stack({ alignContent: Alignment.Center }) {
-              Circle()
-                .width(22)
-                .height(22)
-                .fill(Color.Transparent)
-                .stroke(Color.White)
-                .strokeWidth(2)
-            }
-            .width(24)
-            .height(24)
-          }
-        }
-        .padding({ top: 6, right: 6 })
-      }
-      .width('100%')
-      .hitTestBehavior(HitTestMode.None)
-      .visibility(this.selectionMode ? Visibility.Visible : Visibility.Hidden)
+      GalleryAlbumSelectionOverlay({
+        itemId: nid >= 0 ? `${nid}` : '',
+        visualScope: GALLERY_SELECTION_SCOPE_RECYCLE,
+        selectionMode: this.selectionMode
+      })
     }
     .layoutWeight(1)
     .aspectRatio(1)
@@ -573,7 +581,7 @@ struct RecycleBinPage {
     Stack({ alignContent: Alignment.TopStart }) {
       RecycleBinChrome({
         selectionMode: this.selectionMode,
-        selectedCount: this.selectedIds.length,
+        selectedCount: this.selectedCount,
         topSafeInsetVp: this.systemTopInsetVp,
         scrollerList: [this.listScroller],
         onCancelSelection: (): void => {
@@ -726,13 +734,14 @@ struct RecycleBinPage {
                 Column() {
                   Blank()
                     .width('100%')
-                    .height(this.selectionMode && this.selectedIds.length > 0 ? 80 : 32)
+                    .height(this.selectionMode && this.selectedCount > 0 ? 80 : 32)
                 }
                 .width('100%')
               }
             }
             .width('100%')
             .layoutWeight(1)
+            .id(RECYCLE_BIN_LIST_DOM_ID)
             .cachedCount(3)
             .margin({ top: this.contentInsetTopVp() })
             .edgeEffect(EdgeEffect.Spring)
@@ -774,10 +783,10 @@ struct RecycleBinPage {
               }
               .width('100%')
               .justifyContent(FlexAlign.Center)
-              .padding({ top: 8, bottom: this.selectionMode && this.selectedIds.length > 0 ? 8 : 0 })
+              .padding({ top: 8, bottom: this.selectionMode && this.selectedCount > 0 ? 8 : 0 })
             }
 
-            if (this.selectionMode && this.selectedIds.length > 0) {
+            if (this.selectionMode && this.selectedCount > 0) {
               RecycleBinBatchBar({
                 downloading: this.rbBatchDownloading,
                 restoring: this.restoring,

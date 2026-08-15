@@ -6,13 +6,14 @@ import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
-import { GalleryAlbumSelectionOverlay } from './GalleryAlbumSelectionOverlay';
+import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
 
 const GALLERY_SEARCH_INITIAL_RENDER_COUNT = 120;
 const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
 const GALLERY_SEARCH_APPEND_PREFETCH_ROWS = 8;
 const GALLERY_SEARCH_LIST_CACHED_COUNT = 3;
 const GALLERY_SEARCH_THUMB_RESUME_DELAY_MS = 96;
+export const GALLERY_ALBUM_SEARCH_LIST_DOM_ID: string = 'gallery_album_search_list';
 
 interface GallerySearchRowBlockCell {
   flatIdx: number;
@@ -365,7 +366,9 @@ export struct GalleryAlbumSearchModeView {
         .width('100%')
         .aspectRatio(1)
       GalleryAlbumSelectionOverlay({
-        itemId: this.itemIdOf(item)
+        itemId: this.itemIdOf(item),
+        visualScope: GALLERY_SELECTION_SCOPE_ALBUM,
+        selectionMode: this.gallerySelectionMode
       })
     }
     .id(this.searchThumbDomId(flatIndex))
@@ -547,6 +550,7 @@ export struct GalleryAlbumSearchModeView {
           }
           .width('100%')
           .layoutWeight(1)
+          .id(GALLERY_ALBUM_SEARCH_LIST_DOM_ID)
           .cachedCount(GALLERY_SEARCH_LIST_CACHED_COUNT)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)

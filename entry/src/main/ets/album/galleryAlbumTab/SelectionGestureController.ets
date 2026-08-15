@@ -1,7 +1,11 @@
 import { UIContext } from '@kit.ArkUI';
-import { displaySync } from '@kit.ArkGraphics2D';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
+import {
+  gallerySlideAutoScrollStop,
+  gallerySlideAutoScrollUpdate,
+  GallerySlideAutoScrollSession
+} from '../GallerySlideAutoScroll';
 import {
   GALLERY_SLIDE_DOM_BUDGET_PER_FRAME,
   GALLERY_SLIDE_FLOW_ROW_RADIUS,
@@ -42,6 +46,8 @@ export interface SelectionGestureControllerHost {
   gallerySlideHasRef: boolean;
   searchResults: GalleryListItem[];
   scrollerRef: Scroller;
+  searchScroller: Scroller;
+  searchListDomId: string;
   flowDataSource: GalleryWaterFlowDataSource;
   galleryThumbHitBounds: Map<string, GalleryThumbHitRect>;
   searchThumbHitBounds: Map<string, GalleryThumbHitRect>;
@@ -58,19 +64,7 @@ export interface SelectionGestureControllerHost {
   resolveGalleryFlatIndexForOpenPreview(item: GalleryListItem, hintFlat: number): number;
 }
 
-/** 官方图库：热区约为半格到一格，贴着可见宫格底/顶边而不是整屏底。 */
-const GALLERY_SLIDE_AUTO_SCROLL_EDGE_VP: number = 64;
-const GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S: number = 140;
-const GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S: number = 520;
-const GALLERY_SLIDE_AUTO_SCROLL_DT_MIN_S: number = 0.004;
-const GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S: number = 0.032;
-const GALLERY_SLIDE_AUTO_SCROLL_NS_PER_S: number = 1000000000;
-const GALLERY_SLIDE_AUTO_SCROLL_FRAME_RATE: ExpectedFrameRateRange = { expected: 60, min: 30, max: 120 };
-
-let gallerySlideAutoScrollSync: displaySync.DisplaySync | null = null;
-let gallerySlideAutoScrollHost: SelectionGestureControllerHost | null = null;
-let gallerySlideAutoScrollLastTsNs: number = 0;
-let gallerySlideAutoScrollListRect: GalleryThumbHitRect | null = null;
+const gallerySlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
 
 interface SelectionGalleryFlowSlot {
   flowIndex: number;
@@ -216,7 +210,6 @@ function selectionBeginGallerySlideSelectGestureCore(
   host.gallerySlideLastAppliedEndFlat = -99999;
   host.gallerySlideLastApplyMs = 0;
   host.gallerySlidePendingEndFlat = host.gallerySlideAnchorFlat;
-  gallerySlideAutoScrollListRect = selectionReadMainGalleryListRectPx(host);
   const anchorId = host.itemIdOf(item);
   if (host.inSearchMode) {
     selectionRecordSearchThumbRect(host, anchorFlat);
@@ -299,104 +292,23 @@ export function selectionEndGallerySlideSelectGesture(host: SelectionGestureCont
   host.gallerySlideLastApplyMs = 0;
   host.gallerySlidePendingEndFlat = -1;
   host.galleryMainListScrollEnabled = true;
-  gallerySlideAutoScrollListRect = null;
 }
 
-function selectionReadMainGalleryListRectPx(host: SelectionGestureControllerHost): GalleryThumbHitRect | null {
-  if (host.galleryMainListDomId.length === 0) {
-    return null;
-  }
-  try {
-    const info = host.getUIContext().getComponentUtils().getRectangleById(host.galleryMainListDomId);
-    const left = info.windowOffset.x as number;
-    const top = info.windowOffset.y as number;
-    const width = info.size.width as number;
-    const height = info.size.height as number;
-    if (!Number.isFinite(left) || !Number.isFinite(top) ||
-      !Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
-      return null;
-    }
-    return {
-      left: left,
-      top: top,
-      right: left + width,
-      bottom: top + height
-    };
-  } catch (_e) {
-    return null;
-  }
-}
-
-function selectionCachedMainGalleryListRectPx(host: SelectionGestureControllerHost): GalleryThumbHitRect | null {
-  if (gallerySlideAutoScrollListRect !== null) {
-    return gallerySlideAutoScrollListRect;
-  }
-  gallerySlideAutoScrollListRect = selectionReadMainGalleryListRectPx(host);
-  return gallerySlideAutoScrollListRect;
-}
-
-function selectionEasedAutoScrollVelocity(ratio: number): number {
-  const t = Math.max(0, Math.min(1, ratio));
-  const eased = t * t;
-  return GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S +
-    (GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S - GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S) * eased;
-}
-
-/**
- * 官方图库边缘滚：热区相对可见宫格（顶栏下、底栏上），速度随深入热区二次加快，单位 vp/s。
- * 正值向下滚出后续照片，负值向上。
- */
-function selectionComputeGallerySlideAutoScrollVelocityVpPerSec(
-  host: SelectionGestureControllerHost,
-  yPx: number
-): number {
-  if (host.inSearchMode || !host.gallerySlideGestureActive) {
-    return 0;
-  }
-  const rect = selectionCachedMainGalleryListRectPx(host);
-  if (rect === null) {
-    return 0;
-  }
-  const edgePx = Math.max(1, selectionVpToPx(host, GALLERY_SLIDE_AUTO_SCROLL_EDGE_VP));
-  const visibleTop = rect.top + selectionVpToPx(host, host.gallerySlideAutoScrollTopInsetVp);
-  const visibleBottom = rect.bottom - selectionVpToPx(host, host.gallerySlideAutoScrollBottomInsetVp);
-  const bottomStart = visibleBottom - edgePx;
-  if (yPx > bottomStart) {
-    try {
-      if (host.scrollerRef.isAtEnd()) {
-        return 0;
-      }
-    } catch (_e) {
-    }
-    return selectionEasedAutoScrollVelocity((yPx - bottomStart) / edgePx);
-  }
-  const topEnd = visibleTop + edgePx;
-  if (yPx < topEnd) {
-    try {
-      const off = host.scrollerRef.currentOffset();
-      const yRaw = off.yOffset;
-      const y = typeof yRaw === 'number' && Number.isFinite(yRaw) ? yRaw : 0;
-      if (y <= 0.5) {
-        return 0;
-      }
-    } catch (_e) {
-    }
-    return -selectionEasedAutoScrollVelocity((topEnd - yPx) / edgePx);
-  }
-  return 0;
-}
-
-function selectionScrollMainGalleryByVp(host: SelectionGestureControllerHost, deltaVp: number): void {
-  if (Math.abs(deltaVp) < 0.01) {
-    return;
-  }
-  try {
-    host.scrollerRef.scrollBy(0, deltaVp);
-    const dyPx = selectionVpToPx(host, deltaVp);
-    selectionShiftThumbHitBoundsY(host.galleryThumbHitBounds, -dyPx);
-    selectionShiftThumbHitBoundsY(host.searchThumbHitBounds, -dyPx);
-  } catch (_e) {
-  }
+function selectionBindSlideAutoScroll(host: SelectionGestureControllerHost): GallerySlideAutoScrollSession {
+  gallerySlideAutoScrollSession.uiContext = host.getUIContext();
+  gallerySlideAutoScrollSession.scroller = host.inSearchMode ? host.searchScroller : host.scrollerRef;
+  gallerySlideAutoScrollSession.listDomId = host.inSearchMode ? host.searchListDomId : host.galleryMainListDomId;
+  gallerySlideAutoScrollSession.topInsetVp = host.inSearchMode ? 0 : host.gallerySlideAutoScrollTopInsetVp;
+  gallerySlideAutoScrollSession.bottomInsetVp = host.inSearchMode ? 0 : host.gallerySlideAutoScrollBottomInsetVp;
+  gallerySlideAutoScrollSession.isActive = (): boolean => host.gallerySlideGestureActive;
+  gallerySlideAutoScrollSession.shiftHitBoundsY = (dyPx: number): void => {
+    selectionShiftThumbHitBoundsY(host.galleryThumbHitBounds, dyPx);
+    selectionShiftThumbHitBoundsY(host.searchThumbHitBounds, dyPx);
+  };
+  gallerySlideAutoScrollSession.followPointer = (xPx: number, yPx: number): void => {
+    selectionFollowSlidePointer(host, xPx, yPx);
+  };
+  return gallerySlideAutoScrollSession;
 }
 
 function selectionFollowSlidePointer(host: SelectionGestureControllerHost, xPx: number, yPx: number): void {
@@ -414,65 +326,8 @@ function selectionFollowSlidePointer(host: SelectionGestureControllerHost, xPx: 
   selectionApplyGallerySlideRowRangeSelection(host, targetEndFlat);
 }
 
-function selectionEnsureGallerySlideAutoScrollSync(): displaySync.DisplaySync {
-  if (gallerySlideAutoScrollSync !== null) {
-    return gallerySlideAutoScrollSync;
-  }
-  const sync = displaySync.create();
-  sync.setExpectedFrameRateRange(GALLERY_SLIDE_AUTO_SCROLL_FRAME_RATE);
-  sync.on('frame', (info: displaySync.IntervalInfo): void => {
-    const host = gallerySlideAutoScrollHost;
-    if (host === null) {
-      return;
-    }
-    selectionOnGallerySlideAutoScrollFrame(host, info);
-  });
-  gallerySlideAutoScrollSync = sync;
-  return sync;
-}
-
-function selectionStopGallerySlideAutoScroll(host: SelectionGestureControllerHost): void {
-  gallerySlideAutoScrollHost = null;
-  gallerySlideAutoScrollLastTsNs = 0;
-  if (gallerySlideAutoScrollSync !== null) {
-    try {
-      gallerySlideAutoScrollSync.stop();
-    } catch (_e) {
-    }
-  }
-  host.gallerySlideAutoScrollTimer = -1;
-  host.gallerySlideAutoScrollVelocityVp = 0;
-}
-
-function selectionOnGallerySlideAutoScrollFrame(
-  host: SelectionGestureControllerHost,
-  info: displaySync.IntervalInfo
-): void {
-  if (!host.gallerySlideGestureActive) {
-    selectionStopGallerySlideAutoScroll(host);
-    return;
-  }
-  const velocityVpS = selectionComputeGallerySlideAutoScrollVelocityVpPerSec(
-    host,
-    host.gallerySlideAutoScrollPointerY
-  );
-  host.gallerySlideAutoScrollVelocityVp = velocityVpS;
-  if (velocityVpS === 0) {
-    selectionStopGallerySlideAutoScroll(host);
-    return;
-  }
-  let dtS = GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S;
-  if (gallerySlideAutoScrollLastTsNs > 0 && info.timestamp > gallerySlideAutoScrollLastTsNs) {
-    dtS = (info.timestamp - gallerySlideAutoScrollLastTsNs) / GALLERY_SLIDE_AUTO_SCROLL_NS_PER_S;
-  }
-  gallerySlideAutoScrollLastTsNs = info.timestamp;
-  if (dtS < GALLERY_SLIDE_AUTO_SCROLL_DT_MIN_S) {
-    dtS = GALLERY_SLIDE_AUTO_SCROLL_DT_MIN_S;
-  } else if (dtS > GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S) {
-    dtS = GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S;
-  }
-  selectionScrollMainGalleryByVp(host, velocityVpS * dtS);
-  selectionFollowSlidePointer(host, host.gallerySlideAutoScrollPointerX, host.gallerySlideAutoScrollPointerY);
+function selectionStopGallerySlideAutoScroll(_host: SelectionGestureControllerHost): void {
+  gallerySlideAutoScrollStop();
 }
 
 function selectionUpdateGallerySlideAutoScroll(
@@ -482,27 +337,7 @@ function selectionUpdateGallerySlideAutoScroll(
 ): void {
   host.gallerySlideAutoScrollPointerX = xPx;
   host.gallerySlideAutoScrollPointerY = yPx;
-  const velocityVpS = selectionComputeGallerySlideAutoScrollVelocityVpPerSec(host, yPx);
-  host.gallerySlideAutoScrollVelocityVp = velocityVpS;
-  if (velocityVpS === 0) {
-    if (host.gallerySlideAutoScrollTimer >= 0) {
-      selectionStopGallerySlideAutoScroll(host);
-    }
-    return;
-  }
-  if (host.gallerySlideAutoScrollTimer >= 0) {
-    return;
-  }
-  gallerySlideAutoScrollHost = host;
-  gallerySlideAutoScrollLastTsNs = 0;
-  gallerySlideAutoScrollListRect = selectionReadMainGalleryListRectPx(host);
-  try {
-    selectionEnsureGallerySlideAutoScrollSync().start();
-    host.gallerySlideAutoScrollTimer = 1;
-  } catch (_e) {
-    host.gallerySlideAutoScrollTimer = -1;
-    gallerySlideAutoScrollHost = null;
-  }
+  gallerySlideAutoScrollUpdate(selectionBindSlideAutoScroll(host), xPx, yPx);
 }
 
 export function selectionResolveSlidePointerWindowPx(
