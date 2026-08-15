@@ -7,6 +7,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem, GalleryThumbnailBlock } from '../model/FnApiTypes';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
 
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
@@ -1249,27 +1250,8 @@ export struct GalleryNetworkThumb {
           Blank().layoutWeight(1)
           Row() {
             Blank().layoutWeight(1)
-            Stack({ alignContent: Alignment.Center }) {
-              Circle()
-                .width(22)
-                .height(22)
-                .fill('#66000000')
-              Circle()
-                .width(14)
-                .height(14)
-                .fill(Color.Transparent)
-                .stroke(Color.White)
-                .strokeWidth(1.4)
-              Circle()
-                .width(6)
-                .height(6)
-                .fill(Color.Transparent)
-                .stroke(Color.White)
-                .strokeWidth(1.4)
-            }
-            .width(22)
-            .height(22)
-            .margin({ right: 6, bottom: 6 })
+            GalleryLivePhotoMark({ sizeVp: 22 })
+              .margin({ right: 6, bottom: 6 })
           }
         }
         .width('100%')

@@ -31,6 +31,8 @@ import { GalleryListItem } from '../model/FnApiTypes';
 import { isLivePhotoItem } from './livephoto/LivePhotoDetect';
 import { playGalleryLivePhotoHaptic } from './GallerySelectionHaptic';
 import { GalleryLivePreviewLayer } from './livephoto/GalleryLivePreviewLayer';
+import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
+import { GalleryHdrVividBadge } from './GalleryHdrVividBadge';
 import {
   LivePhotoPairFiles,
   loadMovingPhotoFromPair,
@@ -435,6 +437,18 @@ export struct GalleryPreviewSlide {
   private isVideo(): boolean { return this.item !== null && isVideoItem(this.item); }
   private isGif(): boolean { return this.item !== null && isGifItem(this.item); }
   private isLive(): boolean { return this.item !== null && isLivePhotoItem(this.item); }
+
+  /** 原图已走 HDR 解码并正在以 DynamicRangeMode.HIGH 显示 */
+  private showHdrVividBadge(): boolean {
+    if (this.isVideo() || this.isGif()) {
+      return false;
+    }
+    if (this.originalPreviewEnabled && this.fullLoading) {
+      return true;
+    }
+    return this.showingOriginal && this.fullPix !== undefined;
+  }
+
   /**
    * 估算当前视频原始清晰度上限（p）：
    * - 优先使用条目里的 width/height（若服务端下发）；
@@ -630,32 +644,38 @@ export struct GalleryPreviewSlide {
           .width('100%')
           .height('100%')
       } else if (this.isLive()) {
-        if (this.liveReady && this.movingPhoto !== undefined) {
-          MovingPhotoView({
-            movingPhoto: this.movingPhoto,
-            controller: this.liveController
-          })
-            .width('100%')
-            .height('100%')
-            .autoPlay(false)
-            .repeatPlay(false)
-            .objectFit(ImageFit.Contain)
-            .onStart((): void => {
-              playGalleryLivePhotoHaptic();
+        Stack({ alignContent: Alignment.BottomEnd }) {
+          if (this.liveReady && this.movingPhoto !== undefined) {
+            MovingPhotoView({
+              movingPhoto: this.movingPhoto,
+              controller: this.liveController
             })
-        } else {
-          GalleryLivePreviewLayer({
-            stillUri: this.liveStillUri,
-            hintColor: this.hintColor(),
-            thumbPix: this.thumbPix,
-            fullPix: this.fullPix,
-            showOriginal: this.showingOriginal,
-            spinnerColor: this.spinnerColor()
-          })
-            .width('100%')
-            .height('100%')
-            .hitTestBehavior(HitTestMode.None)
+              .width('100%')
+              .height('100%')
+              .autoPlay(false)
+              .repeatPlay(false)
+              .objectFit(ImageFit.Contain)
+              .onStart((): void => {
+                playGalleryLivePhotoHaptic();
+              })
+          } else {
+            GalleryLivePreviewLayer({
+              stillUri: this.liveStillUri,
+              hintColor: this.hintColor(),
+              thumbPix: this.thumbPix,
+              fullPix: this.fullPix,
+              showOriginal: this.showingOriginal,
+              spinnerColor: this.spinnerColor()
+            })
+              .width('100%')
+              .height('100%')
+              .hitTestBehavior(HitTestMode.None)
+          }
+          GalleryLivePhotoMark({ sizeVp: 32, animated: true })
+            .margin({ right: 16, bottom: this.videoBottomPadding + 12 })
         }
+        .width('100%')
+        .height('100%')
       } else {
         Column() {
           Stack({ alignContent: Alignment.Center }) {
@@ -813,6 +833,21 @@ export struct GalleryPreviewSlide {
           .alignItems(HorizontalAlign.Center)
           .hitTestBehavior(HitTestMode.None)
         }
+      }
+
+      if (this.showHdrVividBadge()) {
+        Column() {
+          Blank().layoutWeight(1)
+          Row() {
+            GalleryHdrVividBadge()
+              .margin({ left: 16, bottom: this.videoBottomPadding + 12 })
+            Blank().layoutWeight(1)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
       }
     }
     .width('100%').height('100%')
