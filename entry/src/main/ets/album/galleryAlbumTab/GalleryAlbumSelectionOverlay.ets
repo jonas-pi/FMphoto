@@ -1,8 +1,15 @@
+/**
+ * 宫格多选遮罩。
+ *
+ * 官方建议：频繁变化的选中态不要走 AppStorage revision / 列表父组件 @State。
+ * 遮罩用自身 @State 刷新，划选只通知状态变化的单元格。
+ */
 export const GALLERY_ALBUM_SELECTION_VISUAL_MODE_KEY: string = 'galleryAlbumSelectionVisualMode';
-export const GALLERY_ALBUM_SELECTION_VISUAL_REVISION_KEY: string = 'galleryAlbumSelectionVisualRevision';
 
 let galleryAlbumSelectedVisualIds: Set<string> = new Set<string>();
 let galleryAlbumSelectionVisualStorageReady: boolean = false;
+const galleryAlbumOverlaySetters: Map<string, ((selected: boolean) => void)[]> =
+  new Map<string, ((selected: boolean) => void)[]>();
 
 function setAppStorageBool(key: string, value: boolean): void {
   if (AppStorage.has(key)) {
@@ -12,12 +19,14 @@ function setAppStorageBool(key: string, value: boolean): void {
   AppStorage.setOrCreate<boolean>(key, value);
 }
 
-function setAppStorageNumber(key: string, value: number): void {
-  if (AppStorage.has(key)) {
-    AppStorage.set<number>(key, value);
+function notifyCellSelected(id: string, selected: boolean): void {
+  const setters = galleryAlbumOverlaySetters.get(id);
+  if (setters === undefined) {
     return;
   }
-  AppStorage.setOrCreate<number>(key, value);
+  for (let i = 0; i < setters.length; i++) {
+    setters[i](selected);
+  }
 }
 
 export function galleryAlbumEnsureSelectionVisualStorage(): void {
@@ -25,8 +34,43 @@ export function galleryAlbumEnsureSelectionVisualStorage(): void {
     return;
   }
   AppStorage.setOrCreate<boolean>(GALLERY_ALBUM_SELECTION_VISUAL_MODE_KEY, false);
-  AppStorage.setOrCreate<number>(GALLERY_ALBUM_SELECTION_VISUAL_REVISION_KEY, 0);
   galleryAlbumSelectionVisualStorageReady = true;
+}
+
+export function galleryAlbumRegisterSelectionOverlay(
+  id: string,
+  setter: (selected: boolean) => void
+): void {
+  if (id.length === 0) {
+    return;
+  }
+  const current = galleryAlbumOverlaySetters.get(id);
+  if (current === undefined) {
+    galleryAlbumOverlaySetters.set(id, [setter]);
+    return;
+  }
+  current.push(setter);
+}
+
+export function galleryAlbumUnregisterSelectionOverlay(
+  id: string,
+  setter: (selected: boolean) => void
+): void {
+  const current = galleryAlbumOverlaySetters.get(id);
+  if (current === undefined) {
+    return;
+  }
+  const next: ((selected: boolean) => void)[] = [];
+  for (let i = 0; i < current.length; i++) {
+    if (current[i] !== setter) {
+      next.push(current[i]);
+    }
+  }
+  if (next.length === 0) {
+    galleryAlbumOverlaySetters.delete(id);
+    return;
+  }
+  galleryAlbumOverlaySetters.set(id, next);
 }
 
 export function galleryAlbumSyncSelectionVisualState(selectionMode: boolean, selectedIds: string[]): void {
@@ -38,10 +82,19 @@ export function galleryAlbumSyncSelectionVisualState(selectionMode: boolean, sel
       next.add(id);
     }
   }
+  const prev = galleryAlbumSelectedVisualIds;
+  prev.forEach((id: string): void => {
+    if (!next.has(id)) {
+      notifyCellSelected(id, false);
+    }
+  });
+  next.forEach((id: string): void => {
+    if (!prev.has(id)) {
+      notifyCellSelected(id, true);
+    }
+  });
   galleryAlbumSelectedVisualIds = next;
   setAppStorageBool(GALLERY_ALBUM_SELECTION_VISUAL_MODE_KEY, selectionMode);
-  const oldRevision = AppStorage.get<number>(GALLERY_ALBUM_SELECTION_VISUAL_REVISION_KEY) ?? 0;
-  setAppStorageNumber(GALLERY_ALBUM_SELECTION_VISUAL_REVISION_KEY, oldRevision + 1);
 }
 
 export function galleryAlbumIsSelectionVisualIdSelected(id: string): boolean {
@@ -52,13 +105,18 @@ export function galleryAlbumIsSelectionVisualIdSelected(id: string): boolean {
 export struct GalleryAlbumSelectionOverlay {
   @Prop itemId: string = '';
   @StorageLink(GALLERY_ALBUM_SELECTION_VISUAL_MODE_KEY) private selectionMode: boolean = false;
-  @StorageLink(GALLERY_ALBUM_SELECTION_VISUAL_REVISION_KEY) private selectionRevision: number = 0;
+  @State private selected: boolean = false;
+  private applySelected: (value: boolean) => void = (value: boolean): void => {
+    this.selected = value;
+  };
 
-  private isSelected(): boolean {
-    if (this.selectionRevision < 0) {
-      return false;
-    }
-    return galleryAlbumIsSelectionVisualIdSelected(this.itemId);
+  aboutToAppear(): void {
+    this.selected = galleryAlbumIsSelectionVisualIdSelected(this.itemId);
+    galleryAlbumRegisterSelectionOverlay(this.itemId, this.applySelected);
+  }
+
+  aboutToDisappear(): void {
+    galleryAlbumUnregisterSelectionOverlay(this.itemId, this.applySelected);
   }
 
   build() {
@@ -67,7 +125,7 @@ export struct GalleryAlbumSelectionOverlay {
         .width('100%')
         .aspectRatio(1)
         .backgroundColor('#55000000')
-        .opacity(this.selectionMode && this.isSelected() ? 1 : 0)
+        .opacity(this.selectionMode && this.selected ? 1 : 0)
         .hitTestBehavior(HitTestMode.None)
         .animation({ duration: 0, curve: Curve.Linear })
 
@@ -80,13 +138,13 @@ export struct GalleryAlbumSelectionOverlay {
             .fill(Color.Transparent)
             .stroke(Color.White)
             .strokeWidth(2)
-            .opacity(this.isSelected() ? 0 : 1)
+            .opacity(this.selected ? 0 : 1)
 
           SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
             .fontSize(24)
             .fontColor([$r('app.color.brand_primary')])
             .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-            .opacity(this.isSelected() ? 1 : 0)
+            .opacity(this.selected ? 1 : 0)
         }
         .width(24)
         .height(24)

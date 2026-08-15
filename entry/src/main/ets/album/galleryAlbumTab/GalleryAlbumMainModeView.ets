@@ -48,8 +48,6 @@ export struct GalleryAlbumMainModeView {
   @Prop modeSwitchOffsetY: number = 0;
   @Prop galleryTimelineRefreshing: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
-  @Prop gallerySelectedCount: number = 0;
-  @Prop gallerySelectedIds: string[] = [];
   @Prop showBatchActionBar: boolean = true;
   @Prop galleryBatchDownloading: boolean = false;
   @Prop galleryBatchDeleting: boolean = false;
@@ -243,9 +241,14 @@ export struct GalleryAlbumMainModeView {
     this.onListDidScroll(offset, scrollState);
   }
 
-  private isItemSelected(item: GalleryListItem): boolean {
-    const id = this.itemIdOf(item);
-    return id.length > 0 && this.gallerySelectedIds.indexOf(id) >= 0;
+  private currentThumbDensity(): 'day' | 'month' | 'year' {
+    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
+      return 'year';
+    }
+    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
+      return 'month';
+    }
+    return 'day';
   }
 
   private rowTrailingBlankSlots(node: GalleryFlowNode): number[] {
@@ -277,16 +280,6 @@ export struct GalleryAlbumMainModeView {
 
   private shouldTrackGalleryThumbRect(): boolean {
     return this.gallerySelectionMode || this.gallerySlideGestureActive || this.galleryInitialSlidePending;
-  }
-
-  private currentThumbDensity(): 'day' | 'month' | 'year' {
-    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
-      return 'year';
-    }
-    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
-      return 'month';
-    }
-    return 'day';
   }
 
   private vpToPx(value: number): number {
@@ -709,7 +702,7 @@ export struct GalleryAlbumMainModeView {
                         .textAlign(TextAlign.Center)
                         .padding(12)
                     }
-                    Blank().height((this.showBatchActionBar && this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32) +
+                    Blank().height((this.showBatchActionBar && this.gallerySelectionMode ? 88 : 32) +
                       this.contentInsetBottomVp)
                   }
                   .width('100%')
@@ -771,7 +764,7 @@ export struct GalleryAlbumMainModeView {
           .layoutWeight(1)
           .clip(false)
 
-          if (this.showBatchActionBar && this.gallerySelectionMode && this.gallerySelectedCount > 0) {
+          if (this.showBatchActionBar && this.gallerySelectionMode) {
             GalleryAlbumBatchActionBar({
               downloading: this.galleryBatchDownloading,
               deleting: this.galleryBatchDeleting,

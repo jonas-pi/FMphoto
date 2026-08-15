@@ -43,14 +43,6 @@ import {
   trimThumbPixCacheForList,
 } from './GalleryAlbumCommon';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
-import {
-  GALLERY_SLIDE_DOM_BUDGET_PER_FRAME,
-  GALLERY_SLIDE_FLOW_ROW_RADIUS,
-  GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
-  GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
-  GALLERY_SLIDE_TAIL_FLOW_ROWS,
-  pickIndexedFlatForSlidePointer
-} from './GallerySlidePick';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { openPersonAlbumById } from './PersonAlbumOpenHelper';
@@ -493,7 +485,8 @@ export struct GalleryAlbumTab {
   @State private autoSyncBadgeCount: number = 0;
   /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
   @State private gallerySelectionMode: boolean = false;
-  @State private gallerySelectedIds: string[] = [];
+  private gallerySelectedIds: string[] = [];
+  @State private gallerySelectedCount: number = 0;
   @State private galleryBatchDeleting: boolean = false;
   @State private galleryBatchDownloading: boolean = false;
   /**
@@ -853,18 +846,18 @@ export struct GalleryAlbumTab {
       this.dismissMoreMenu();
     }
     galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
-    const visibleRows = this.notifyMainGalleryVisibleSelectionRows();
-    this.logSelectionVisualRefresh(value ? 'mode-on' : 'mode-off', new Set<string>(), 0, visibleRows);
     this.notifySelectionDockStateChange();
   }
 
   private setGallerySelectedIdsStateLocal(value: string[]): void {
-    const changedIds = this.selectionVisualChangedIds(this.gallerySelectedIds, value);
     this.gallerySelectedIds = value;
     galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
-    const idRows = this.notifyMainGallerySelectionRowsForIds(changedIds);
-    this.logSelectionVisualRefresh('ids', changedIds, idRows, 0);
-    this.notifySelectionDockStateChange();
+    if (this.gallerySelectedCount !== value.length) {
+      this.gallerySelectedCount = value.length;
+    }
+    if (!this.gallerySlideGestureActive) {
+      this.notifySelectionDockStateChange();
+    }
   }
 
   private asSelectionGestureHost(): SelectionGestureControllerHost {
@@ -880,7 +873,13 @@ export struct GalleryAlbumTab {
       get galleryTimelineRefreshing(): boolean { return self.galleryTimelineRefreshing; }
       set galleryTimelineRefreshing(value: boolean) { self.galleryTimelineRefreshing = value; }
       get gallerySlideGestureActive(): boolean { return self.gallerySlideGestureActive; }
-      set gallerySlideGestureActive(value: boolean) { self.gallerySlideGestureActive = value; }
+      set gallerySlideGestureActive(value: boolean) {
+        const wasActive = self.gallerySlideGestureActive;
+        self.gallerySlideGestureActive = value;
+        if (wasActive && !value) {
+          self.notifySelectionDockStateChange();
+        }
+      }
       get galleryMainListScrollEnabled(): boolean { return self.galleryMainListScrollEnabled; }
       set galleryMainListScrollEnabled(value: boolean) { self.galleryMainListScrollEnabled = value; }
       get gallerySlideAnchorFlat(): number { return self.gallerySlideAnchorFlat; }
@@ -919,10 +918,18 @@ export struct GalleryAlbumTab {
       set gallerySlideAutoScrollPointerX(value: number) { self.gallerySlideAutoScrollPointerX = value; }
       get gallerySlideAutoScrollPointerY(): number { return self.gallerySlideAutoScrollPointerY; }
       set gallerySlideAutoScrollPointerY(value: number) { self.gallerySlideAutoScrollPointerY = value; }
+      get gallerySlideAutoScrollTopInsetVp(): number { return self.mainGalleryContentInsetTopVp(); }
+      set gallerySlideAutoScrollTopInsetVp(_value: number) {}
+      get gallerySlideAutoScrollBottomInsetVp(): number { return self.currentBottomDockInsetVp(); }
+      set gallerySlideAutoScrollBottomInsetVp(_value: number) {}
       get galleryThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.galleryThumbHitBounds; }
       set galleryThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.galleryThumbHitBounds = value; }
       get searchThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.searchThumbHitBounds; }
       set searchThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.searchThumbHitBounds = value; }
+      get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
+      set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
+      get listVisibleLastNodeIdx(): number { return self.listVisibleLastNodeIdx; }
+      set listVisibleLastNodeIdx(value: number) { self.listVisibleLastNodeIdx = value; }
       get gallerySelectedIds(): string[] { return self.gallerySelectedIds; }
       set gallerySelectedIds(value: string[]) { self.setGallerySelectedIdsStateLocal(value); }
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
@@ -2493,7 +2500,7 @@ export struct GalleryAlbumTab {
           inPersonMode: this.inPersonMode,
           rootSurfaceTitle: this.currentHomeSurfaceTitle(),
           gallerySelectionMode: this.gallerySelectionMode,
-          gallerySelectedCount: this.gallerySelectedIds.length,
+          gallerySelectedCount: this.gallerySelectedCount,
           moreMenuExpanded: this.moreMenuExpanded,
           searchQuery: this.searchQuery,
           topSafeInsetVp: this.topSafeInsetVp,
@@ -2536,8 +2543,6 @@ export struct GalleryAlbumTab {
           error: this.searchError,
           searchResults: this.searchResults,
           gallerySelectionMode: this.gallerySelectionMode,
-          gallerySelectedCount: this.gallerySelectedIds.length,
-          gallerySelectedIds: this.gallerySelectedIds,
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
@@ -2710,8 +2715,6 @@ export struct GalleryAlbumTab {
           footText: this.footText,
           galleryTimelineRefreshing: this.galleryTimelineRefreshing,
           gallerySelectionMode: this.gallerySelectionMode,
-          gallerySelectedCount: this.gallerySelectedIds.length,
-          gallerySelectedIds: this.gallerySelectedIds,
           showBatchActionBar: !this.shouldUseHomeSelectionDock(),
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,

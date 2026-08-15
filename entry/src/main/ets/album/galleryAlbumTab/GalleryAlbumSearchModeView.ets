@@ -35,8 +35,6 @@ export struct GalleryAlbumSearchModeView {
   @Prop error: string = '';
   @Prop @Watch('onSearchResultsChanged') searchResults: GalleryListItem[] = [];
   @Prop gallerySelectionMode: boolean = false;
-  @Prop gallerySelectedCount: number = 0;
-  @Prop gallerySelectedIds: string[] = [];
   @Prop galleryBatchDownloading: boolean = false;
   @Prop galleryBatchDeleting: boolean = false;
   @Prop galleryMainListScrollEnabled: boolean = true;
@@ -212,11 +210,6 @@ export struct GalleryAlbumSearchModeView {
       return `scell_${block.rowIdx}_${col}_empty`;
     }
     return `scell_${block.rowIdx}_${col}_${this.searchItemStableKey(cell.item, cell.flatIdx)}`;
-  }
-
-  private isItemSelected(item: GalleryListItem): boolean {
-    const id = this.itemIdOf(item);
-    return id.length > 0 && this.gallerySelectedIds.indexOf(id) >= 0;
   }
 
   private clearSearchAppendTimer(): void {
@@ -524,7 +517,7 @@ export struct GalleryAlbumSearchModeView {
               Column() {
                 Blank()
                   .width('100%')
-                  .height((this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 88 : 32) +
+                  .height((this.gallerySelectionMode ? 88 : 32) +
                     (this.hasMoreSearchResults() ? 0 : this.contentInsetBottomVp))
               }
               .width('100%')
@@ -543,7 +536,7 @@ export struct GalleryAlbumSearchModeView {
                 .justifyContent(FlexAlign.Center)
                 .padding({
                   top: 8,
-                  bottom: (this.gallerySelectionMode && this.gallerySelectedCount > 0 ? 8 : 16) +
+                  bottom: (this.gallerySelectionMode ? 8 : 16) +
                     this.contentInsetBottomVp
                 })
                 .onAppear((): void => {
@@ -583,7 +576,7 @@ export struct GalleryAlbumSearchModeView {
             this.onSearchScrollStateChange(scrollState);
           })
 
-          if (this.gallerySelectionMode && this.gallerySelectedCount > 0) {
+          if (this.gallerySelectionMode) {
             GalleryAlbumBatchActionBar({
               downloading: this.galleryBatchDownloading,
               deleting: this.galleryBatchDeleting,

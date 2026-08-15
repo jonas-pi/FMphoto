@@ -11,8 +11,8 @@ export interface GallerySlideThumbRectPx {
   bottom: number;
 }
 
-/** 每帧 getRectangleById 上限：全表扫描会阻塞主线程 */
-export const GALLERY_SLIDE_DOM_BUDGET_PER_FRAME = 12;
+/** 每帧 getRectangleById 上限。划选跟手以矩形缓存为主，DOM 只作漏检兜底。 */
+export const GALLERY_SLIDE_DOM_BUDGET_PER_FRAME = 4;
 /** 以划选终点/锚点 flat 为中心的窗口半径 */
 export const GALLERY_SLIDE_FLAT_RADIUS = 15;
 /** 列表尾部兜底扫描的项数 */
@@ -27,9 +27,30 @@ export const GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE = 5;
 /** 多选未划选时横向 Pan，略提高阈值减少误触 */
 export const GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE = 8;
 
+export function gallerySlideRectContainsPx(
+  rect: GallerySlideThumbRectPx,
+  xPx: number,
+  yPx: number
+): boolean {
+  return xPx >= rect.left && xPx <= rect.right && yPx >= rect.top && yPx <= rect.bottom;
+}
+
+export function gallerySlideShiftRectsByYPx(
+  bounds: Map<string, GallerySlideThumbRectPx>,
+  dyPx: number
+): void {
+  if (!Number.isFinite(dyPx) || Math.abs(dyPx) < 0.5) {
+    return;
+  }
+  bounds.forEach((rect: GallerySlideThumbRectPx): void => {
+    rect.top += dyPx;
+    rect.bottom += dyPx;
+  });
+}
+
 /**
- * 划选 Pan 更新：先全表缓存命中，再在 seed±半径 内按预算 DOM，最后扫尾部若干项。
- * @param pickFromFullCache 自后向前等策略由调用方实现（与 UI 叠层一致）
+ * 划选 Pan 更新：先信缓存几何命中，再在 seed±半径内按预算 DOM。
+ * 官方图库划选不在跟手路径上回查 getRectangleById。
  */
 export function pickIndexedFlatForSlidePointer(
   xPx: number,
@@ -56,12 +77,8 @@ export function pickIndexedFlatForSlidePointer(
     const hi = Math.min(flatCount - 1, seed + GALLERY_SLIDE_FLAT_RADIUS);
     for (let fi = hi; fi >= lo; fi--) {
       const cached = getCachedRect(fi);
-      if (cached !== undefined &&
-        xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-        if (testDomContainsPoint(fi, xPx, yPx)) {
-          recordThumbAfterDomHit(fi);
-          return fi;
-        }
+      if (cached !== undefined && gallerySlideRectContainsPx(cached, xPx, yPx)) {
+        return fi;
       }
       if (domBudget <= 0) {
         continue;
@@ -71,26 +88,6 @@ export function pickIndexedFlatForSlidePointer(
         recordThumbAfterDomHit(fi);
         return fi;
       }
-    }
-  }
-  domBudget = GALLERY_SLIDE_DOM_BUDGET_PER_FRAME;
-  const tailLo = Math.max(0, flatCount - GALLERY_SLIDE_TAIL_FLAT);
-  for (let fi = flatCount - 1; fi >= tailLo; fi--) {
-    if (domBudget <= 0) {
-      break;
-    }
-    const cached = getCachedRect(fi);
-    if (cached !== undefined &&
-      xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-      if (testDomContainsPoint(fi, xPx, yPx)) {
-        recordThumbAfterDomHit(fi);
-        return fi;
-      }
-    }
-    domBudget--;
-    if (testDomContainsPoint(fi, xPx, yPx)) {
-      recordThumbAfterDomHit(fi);
-      return fi;
     }
   }
   return -1;
