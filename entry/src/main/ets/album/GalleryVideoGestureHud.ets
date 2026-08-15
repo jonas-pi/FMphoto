@@ -28,7 +28,7 @@ export struct GalleryVideoGestureHud {
             value: this.sliderValue(),
             min: 0,
             max: 1,
-            step: 0.05,
+            step: 0.01,
             style: SliderStyle.NONE,
             direction: Axis.Vertical,
             reverse: true

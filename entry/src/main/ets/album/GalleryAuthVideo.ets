@@ -39,6 +39,8 @@ const GALLERY_VIDEO_ADJUST_HUD_HIDE_MS = 3000;
 /** 播放中无操作时收起顶底栏与浮层控件 */
 const GALLERY_VIDEO_CHROME_AUTOHIDE_MS = 2500;
 const GALLERY_VIDEO_VOLUME_MAX_FALLBACK = 15;
+/** 滑过屏高约 1/3 即走完全量程，避免按整屏换算发闷 */
+const GALLERY_VIDEO_ADJUST_TRAVEL_RATIO: number = 0.32;
 
 interface QualityOption {
   label: string;
@@ -721,8 +723,8 @@ export struct GalleryAuthVideo {
     if (!this.adjustHudVisible || this.draggingSeek) {
       return;
     }
-    const heightPx = this.viewH > 1 ? this.getUIContext().vp2px(this.viewH) : 1;
-    const delta = this.getUIContext().vp2px(event.offsetY) / heightPx;
+    const travel = Math.max(1, this.viewH * GALLERY_VIDEO_ADJUST_TRAVEL_RATIO);
+    const delta = event.offsetY / travel;
     if (this.adjustIsBrightness) {
       const next = this.clampAdjust(this.adjustBrightnessBase - delta, 0, 1);
       this.screenBrightness = next;

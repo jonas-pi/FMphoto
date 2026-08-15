@@ -378,7 +378,7 @@ export struct GalleryVideoOverlayChrome {
     })
     .gesture(
       GestureGroup(GestureMode.Exclusive,
-        PanGesture({ direction: PanDirection.Vertical, distance: 16 })
+        PanGesture({ direction: PanDirection.Vertical, distance: 8 })
           .onActionStart((event: GestureEvent): void => {
             this.onVerticalAdjustStart(event);
           })
