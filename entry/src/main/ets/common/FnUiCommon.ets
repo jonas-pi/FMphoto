@@ -152,6 +152,12 @@ export function fnHdsImmersiveSystemMaterialEffect(): SystemMaterialParams {
   return { materialType: materialType, materialLevel: materialLevel };
 }
 
+/**
+ * 悬浮底栏统一配置。
+ * 必须显式设置 barWidth / barSideMargin：未设置时系统默认单页签 76vp、侧边距 16vp，
+ * 在「中栏 + 侧钮」Row 布局里会把右侧控件挤出屏幕（鸿蒙 7 上更明显）。
+ * adaptToHandedness 固定关闭，避免智感握姿把胶囊栏整体右偏。
+ */
 export function fnHdsImmersiveTabsFloatingStyle(
   height: number,
   width: Length = '100%',
@@ -165,6 +171,7 @@ export function fnHdsImmersiveTabsFloatingStyle(
     },
     barSideMargin: 0,
     barBottomMargin: 0,
+    adaptToHandedness: false,
     gradientMask: {
       maskColor: Color.Transparent,
       maskHeight: height

@@ -1,5 +1,12 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../main/ets/network/ServerUrl';
+import {
+  buildNasDedupeIndex,
+  nasDedupeIndexHasLocal,
+  nasDedupeIndexMatchKind,
+  nasDedupeMatchIsStrong,
+  officialSizeMtimeSetHas
+} from '../main/ets/album/GalleryAutoSyncOfficialFingerprint';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -43,6 +50,47 @@ export default function localUnitTest() {
       expect(normalizeServerUrl('[fe80::1]', true)).assertEqual('https://[fe80::1]:5667');
       expect(normalizeServerUrl('fe80::1:8080', false)).assertEqual('http://[fe80::1]:8080');
       expect(normalizeServerUrl('http://[::1]/', false)).assertEqual('http://[::1]:5666');
+    });
+
+    it('autoSync_sizeMtime_matches_without_name', 0, () => {
+      const index = {
+        fingerprints: new Set<string>(),
+        sizeMtimeKeys: new Set<string>(['2048:1000']),
+        nameSizeKeys: new Set<string>()
+      };
+      expect(nasDedupeIndexHasLocal(index, 'renamed.jpg', 2048, 1000)).assertTrue();
+      expect(nasDedupeIndexHasLocal(index, 'renamed.jpg', 2048, 1002)).assertTrue();
+      expect(nasDedupeIndexHasLocal(index, 'renamed.jpg', 2048, 1003)).assertFalse();
+      expect(nasDedupeIndexMatchKind(index, 'renamed.jpg', 2048, 1000)).assertEqual('sizeMtime');
+      expect(nasDedupeMatchIsStrong(nasDedupeIndexMatchKind(index, 'renamed.jpg', 2048, 1000))).assertFalse();
+    });
+
+    it('autoSync_strong_match_fingerprint_and_nameSize', 0, () => {
+      const index = {
+        fingerprints: new Set<string>(['IMG_0001.jpg:2048:1000']),
+        sizeMtimeKeys: new Set<string>(),
+        nameSizeKeys: new Set<string>(['shot.png:4096'])
+      };
+      expect(nasDedupeIndexMatchKind(index, 'IMG_0001.jpg', 2048, 1000)).assertEqual('fingerprint');
+      expect(nasDedupeMatchIsStrong(nasDedupeIndexMatchKind(index, 'IMG_0001.jpg', 2048, 1000))).assertTrue();
+      expect(nasDedupeIndexMatchKind(index, 'shot.png', 4096, 0)).assertEqual('nameSize');
+      expect(nasDedupeMatchIsStrong(nasDedupeIndexMatchKind(index, 'shot.png', 4096, 0))).assertTrue();
+    });
+
+    it('autoSync_sizeMtime_rejects_invalid_values', 0, () => {
+      const keys = new Set<string>(['2048:1000']);
+      expect(officialSizeMtimeSetHas(keys, 0, 1000)).assertFalse();
+      expect(officialSizeMtimeSetHas(keys, 2048, 0)).assertFalse();
+    });
+
+    it('autoSync_index_collects_sizeMtime', 0, () => {
+      const item = {
+        fileName: 'IMG_0001.jpg',
+        fileSize: 2048,
+        fileCreateTime: 1000
+      };
+      const index = buildNasDedupeIndex([item]);
+      expect(index.sizeMtimeKeys.has('2048:1000')).assertTrue();
     });
 
     it('fnWebViewBaseUrl_preserves_domain_https_port', 0, () => {

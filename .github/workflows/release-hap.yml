@@ -63,3 +63,5 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: false
           overwrite_files: true
+          # 标签名含 beta / rc 时标记为预发布
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}

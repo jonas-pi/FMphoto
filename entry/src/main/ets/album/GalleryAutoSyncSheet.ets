@@ -1,5 +1,6 @@
 /**
  * 批量同步上传（后台传输队列，不阻塞 UI）。
+ * 半官方策略：账本 + NAS 指纹快筛后，上传前再问服务端；仅明确 exists 才跳过。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -23,6 +24,9 @@ export interface AutoSyncRunnerCallbacks {
   requestBootstrap(debounced: boolean): void;
 }
 
+/**
+ * 上传前二次过滤：本地索引 + 服务端 check（仅 'exists' 跳过；unknown/missing 仍上传）。
+ */
 async function refilterBeforeUpload(
   ctx: common.UIAbilityContext,
   client: FnHttpClient,
@@ -50,6 +54,7 @@ async function refilterBeforeUpload(
   if (serverExists.length > 0) {
     await GalleryAutoSyncLedger.markSynced(ctx, serverExists);
     GalleryAutoSyncStore.markSynced(serverExists.map((p: LocalPhotoEntry): string => p.uri));
+    GalleryAutoSyncNasIndex.addLocalEntries(serverExists);
     hilog.info(DOMAIN, TAG, 'server dedupe skipped=%{public}d', serverExists.length);
   }
   return toUpload;
@@ -109,7 +114,7 @@ export function runAutoSyncInBackground(
               ok++;
               GalleryAutoSyncStore.markSynced([photo.uri]);
               await GalleryAutoSyncLedger.markSynced(ctx, [photo]);
-              GalleryAutoSyncNasIndex.invalidate();
+              GalleryAutoSyncNasIndex.addLocalEntries([photo]);
             } else if (failMsg.length === 0) {
               failMsg = res.message ?? '同步失败';
             }

@@ -12,7 +12,7 @@ import {
 
 const PREF_NAME = 'fnos_client_prefs';
 const K_AUTO_SYNC_LEDGER = 'auto_sync_ledger_v2';
-const MAX_LEDGER_ENTRIES: number = 4000;
+const MAX_LEDGER_ENTRIES: number = 6000;
 const NAME_SIZE_PREFIX = 'ns:';
 
 async function openPrefs(ctx: common.UIAbilityContext): Promise<preferences.Preferences> {
@@ -59,7 +59,7 @@ export class GalleryAutoSyncLedger {
     return new Set<string>(GalleryAutoSyncLedger.memory);
   }
 
-  /** 账本是否已记录该本地照片（精确指纹 ±2s，或 name+size 软键） */
+  /** 账本是否已记录该本地照片（精确指纹 ±2s，或 name+size；不含 size+mtime 弱键） */
   static hasEntry(ledger: Set<string>, entry: LocalPhotoEntry): boolean {
     const fp = localPhotoOfficialFingerprint(entry);
     if (officialFingerprintSetHas(ledger, fp)) {
