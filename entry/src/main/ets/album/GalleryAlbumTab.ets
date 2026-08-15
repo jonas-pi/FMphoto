@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 原生相册 Tab（对齐 fnos_gallery_mobile.py 第 2~4 段主流程）。
  *
  * 数据链路：
@@ -143,8 +143,10 @@ import {
   collectTimelineYearMarkers,
   collectTimelineYearMonths,
   findFlowRoughVisibleRangeForYearMonth,
+  findFlowScrollIndexForAnchorDate,
   findFlowScrollIndexForYearMonth,
   findTimelineMonthRange,
+  readFlowAnchorDate,
   getTimelineHighlightDay,
   getTimelineHighlightMonth,
   getTimelineHighlightYear,
@@ -429,6 +431,7 @@ export struct GalleryAlbumTab {
   onSearchModeVisibilityChange: (hiddenBottomNav: boolean) => void = (_: boolean): void => {};
   onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void) => void =
     (_: boolean, __: () => void, ___: () => void): void => {};
+  onViewGranularityChange: (mode: GalleryViewGranularity) => void = (_: GalleryViewGranularity): void => {};
   /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
 
@@ -2209,6 +2212,10 @@ export struct GalleryAlbumTab {
   }
 
   private tryConsumeSurfaceBack(): boolean {
+    if (this.slideshowSettingsVisible) {
+      this.dismissSlideshowSettings();
+      return true;
+    }
     return galleryAlbumTryConsumeSurfaceBack(this.asRootSurfaceHost());
   }
 
@@ -2254,11 +2261,34 @@ export struct GalleryAlbumTab {
     }
   }
 
+  private restoreGranularityAnchorScroll(anchor: TimelineDayModel | null): void {
+    if (anchor === null) {
+      return;
+    }
+    const idx = findFlowScrollIndexForAnchorDate(
+      this.flowDataSource,
+      anchor.year,
+      anchor.month,
+      anchor.day,
+      this.renderedViewGranularity
+    );
+    if (idx < 0) {
+      return;
+    }
+    try {
+      this.scrollerRef.scrollToIndex(this.mainListIndexFromFlowNodeIndex(idx), false, ScrollAlign.START);
+      this.listVisibleFirstNodeIdx = idx;
+    } catch (_e) {
+    }
+  }
+
   private commitGranularitySwitch(direction: number): void {
     this.granularitySwitchTimer = -1;
+    const anchor = readFlowAnchorDate(this.flowDataSource, this.listVisibleFirstNodeIdx);
     this.renderedViewGranularity = this.viewGranularity;
     this.lastGranularityMotionMode = this.renderedViewGranularity;
     galleryAlbumRebuildFlow(this.asVisibleLoadHost());
+    this.restoreGranularityAnchorScroll(anchor);
     this.refreshRootPhotosScrollTitle();
     if (direction === 0) {
       this.modeSwitchOpacity = 1;
@@ -2294,6 +2324,17 @@ export struct GalleryAlbumTab {
   private onViewGranularityChanged(): void {
     this.clearGranularitySwitchTimer();
     this.commitGranularitySwitch(0);
+  }
+
+  private canPinchSwitchGranularity(): boolean {
+    return this.homeSurface === 'photos' &&
+      !this.inSearchMode &&
+      !this.inCategoryMode &&
+      !this.inSmartCategoryMode &&
+      !this.inPersonMode &&
+      !this.gallerySelectionMode &&
+      !this.gallerySlideGestureActive &&
+      !this.bootLoading;
   }
 
   private openSearchPanel(): void {
@@ -2715,6 +2756,7 @@ export struct GalleryAlbumTab {
           footText: this.footText,
           galleryTimelineRefreshing: this.galleryTimelineRefreshing,
           gallerySelectionMode: this.gallerySelectionMode,
+          granularityPinchEnabled: this.canPinchSwitchGranularity(),
           showBatchActionBar: !this.shouldUseHomeSelectionDock(),
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
@@ -3016,6 +3058,9 @@ export struct GalleryAlbumTab {
           },
           onTimelinePanCancel: (_event: GestureEvent): void => {
             this.endTimelineDrag();
+          },
+          onGranularityPinchCommit: (mode: GalleryViewGranularity): void => {
+            this.onViewGranularityChange(mode);
           }
         })
           .visibility(this.isRootPhotosSurfaceLayerVisible() ? Visibility.Visible : Visibility.None)

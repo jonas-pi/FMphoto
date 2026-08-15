@@ -1281,6 +1281,9 @@ struct Home {
               floatingDockInsetBottomVp: this.dockReserveHeight(),
               homeSurface: this.currentHomeSurface(),
               viewGranularity: this.galleryViewGranularity,
+              onViewGranularityChange: (mode: GalleryViewGranularity): void => {
+                this.galleryViewGranularity = mode;
+              },
               onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
                 this.albumSearchModeActive = hiddenBottomNav;
               },

@@ -1,4 +1,5 @@
 import { GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
+import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 import {
   GALLERY_TIMELINE_INDICATOR_PAD_VP,
   GALLERY_TIMELINE_INDICATOR_RESERVED_VP
@@ -120,6 +121,75 @@ export function findFlowScrollIndexForYearMonth(
     }
   }
   return -1;
+}
+
+/** 读取当前可见宫格对应的年月日，用于粒度切换后回到同一时间位置。 */
+export function readFlowAnchorDate(
+  flowDataSource: GalleryWaterFlowDataSource,
+  firstIdx: number
+): TimelineDayModel | null {
+  const total = flowDataSource.totalCount();
+  if (total <= 0) {
+    return null;
+  }
+  const start = Math.max(0, Math.min(firstIdx, total - 1));
+  const forwardEnd = Math.min(total - 1, start + 24);
+  for (let i = start; i <= forwardEnd; i++) {
+    const node = flowDataSource.getData(i);
+    if (node.year > 0 && node.month > 0) {
+      return { year: node.year, month: node.month, day: Math.max(0, node.day), itemCount: 0 };
+    }
+  }
+  const backwardStart = Math.max(0, start - 24);
+  for (let i = start - 1; i >= backwardStart; i--) {
+    const node = flowDataSource.getData(i);
+    if (node.year > 0 && node.month > 0) {
+      return { year: node.year, month: node.month, day: Math.max(0, node.day), itemCount: 0 };
+    }
+  }
+  return null;
+}
+
+export function findFlowScrollIndexForAnchorDate(
+  flowDataSource: GalleryWaterFlowDataSource,
+  year: number,
+  month: number,
+  day: number,
+  mode: GalleryViewGranularity
+): number {
+  const total = flowDataSource.totalCount();
+  if (mode === GalleryViewGranularity.YEAR) {
+    for (let i = 0; i < total; i++) {
+      const node = flowDataSource.getData(i);
+      if (node.year === year && (node.kind === 'month' || node.kind === 'row')) {
+        return i;
+      }
+    }
+    return -1;
+  }
+  if (mode === GalleryViewGranularity.MONTH) {
+    const monthIdx = findFlowScrollIndexForYearMonth(flowDataSource, year, month);
+    if (monthIdx >= 0) {
+      return monthIdx;
+    }
+    for (let i = 0; i < total; i++) {
+      const node = flowDataSource.getData(i);
+      if (node.year === year && node.month === month && node.kind === 'row') {
+        return i;
+      }
+    }
+    return -1;
+  }
+  if (day > 0) {
+    for (let i = 0; i < total; i++) {
+      const node = flowDataSource.getData(i);
+      if (node.year === year && node.month === month && node.day === day &&
+        (node.kind === 'day' || node.kind === 'row')) {
+        return i;
+      }
+    }
+  }
+  return findFlowScrollIndexForYearMonth(flowDataSource, year, month);
 }
 
 export function findFlowRoughVisibleRangeForYearMonth(

@@ -20,8 +20,9 @@ import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
-import { GalleryViewGranularity } from './GalleryAlbumGranularity';
+import { GalleryViewGranularity, galleryViewGranularityAfterPinch } from './GalleryAlbumGranularity';
 import { GalleryAlbumSelectionOverlay } from './GalleryAlbumSelectionOverlay';
+import { GalleryPinchScaleUpdater } from './GalleryAlbumPinchScale';
 
 const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
 const GALLERY_MAIN_TOUCH_SLOP_VP: number = 10;
@@ -30,8 +31,8 @@ const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_MONTH: number = 360;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_YEAR: number = 120;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_MONTH: number = 160;
-const GALLERY_GRANULARITY_SWITCH_DURATION_MS: number = 140;
-const GALLERY_GRANULARITY_SWITCH_START_OPACITY: number = 0.92;
+const GALLERY_GRANULARITY_PINCH_DISTANCE_VP: number = 8;
+const GALLERY_GRANULARITY_PINCH_LOCK_MS: number = 320;
 export const GALLERY_ALBUM_MAIN_LIST_DOM_ID: string = 'gallery_album_main_list';
 
 @Component
@@ -48,6 +49,7 @@ export struct GalleryAlbumMainModeView {
   @Prop modeSwitchOffsetY: number = 0;
   @Prop galleryTimelineRefreshing: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
+  @Prop granularityPinchEnabled: boolean = true;
   @Prop showBatchActionBar: boolean = true;
   @Prop galleryBatchDownloading: boolean = false;
   @Prop galleryBatchDeleting: boolean = false;
@@ -86,6 +88,11 @@ export struct GalleryAlbumMainModeView {
   private thumbLastAdaptiveDropAtMs: number = 0;
   private lastViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   @State private granularityOpacity: number = 1;
+  private pinchScaleUpdater: GalleryPinchScaleUpdater = new GalleryPinchScaleUpdater();
+  private granularityPinchActive: boolean = false;
+  private pinchCenterX: number = 0;
+  private pinchCenterY: number = 0;
+  private pinchLockUntilMs: number = 0;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
   galleryThumbDomId: (photoId: string) => string = (_: string) => '';
@@ -122,6 +129,7 @@ export struct GalleryAlbumMainModeView {
   onTimelinePanUpdate: (event: GestureEvent) => void = (_: GestureEvent) => {};
   onTimelinePanEnd: (event: GestureEvent) => void = (_: GestureEvent) => {};
   onTimelinePanCancel: (event: GestureEvent) => void = (_: GestureEvent) => {};
+  onGranularityPinchCommit: (mode: GalleryViewGranularity) => void = (_: GalleryViewGranularity): void => {};
 
   private showTimelineSidebar(): boolean {
     return this.sectionsLength > 0 || this.orderedDaysLength > 0;
@@ -165,15 +173,61 @@ export struct GalleryAlbumMainModeView {
     this.granularityOpacity = 1;
   }
 
-  private playGranularitySwitchMotion(): void {
-    this.granularityOpacity = GALLERY_GRANULARITY_SWITCH_START_OPACITY;
-    try {
-      this.getUIContext().animateTo({ duration: GALLERY_GRANULARITY_SWITCH_DURATION_MS, curve: Curve.EaseOut }, (): void => {
-        this.resetGranularityMotion();
-      });
-    } catch (_e) {
-      this.resetGranularityMotion();
+  private canRecognizeGranularityPinch(): boolean {
+    if (!this.granularityPinchEnabled || this.timelineSidebarDragging || this.gallerySlideGestureActive) {
+      return false;
     }
+    return Date.now() >= this.pinchLockUntilMs;
+  }
+
+  private onGranularityPinchStart(event: GestureEvent): void {
+    if (!this.canRecognizeGranularityPinch()) {
+      return;
+    }
+    this.resetGalleryTouchTracking();
+    this.granularityPinchActive = true;
+    this.pinchCenterX = event.pinchCenterX;
+    this.pinchCenterY = event.pinchCenterY;
+    this.pinchScaleUpdater.applyScale(1, this.pinchCenterX, this.pinchCenterY);
+  }
+
+  private onGranularityPinchUpdate(event: GestureEvent): void {
+    if (!this.granularityPinchActive) {
+      return;
+    }
+    this.pinchCenterX = event.pinchCenterX;
+    this.pinchCenterY = event.pinchCenterY;
+    this.pinchScaleUpdater.applyScale(event.scale, this.pinchCenterX, this.pinchCenterY);
+  }
+
+  private onGranularityPinchEnd(event: GestureEvent): void {
+    if (!this.granularityPinchActive) {
+      this.pinchScaleUpdater.resetScale();
+      return;
+    }
+    this.granularityPinchActive = false;
+    const nextMode = galleryViewGranularityAfterPinch(this.viewGranularity, event.scale);
+    this.pinchScaleUpdater.resetScale();
+    if (nextMode === null) {
+      return;
+    }
+    this.pinchLockUntilMs = Date.now() + GALLERY_GRANULARITY_PINCH_LOCK_MS;
+    this.onGranularityPinchCommit(nextMode);
+  }
+
+  private onGranularityPinchCancel(): void {
+    this.granularityPinchActive = false;
+    this.pinchScaleUpdater.resetScale();
+  }
+
+  private onGranularityPinchJudgeBegin(info: GestureInfo): GestureJudgeResult {
+    if (info.type !== GestureControl.GestureType.PINCH_GESTURE) {
+      return GestureJudgeResult.CONTINUE;
+    }
+    if (!this.canRecognizeGranularityPinch()) {
+      return GestureJudgeResult.REJECT;
+    }
+    return GestureJudgeResult.CONTINUE;
   }
 
   aboutToAppear(): void {
@@ -189,7 +243,7 @@ export struct GalleryAlbumMainModeView {
   private onViewGranularityChanged(): void {
     this.lastViewGranularity = this.viewGranularity;
     this.syncThumbHighThroughputMode();
-    this.playGranularitySwitchMotion();
+    this.pinchScaleUpdater.resetScale();
   }
 
   private currentThumbPressureLoadMs(): number {
@@ -718,6 +772,7 @@ export struct GalleryAlbumMainModeView {
               .scrollBarWidth(0)
               .divider({ strokeWidth: 0 })
               .enableScrollInteraction(this.galleryMainListScrollEnabled)
+              .attributeModifier(this.pinchScaleUpdater)
               .onTouch((event: TouchEvent): void => {
                 this.onMainListTouchEvent(event);
               })
@@ -728,9 +783,28 @@ export struct GalleryAlbumMainModeView {
               .onScrollVisibleContentChange((start: VisibleListContentInfo, end: VisibleListContentInfo): void => {
                 this.onListVisibleContentChange(start, end);
               })
+              .onGestureJudgeBegin((info: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+                return this.onGranularityPinchJudgeBegin(info);
+              })
+              .priorityGesture(
+                PinchGesture({ fingers: 2, distance: GALLERY_GRANULARITY_PINCH_DISTANCE_VP })
+                  .onActionStart((event: GestureEvent): void => {
+                    this.onGranularityPinchStart(event);
+                  })
+                  .onActionUpdate((event: GestureEvent): void => {
+                    this.onGranularityPinchUpdate(event);
+                  })
+                  .onActionEnd((event: GestureEvent): void => {
+                    this.onGranularityPinchEnd(event);
+                  })
+                  .onActionCancel((): void => {
+                    this.onGranularityPinchCancel();
+                  })
+              )
             }
             .width('100%')
             .height('100%')
+            .clip(true)
             .onOffsetChange(this.onRefreshOffsetChange)
             .pullToRefresh(!this.gallerySelectionMode)
             .onRefreshing(this.onRefreshing)

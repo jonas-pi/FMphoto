@@ -1,4 +1,4 @@
-﻿import { UIContext } from '@kit.ArkUI';
+import { UIContext } from '@kit.ArkUI';
 import { AppSession } from '../../auth/AppSession';
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../../common/FnMotion';
@@ -330,7 +330,8 @@ export function galleryAlbumTryConsumeSurfaceBack(host: GalleryAlbumRootSurfaceH
     host.dismissMoreMenu();
     return true;
   }
-  if (host.gallerySelectionMode && host.inSearchMode) {
+  // 系统图库：多选是瞬时态，返回先退出多选（与顶栏「取消」相同），不退出应用。
+  if (host.gallerySelectionMode) {
     host.exitGallerySelection();
     return true;
   }
