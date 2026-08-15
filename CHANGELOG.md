@@ -6,6 +6,32 @@
 
 ---
 
+## [1.3.0-beta.1] - 2026-08-15
+
+### 新增
+
+- **跨系统实况/动图预览**：支持安卓 Motion Photo、鸿蒙 Moving Photo、iOS Live Photo。宫格仍显示静帧封面 + 右下角同心圆标识；全屏预览长按播放（官方 `MovingPhotoView` 内置长按），开播轻微震动。
+- **全屏实况标识**：预览页右下角显示带呼吸动效的同心圆，避开底部工具栏，不拦截长按。
+- **HDR Vivid 提示**：加载原图并以 HDR 显示时，左下角展示官方 `hd_square_fill` 图标 + `HDR Vivid` 标签。
+
+### 改进
+
+- **预览工具栏局部刷新**：顶底栏显隐改走 AppStorage，点击切换不再重绘整页 Swiper，避免实况加载被打断。
+
+### 修复
+
+- **照片详情半模态**：同一节点不再挂两个 `bindSheet`（详情与实况保存共用一个），点击详情可正常弹出半屏。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.2.0` 的设备可直接覆盖升级（`versionCode` 1003001）。
+
+---
+
 ## [1.2.0] - 2026-08-15
 
 在 [1.2.0-beta.1] 验证通过后发布的正式版，功能与预发布一致。
@@ -138,6 +164,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.0-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.2.0...v1.3.0-beta.1
 [1.2.0]: https://github.com/jonas-pi/FMphoto/compare/v1.2.0-beta.1...v1.2.0
 [1.2.0-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.1.1...v1.2.0-beta.1
 [1.1.1]: https://github.com/jonas-pi/FMphoto/compare/v1.1...v1.1.1
