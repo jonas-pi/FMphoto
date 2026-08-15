@@ -104,6 +104,7 @@ import {
   personId,
   personName,
   personStatText,
+  smartCategoryCount,
   smartCategoryCover,
   smartCategoryName,
 } from './galleryAlbumTab/GalleryAlbumModeData';
@@ -2717,6 +2718,7 @@ export struct GalleryAlbumTab {
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           getCategoryName: (item: SmartCategoryItem): string => smartCategoryName(item),
           getCategoryCover: (item: SmartCategoryItem): string => smartCategoryCover(item),
+          getCategoryCount: (item: SmartCategoryItem): number => smartCategoryCount(item),
           onRunSearch: (keyword: string): void => {
             this.searchQuery = keyword;
             void galleryAlbumRunSearch(this.asModeOrchestratorHost(), keyword);

@@ -3,7 +3,7 @@ import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { SmartCategoryItem } from '../model/FnApiTypes';
 import { loadSmartCategoryGalleryItems } from '../album/SmartCategoryMagicSearch';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
-import { smartCategoryCover } from '../album/GalleryAlbumEntityData';
+import { smartCategoryCover, smartCategoryCount } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -95,6 +95,10 @@ struct SmartCategoryPage {
 
   private coverOf(item: SmartCategoryItem): string {
     return smartCategoryCover(item);
+  }
+
+  private countOf(item: SmartCategoryItem): number {
+    return smartCategoryCount(item);
   }
 
   private smartCategoryGridKey(item: SmartCategoryItem, index: number): string {
@@ -210,6 +214,11 @@ struct SmartCategoryPage {
               .fontColor($r('app.color.text_primary'))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+
+            Text(`${this.countOf(item)} 项`)
+              .fontSize(11)
+              .fontColor($r('app.color.text_secondary'))
               .width('100%')
           }
           .width('100%')

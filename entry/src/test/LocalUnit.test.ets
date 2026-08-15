@@ -8,6 +8,7 @@ import {
   nasDedupeMatchIsStrong,
   officialSizeMtimeSetHas
 } from '../main/ets/album/GalleryAutoSyncOfficialFingerprint';
+import { smartCategoryCount } from '../main/ets/album/GalleryAlbumEntityData';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -101,6 +102,13 @@ export default function localUnitTest() {
       };
       const index = buildNasDedupeIndex([item]);
       expect(index.sizeMtimeKeys.has('2048:1000')).assertTrue();
+    });
+
+    it('smartCategoryCount_reads_official_itemCount', 0, () => {
+      expect(smartCategoryCount({ name: '猫', itemCount: 276 })).assertEqual(276);
+      expect(smartCategoryCount({ name: '跳舞', itemCount: 106 })).assertEqual(106);
+      expect(smartCategoryCount({ name: '证件', count: 12 })).assertEqual(12);
+      expect(smartCategoryCount({ name: '空' })).assertEqual(0);
     });
 
     it('fnWebViewBaseUrl_preserves_domain_https_port', 0, () => {

@@ -216,11 +216,28 @@ export function smartCategoryName(item: SmartCategoryItem): string {
   return n !== undefined && n.length > 0 ? n : '未命名分类';
 }
 
+function readFirstNonNegativeCount(raw: LooseGalleryCoverRecord, keys: string[]): number {
+  for (let i = 0; i < keys.length; i++) {
+    const v = raw[keys[i]];
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      return Math.max(0, Math.floor(v));
+    }
+    if (typeof v === 'string') {
+      const n = Number(v);
+      if (Number.isFinite(n)) {
+        return Math.max(0, Math.floor(n));
+      }
+    }
+  }
+  return 0;
+}
+
 export function smartCategoryCount(item: SmartCategoryItem): number {
+  // 官方 ai-smart-rec/categories 用 itemCount；直接读属性，避免 ArkTS 下标访问丢字段
   const directVals: Array<number | string | undefined> = [
+    item.itemCount,
     item.count,
     item.total,
-    item.itemCount,
     item.item_count,
     item.photoCount,
     item.photo_count,
@@ -239,7 +256,14 @@ export function smartCategoryCount(item: SmartCategoryItem): number {
       }
     }
   }
-  return 0;
+  return readFirstNonNegativeCount(item as LooseGalleryCoverRecord, [
+    'photoNum',
+    'photo_num',
+    'mediaCount',
+    'media_count',
+    'fileCount',
+    'file_count'
+  ]);
 }
 
 export function smartCategoryCover(item: SmartCategoryItem): string {

@@ -1402,6 +1402,25 @@ export class FnHttpClientGalleryOps {
     return '';
   }
 
+  private static readFirstNonNegativeNumber(
+    raw: Record<string, Object | string | number | boolean | undefined | null>,
+    keys: string[]
+  ): number {
+    for (let i = 0; i < keys.length; i++) {
+      const v = raw[keys[i]];
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        return Math.max(0, Math.floor(v));
+      }
+      if (typeof v === 'string') {
+        const n = Number(v);
+        if (Number.isFinite(n)) {
+          return Math.max(0, Math.floor(n));
+        }
+      }
+    }
+    return -1;
+  }
+
   private static asLooseJsonRecord(
     value: Object | string | number | boolean | undefined | null
   ): Record<string, Object | string | number | boolean | undefined | null> | null {
@@ -1529,6 +1548,18 @@ export class FnHttpClientGalleryOps {
     raw: Record<string, Object | string | number | boolean | undefined | null>
   ): SmartCategoryItem {
     const out = raw as SmartCategoryItem;
+    // 官方 ai-smart-rec/categories 数量字段为 itemCount
+    const count = FnHttpClientGalleryOps.readFirstNonNegativeNumber(raw, [
+      'itemCount',
+      'item_count',
+      'count',
+      'total',
+      'photoCount',
+      'photo_count'
+    ]);
+    if (count >= 0) {
+      out.itemCount = count;
+    }
     const coverUrl = FnHttpClientGalleryOps.pickBestCoverUrl(raw, ['poster', 'coverInfo', 'coverPhoto']);
     if (coverUrl.length > 0) {
       raw['cover'] = coverUrl;

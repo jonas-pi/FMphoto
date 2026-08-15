@@ -18,6 +18,7 @@ export struct GalleryAlbumSmartCategoryModeView {
 
   getCategoryName: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
   getCategoryCover: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
+  getCategoryCount: (item: SmartCategoryItem) => number = (_: SmartCategoryItem) => 0;
   onRunSearch: (keyword: string) => void = (_: string) => {};
 
   aboutToAppear(): void {
@@ -79,7 +80,8 @@ export struct GalleryAlbumSmartCategoryModeView {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
-            Text('点击发起AI搜索')
+            // 与媒体分类宫格一致：副标题展示该项数量
+            Text(`${this.getCategoryCount(item)} 项`)
               .fontSize(11)
               .fontColor($r('app.color.text_secondary'))
               .width('100%')
