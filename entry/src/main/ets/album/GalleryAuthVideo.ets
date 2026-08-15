@@ -9,25 +9,31 @@
  *      不匹配则说明已被更新的调用取代，直接退出。
  */
 import { media } from '@kit.MediaKit';
+import { audio, AVVolumePanel } from '@kit.AudioKit';
+import { window } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
+import { FnHdsPillButton } from '../common/FnUiCommon';
+import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY, toggleGalleryPreviewToolbarVisible } from '../pages/galleryPreview/GalleryPreviewToolbarStore';
 import {
-  FnHdsPillButton,
-  FnHdsSymbolButton,
-  fnImmersiveBackgroundEffect,
-  fnLiquidGlassGradient
-} from '../common/FnUiCommon';
-import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from '../pages/galleryPreview/GalleryPreviewToolbarStore';
+  GALLERY_PREVIEW_VIDEO_TOGGLE_MUTE_SEQ_KEY,
+  GALLERY_PREVIEW_VIDEO_TOGGLE_PLAY_SEQ_KEY,
+  restoreGalleryPreviewPortrait,
+  setGalleryPreviewVideoActive,
+  setGalleryPreviewVideoDockExpanded,
+  setGalleryPreviewVideoLandscape,
+  setGalleryPreviewVideoMuted,
+  setGalleryPreviewVideoPlaying
+} from '../pages/galleryPreview/GalleryPreviewVideoStore';
+import { GalleryVideoGestureHud } from './GalleryVideoGestureHud';
+import { GalleryVideoOverlayChrome } from './GalleryVideoOverlayChrome';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryAuthVideo';
 const LONG_PRESS_RATE = 2.0;
-const SEEK_DRAG_UI_DEBOUNCE_MS = 26;
-
-interface SpeedOption {
-  label: string;
-  rate: number;
-}
+const GALLERY_VIDEO_ADJUST_HUD_HIDE_MS = 3000;
+const GALLERY_VIDEO_VOLUME_MAX_FALLBACK = 15;
 
 interface QualityOption {
   label: string;
@@ -36,14 +42,6 @@ interface QualityOption {
   /** true 表示走原始直链（/stream/v/{id}），不走 decode/play */
   directStream: boolean;
 }
-
-const SPEED_OPTIONS: SpeedOption[] = [
-  { label: '0.75x', rate: 0.75 },
-  { label: '1.0x', rate: 1.0 },
-  { label: '1.25x', rate: 1.25 },
-  { label: '1.75x', rate: 1.75 },
-  { label: '2.0x', rate: 2.0 }
-];
 
 const QUALITY_OPTIONS: QualityOption[] = [
   // 默认使用原始直链，性能和带宽通常最好；用户可手动切到转码档位。
@@ -80,8 +78,17 @@ export struct GalleryAuthVideo {
   @State private isDarkTheme: boolean = false;
   /** 播放链路失败时可手动重试（与「清晰度超限」等提示区分） */
   @State private showPlaybackRetry: boolean = false;
-  @State private controlsVisible: boolean = true;
-  @State private isPlaying: boolean = false;
+  @State @Watch('onPlaybackChromeChanged') private isPlaying: boolean = false;
+  @State private userStartedOnce: boolean = false;
+  @State private playbackEnded: boolean = false;
+  @State @Watch('onPlaybackChromeChanged') private muted: boolean = false;
+  @State private landscape: boolean = false;
+  @StorageProp(GALLERY_PREVIEW_VIDEO_TOGGLE_PLAY_SEQ_KEY) @Watch('onTogglePlayCmd')
+    private togglePlaySeq: number = 0;
+  @StorageProp(GALLERY_PREVIEW_VIDEO_TOGGLE_MUTE_SEQ_KEY) @Watch('onToggleMuteCmd')
+    private toggleMuteSeq: number = 0;
+  private lastTogglePlaySeq: number = 0;
+  private lastToggleMuteSeq: number = 0;
   @State private currentMs: number = 0;
   @State private durationMs: number = 0;
   @State private dragRatio: number = 0;
@@ -90,7 +97,13 @@ export struct GalleryAuthVideo {
   @State private speedRate: number = LAST_VIDEO_SPEED_RATE;
   @State private qualityIndex: number = LAST_VIDEO_QUALITY_INDEX;
   @State private longPressSpeeding: boolean = false;
-  @State private progressW: number = 1;
+  @State private viewW: number = 360;
+  @State private viewH: number = 780;
+  @State private adjustHudVisible: boolean = false;
+  @State private adjustIsBrightness: boolean = true;
+  @State private screenBrightness: number = 0.5;
+  @State private mediaVolume: number = 5;
+  @State private mediaVolumeMax: number = GALLERY_VIDEO_VOLUME_MAX_FALLBACK;
 
   private xController: XComponentController = new XComponentController();
   private avPlayer: media.AVPlayer | null = null;
@@ -115,8 +128,6 @@ export struct GalleryAuthVideo {
    * 先以 1.0 起播，进入 playing 后再套用记忆倍速。
    */
   private deferPlaybackRateUntilPlaying: boolean = false;
-  /** 进度条拖动 UI 去抖时间戳，降低频繁重绘导致的卡顿 */
-  private lastSeekDragUiUpdateMs: number = 0;
   /** 转码播放异常自动自愈次数（每个视频最多一次） */
   private autoRecoverCount: number = 0;
   /** 最近一次 timeUpdate 墙钟时间；报错时若进度仍在刷新，多为 HLS+高倍速下的误信号 */
@@ -126,45 +137,22 @@ export struct GalleryAuthVideo {
    * 每次新起播在 startPlay 入口清零，仅在 arm… 时写入。
    */
   private playbackFalsePositiveGuardUntilMs: number = 0;
+  private adjustBrightnessBase: number = 0.5;
+  private adjustVolumeBase: number = 5;
+  private savedWindowBrightness: number = -1;
+  private windowBrightnessDirty: boolean = false;
+  private adjustHudHideTimer: number = 0;
 
   private surfaceBackgroundColor(): ResourceColor {
     return this.isDarkTheme ? Color.Black : Color.White;
-  }
-
-  private controlChipBackground(): ResourceColor {
-    return $r('app.color.gallery_material_surface_bg');
-  }
-
-  private controlChipBorder(): ResourceColor {
-    return $r('app.color.immersive_panel_border');
-  }
-
-  private controlPanelBackground(): ResourceColor {
-    return $r('app.color.immersive_panel_bg');
-  }
-
-  private effectiveBottomPadding(): number {
-    return this.previewToolbarVisible ? this.bottomPadding : 0;
   }
 
   private controlPrimaryTextColor(): ResourceColor {
     return $r('app.color.button_secondary_fg');
   }
 
-  private controlTimeTextColor(): ResourceColor {
-    return this.isDarkTheme ? '#DDFFFFFF' : '#C0162033';
-  }
-
-  private controlTrackColor(): ResourceColor {
-    return this.isDarkTheme ? '#44FFFFFF' : '#22000000';
-  }
-
-  private controlProgressFillColor(): ResourceColor {
-    return this.isDarkTheme ? '#FFFFFFFF' : $r('app.color.brand_primary');
-  }
-
-  private controlShadowColor(): string {
-    return this.isDarkTheme ? '#22000000' : '#14001A33';
+  private effectiveBottomPadding(): number {
+    return this.previewToolbarVisible ? this.bottomPadding : 0;
   }
 
   private loadingIndicatorColor(): ResourceColor {
@@ -217,6 +205,8 @@ export struct GalleryAuthVideo {
   onUrlChange(): void {
     this.playGen++;
     this.isPlaying = false;
+    this.userStartedOnce = false;
+    this.playbackEnded = false;
     this.currentMs = 0;
     this.durationMs = 0;
     this.draggingSeek = false;
@@ -251,6 +241,41 @@ export struct GalleryAuthVideo {
     this.normalizeQualityIndex();
     this.autoRecoverCount = 0;
     this.showPlaybackRetry = false;
+    this.lastTogglePlaySeq = this.togglePlaySeq;
+    this.lastToggleMuteSeq = this.toggleMuteSeq;
+    this.onPlaybackChromeChanged();
+    void this.initWindowBrightness();
+    void this.initMediaVolume();
+  }
+
+  onPlaybackChromeChanged(): void {
+    if (!this.active) {
+      return;
+    }
+    setGalleryPreviewVideoActive(true);
+    setGalleryPreviewVideoPlaying(this.isPlaying);
+    setGalleryPreviewVideoMuted(this.muted);
+    setGalleryPreviewVideoDockExpanded(this.userStartedOnce && !this.playbackEnded);
+  }
+
+  onTogglePlayCmd(): void {
+    if (this.togglePlaySeq === this.lastTogglePlaySeq) {
+      return;
+    }
+    this.lastTogglePlaySeq = this.togglePlaySeq;
+    if (this.active) {
+      void this.togglePlayPause();
+    }
+  }
+
+  onToggleMuteCmd(): void {
+    if (this.toggleMuteSeq === this.lastToggleMuteSeq) {
+      return;
+    }
+    this.lastToggleMuteSeq = this.toggleMuteSeq;
+    if (this.active) {
+      this.toggleMute();
+    }
   }
 
   onActiveChanged(): void {
@@ -258,17 +283,29 @@ export struct GalleryAuthVideo {
     if (!this.active) {
       this.videoLoading = false;
       this.isPlaying = false;
+      this.adjustHudVisible = false;
+      setGalleryPreviewVideoActive(false);
+      setGalleryPreviewVideoPlaying(false);
+      setGalleryPreviewVideoDockExpanded(false);
+      void this.restoreWindowBrightness();
+      if (this.landscape) {
+        this.landscape = false;
+        void restoreGalleryPreviewPortrait(this.getUIContext());
+      }
       if (p !== null) {
         p.pause().catch((): void => {});
       }
       return;
     }
+    this.onPlaybackChromeChanged();
     // 恢复到可见页：优先续播已有实例；没有实例则按正常链路重建
     if (this.videoUrl.length === 0) {
       return;
     }
     if (p !== null) {
-      p.play().catch((): void => {});
+      if (this.userStartedOnce && !this.playbackEnded) {
+        p.play().catch((): void => {});
+      }
       return;
     }
     if (this.surfaceReady) {
@@ -279,6 +316,16 @@ export struct GalleryAuthVideo {
 
   aboutToDisappear(): void {
     this.playGen++;
+    this.clearAdjustHudHideTimer();
+    void this.restoreWindowBrightness();
+    if (this.active) {
+      setGalleryPreviewVideoActive(false);
+      setGalleryPreviewVideoPlaying(false);
+      if (this.landscape) {
+        this.landscape = false;
+        void restoreGalleryPreviewPortrait(this.getUIContext());
+      }
+    }
     if (this.restartTimerId !== 0) {
       try {
         clearTimeout(this.restartTimerId);
@@ -339,8 +386,26 @@ export struct GalleryAuthVideo {
     const sec = Math.max(0, Math.floor(ms / 1000));
     const m = Math.floor(sec / 60);
     const s = sec % 60;
+    const mm = m < 10 ? `0${m}` : `${m}`;
     const ss = s < 10 ? `0${s}` : `${s}`;
-    return `${m}:${ss}`;
+    return `${mm}:${ss}`;
+  }
+
+  private speedBadgeText(): string {
+    if (this.longPressSpeeding) {
+      return '2.0X';
+    }
+    const r = this.speedRate;
+    if (Math.abs(r - 0.25) < 0.01) {
+      return '0.25X';
+    }
+    if (Math.abs(r - 0.5) < 0.01) {
+      return '0.5X';
+    }
+    if (Math.abs(r - 1.5) < 0.01) {
+      return '1.5X';
+    }
+    return `${r.toFixed(1)}X`;
   }
 
   /**
@@ -387,10 +452,18 @@ export struct GalleryAuthVideo {
      * - 仅在 setSpeed 不可用时回退 setPlaybackRate。
      */
     try {
-      if (rate <= 0.75) {
-        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_0_75_X);
-      } else if (rate <= 1.0) {
+      if (Math.abs(rate - 0.25) < 0.01) {
+        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_0_25_X);
+      } else if (Math.abs(rate - 0.5) < 0.01) {
+        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_0_50_X);
+      } else if (Math.abs(rate - 1.0) < 0.01) {
         player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_00_X);
+      } else if (Math.abs(rate - 1.5) < 0.01) {
+        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_50_X);
+      } else if (Math.abs(rate - 2.0) < 0.01) {
+        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_2_00_X);
+      } else if (rate <= 0.75) {
+        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_0_75_X);
       } else if (rate <= 1.25) {
         player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_25_X);
       } else if (rate <= 1.75) {
@@ -406,17 +479,213 @@ export struct GalleryAuthVideo {
     }
   }
 
+  private applyPlayerMute(player: media.AVPlayer): void {
+    try {
+      player.setVolume(this.muted ? 0 : 1);
+    } catch (_e) {
+    }
+  }
+
+  private toggleMute(): void {
+    this.muted = !this.muted;
+    const p = this.avPlayer;
+    if (p !== null) {
+      this.applyPlayerMute(p);
+    }
+  }
+
+  private async toggleLandscape(): Promise<void> {
+    const win = await this.resolveHostWindow();
+    if (win === undefined) {
+      return;
+    }
+    const next = !this.landscape;
+    try {
+      await win.setPreferredOrientation(
+        next ? window.Orientation.USER_ROTATION_LANDSCAPE : window.Orientation.PORTRAIT
+      );
+      this.landscape = next;
+      setGalleryPreviewVideoLandscape(next);
+    } catch (_e) {
+    }
+  }
+
+  private showCenterPlay(): boolean {
+    return !this.isPlaying && (!this.userStartedOnce || this.playbackEnded);
+  }
+
+  private shouldResumePlayback(): boolean {
+    return this.active && this.userStartedOnce && !this.playbackEnded;
+  }
+
   private async togglePlayPause(): Promise<void> {
     const p = this.avPlayer;
     if (p === null) { return; }
     try {
       if (this.isPlaying) {
+        this.isPlaying = false;
         await p.pause();
+        return;
+      }
+      this.userStartedOnce = true;
+      this.playbackEnded = false;
+      this.onPlaybackChromeChanged();
+      this.isPlaying = true;
+      if (this.durationMs > 0 && this.currentMs >= this.durationMs - 400) {
+        try {
+          p.seek(0, media.SeekMode.SEEK_CLOSEST);
+          this.currentMs = 0;
+        } catch (_e) {
+        }
+      }
+      await p.play();
+    } catch (_e) {
+    }
+  }
+
+  private clampAdjust(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  private clearAdjustHudHideTimer(): void {
+    if (this.adjustHudHideTimer === 0) {
+      return;
+    }
+    try {
+      clearTimeout(this.adjustHudHideTimer);
+    } catch (_e) {
+    }
+    this.adjustHudHideTimer = 0;
+  }
+
+  private scheduleHideAdjustHud(): void {
+    this.clearAdjustHudHideTimer();
+    this.adjustHudHideTimer = setTimeout((): void => {
+      this.adjustHudHideTimer = 0;
+      this.adjustHudVisible = false;
+    }, GALLERY_VIDEO_ADJUST_HUD_HIDE_MS);
+  }
+
+  private async resolveHostWindow(): Promise<window.Window | undefined> {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      return await window.getLastWindow(ctx);
+    } catch (_e) {
+      return undefined;
+    }
+  }
+
+  private async initWindowBrightness(): Promise<void> {
+    const win = await this.resolveHostWindow();
+    if (win === undefined) {
+      return;
+    }
+    try {
+      const raw = win.getWindowProperties().brightness;
+      if (Number.isFinite(raw) && raw >= 0 && raw <= 1) {
+        this.savedWindowBrightness = raw;
+        this.screenBrightness = raw;
       } else {
-        await p.play();
+        this.savedWindowBrightness = -1;
+        this.screenBrightness = 0.5;
       }
     } catch (_e) {
     }
+  }
+
+  private async applyWindowBrightness(value: number): Promise<void> {
+    const win = await this.resolveHostWindow();
+    if (win === undefined) {
+      return;
+    }
+    try {
+      await win.setWindowBrightness(this.clampAdjust(value, 0, 1));
+      this.windowBrightnessDirty = true;
+    } catch (_e) {
+    }
+  }
+
+  private async restoreWindowBrightness(): Promise<void> {
+    if (!this.windowBrightnessDirty) {
+      return;
+    }
+    const win = await this.resolveHostWindow();
+    if (win === undefined) {
+      return;
+    }
+    try {
+      await win.setWindowBrightness(this.savedWindowBrightness);
+      this.windowBrightnessDirty = false;
+    } catch (_e) {
+    }
+  }
+
+  private async initMediaVolume(): Promise<void> {
+    try {
+      const volumeManager = audio.getAudioManager().getVolumeManager();
+      const maxV = await volumeManager.getMaxVolumeByStream(audio.StreamUsage.STREAM_USAGE_MOVIE);
+      if (Number.isFinite(maxV) && maxV > 0) {
+        this.mediaVolumeMax = maxV;
+      }
+      const cur = await volumeManager.getVolumeByStream(audio.StreamUsage.STREAM_USAGE_MOVIE);
+      if (Number.isFinite(cur)) {
+        this.mediaVolume = this.clampAdjust(cur, 0, this.mediaVolumeMax);
+      }
+    } catch (_e) {
+    }
+  }
+
+  private onVideoSingleTap(): void {
+    toggleGalleryPreviewToolbarVisible();
+  }
+
+  private beginVerticalAdjust(event: GestureEvent): void {
+    if (this.draggingSeek || this.longPressSpeeding) {
+      return;
+    }
+    const fl = event.fingerList;
+    if (fl === undefined || fl.length < 1) {
+      return;
+    }
+    this.clearAdjustHudHideTimer();
+    this.adjustBrightnessBase = this.screenBrightness;
+    this.adjustVolumeBase = this.mediaVolume;
+    this.adjustIsBrightness = fl[0].localX < this.viewW * 0.5;
+    this.adjustHudVisible = true;
+    if (!this.adjustIsBrightness && this.muted) {
+      this.muted = false;
+      const p = this.avPlayer;
+      if (p !== null) {
+        this.applyPlayerMute(p);
+      }
+    }
+  }
+
+  private updateVerticalAdjust(event: GestureEvent): void {
+    if (!this.adjustHudVisible || this.draggingSeek) {
+      return;
+    }
+    const heightPx = this.viewH > 1 ? this.getUIContext().vp2px(this.viewH) : 1;
+    const delta = this.getUIContext().vp2px(event.offsetY) / heightPx;
+    if (this.adjustIsBrightness) {
+      const next = this.clampAdjust(this.adjustBrightnessBase - delta, 0, 1);
+      this.screenBrightness = next;
+      void this.applyWindowBrightness(next);
+      return;
+    }
+    const nextVol = this.clampAdjust(
+      this.adjustVolumeBase - delta * this.mediaVolumeMax,
+      0,
+      this.mediaVolumeMax
+    );
+    this.mediaVolume = nextVol;
+  }
+
+  private endVerticalAdjust(): void {
+    if (!this.adjustHudVisible) {
+      return;
+    }
+    this.scheduleHideAdjustHud();
   }
 
   private seekByRatio(ratio: number): void {
@@ -438,7 +707,6 @@ export struct GalleryAuthVideo {
     this.draggingSeek = true;
     this.dragStartRatio = this.progressRatio();
     this.dragRatio = this.dragStartRatio;
-    this.lastSeekDragUiUpdateMs = 0;
     this.wasPlayingBeforeSeek = this.isPlaying;
     this.seekResumePending = false;
     if (p !== null && this.wasPlayingBeforeSeek) {
@@ -453,15 +721,6 @@ export struct GalleryAuthVideo {
     this.seekByRatio(this.dragRatio);
     this.draggingSeek = false;
     this.seekResumePending = this.wasPlayingBeforeSeek;
-  }
-
-  /** 点击进度条任意位置直接跳转 */
-  private seekByTapX(localX: number): void {
-    if (this.progressW <= 0 || this.durationMs <= 0) {
-      return;
-    }
-    const r = Math.max(0, Math.min(1, localX / this.progressW));
-    this.seekByRatio(r);
   }
 
   /** 转码流播放异常时做一次保活重连，降低偶发失败率 */
@@ -567,35 +826,16 @@ export struct GalleryAuthVideo {
     return false;
   }
 
-  private async chooseSpeed(): Promise<void> {
-    try {
-      const choice = await this.getUIContext().getPromptAction().showActionMenu({
-        title: '播放倍速',
-        buttons: [
-          { text: '0.75x', color: '#007AFF' },
-          { text: '1.0x', color: '#007AFF' },
-          { text: '1.25x', color: '#007AFF' },
-          { text: '1.75x', color: '#007AFF' },
-          { text: '2.0x', color: '#007AFF' }
-        ]
-      });
-      const idx = choice.index;
-      if (idx < 0 || idx >= SPEED_OPTIONS.length) {
-        return;
-      }
-      const p = this.avPlayer;
-      if (p === null) {
-        return;
-      }
-      const picked = SPEED_OPTIONS[idx].rate;
-      this.speedRate = picked;
-      // 持久化到进程级共享变量，供后续视频实例直接复用。
-      LAST_VIDEO_SPEED_RATE = picked;
-      if (!this.longPressSpeeding) {
-        this.applySpeed(p, picked);
-        this.armPlaybackFalsePositiveGuardForTranscode();
-      }
-    } catch (_e) {
+  private applyPickedSpeed(picked: number): void {
+    const p = this.avPlayer;
+    if (p === null) {
+      return;
+    }
+    this.speedRate = picked;
+    LAST_VIDEO_SPEED_RATE = picked;
+    if (!this.longPressSpeeding) {
+      this.applySpeed(p, picked);
+      this.armPlaybackFalsePositiveGuardForTranscode();
     }
   }
 
@@ -830,16 +1070,33 @@ export struct GalleryAuthVideo {
       hilog.info(DOMAIN, TAG, 'stateChange → %{public}s', state as string);
       if (state === 'initialized') {
         player.surfaceId = surfaceId;
-        player.prepare().catch((e: Error): void => {
-          if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
-            return;
-          }
-          hilog.error(DOMAIN, TAG, 'prepare err: %{public}s', String(e));
-          this.setPlaybackFailureHint('视频准备失败');
-        });
+        const runPrepare = (): void => {
+          player.prepare().catch((e: Error): void => {
+            if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
+              return;
+            }
+            hilog.error(DOMAIN, TAG, 'prepare err: %{public}s', String(e));
+            this.setPlaybackFailureHint('视频准备失败');
+          });
+        };
+        try {
+          const strategy: media.PlaybackStrategy = { showFirstFrameOnPrepare: true };
+          player.setPlaybackStrategy(strategy).then((): void => {
+            if (gen !== this.playGen) {
+              return;
+            }
+            runPrepare();
+          }).catch((): void => {
+            runPrepare();
+          });
+        } catch (_e) {
+          runPrepare();
+        }
       } else if (state === 'prepared') {
+        this.videoLoading = false;
         this.durationMs = player.duration > 0 ? player.duration : this.durationMs;
         this.applyContainMode(player);
+        this.applyPlayerMute(player);
         if (this.deferPlaybackRateUntilPlaying) {
           this.applySpeed(player, 1.0);
         } else {
@@ -852,13 +1109,13 @@ export struct GalleryAuthVideo {
         if (this.pendingRestoreMs >= 0 && this.durationMs > 0) {
           const toMs = Math.min(this.pendingRestoreMs, Math.max(0, this.durationMs - 500));
           this.pendingRestoreMs = -1;
-          this.seekResumePending = this.active;
+          this.seekResumePending = this.shouldResumePlayback();
           try {
             player.seek(toMs, media.SeekMode.SEEK_CLOSEST);
             this.currentMs = toMs;
           } catch (_e) {
             this.seekResumePending = false;
-            if (this.active) {
+            if (this.shouldResumePlayback()) {
               player.play().catch((e: Error): void => {
                 if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
                   return;
@@ -868,7 +1125,7 @@ export struct GalleryAuthVideo {
               });
             }
           }
-        } else if (this.active) {
+        } else if (this.shouldResumePlayback()) {
           player.play().catch((e: Error): void => {
             if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
               return;
@@ -876,12 +1133,17 @@ export struct GalleryAuthVideo {
             hilog.error(DOMAIN, TAG, 'play err: %{public}s', String(e));
             this.setPlaybackFailureHint('视频播放失败');
           });
+        } else {
+          this.videoLoading = false;
         }
       } else if (state === 'playing') {
         this.videoLoading = false;
         this.hint = '';
         this.showPlaybackRetry = false;
         this.isPlaying = true;
+        this.userStartedOnce = true;
+        this.playbackEnded = false;
+        this.onPlaybackChromeChanged();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
         if (this.deferPlaybackRateUntilPlaying) {
@@ -892,6 +1154,8 @@ export struct GalleryAuthVideo {
         }
       } else if (state === 'completed') {
         this.isPlaying = false;
+        this.playbackEnded = true;
+        this.onPlaybackChromeChanged();
         this.syncUiProgressToNaturalEnd(player);
       } else if (state === 'paused' || state === 'stopped') {
         this.isPlaying = false;
@@ -944,35 +1208,7 @@ export struct GalleryAuthVideo {
         .width('100%')
         .height('100%')
         .backgroundColor(this.surfaceBackgroundColor())
-        .onClick((): void => {
-          this.controlsVisible = !this.controlsVisible;
-        })
-        .gesture(
-          LongPressGesture({ repeat: false })
-            .onAction((): void => {
-              const p = this.avPlayer;
-              if (p === null) { return; }
-              this.longPressSpeeding = true;
-              this.applySpeed(p, LONG_PRESS_RATE);
-              this.armPlaybackFalsePositiveGuardForTranscode(LONG_PRESS_RATE);
-            })
-            .onActionEnd((): void => {
-              const p = this.avPlayer;
-              this.longPressSpeeding = false;
-              if (p !== null) {
-                this.applySpeed(p, this.speedRate);
-                this.armPlaybackFalsePositiveGuardForTranscode();
-              }
-            })
-            .onActionCancel((): void => {
-              const p = this.avPlayer;
-              this.longPressSpeeding = false;
-              if (p !== null) {
-                this.applySpeed(p, this.speedRate);
-                this.armPlaybackFalsePositiveGuardForTranscode();
-              }
-            })
-        )
+        .hitTestBehavior(HitTestMode.None)
         .onLoad((): void => {
           this.surfaceReady = true;
           this.scheduleStartPlay();
@@ -988,139 +1224,149 @@ export struct GalleryAuthVideo {
         .hitTestBehavior(HitTestMode.None)
       }
 
-      if (this.controlsVisible) {
-        Column() {
-          // 仅占位展开底部控制条，不参与命中，避免挡住上方同 Stack 内后声明的「重试」层
-          Blank().layoutWeight(1).hitTestBehavior(HitTestMode.None)
-          Column({ space: 8 }) {
-            Row({ space: 10 }) {
-              FnHdsSymbolButton({
-                symbol: this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'),
-                widthValue: 40,
-                heightValue: 40,
-                radiusValue: 20,
-                fontSizeValue: 20,
-                fontColorValue: this.controlPrimaryTextColor(),
-                action: (): void => {
-                  void this.togglePlayPause();
-                }
-              })
-
-              FnHdsPillButton({
-                text: this.longPressSpeeding ? '2.0x' : `${this.speedRate.toFixed(2)}x`,
-                widthValue: 78,
-                heightValue: 36,
-                radiusValue: 18,
-                fontSizeValue: 13,
-                fontColorValue: this.controlPrimaryTextColor(),
-                action: (): void => {
-                  void this.chooseSpeed();
-                }
-              })
-
-              FnHdsPillButton({
-                text: this.currentQualityLabel(),
-                widthValue: 78,
-                heightValue: 36,
-                radiusValue: 18,
-                fontSizeValue: 13,
-                fontColorValue: this.controlPrimaryTextColor(),
-                action: (): void => {
-                  void this.chooseQuality();
-                }
-              })
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.SpaceBetween)
-
-            Row({ space: 8 }) {
-              Text(this.fmtTime(this.currentMs))
-                .fontSize(11)
-                .fontColor(this.controlTimeTextColor())
-                .width(44)
-              Stack({ alignContent: Alignment.Start }) {
-                Row()
-                  .width('100%')
-                  .height(3)
-                  .backgroundColor(this.controlTrackColor())
-                  .borderRadius(2)
-                Row()
-                  .width(`${Math.round(this.progressRatio() * 100)}%`)
-                  .height(3)
-                  .backgroundColor(this.controlProgressFillColor())
-                  .borderRadius(2)
-              }
-              .layoutWeight(1)
-              .height(24)
-              .onAreaChange((_old, area): void => {
-                const w = area.width as number;
-                this.progressW = w > 1 ? w : 1;
-              })
-              .gesture(
-                PanGesture({ direction: PanDirection.Horizontal })
-                  .onActionStart((): void => {
-                    void this.beginSeekDrag();
-                  })
-                  .onActionUpdate((ev: GestureEvent): void => {
-                    const now = Date.now();
-                    if (this.lastSeekDragUiUpdateMs > 0 && now - this.lastSeekDragUiUpdateMs < SEEK_DRAG_UI_DEBOUNCE_MS) {
-                      return;
-                    }
-                    this.lastSeekDragUiUpdateMs = now;
-                    const delta = this.progressW > 0 ? ev.offsetX / this.progressW : 0;
-                    const r = this.dragStartRatio + delta;
-                    this.dragRatio = Math.max(0, Math.min(1, r));
-                    if (this.durationMs > 0) {
-                      this.currentMs = Math.floor(this.durationMs * this.dragRatio);
-                    }
-                  })
-                  .onActionEnd((): void => {
-                    this.endSeekDrag();
-                  })
-                  .onActionCancel((): void => {
-                    this.draggingSeek = false;
-                    this.seekResumePending = false;
-                  })
-              )
-              .gesture(
-                TapGesture()
-                  .onAction((ev: GestureEvent): void => {
-                    // 某些机型 TapGesture.offsetX 恒为 0，保留空实现避免误触“跳到开头”。
-                  })
-              )
-              .onTouch((ev: TouchEvent): void => {
-                if (ev.type !== TouchType.Up || this.draggingSeek) {
-                  return;
-                }
-                const ts = ev.touches;
-                if (ts === undefined || ts.length < 1) {
-                  return;
-                }
-                const x = ts[0].x;
-                if (!Number.isFinite(x)) {
-                  return;
-                }
-                this.seekByTapX(x);
-              })
-
-              Text(this.fmtTime(this.durationMs))
-                .fontSize(11)
-                .fontColor(this.controlTimeTextColor())
-                .width(44)
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Center)
-          }
-          .width('100%')
-          .padding({ left: 12, right: 12, bottom: 18 + this.effectiveBottomPadding(), top: 12 })
-          .backgroundColor(this.controlPanelBackground())
-          .backgroundEffect(fnImmersiveBackgroundEffect(false, this.controlPanelBackground()))
-          .linearGradient(fnLiquidGlassGradient())
-        }
+      GalleryVideoGestureHud({
+        visible: this.adjustHudVisible,
+        isBrightness: this.adjustIsBrightness,
+        brightnessValue: this.screenBrightness,
+        volumeValue: this.mediaVolume,
+        volumeMax: this.mediaVolumeMax
+      })
         .width('100%')
         .height('100%')
-        .justifyContent(FlexAlign.End)
+        .hitTestBehavior(HitTestMode.None)
+
+      AVVolumePanel({
+        volumeLevel: this.mediaVolume,
+        volumeParameter: {
+          position: {
+            x: -1,
+            y: -1
+          }
+        }
+      })
+        .width(1)
+        .height(1)
+        .hitTestBehavior(HitTestMode.None)
+
+      // 叠在 HUD 之上、底栏之下：全屏 Default 层会挡住后面兄弟，必须是最上层可点区域。
+      Column() {
+        Blank()
+          .width('100%')
+          .height('100%')
       }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#01000000')
+        .responseRegion({ x: 0, y: 0, width: '100%', height: '100%' })
+        .id('gallery_video_gesture_layer')
+        .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+          if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+            return GestureJudgeResult.CONTINUE;
+          }
+          const pan = event as PanGestureEvent;
+          if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
+            return GestureJudgeResult.REJECT;
+          }
+          return GestureJudgeResult.CONTINUE;
+        })
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            PanGesture({ direction: PanDirection.Vertical, distance: 10 })
+              .onActionStart((event: GestureEvent): void => {
+                this.beginVerticalAdjust(event);
+              })
+              .onActionUpdate((event: GestureEvent): void => {
+                this.updateVerticalAdjust(event);
+              })
+              .onActionEnd((): void => {
+                this.endVerticalAdjust();
+              })
+              .onActionCancel((): void => {
+                this.endVerticalAdjust();
+              }),
+            LongPressGesture({ repeat: false })
+              .onAction((): void => {
+                const p = this.avPlayer;
+                if (p === null) {
+                  return;
+                }
+                this.longPressSpeeding = true;
+                this.applySpeed(p, LONG_PRESS_RATE);
+                this.armPlaybackFalsePositiveGuardForTranscode(LONG_PRESS_RATE);
+              })
+              .onActionEnd((): void => {
+                const p = this.avPlayer;
+                this.longPressSpeeding = false;
+                if (p !== null) {
+                  this.applySpeed(p, this.speedRate);
+                  this.armPlaybackFalsePositiveGuardForTranscode();
+                }
+              })
+              .onActionCancel((): void => {
+                const p = this.avPlayer;
+                this.longPressSpeeding = false;
+                if (p !== null) {
+                  this.applySpeed(p, this.speedRate);
+                  this.armPlaybackFalsePositiveGuardForTranscode();
+                }
+              }),
+            TapGesture({ count: 2 })
+              .onAction((): void => {
+                void this.togglePlayPause();
+              }),
+            TapGesture({ count: 1 })
+              .onAction((): void => {
+                this.onVideoSingleTap();
+              })
+          )
+        )
+
+      GalleryVideoOverlayChrome({
+        visible: this.previewToolbarVisible,
+        showCenterPlay: this.showCenterPlay(),
+        landscape: this.landscape,
+        speedText: this.speedBadgeText(),
+        speedRate: this.speedRate,
+        currentText: this.fmtTime(this.currentMs),
+        durationText: this.fmtTime(this.durationMs),
+        progress: this.progressRatio(),
+        bottomPadding: this.effectiveBottomPadding(),
+        onPlay: (): void => {
+          void this.togglePlayPause();
+        },
+        onSelectSpeed: (rate: number): void => {
+          this.applyPickedSpeed(rate);
+        },
+        onQuality: (): void => {
+          void this.chooseQuality();
+        },
+        onFullscreen: (): void => {
+          void this.toggleLandscape();
+        },
+        onSeekStart: (): void => {
+          void this.beginSeekDrag();
+        },
+        onSeekRatio: (ratio: number): void => {
+          this.dragRatio = ratio;
+          if (this.durationMs > 0) {
+            this.currentMs = Math.floor(this.durationMs * ratio);
+          }
+        },
+        onSeekEnd: (): void => {
+          this.endSeekDrag();
+        },
+        onSeekCancel: (): void => {
+          this.draggingSeek = false;
+          this.seekResumePending = false;
+        },
+        onSeekTapRatio: (ratio: number): void => {
+          if (!this.draggingSeek) {
+            this.seekByRatio(ratio);
+          }
+        }
+      })
+        .width('100%')
+        .height('100%')
 
       // 必须放在全屏控制层之后：否则底部 Column 的占位区会优先命中，重试按钮点击无响应。
       if (this.hint.length > 0) {
@@ -1152,5 +1398,15 @@ export struct GalleryAuthVideo {
     // 透明背景：XComponent 表面始终为黑（视频渲染区域），四周留白区域由父组件
     // GalleryPreviewSlide 的主题背景透出（深色模式=黑，浅色模式=白），跟随系统主题
     .backgroundColor(this.surfaceBackgroundColor())
+    .onAreaChange((_old, area): void => {
+      const w = area.width as number;
+      const h = area.height as number;
+      if (w > 1) {
+        this.viewW = w;
+      }
+      if (h > 1) {
+        this.viewH = h;
+      }
+    })
   }
 }

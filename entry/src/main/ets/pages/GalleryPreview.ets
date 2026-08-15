@@ -67,6 +67,10 @@ import {
   setGalleryPreviewToolbarVisible,
   toggleGalleryPreviewToolbarVisible
 } from './galleryPreview/GalleryPreviewToolbarStore';
+import {
+  resetGalleryPreviewVideoChrome,
+  restoreGalleryPreviewPortrait
+} from './galleryPreview/GalleryPreviewVideoStore';
 
 @Entry
 @Component
@@ -139,6 +143,7 @@ struct GalleryPreview {
   }
 
   private navigateBack(): void {
+    void restoreGalleryPreviewPortrait(this.getUIContext());
     this.getUIContext().getRouter().back();
   }
 
@@ -298,6 +303,8 @@ struct GalleryPreview {
     }
     GalleryPreviewNavStore.clear();
     setGalleryPreviewToolbarVisible(true);
+    resetGalleryPreviewVideoChrome();
+    void restoreGalleryPreviewPortrait(this.getUIContext());
     this.syncPreviewSheetVisible();
   }
 
@@ -721,8 +728,33 @@ struct GalleryPreview {
         .curve(FN_SWIPER_CURVE)
         .cachedCount(1)
         .disableSwipe(this.swiperLocked)
+        .id('gallery_preview_swiper')
         .onClick((): void => {
+          if (this.currentItemIsVideo()) {
+            return;
+          }
           this.toggleToolbar();
+        })
+        .onGestureRecognizerJudgeBegin((
+          _event: BaseGestureEvent,
+          current: GestureRecognizer,
+          _others: Array<GestureRecognizer>
+        ): GestureJudgeResult => {
+          if (!this.currentItemIsVideo()) {
+            return GestureJudgeResult.CONTINUE;
+          }
+          if (current.getType() !== GestureControl.GestureType.TAP_GESTURE) {
+            return GestureJudgeResult.CONTINUE;
+          }
+          // 只拒掉 Swiper 内置单击，放行视频层自定义 Tap
+          if (current.isBuiltIn()) {
+            return GestureJudgeResult.REJECT;
+          }
+          const target = current.getEventTargetInfo();
+          if (target !== undefined && target.getId() === 'gallery_preview_swiper') {
+            return GestureJudgeResult.REJECT;
+          }
+          return GestureJudgeResult.CONTINUE;
         })
         .onChange((idx: number): void => {
           this.swiperIndex = idx;
@@ -733,6 +765,10 @@ struct GalleryPreview {
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
           setGalleryPreviewToolbarVisible(true);
+          if (!this.currentItemIsVideo()) {
+            resetGalleryPreviewVideoChrome();
+            void restoreGalleryPreviewPortrait(this.getUIContext());
+          }
           this.applySystemBar(false);
           const nextId = this.currentItemId();
           this.syncCollectStateFromCurrentItem();

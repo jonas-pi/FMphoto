@@ -12,6 +12,8 @@ import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
 export const GALLERY_PREVIEW_SCALE_MAX = 4;
+/** 官方图片预览：双击在默认尺寸与固定倍率之间切换 */
+export const GALLERY_PREVIEW_DOUBLE_TAP_SCALE = 2;
 export const GALLERY_PREVIEW_ZOOM_EPS = 0.0005;
 export const GALLERY_PREVIEW_SNAP_EPS = 0.001;
 export const GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP = 232;

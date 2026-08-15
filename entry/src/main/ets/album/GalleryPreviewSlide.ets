@@ -8,6 +8,7 @@
  */
 import {
   itemFileExt,
+  GALLERY_PREVIEW_DOUBLE_TAP_SCALE,
   GALLERY_PREVIEW_SCALE_MAX,
   GALLERY_PREVIEW_SCALE_MIN,
   GALLERY_PREVIEW_SNAP_EPS,
@@ -618,6 +619,57 @@ export struct GalleryPreviewSlide {
     }
   }
 
+  private readGestureLocalPoint(event: GestureEvent): GalleryPreviewTouchPoint | null {
+    const fl = event.fingerList;
+    if (fl === undefined || fl.length < 1) {
+      return null;
+    }
+    const f0 = fl[0];
+    const x = f0.localX;
+    const y = f0.localY;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    const pt: GalleryPreviewTouchPoint = { x: x, y: y };
+    return pt;
+  }
+
+  /**
+   * 官方图片预览：双击在默认尺寸与固定倍率之间切换；
+   * 放大时以点击点为锚，保持该点相对视口位置不变。
+   */
+  private onPreviewDoubleTap(event: GestureEvent): void {
+    if (this.isVideo()) {
+      return;
+    }
+    this.haltLivePlayback();
+    if (this.isImageZoomed()) {
+      this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseOut }, (): void => {
+        this.previewScale = 1;
+        this.previewPanX = 0;
+        this.previewPanY = 0;
+      });
+      this.onZoomLockChange(false);
+      return;
+    }
+    const target = Math.min(GALLERY_PREVIEW_SCALE_MAX, GALLERY_PREVIEW_DOUBLE_TAP_SCALE);
+    let nx = 0.5;
+    let ny = 0.5;
+    const tap = this.readGestureLocalPoint(event);
+    if (tap !== null && this.viewW > 1 && this.viewH > 1) {
+      nx = Math.max(0, Math.min(1, tap.x / this.viewW));
+      ny = Math.max(0, Math.min(1, tap.y / this.viewH));
+    }
+    const panX = this.clampToLimit((0.5 - nx) * this.viewW * (target - 1), this.viewW * (target - 1) / 2);
+    const panY = this.clampToLimit((0.5 - ny) * this.viewH * (target - 1), this.viewH * (target - 1) / 2);
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseOut }, (): void => {
+      this.previewScale = target;
+      this.previewPanX = panX;
+      this.previewPanY = panY;
+    });
+    this.emitZoomLock();
+  }
+
   private springBackIfNeeded(): void {
     const cx = this.clampedPanX();
     const cy = this.clampedPanY();
@@ -776,19 +828,25 @@ export struct GalleryPreviewSlide {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
         .parallelGesture(
-          PinchGesture({ fingers: 2, distance: 1 })
-            .onActionStart((): void => {
-              this.onPreviewPinchStart();
-            })
-            .onActionUpdate((event: GestureEvent): void => {
-              this.onPreviewPinchUpdate(event);
-            })
-            .onActionEnd((): void => {
-              this.onPreviewPinchEnd();
-            })
-            .onActionCancel((): void => {
-              this.onPreviewPinchEnd();
-            })
+          GestureGroup(GestureMode.Exclusive,
+            TapGesture({ count: 2 })
+              .onAction((event: GestureEvent): void => {
+                this.onPreviewDoubleTap(event);
+              }),
+            PinchGesture({ fingers: 2, distance: 1 })
+              .onActionStart((): void => {
+                this.onPreviewPinchStart();
+              })
+              .onActionUpdate((event: GestureEvent): void => {
+                this.onPreviewPinchUpdate(event);
+              })
+              .onActionEnd((): void => {
+                this.onPreviewPinchEnd();
+              })
+              .onActionCancel((): void => {
+                this.onPreviewPinchEnd();
+              })
+          )
         , this.isLive() ? GestureMask.Normal : GestureMask.IgnoreInternal)
         // 未放大时仅处理纵向下拉关闭（保留 Swiper 左右切页）；
         // 放大后切换为全向拖拽，支持单指左右平移。

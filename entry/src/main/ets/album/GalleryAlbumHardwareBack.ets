@@ -1,6 +1,7 @@
 /**
  * 相册 Tab 内嵌子视图（多选 / 搜索 / 分类 / 人物等）时，由 Home.onBackPress 委托此处消费系统返回，
  * 避免直接退出应用。分层顺序与系统图库一致：浮层 → 多选 → 子页。
+ * 相册根页不消费返回，由 Home 切到图库 Tab。
  */
 type GalleryAlbumBackHandler = () => boolean;
 

@@ -38,13 +38,26 @@ import {
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
 import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
+import {
+  GALLERY_PREVIEW_VIDEO_ACTIVE_KEY,
+  GALLERY_PREVIEW_VIDEO_DOCK_EXPANDED_KEY,
+  GALLERY_PREVIEW_VIDEO_MUTED_KEY,
+  GALLERY_PREVIEW_VIDEO_PLAYING_KEY,
+  requestGalleryPreviewVideoToggleMute,
+  requestGalleryPreviewVideoTogglePlay
+} from './GalleryPreviewVideoStore';
 
 const GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP: number = 268;
+const GALLERY_PREVIEW_VIDEO_PLAYING_DOCK_WIDTH_VP: number = 372;
 
 @Component
 export struct GalleryPreviewChrome {
   /** 自己订阅显隐，父页切换工具栏时不会整页重绘 Swiper */
   @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private toolbarVisible: boolean = true;
+  @StorageProp(GALLERY_PREVIEW_VIDEO_ACTIVE_KEY) private videoActive: boolean = false;
+  @StorageProp(GALLERY_PREVIEW_VIDEO_DOCK_EXPANDED_KEY) private videoDockExpanded: boolean = false;
+  @StorageProp(GALLERY_PREVIEW_VIDEO_PLAYING_KEY) private videoPlaying: boolean = false;
+  @StorageProp(GALLERY_PREVIEW_VIDEO_MUTED_KEY) private videoMuted: boolean = false;
   @Prop dismissDragProgress: number = 0;
   @Prop titleText: string = '';
   @Prop toolbarBg: string = '#FF000000';
@@ -229,31 +242,80 @@ export struct GalleryPreviewChrome {
     })
   }
 
+  private showVideoPlayingDock(): boolean {
+    return this.videoActive && this.videoDockExpanded;
+  }
+
+  private dockWidth(): number {
+    return this.showVideoPlayingDock() ? GALLERY_PREVIEW_VIDEO_PLAYING_DOCK_WIDTH_VP :
+      GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP;
+  }
+
+  private onDockShare(): void {
+    if (!this.sharing) {
+      this.onShare();
+    }
+  }
+
+  private onDockDownload(): void {
+    if (!this.downloading) {
+      this.onDownload();
+    }
+  }
+
+  private onDockFavorite(): void {
+    if (!this.favoriteToggling) {
+      this.onFavorite();
+    }
+  }
+
+  private onDockDelete(): void {
+    if (!this.deleting) {
+      this.onDelete();
+    }
+  }
+
   private onPreviewHdsAction(index: number): void {
     if (!this.toolbarVisible) {
       return;
     }
-    if (index === 0) {
-      if (!this.sharing) {
-        this.onShare();
+    if (this.showVideoPlayingDock()) {
+      if (index === 0) {
+        this.onDockShare();
+        return;
       }
+      if (index === 1) {
+        this.onDockDownload();
+        return;
+      }
+      if (index === 2) {
+        requestGalleryPreviewVideoTogglePlay();
+        return;
+      }
+      if (index === 3) {
+        requestGalleryPreviewVideoToggleMute();
+        return;
+      }
+      if (index === 4) {
+        this.onDockFavorite();
+        return;
+      }
+      this.onDockDelete();
+      return;
+    }
+    if (index === 0) {
+      this.onDockShare();
       return;
     }
     if (index === 1) {
-      if (!this.downloading) {
-        this.onDownload();
-      }
+      this.onDockDownload();
       return;
     }
     if (index === 2) {
-      if (!this.favoriteToggling) {
-        this.onFavorite();
-      }
+      this.onDockFavorite();
       return;
     }
-    if (!this.deleting) {
-      this.onDelete();
-    }
+    this.onDockDelete();
   }
 
   @Builder
@@ -281,6 +343,30 @@ export struct GalleryPreviewChrome {
         this.previewActionColor(this.downloading)
       ))
 
+      if (this.showVideoPlayingDock()) {
+        TabContent() {
+          Column()
+            .width('100%')
+            .height('100%')
+        }
+        .tabBar(fnHdsBottomDockActionTabStyle(
+          this.videoPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'),
+          this.videoPlaying ? '\u6682\u505c' : '\u64ad\u653e',
+          this.fgColor
+        ))
+
+        TabContent() {
+          Column()
+            .width('100%')
+            .height('100%')
+        }
+        .tabBar(fnHdsBottomDockActionTabStyle(
+          this.videoMuted ? $r('sys.symbol.speaker_slash_fill') : $r('sys.symbol.speaker_wave_2_fill'),
+          this.videoMuted ? '\u6062\u590d' : '\u9759\u97f3',
+          this.fgColor
+        ))
+      }
+
       TabContent() {
         Column()
           .width('100%')
@@ -303,17 +389,17 @@ export struct GalleryPreviewChrome {
         this.previewActionColor(this.deleting)
       ))
     }
-    .width(GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP)
+    .width(this.dockWidth())
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
-    .barWidth(GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP)
+    .barWidth(this.dockWidth())
     // @SuppressWarnings compatibility
     .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
       FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
-      GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP,
+      this.dockWidth(),
       $r('app.color.gallery_material_surface_bg')
     ))
     .scrollable(false)
@@ -376,20 +462,47 @@ export struct GalleryPreviewChrome {
         this.previewDownloadLabel(),
         this.previewActionColor(this.downloading)
       )
-      this.previewBottomFallbackAction(
-        2,
-        this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
-        '\u6536\u85cf',
-        this.previewActionColor(this.favoriteToggling, this.starFilled ? this.favoriteStarTint : this.fgColor)
-      )
-      this.previewBottomFallbackAction(
-        3,
-        $r('sys.symbol.trash'),
-        this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
-        this.previewActionColor(this.deleting)
-      )
+      if (this.showVideoPlayingDock()) {
+        this.previewBottomFallbackAction(
+          2,
+          this.videoPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'),
+          this.videoPlaying ? '\u6682\u505c' : '\u64ad\u653e',
+          this.fgColor
+        )
+        this.previewBottomFallbackAction(
+          3,
+          this.videoMuted ? $r('sys.symbol.speaker_slash_fill') : $r('sys.symbol.speaker_wave_2_fill'),
+          this.videoMuted ? '\u6062\u590d' : '\u9759\u97f3',
+          this.fgColor
+        )
+        this.previewBottomFallbackAction(
+          4,
+          this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
+          '\u6536\u85cf',
+          this.previewActionColor(this.favoriteToggling, this.starFilled ? this.favoriteStarTint : this.fgColor)
+        )
+        this.previewBottomFallbackAction(
+          5,
+          $r('sys.symbol.trash'),
+          this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+          this.previewActionColor(this.deleting)
+        )
+      } else {
+        this.previewBottomFallbackAction(
+          2,
+          this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
+          '\u6536\u85cf',
+          this.previewActionColor(this.favoriteToggling, this.starFilled ? this.favoriteStarTint : this.fgColor)
+        )
+        this.previewBottomFallbackAction(
+          3,
+          $r('sys.symbol.trash'),
+          this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+          this.previewActionColor(this.deleting)
+        )
+      }
     }
-    .width(GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP)
+    .width(this.dockWidth())
     .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
     .backgroundColor($r('app.color.gallery_material_surface_bg'))

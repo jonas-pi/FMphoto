@@ -1,4 +1,4 @@
-import { UIContext } from '@kit.ArkUI';
+﻿import { UIContext } from '@kit.ArkUI';
 import { AppSession } from '../../auth/AppSession';
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../../common/FnMotion';
@@ -334,6 +334,10 @@ export function galleryAlbumTryConsumeSurfaceBack(host: GalleryAlbumRootSurfaceH
   if (host.gallerySelectionMode) {
     host.exitGallerySelection();
     return true;
+  }
+  // 相册根页与「我的」一致：不消费返回，交给 Home 切到图库 Tab。
+  if (galleryAlbumIsRootAlbumsSurfaceVisible(host)) {
+    return false;
   }
   if (!host.inSearchMode && !host.inCategoryMode && !host.inSmartCategoryMode && !host.inPersonMode) {
     return false;

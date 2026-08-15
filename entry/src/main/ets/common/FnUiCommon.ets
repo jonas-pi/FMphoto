@@ -271,18 +271,31 @@ export struct FnHdsPillButton {
 
   @Builder
   private glassLayer() {
-    Row()
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.resolvedLightColor())
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .linearGradient(fnLiquidGlassGradient(this.shouldUseHds(), this.isPressed, this.active))
-      .borderRadius(this.shapeRadius())
-      .borderWidth(1)
-      .borderColor(this.resolvedBorderColor())
-      .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
-      .clip(true)
-      .hitTestBehavior(HitTestMode.None)
+    if (this.shouldUseHds()) {
+      // 官方 FAQ：不透明底/渐变/自定义阴影会盖住沉浸材质；与系统 Menu 一样走透明 + ULTRA_THICK
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .borderRadius(this.shapeRadius())
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    } else {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.resolvedLightColor())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect())
+        .linearGradient(fnLiquidGlassGradient(false, this.isPressed, this.active))
+        .borderRadius(this.shapeRadius())
+        .borderWidth(1)
+        .borderColor(this.resolvedBorderColor())
+        .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    }
   }
 
   @Builder
@@ -387,18 +400,30 @@ export struct FnHdsSymbolButton {
 
   @Builder
   private glassLayer() {
-    Row()
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.resolvedLightColor())
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .linearGradient(fnLiquidGlassGradient(this.shouldUseHds(), this.isPressed, this.active))
-      .borderRadius(this.shapeRadius())
-      .borderWidth(1)
-      .borderColor(this.resolvedBorderColor())
-      .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
-      .clip(true)
-      .hitTestBehavior(HitTestMode.None)
+    if (this.shouldUseHds()) {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .borderRadius(this.shapeRadius())
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    } else {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.resolvedLightColor())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect())
+        .linearGradient(fnLiquidGlassGradient(false, this.isPressed, this.active))
+        .borderRadius(this.shapeRadius())
+        .borderWidth(1)
+        .borderColor(this.resolvedBorderColor())
+        .shadow({ radius: 12, color: '#18000000', offsetX: 0, offsetY: 4 })
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    }
   }
 
   @Builder
@@ -456,17 +481,29 @@ export struct FnHdsTextPill {
 
   @Builder
   private glassLayer() {
-    Row()
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.lightColorValue)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .linearGradient(fnLiquidGlassGradient(this.shouldUseHds()))
-      .borderRadius(this.shapeRadius())
-      .borderWidth(1)
-      .borderColor($r('app.color.immersive_panel_border'))
-      .clip(true)
-      .hitTestBehavior(HitTestMode.None)
+    if (this.shouldUseHds()) {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .borderRadius(this.shapeRadius())
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    } else {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.lightColorValue)
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect())
+        .linearGradient(fnLiquidGlassGradient(false))
+        .borderRadius(this.shapeRadius())
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    }
   }
 
   @Builder
