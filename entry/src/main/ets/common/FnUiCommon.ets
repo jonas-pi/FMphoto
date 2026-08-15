@@ -10,11 +10,11 @@ import {
   hdsEffect,
   HdsNavigationBackgroundStyle,
   HdsTabsFloatingStyle,
-  hdsMaterial,
   ScrollEffectOptions,
-  ScrollEffectType,
-  SystemMaterialParams
+  ScrollEffectType
 } from '@kit.UIDesignKit';
+// @SuppressWarnings compatibility
+import { hdsMaterial, SystemMaterialParams } from '@kit.UIDesignKit';
 
 import {
   GALLERY_TOP_BAR_BUTTON_FONT_VP,
@@ -76,6 +76,7 @@ export function fnHdsNavChromeBackgroundStyle(): HdsNavigationBackgroundStyle {
 export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
   return {
     enableScrollEffect: true,
+    // @SuppressWarnings compatibility
     scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
   };
 }
@@ -171,12 +172,14 @@ export function fnHdsImmersiveTabsFloatingStyle(
     },
     barSideMargin: 0,
     barBottomMargin: 0,
+    // @SuppressWarnings compatibility
     adaptToHandedness: false,
     gradientMask: {
       maskColor: Color.Transparent,
       maskHeight: height
     },
     lightColor: lightColor,
+    // @SuppressWarnings compatibility
     systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
   };
 }

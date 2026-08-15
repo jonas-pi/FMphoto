@@ -459,30 +459,30 @@ export struct GalleryAlbumTab {
 
   // ── 搜索状态 ──────────────────────────────────────────────────────────────
   @State private searchQuery: string = '';
-  @State @Watch('onSearchModeChanged') private inSearchMode: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private inSearchMode: boolean = false;
   @State private searchResults: GalleryListItem[] = [];
   @State private searchLoading: boolean = false;
   @State private searchError: string = '';
   @State private moreMenuExpanded: boolean = false;
   @State private slideshowSettingsVisible: boolean = false;
-  @State private slideshowPreparing: boolean = false;
-  @State private inCategoryMode: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private slideshowPreparing: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private inCategoryMode: boolean = false;
   @State private categoryLoading: boolean = false;
-  @State private categoryOpening: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private categoryOpening: boolean = false;
   @State private categoryOpeningText: string = '打开中…';
   @State private categoryError: string = '';
   @State private categoryItems: MediaCategoryItem[] = [];
-  @State private inSmartCategoryMode: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private inSmartCategoryMode: boolean = false;
   @State private smartCategoryLoading: boolean = false;
   @State private smartCategoryError: string = '';
   @State private smartSceneItems: SmartCategoryItem[] = [];
   @State private smartInfoItems: SmartCategoryItem[] = [];
-  @State private inPersonMode: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private inPersonMode: boolean = false;
   @State private personLoading: boolean = false;
-  @State private personOpening: boolean = false;
-  @State private recentOpening: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private personOpening: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private recentOpening: boolean = false;
   /** 打开“收藏”聚合列表时的全屏遮罩，与“最近添加”保持一致。 */
-  @State private collectOpening: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private collectOpening: boolean = false;
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
   @State private personStatVersion: number = 0;
@@ -491,7 +491,7 @@ export struct GalleryAlbumTab {
   @State private gallerySelectionMode: boolean = false;
   private gallerySelectedIds: string[] = [];
   @State private gallerySelectedCount: number = 0;
-  @State private galleryBatchDeleting: boolean = false;
+  @State @Watch('onBottomDockVisibilityChanged') private galleryBatchDeleting: boolean = false;
   @State private galleryBatchDownloading: boolean = false;
   /**
    * 主时间线 List 是否响应手指滚动。
@@ -1596,6 +1596,7 @@ export struct GalleryAlbumTab {
       onSearchModeVisibilityChange(hiddenBottomNav: boolean): void {
         self.onSearchModeVisibilityChange(hiddenBottomNav);
       }
+      notifyHomeBottomDockVisibility(): void { self.notifyHomeBottomDockVisibility(); }
       notifySelectionDockStateChange(): void { self.notifySelectionDockStateChange(); }
       syncHomeSurface(animate: boolean): void { self.syncHomeSurface(animate); }
       refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
@@ -2092,9 +2093,22 @@ export struct GalleryAlbumTab {
     await galleryAlbumOpenCollectGallery(this.asModeOrchestratorHost());
   }
 
-  private onSearchModeChanged(): void {
-    this.onSearchModeVisibilityChange(this.inSearchMode);
+  private onBottomDockVisibilityChanged(): void {
+    this.notifyHomeBottomDockVisibility();
     this.notifySelectionDockStateChange();
+  }
+
+  /** 底栏仅一级页显示；子页与全屏加载遮罩期间隐藏。 */
+  private shouldHideHomeBottomDock(): boolean {
+    if (this.recentOpening || this.collectOpening || this.categoryOpening || this.personOpening ||
+      this.slideshowPreparing || this.galleryBatchDeleting) {
+      return true;
+    }
+    return !this.isRootSurfaceVisible();
+  }
+
+  private notifyHomeBottomDockVisibility(): void {
+    this.onSearchModeVisibilityChange(this.shouldHideHomeBottomDock());
   }
 
   private isPhotosHomeSurface(): boolean {
@@ -2226,6 +2240,7 @@ export struct GalleryAlbumTab {
 
   private onHomeSurfaceChanged(): void {
     galleryAlbumOnHomeSurfaceChanged(this.asRootSurfaceHost());
+    this.notifyHomeBottomDockVisibility();
   }
 
   private currentGalleryGridColumns(): number {
@@ -2443,6 +2458,9 @@ export struct GalleryAlbumTab {
   }
 
   private currentBottomDockInsetVp(): number {
+    if (this.shouldHideHomeBottomDock()) {
+      return 0;
+    }
     return galleryAlbumCurrentBottomDockInsetVp(this.asRootSurfaceHost());
   }
 

@@ -45,6 +45,7 @@ export interface GalleryAlbumLifecycleHost {
   loadGen: number;
   currentThumbHeavyItemCount(): number;
   onSearchModeVisibilityChange(hiddenBottomNav: boolean): void;
+  notifyHomeBottomDockVisibility(): void;
   notifySelectionDockStateChange(): void;
   syncHomeSurface(animate: boolean): void;
   refreshRootPhotosScrollTitle(): void;
@@ -92,15 +93,15 @@ function tryRestoreMainTimelineSnapshot(host: GalleryAlbumLifecycleHost): boolea
 
 export function galleryAlbumAboutToAppear(host: GalleryAlbumLifecycleHost): void {
   host.lastHomeSurface = host.homeSurface;
-  host.onSearchModeVisibilityChange(host.inSearchMode);
-  host.notifySelectionDockStateChange();
-  host.syncHomeSurface(false);
-  host.refreshRootPhotosScrollTitle();
-  host.ensureAlbumsHomeSupplementaryData();
   host.personOpening = false;
   host.categoryOpening = false;
   host.recentOpening = false;
   host.collectOpening = false;
+  host.syncHomeSurface(false);
+  host.notifyHomeBottomDockVisibility();
+  host.notifySelectionDockStateChange();
+  host.refreshRootPhotosScrollTitle();
+  host.ensureAlbumsHomeSupplementaryData();
   host.timelineReleaseAwaitVisibleCallback = false;
   gallerySetAlbumBackHandler((): boolean => host.tryConsumeSurfaceBack());
   setTimeout((): void => {

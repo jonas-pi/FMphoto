@@ -683,7 +683,8 @@ struct MePanel {
 struct Home {
   @StorageProp(FN_MEDIA_BASE_URL) private galleryBaseUrl: string = '';
   @State private sessionOk: boolean = false;
-  @State private albumSearchModeActive: boolean = false;
+  /** 非一级页（搜索/相册子页/全屏加载）时隐藏底栏；我的页始终显示。 */
+  @State private hideHomeBottomDock: boolean = false;
   @State private bottomNavIndex: number = 0;
   @State private gallerySurfaceIndex: number = 0;
   @State private galleryViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
@@ -782,7 +783,10 @@ struct Home {
   }
 
   private shouldShowBottomDock(): boolean {
-    return !this.albumSearchModeActive;
+    if (this.bottomNavIndex === 2) {
+      return true;
+    }
+    return !this.hideHomeBottomDock;
   }
 
   private isGalleryShellVisible(): boolean {
@@ -1426,7 +1430,7 @@ struct Home {
                 this.galleryViewGranularity = mode;
               },
               onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
-                this.albumSearchModeActive = hiddenBottomNav;
+                this.hideHomeBottomDock = hiddenBottomNav;
               },
               onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void): void => {
                 this.onGallerySelectionDockStateChange(active, onDownload, onDelete);

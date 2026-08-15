@@ -394,7 +394,7 @@ export function galleryAlbumMainGalleryContentInsetTopVp(host: GalleryAlbumRootS
 }
 
 export function galleryAlbumCurrentBottomDockInsetVp(host: GalleryAlbumRootSurfaceHost): number {
-  if (host.inSearchMode) {
+  if (!galleryAlbumIsRootSurfaceVisible(host)) {
     return 0;
   }
   return host.floatingDockInsetBottomVp;
