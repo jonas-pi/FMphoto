@@ -74,6 +74,8 @@ export struct GalleryPreviewSlide {
   @Prop enableSharedTransition: boolean = true;
   /** 视频模式下，控件距屏幕底部的额外偏移（避开外部工具栏） */
   @Prop videoBottomPadding: number = 0;
+  /** 幻灯片进页即播；普通预览只展示封面 */
+  @Prop autoStartVideo: boolean = false;
   /** 跟随系统深浅色模式，用于 loading 指示器颜色 */
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   /**
@@ -97,8 +99,6 @@ export struct GalleryPreviewSlide {
   onOriginalLoaded: () => void = () => {};
   /** 原图加载失败后通知父页面，父页面可提示用户并保持可重试 */
   onOriginalLoadFailed: (msg: string) => void = (_: string) => {};
-  /** 当前页视频已送出首帧（或播放失败需揭层） */
-  onVideoFirstFrame: () => void = () => {};
 
   @State private thumbPix: PixelMap | undefined = undefined;
   @State private fullPix: PixelMap | undefined = undefined;
@@ -869,7 +869,7 @@ export struct GalleryPreviewSlide {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isVideo()) {
-        // 底层静帧参与 sharedTransition；播放器盖在上面
+        // 底层封面参与 sharedTransition；播放器未起播时透明叠封面，避免首帧跳变
         Stack({ alignContent: Alignment.Center }) {
           if (this.thumbPix !== undefined) {
             Stack() {
@@ -892,11 +892,8 @@ export struct GalleryPreviewSlide {
             active: this.active,
             bottomPadding: this.videoBottomPadding,
             maxResolutionP: this.videoMaxResolutionP(),
-            onFirstFrame: (): void => {
-              if (this.active) {
-                this.onVideoFirstFrame();
-              }
-            }
+            autoStart: this.autoStartVideo,
+            posterPix: this.thumbPix
           })
             .width('100%')
             .height('100%')

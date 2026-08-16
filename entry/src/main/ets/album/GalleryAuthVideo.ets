@@ -7,6 +7,8 @@
  *   2. 使用 generation token (playGen) 保证并发安全：
  *      每次 startPlay() 入口同步递增 gen，后续所有异步检查点均比较 gen，
  *      不匹配则说明已被更新的调用取代，直接退出。
+ *   3. 进页只展示网格封面，不自动 prepare/play；点击播放后再拉流。
+ *      Surface 盖住封面会造成「封面 → 首帧」跳变，故未起播前保持透明并叠封面。
  */
 import { media } from '@kit.MediaKit';
 import { audio, AVVolumePanel } from '@kit.AudioKit';
@@ -79,10 +81,15 @@ export struct GalleryAuthVideo {
   @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private previewToolbarVisible: boolean = true;
   /** 当前视频允许的最大清晰度（p），由上游按原始分辨率估算传入 */
   @Prop maxResolutionP: number = 1080;
-  onFirstFrame: () => void = () => {};
+  /** 幻灯片等场景需要进页即起播；普通预览保持封面等待点击 */
+  @Prop autoStart: boolean = false;
+  /** 网格同款封面，盖住 Surface 直到真正 playing */
+  posterPix: PixelMap | undefined = undefined;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
-  /** 初值即遮罩，避免首帧白屏等 onUrlChange 才转圈 */
-  @State private videoLoading: boolean = true;
+  /** 仅在用户点击播放（或幻灯片自动起播）后转圈 */
+  @State private videoLoading: boolean = false;
+  /** 已进入 playing：才揭开 Surface，避免封面与首帧跳变 */
+  @State private videoSurfaceVisible: boolean = false;
   @State private hint: string = '';
   @State private isDarkTheme: boolean = false;
   /** 播放链路失败时可手动重试（与「清晰度超限」等提示区分） */
@@ -158,12 +165,36 @@ export struct GalleryAuthVideo {
     return this.isDarkTheme ? Color.Black : Color.White;
   }
 
+  /** 未起播时保持透明，让下层/本层封面参与 sharedTransition 且不跳变 */
+  private hostBackgroundColor(): ResourceColor {
+    return this.videoSurfaceVisible ? this.surfaceBackgroundColor() : Color.Transparent;
+  }
+
   private finishVideoLoading(): void {
     if (!this.videoLoading) {
       return;
     }
     this.videoLoading = false;
-    this.onFirstFrame();
+  }
+
+  /** 幻灯片：进页即视为用户已点播放 */
+  private applyAutoStartIfNeeded(): void {
+    if (!this.autoStart || !this.active || this.videoUrl.length === 0) {
+      return;
+    }
+    this.userStartedOnce = true;
+    this.videoLoading = true;
+  }
+
+  /** 尚无播放器时，点击播放才创建并拉流 */
+  private beginPlaybackFromUser(): void {
+    this.userStartedOnce = true;
+    this.playbackEnded = false;
+    this.videoLoading = true;
+    this.showPlaybackRetry = false;
+    this.hint = '';
+    this.onPlaybackChromeChanged();
+    this.scheduleStartPlay();
   }
 
   private loadingSpinnerColor(): ResourceColor {
@@ -248,9 +279,13 @@ export struct GalleryAuthVideo {
     this.autoRecoverCount = 0;
     this.lastAvTimeUpdateWallMs = 0;
     this.playbackFalsePositiveGuardUntilMs = 0;
-    this.videoLoading = this.active && this.videoUrl.length > 0;
+    this.videoSurfaceVisible = false;
+    this.videoLoading = false;
     this.clearChromeAutoHideTimer();
-    this.scheduleStartPlay();
+    this.applyAutoStartIfNeeded();
+    if (this.userStartedOnce) {
+      this.scheduleStartPlay();
+    }
   }
 
   /**
@@ -267,7 +302,9 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = false;
     this.lastTogglePlaySeq = this.togglePlaySeq;
     this.lastToggleMuteSeq = this.toggleMuteSeq;
-    this.videoLoading = this.active && this.videoUrl.length > 0;
+    this.videoLoading = false;
+    this.videoSurfaceVisible = false;
+    this.applyAutoStartIfNeeded();
     this.onPlaybackChromeChanged();
     void this.initWindowBrightness();
     void this.initMediaVolume();
@@ -335,7 +372,7 @@ export struct GalleryAuthVideo {
       }
       return;
     }
-    if (this.surfaceReady) {
+    if (this.surfaceReady && this.userStartedOnce) {
       this.videoLoading = true;
       this.scheduleStartPlay();
     }
@@ -548,7 +585,10 @@ export struct GalleryAuthVideo {
 
   private async togglePlayPause(): Promise<void> {
     const p = this.avPlayer;
-    if (p === null) { return; }
+    if (p === null) {
+      this.beginPlaybackFromUser();
+      return;
+    }
     try {
       if (this.isPlaying) {
         this.isPlaying = false;
@@ -825,7 +865,6 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = true;
     this.videoLoading = false;
     this.isPlaying = false;
-    this.onFirstFrame();
   }
 
   /** 用户点击重试：清空失败态，允许再次走自动自愈计数，并重建播放。 */
@@ -953,6 +992,9 @@ export struct GalleryAuthVideo {
     }
     this.qualityIndex = idx;
     LAST_VIDEO_QUALITY_INDEX = idx;
+    if (!this.userStartedOnce) {
+      return;
+    }
     this.pendingQualitySwitch = true;
     /**
      * 记忆当前进度用于清晰度切换后的无缝续播：
@@ -1209,10 +1251,9 @@ export struct GalleryAuthVideo {
             this.setPlaybackFailureHint('视频播放失败');
           });
         }
-        // 官方：prepared = 已能播放；showFirstFrameOnPrepare 会在此时送出首帧。
-        // startRenderFrame 要等 play() 进入 playing 后才回调，不能作为进页条件。
-        this.finishVideoLoading();
+        // 封面仍盖在 Surface 上，等 playing 再揭开，避免进页看到首帧跳变
       } else if (state === 'playing') {
+        this.videoSurfaceVisible = true;
         this.finishVideoLoading();
         this.hint = '';
         this.showPlaybackRetry = false;
@@ -1285,15 +1326,27 @@ export struct GalleryAuthVideo {
       })
         .width('100%')
         .height('100%')
-        .backgroundColor(this.surfaceBackgroundColor())
+        .backgroundColor(this.hostBackgroundColor())
         .hitTestBehavior(HitTestMode.None)
         .onLoad((): void => {
           this.surfaceReady = true;
-          this.scheduleStartPlay();
+          if (this.userStartedOnce) {
+            this.scheduleStartPlay();
+          }
         })
         .onDestroy((): void => {
           this.surfaceReady = false;
         });
+
+      if (!this.videoSurfaceVisible && this.posterPix !== undefined) {
+        Image(this.posterPix)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Contain)
+          .autoResize(false)
+          .hitTestBehavior(HitTestMode.None)
+          .draggable(false)
+      }
 
       if (this.videoLoading) {
         Column({ space: 10 }) {
@@ -1309,7 +1362,7 @@ export struct GalleryAuthVideo {
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-        .backgroundColor(this.surfaceBackgroundColor())
+        .backgroundColor(Color.Transparent)
         .hitTestBehavior(HitTestMode.None)
       }
 
@@ -1459,7 +1512,7 @@ export struct GalleryAuthVideo {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.surfaceBackgroundColor())
+    .backgroundColor(this.hostBackgroundColor())
     .onAreaChange((_old, area): void => {
       const w = area.width as number;
       const h = area.height as number;
