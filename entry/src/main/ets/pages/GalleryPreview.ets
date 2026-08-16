@@ -20,8 +20,10 @@ import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../m
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
 import {
+  askLivePhotoSaveChoice,
   LivePhotoSaveActionSheet,
-  LivePhotoSaveChoice
+  LivePhotoSaveChoice,
+  LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
 } from '../album/livephoto/LivePhotoSaveActionSheet';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
@@ -30,6 +32,7 @@ import {
   FN_SYSTEM_TOP_INSET_VP_KEY,
   fnPublishSystemAvoidArea
 } from '../common/FnSystemAvoidArea';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions, fnHdsSheetOptions } from '../common/FnHdsOverlay';
 import {
   FN_FLOATING_TOP_TOTAL_HEIGHT_VP,
   fnBottomDockBottomGap,
@@ -88,6 +91,9 @@ struct GalleryPreview {
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
   @State private liveSaveSheetVisible: boolean = false;
+  @State private choiceSheetVisible: boolean = false;
+  @State private choiceSheetTitle: string = '';
+  @State private choiceSheetButtons: string[] = [];
   @State private downloadProgressPct: number = 0;
   @State private downloadProgressKnown: boolean = false;
   @State private sharing: boolean = false;
@@ -121,6 +127,8 @@ struct GalleryPreview {
   private slideshowLibraryTotal: number = 0;
   private slideshowGlobalIndices: number[] = [];
   private slideshowTimerId: number = -1;
+  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
+  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
@@ -136,6 +144,14 @@ struct GalleryPreview {
   }
 
   onBackPress(): boolean {
+    if (this.choiceSheetVisible) {
+      this.completeChoice(-1);
+      return true;
+    }
+    if (this.liveSaveSheetVisible) {
+      this.completeLivePhotoSave('cancel');
+      return true;
+    }
     this.navigateBack();
     return true;
   }
@@ -491,23 +507,72 @@ struct GalleryPreview {
     await galleryPreviewOnPersonInPhotoClick(this.asActionsHost(), p);
   }
 
+  private askChoice(title: string, buttons: string[]): Promise<number> {
+    if (this.choiceSheetVisible) {
+      return Promise.resolve(-1);
+    }
+    return new Promise<number>((resolve: (index: number) => void) => {
+      this.choiceSheetTitle = title;
+      this.choiceSheetButtons = buttons;
+      this.choiceSheetResolver = resolve;
+      this.choiceSheetVisible = true;
+    });
+  }
+
+  private completeChoice(index: number): void {
+    const resolver = this.choiceSheetResolver;
+    this.choiceSheetResolver = undefined;
+    this.choiceSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(index);
+    }
+  }
+
+  private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    return askLivePhotoSaveChoice(
+      (title: string, buttons: string[]): Promise<number> => this.askChoice(title, buttons),
+      (): Promise<boolean> => this.askLivePhotoPrivilege()
+    );
+  }
+
+  private askLivePhotoPrivilege(): Promise<boolean> {
+    if (this.liveSaveSheetVisible) {
+      return Promise.resolve(false);
+    }
+    return new Promise<boolean>((resolve: (ok: boolean) => void) => {
+      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+        resolve(choice === 'privilege');
+      };
+      this.liveSaveSheetVisible = true;
+    });
+  }
+
+  private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
+    const resolver = this.liveSaveResolver;
+    this.liveSaveResolver = undefined;
+    this.liveSaveSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(choice);
+    }
+  }
+
   private downloadCurrentImage(): void {
     galleryPreviewDownloadCurrentImage(this.asActionsHost(), false);
   }
 
   private onDownloadTapped(): void {
-    if (this.downloading || this.liveSaveSheetVisible) {
+    if (this.downloading || this.liveSaveSheetVisible || this.choiceSheetVisible) {
       return;
     }
     if (this.currentIsLivePhoto()) {
-      this.liveSaveSheetVisible = true;
+      void this.downloadLiveWithMenu();
       return;
     }
     this.downloadCurrentImage();
   }
 
-  private onLiveSaveSelect(choice: LivePhotoSaveChoice): void {
-    this.liveSaveSheetVisible = false;
+  private async downloadLiveWithMenu(): Promise<void> {
+    const choice = await this.askLivePhotoSave();
     if (choice === 'cancel') {
       return;
     }
@@ -518,7 +583,7 @@ struct GalleryPreview {
   private liveSaveSheetBuilder() {
     LivePhotoSaveActionSheet({
       onSelect: (choice: LivePhotoSaveChoice): void => {
-        this.onLiveSaveSelect(choice);
+        this.completeLivePhotoSave(choice);
       }
     })
   }
@@ -608,6 +673,7 @@ struct GalleryPreview {
       currentItemId(): string { return self.currentItemId(); }
       toast(msg: string): void { self.toast(msg); }
       routerBack(): void { self.navigateBack(); }
+      askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
     return new PreviewActionsHostBridge();
   }
@@ -618,9 +684,18 @@ struct GalleryPreview {
   }
 
   @Builder
+  private choiceSheetBuilder() {
+    FnHdsChoiceSheet({
+      buttons: this.choiceSheetButtons,
+      onSelect: (index: number): void => {
+        this.completeChoice(index);
+      }
+    })
+  }
+
+  @Builder
   private detailsSheetBuilder() {
     GalleryPreviewDetailsSheet({
-      isDark: this.isDark(),
       detailsLoading: this.detailsLoading,
       detailsError: this.detailsError,
       detailsData: this.detailsData,
@@ -815,24 +890,36 @@ struct GalleryPreview {
         })
       }
 
-      if (this.liveSaveSheetVisible) {
-        this.liveSaveSheetBuilder()
-      }
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.liveSaveSheetVisible, this.liveSaveSheetBuilder, fnHdsSaveButtonSheetOptions(
+          LIVE_PHOTO_PRIVILEGE_SHEET_TITLE,
+          (): void => {
+            this.completeLivePhotoSave('cancel');
+          }
+        ))
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
+          this.choiceSheetTitle,
+          (): void => {
+            this.completeChoice(-1);
+          }
+        ))
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageBg())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, {
-      height: this.previewSheetHeight(),
-      title: { title: this.previewSheetTitle() },
-      showClose: true,
-      dragBar: true,
-      backgroundColor: this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF',
-      onDisappear: (): void => {
+    .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, fnHdsSheetOptions(
+      this.previewSheetTitle(),
+      (): void => {
         this.closeDetailsPanel();
-      }
-    })
+      },
+      this.previewSheetHeight()
+    ))
   }
 
   pageTransition(): void {

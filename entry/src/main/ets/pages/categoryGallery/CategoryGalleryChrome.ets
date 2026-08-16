@@ -16,6 +16,7 @@ import {
   TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
+import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
 import {
   fnHdsImmersiveSystemMaterialEffect,
   fnHdsChromeButtonBackgroundColor,
@@ -55,6 +56,9 @@ export struct CategoryGalleryChrome {
   onBack: () => void = () => {};
   onToggleMode: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
+  onDismissMoreMenu: () => void = () => {};
+  onEnterMultiselectFromMore: () => void = () => {};
+  onOpenSlideshowFromMore: () => void = () => {};
 
   private canUseHds(): boolean {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
@@ -207,18 +211,48 @@ export struct CategoryGalleryChrome {
     };
   }
 
+  @Builder
+  private moreMenuBuilder() {
+    Menu() {
+      MenuItem({ content: '多选' })
+        .onClick((): void => {
+          this.onEnterMultiselectFromMore();
+        })
+      MenuItem({ content: '幻灯片' })
+        .onClick((): void => {
+          this.onOpenSlideshowFromMore();
+        })
+    }
+  }
+
   build() {
-    HdsNavigation() {
-      this.pageContent()
+    Stack({ alignContent: Alignment.TopEnd }) {
+      HdsNavigation() {
+        this.pageContent()
+      }
+      .width('100%')
+      .height('100%')
+      // 整页壳禁用 Auto 分栏，避免平板上内容只显示在左半屏
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .hideBackButton(this.selectionMode)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+      .bindToScrollable(this.scrollerList)
+      .titleBar(this.titleBarOptions())
+
+      Row()
+        .width(40)
+        .height(40)
+        .margin({ top: this.topSafeInsetVp + 8, right: 8 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
+          Placement.BottomLeft,
+          (): void => {
+            this.onDismissMoreMenu();
+          }
+        ))
     }
     .width('100%')
     .height('100%')
-    // 整页壳禁用 Auto 分栏，避免平板上内容只显示在左半屏
-    .mode(NavigationMode.Stack)
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .hideBackButton(this.selectionMode)
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-    .bindToScrollable(this.scrollerList)
-    .titleBar(this.titleBarOptions())
   }
 }

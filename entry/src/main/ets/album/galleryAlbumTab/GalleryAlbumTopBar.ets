@@ -13,6 +13,7 @@ import {
   IconStyleMode,
   TextStyleMode
 } from '@kit.UIDesignKit';
+import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
 import {
   fnHdsImmersiveSystemMaterialEffect,
   fnHdsChromeButtonBackgroundColor,
@@ -65,6 +66,9 @@ export struct GalleryAlbumTopBar {
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
   @Prop moreMenuExpanded: boolean = false;
+  @Prop showMoreMultiselect: boolean = false;
+  @Prop showMoreAutoSync: boolean = false;
+  @Prop moreAutoSyncBadgeCount: number = 0;
   @Prop searchQuery: string = '';
   /** 系统状态栏高度：内容区顶部留白仍用此值；按钮避让靠 titleBar.avoidLayoutSafeArea。 */
   @Prop topSafeInsetVp: number = 0;
@@ -84,6 +88,10 @@ export struct GalleryAlbumTopBar {
   onEnterSelection: () => void = () => {};
   onBackToGallery: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
+  onDismissMoreMenu: () => void = () => {};
+  onEnterMultiselectFromMore: () => void = () => {};
+  onOpenSlideshowFromMore: () => void = () => {};
+  onStartAutoSyncFromMore: () => void = () => {};
 
   @State private suppressSearchAutoFocus: boolean = true;
   @State private searchSubmitted: boolean = false;
@@ -615,18 +623,63 @@ export struct GalleryAlbumTopBar {
     return items;
   }
 
+  private autoSyncMenuLabel(): string {
+    if (this.moreAutoSyncBadgeCount > 0) {
+      return `同步本地照片 (${this.moreAutoSyncBadgeCount})`;
+    }
+    return '同步本地照片';
+  }
+
+  @Builder
+  private moreMenuBuilder() {
+    Menu() {
+      if (this.showMoreMultiselect) {
+        MenuItem({ content: '多选' })
+          .onClick((): void => {
+            this.onEnterMultiselectFromMore();
+          })
+      }
+      if (this.showMoreAutoSync) {
+        MenuItem({ content: this.autoSyncMenuLabel() })
+          .onClick((): void => {
+            this.onStartAutoSyncFromMore();
+          })
+      }
+      MenuItem({ content: '幻灯片' })
+        .onClick((): void => {
+          this.onOpenSlideshowFromMore();
+        })
+    }
+  }
+
   build() {
-    HdsNavigation() {
-      this.pageContent()
+    Stack({ alignContent: Alignment.TopEnd }) {
+      HdsNavigation() {
+        this.pageContent()
+      }
+      .width('100%')
+      .height('100%')
+      // 用作整页壳时必须 Stack：默认 Auto 在宽屏(≥600vp)会 Split，内容只占左栏
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .hideBackButton(!this.shouldShowBack())
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+      .bindToScrollable(this.scrollerList)
+      .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
+
+      Row()
+        .width(40)
+        .height(40)
+        .margin({ top: this.topSafeInsetVp + 8, right: 8 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
+          Placement.BottomLeft,
+          (): void => {
+            this.onDismissMoreMenu();
+          }
+        ))
     }
     .width('100%')
     .height('100%')
-    // 用作整页壳时必须 Stack：默认 Auto 在宽屏(≥600vp)会 Split，内容只占左栏
-    .mode(NavigationMode.Stack)
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .hideBackButton(!this.shouldShowBack())
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-    .bindToScrollable(this.scrollerList)
-    .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
   }
 }

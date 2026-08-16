@@ -18,7 +18,6 @@ import {
  */
 @Component
 export struct GalleryPreviewDetailsSheet {
-  @Prop isDark: boolean = false;
   @Prop detailsLoading: boolean = false;
   @Prop detailsError: string = '';
   @Prop detailsData: GalleryPhotoDetailData | undefined = undefined;
@@ -35,11 +34,11 @@ export struct GalleryPreviewDetailsSheet {
       Row({ space: 10 }) {
         Text(label)
           .fontSize(13)
-          .fontColor(this.isDark ? '#FF8E8E93' : '#FF6E6E73')
+          .fontColor($r('app.color.text_secondary'))
           .width(92)
         Text(value)
           .fontSize(13)
-          .fontColor(this.isDark ? '#FFF2F2F7' : '#FF1C1C1E')
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
       }
       .width('100%')
@@ -53,18 +52,18 @@ export struct GalleryPreviewDetailsSheet {
     Row({ space: 10 }) {
       Text('人物')
         .fontSize(13)
-        .fontColor(this.isDark ? '#FF8E8E93' : '#FF6E6E73')
+        .fontColor($r('app.color.text_secondary'))
         .width(92)
       Column({ space: 4 }) {
         if (this.personsInPhoto.length === 0) {
           Text('未识别到人物')
             .fontSize(13)
-            .fontColor(this.isDark ? '#FFF2F2F7' : '#FF1C1C1E')
+            .fontColor($r('app.color.text_primary'))
         } else {
           ForEach(this.personsInPhoto, (p: PersonInPhotoItem, idx: number) => {
             Text(galleryPreviewPersonInPhotoLineText(p))
               .fontSize(13)
-              .fontColor(this.isDark ? '#FF78A6FF' : '#FF0A63D8')
+              .fontColor($r('app.color.brand_primary'))
               .maxLines(3)
               .width('100%')
               .textAlign(TextAlign.Start)
@@ -74,7 +73,7 @@ export struct GalleryPreviewDetailsSheet {
           }, (p: PersonInPhotoItem, idx: number) => `pip_${idx}_${p.personId ?? 0}_${p.faceId ?? 0}`)
           Text(this.personOpening ? '正在打开人物相册…' : '点击姓名打开该人物相册')
             .fontSize(11)
-            .fontColor(this.isDark ? '#FF8E8E93' : '#FF6E6E73')
+            .fontColor($r('app.color.text_secondary'))
             .margin({ top: 2 })
         }
       }
@@ -92,17 +91,17 @@ export struct GalleryPreviewDetailsSheet {
       Row({ space: 10 }) {
         Text(label)
           .fontSize(13)
-          .fontColor(this.isDark ? '#FF8E8E93' : '#FF6E6E73')
+          .fontColor($r('app.color.text_secondary'))
           .width(92)
         Column({ space: 4 }) {
           Text(galleryPreviewCompactDisplayPath(fullPath))
             .fontSize(13)
-            .fontColor(this.isDark ? '#FF78A6FF' : '#FF0A63D8')
+            .fontColor($r('app.color.brand_primary'))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(this.folderOpening ? '正在打开同目录媒体...' : '点击打开同目录媒体')
             .fontSize(11)
-            .fontColor(this.isDark ? '#FF8E8E93' : '#FF6E6E73')
+            .fontColor($r('app.color.text_secondary'))
         }
         .layoutWeight(1)
       }
@@ -172,5 +171,6 @@ export struct GalleryPreviewDetailsSheet {
     .width('100%')
     .padding({ left: 16, right: 16, top: 4, bottom: 24 })
     .alignItems(HorizontalAlign.Start)
+    .backgroundColor(Color.Transparent)
   }
 }

@@ -34,9 +34,12 @@ import {
 } from './recycleBinPage/RecycleBinActions';
 import { gallerySelectionContainsLive } from '../album/livephoto/LivePhotoDetect';
 import {
+  askLivePhotoSaveChoice,
   LivePhotoSaveActionSheet,
-  LivePhotoSaveChoice
+  LivePhotoSaveChoice,
+  LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
 } from '../album/livephoto/LivePhotoSaveActionSheet';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
@@ -99,6 +102,9 @@ struct RecycleBinPage {
   @State private selectedCount: number = 0;
   @State private selectionHasLivePhoto: boolean = false;
   @State private liveSaveSheetVisible: boolean = false;
+  @State private choiceSheetVisible: boolean = false;
+  @State private choiceSheetTitle: string = '';
+  @State private choiceSheetButtons: string[] = [];
   @State private rbSlideGestureActive: boolean = false;
   @State private rbScrollEnabled: boolean = true;
   @State private rbThumbLoadingPaused: boolean = false;
@@ -122,6 +128,14 @@ struct RecycleBinPage {
   private listScroller: Scroller = new Scroller();
 
   onBackPress(): boolean {
+    if (this.choiceSheetVisible) {
+      this.completeChoice(-1);
+      return true;
+    }
+    if (this.liveSaveSheetVisible) {
+      this.completeLivePhotoSave('cancel');
+      return true;
+    }
     if (this.selectionMode) {
       this.exitSelection();
       return true;
@@ -499,13 +513,23 @@ struct RecycleBinPage {
   }
 
   private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
 
   private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    return askLivePhotoSaveChoice(
+      (title: string, buttons: string[]): Promise<number> => this.askChoice(title, buttons),
+      (): Promise<boolean> => this.askLivePhotoPrivilege()
+    );
+  }
+
+  private askLivePhotoPrivilege(): Promise<boolean> {
     if (this.liveSaveSheetVisible) {
-      return Promise.resolve('cancel' as LivePhotoSaveChoice);
+      return Promise.resolve(false);
     }
-    return new Promise<LivePhotoSaveChoice>((resolve: (choice: LivePhotoSaveChoice) => void) => {
-      this.liveSaveResolver = resolve;
+    return new Promise<boolean>((resolve: (ok: boolean) => void) => {
+      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+        resolve(choice === 'privilege');
+      };
       this.liveSaveSheetVisible = true;
     });
   }
@@ -526,6 +550,37 @@ struct RecycleBinPage {
         this.completeLivePhotoSave(choice);
       }
     })
+  }
+
+  @Builder
+  private choiceSheetBuilder() {
+    FnHdsChoiceSheet({
+      buttons: this.choiceSheetButtons,
+      onSelect: (index: number): void => {
+        this.completeChoice(index);
+      }
+    })
+  }
+
+  private askChoice(title: string, buttons: string[]): Promise<number> {
+    if (this.choiceSheetVisible) {
+      return Promise.resolve(-1);
+    }
+    return new Promise<number>((resolve: (index: number) => void) => {
+      this.choiceSheetTitle = title;
+      this.choiceSheetButtons = buttons;
+      this.choiceSheetResolver = resolve;
+      this.choiceSheetVisible = true;
+    });
+  }
+
+  private completeChoice(index: number): void {
+    const resolver = this.choiceSheetResolver;
+    this.choiceSheetResolver = undefined;
+    this.choiceSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(index);
+    }
   }
 
   private asActionsHost(): RecycleBinActionsHost {
@@ -560,6 +615,7 @@ struct RecycleBinPage {
       toast(msg: string): void { self.toast(msg); }
       exitSelection(): void { self.exitSelection(); }
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
+      askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
     return new RecycleBinActionsHostBridge();
   }
@@ -849,9 +905,6 @@ struct RecycleBinPage {
               topOffsetVp: this.contentInsetTopVp()
             })
           }
-          if (this.liveSaveSheetVisible) {
-            this.liveSaveSheetBuilder()
-          }
         }
         .layoutWeight(1)
         .width('100%')
@@ -861,10 +914,25 @@ struct RecycleBinPage {
       .height('100%')
       .backgroundColor($r('app.color.page_background'))
       }
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.liveSaveSheetVisible, this.liveSaveSheetBuilder, fnHdsSaveButtonSheetOptions(
+          LIVE_PHOTO_PRIVILEGE_SHEET_TITLE,
+          (): void => {
+            this.completeLivePhotoSave('cancel');
+          }
+        ))
     }
     .width('100%')
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
+      this.choiceSheetTitle,
+      (): void => {
+        this.completeChoice(-1);
+      }
+    ))
   }
 
   pageTransition(): void {

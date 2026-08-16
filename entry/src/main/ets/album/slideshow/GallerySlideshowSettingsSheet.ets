@@ -1,9 +1,13 @@
 import { common } from '@kit.AbilityKit';
 import {
+  FnHdsPillButton,
   fnImmersiveBackgroundEffect,
-  fnLiquidGlassGradient,
-  FnPrimaryButton
+  fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from '../../common/FnImmersiveSettings';
 import { gallerySlideshowLoadConfig } from './GallerySlideshowPreferences';
 import {
   GALLERY_SLIDESHOW_INTERVAL_SEC_OPTIONS,
@@ -18,6 +22,7 @@ export struct GallerySlideshowSettingsSheet {
   @Prop scope: GallerySlideshowScope = { kind: GallerySlideshowScopeKind.ALL_GALLERY };
   @Prop visible: boolean = false;
   @Prop preparing: boolean = false;
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onDismiss: () => void = (): void => {};
   onStart: (config: GallerySlideshowConfig) => void = (_: GallerySlideshowConfig): void => {};
@@ -29,6 +34,10 @@ export struct GallerySlideshowSettingsSheet {
 
   aboutToAppear(): void {
     void this.loadPrefs();
+  }
+
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
   private async loadPrefs(): Promise<void> {
@@ -53,22 +62,40 @@ export struct GallerySlideshowSettingsSheet {
   }
 
   @Builder
+  private panelChrome() {
+    if (this.canUseHds()) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .hitTestBehavior(HitTestMode.None)
+    } else {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.gallery_material_surface_bg'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(fnImmersiveBackgroundEffect())
+        .linearGradient(fnLiquidGlassGradient())
+        .hitTestBehavior(HitTestMode.None)
+    }
+  }
+
+  @Builder
   private intervalChip(sec: number) {
-    Text(`${sec} 秒`)
-      .fontSize(13)
-      .fontWeight(this.intervalSec === sec ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(this.intervalSec === sec ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-      .backgroundColor(this.intervalSec === sec ? '#1A007AFF' : $r('app.color.gallery_material_surface_bg'))
-      .borderRadius(16)
-      .border({
-        width: 1,
-        color: this.intervalSec === sec ? $r('app.color.brand_primary') : $r('app.color.immersive_panel_border')
-      })
-      .margin({ right: 8, bottom: 8 })
-      .onClick((): void => {
+    FnHdsPillButton({
+      text: `${sec} 秒`,
+      widthValue: 76,
+      heightValue: 36,
+      fontSizeValue: 13,
+      fontColorValue: $r('app.color.text_primary'),
+      active: this.intervalSec === sec,
+      action: (): void => {
         this.intervalSec = sec;
-      })
+      }
+    })
+      .margin({ right: 8, bottom: 8 })
   }
 
   @Builder
@@ -92,6 +119,8 @@ export struct GallerySlideshowSettingsSheet {
   build() {
     if (!this.visible) {
       Blank()
+        .width(0)
+        .height(0)
     } else {
       Stack({ alignContent: Alignment.Center }) {
         Column()
@@ -104,72 +133,80 @@ export struct GallerySlideshowSettingsSheet {
             }
           })
 
-        Column({ space: 14 }) {
-          Text(gallerySlideshowScopeLabel(this.scope))
-            .fontSize(17)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .width('100%')
-
-          Column({ space: 8 }) {
-            Text('切换间隔')
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
+        Stack() {
+          this.panelChrome()
+          Column({ space: 14 }) {
+            Text(gallerySlideshowScopeLabel(this.scope))
+              .fontSize(17)
+              .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
               .width('100%')
 
-            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-              ForEach(GALLERY_SLIDESHOW_INTERVAL_SEC_OPTIONS, (sec: number) => {
-                this.intervalChip(sec)
-              }, (sec: number) => `slideshow_interval_${sec}`)
+            Column({ space: 8 }) {
+              Text('切换间隔')
+                .fontSize(13)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .width('100%')
+
+              Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+                ForEach(GALLERY_SLIDESHOW_INTERVAL_SEC_OPTIONS, (sec: number) => {
+                  this.intervalChip(sec)
+                }, (sec: number) => `slideshow_interval_${sec}`)
+              }
+              .width('100%')
+            }
+
+            Column({ space: 4 }) {
+              this.toggleRow('包含视频', this.includeVideo, (value: boolean): void => {
+                this.includeVideo = value;
+              })
+              this.toggleRow('包含动图', this.includeGif, (value: boolean): void => {
+                this.includeGif = value;
+              })
+            }
+
+            Row({ space: 10 }) {
+              FnHdsPillButton({
+                text: '取消',
+                widthValue: '100%',
+                heightValue: 44,
+                fontSizeValue: 15,
+                fontColorValue: $r('app.color.text_primary'),
+                action: (): void => {
+                  if (!this.preparing) {
+                    this.onDismiss();
+                  }
+                }
+              })
+                .layoutWeight(1)
+
+              FnHdsPillButton({
+                text: this.preparing ? '准备中…' : '开始播放',
+                widthValue: '100%',
+                heightValue: 44,
+                fontSizeValue: 15,
+                fontColorValue: $r('app.color.text_primary'),
+                prominent: true,
+                action: (): void => {
+                  if (!this.preparing && this.prefsLoaded) {
+                    this.onStart(this.buildConfig());
+                  }
+                }
+              })
+                .layoutWeight(1)
+                .opacity(this.preparing ? 0.6 : 1)
             }
             .width('100%')
           }
-
-          Column({ space: 4 }) {
-            this.toggleRow('包含视频', this.includeVideo, (value: boolean): void => {
-              this.includeVideo = value;
-            })
-            this.toggleRow('包含动图', this.includeGif, (value: boolean): void => {
-              this.includeGif = value;
-            })
-          }
-
-          Row({ space: 10 }) {
-            Button('取消')
-              .layoutWeight(1)
-              .height(44)
-              .fontSize(15)
-              .fontColor($r('app.color.text_primary'))
-              .backgroundColor($r('app.color.gallery_material_surface_bg'))
-              .enabled(!this.preparing)
-              .onClick((): void => {
-                this.onDismiss();
-              })
-
-            FnPrimaryButton({
-              text: this.preparing ? '准备中…' : '开始播放',
-              action: (): void => {
-                if (!this.preparing && this.prefsLoaded) {
-                  this.onStart(this.buildConfig());
-                }
-              }
-            })
-              .layoutWeight(1)
-              .opacity(this.preparing ? 0.6 : 1)
-          }
           .width('100%')
+          .padding({ left: 18, right: 18, top: 18, bottom: 18 })
         }
         .width('88%')
         .constraintSize({ maxWidth: 360 })
-        .padding({ left: 18, right: 18, top: 18, bottom: 18 })
-        .backgroundColor($r('app.color.gallery_material_surface_bg'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .backgroundEffect(fnImmersiveBackgroundEffect())
-        .linearGradient(fnLiquidGlassGradient())
         .borderRadius(24)
-        .border({ width: 1, color: $r('app.color.immersive_panel_border') })
-        .shadow({ radius: 24, color: '#1A001A33', offsetX: 0, offsetY: 10 })
+        .borderWidth(this.canUseHds() ? 0 : 1)
+        .borderColor($r('app.color.immersive_panel_border'))
         .clip(true)
       }
       .width('100%')

@@ -921,49 +921,44 @@ export struct GalleryAuthVideo {
   }
 
   /** 选择清晰度后立即重建播放链路；失败会自动回退到原始直链。 */
-  private async chooseQuality(): Promise<void> {
-    try {
-      const choice = await this.getUIContext().getPromptAction().showActionMenu({
-        title: '播放清晰度',
-        buttons: [
-          { text: '原始', color: '#007AFF' },
-          { text: '高清 1080p', color: '#007AFF' },
-          { text: '均衡 720p', color: '#007AFF' },
-          { text: '流畅 480p', color: '#007AFF' }
-        ]
-      });
-      const idx = choice.index;
-      if (idx < 0 || idx >= QUALITY_OPTIONS.length) {
-        return;
-      }
-      // 禁止选择超过原始清晰度的档位（只能降，不能升）
-      if (!this.isQualityAllowed(idx)) {
-        this.hint = `当前视频最高支持 ${Math.max(1, Math.floor(this.maxResolutionP))}p，仅可降清晰度`;
-        this.showPlaybackRetry = false;
-        return;
-      }
-      if (idx === this.qualityIndex) {
-        return;
-      }
-      this.qualityIndex = idx;
-      LAST_VIDEO_QUALITY_INDEX = idx;
-      this.pendingQualitySwitch = true;
-      /**
-       * 记忆当前进度用于清晰度切换后的无缝续播：
-       * - 仅记录有效区间 [0, duration)；
-       * - 若当前尚未拿到 duration，则按 0 处理（从头播）。
-       */
-      if (this.currentMs > 0 && this.durationMs > 0) {
-        this.pendingRestoreMs = Math.min(this.currentMs, Math.max(0, this.durationMs - 800));
-      } else {
-        this.pendingRestoreMs = 0;
-      }
-      this.videoLoading = this.active && this.videoUrl.length > 0;
-      this.hint = '';
-      this.showPlaybackRetry = false;
-      this.scheduleStartPlay();
-    } catch (_e) {
+  private applyQualityAt(idx: number): void {
+    if (idx < 0 || idx >= QUALITY_OPTIONS.length) {
+      return;
     }
+    // 禁止选择超过原始清晰度的档位（只能降，不能升）
+    if (!this.isQualityAllowed(idx)) {
+      this.hint = `当前视频最高支持 ${Math.max(1, Math.floor(this.maxResolutionP))}p，仅可降清晰度`;
+      this.showPlaybackRetry = false;
+      return;
+    }
+    if (idx === this.qualityIndex) {
+      return;
+    }
+    this.qualityIndex = idx;
+    LAST_VIDEO_QUALITY_INDEX = idx;
+    this.pendingQualitySwitch = true;
+    /**
+     * 记忆当前进度用于清晰度切换后的无缝续播：
+     * - 仅记录有效区间 [0, duration)；
+     * - 若当前尚未拿到 duration，则按 0 处理（从头播）。
+     */
+    if (this.currentMs > 0 && this.durationMs > 0) {
+      this.pendingRestoreMs = Math.min(this.currentMs, Math.max(0, this.durationMs - 800));
+    } else {
+      this.pendingRestoreMs = 0;
+    }
+    this.videoLoading = this.active && this.videoUrl.length > 0;
+    this.hint = '';
+    this.showPlaybackRetry = false;
+    this.scheduleStartPlay();
+  }
+
+  private qualityMenuLabels(): string[] {
+    const labels: string[] = [];
+    for (let i = 0; i < QUALITY_OPTIONS.length; i++) {
+      labels.push(QUALITY_OPTIONS[i].label);
+    }
+    return labels;
   }
 
   private async startPlay(): Promise<void> {
@@ -1316,6 +1311,8 @@ export struct GalleryAuthVideo {
         landscape: this.landscape,
         speedText: this.speedBadgeText(),
         speedRate: this.speedRate,
+        qualityLabels: this.qualityMenuLabels(),
+        qualityIndex: this.qualityIndex,
         currentText: this.fmtTime(this.currentMs),
         durationText: this.fmtTime(this.durationMs),
         progress: this.progressRatio(),
@@ -1327,9 +1324,9 @@ export struct GalleryAuthVideo {
           this.bumpChromeAutoHide();
           this.applyPickedSpeed(rate);
         },
-        onQuality: (): void => {
+        onSelectQuality: (index: number): void => {
           this.bumpChromeAutoHide();
-          void this.chooseQuality();
+          this.applyQualityAt(index);
         },
         onFullscreen: (): void => {
           this.bumpChromeAutoHide();

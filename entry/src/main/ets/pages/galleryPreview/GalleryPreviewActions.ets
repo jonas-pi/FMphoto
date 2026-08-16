@@ -60,6 +60,7 @@ export interface GalleryPreviewActionsHost {
   currentItemId(): string;
   toast(msg: string): void;
   routerBack(): void;
+  askChoice(title: string, buttons: string[]): Promise<number>;
 }
 
 function galleryPreviewCurrentItemIsVideo(host: GalleryPreviewActionsHost): boolean {
@@ -614,14 +615,14 @@ async function galleryPreviewDoDownload(
       }
     }
     try {
-      const choice = await host.getUIContext().getPromptAction().showActionMenu({
-        title: '选择下载质量',
-        buttons: [
-          { text: `原图（${galleryPreviewQualitySizeLabel(originalBytes)}）`, color: '#007AFF' },
-          { text: `缩略图（${galleryPreviewQualitySizeLabel(thumbBytes)}）`, color: '#007AFF' }
-        ]
-      });
-      useOriginal = choice.index === 0;
+      const choiceIdx = await host.askChoice('选择下载质量', [
+        `原图（${galleryPreviewQualitySizeLabel(originalBytes)}）`,
+        `缩略图（${galleryPreviewQualitySizeLabel(thumbBytes)}）`
+      ]);
+      if (choiceIdx < 0) {
+        return;
+      }
+      useOriginal = choiceIdx === 0;
     } catch (_e) {
       return;
     }

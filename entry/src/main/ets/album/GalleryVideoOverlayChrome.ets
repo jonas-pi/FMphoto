@@ -1,24 +1,14 @@
 /**
  * 官方图库风格视频浮层。
- * 沉浸光感与底栏相同：HdsTabs 必须给明确宽高（与 Home 侧钮一致），不能用 100% 去撑 wrap 父节点。
- * 图标/文字叠在 HdsTabs 材质之上居中，避免页签默认内边距把 Symbol 顶偏。
+ * 倍速 / 清晰度走系统 bindMenu、bindContextMenu，不要自绘半模态。
+ * 视频手势与控件分层，避免父级单击/长按抢走菜单。
  */
-import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI';
 import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
+import {
+  fnHdsBindContextMenuOptions,
+  fnHdsBindMenuOptions
+} from '../common/FnHdsOverlay';
 import { fnHdsImmersiveTabsFloatingStyle } from '../common/FnUiCommon';
-
-interface GalleryVideoSpeedOption {
-  label: string;
-  rate: number;
-}
-
-const GALLERY_VIDEO_SPEED_OPTIONS: GalleryVideoSpeedOption[] = [
-  { label: '0.25X', rate: 0.25 },
-  { label: '0.5X', rate: 0.5 },
-  { label: '1.0X', rate: 1.0 },
-  { label: '1.5X', rate: 1.5 },
-  { label: '2.0X', rate: 2.0 }
-];
 
 const OVERLAY_PILL_HEIGHT_VP: number = 36;
 const OVERLAY_SPEED_WIDTH_VP: number = 60;
@@ -107,13 +97,15 @@ export struct GalleryVideoOverlayChrome {
   @Prop landscape: boolean = false;
   @Prop speedText: string = '1.0X';
   @Prop speedRate: number = 1.0;
+  @Prop qualityLabels: string[] = ['原始', '高清 1080p', '均衡 720p', '流畅 480p'];
+  @Prop qualityIndex: number = 0;
   @Prop currentText: string = '00:00';
   @Prop durationText: string = '00:00';
   @Prop progress: number = 0;
   @Prop bottomPadding: number = 0;
   onPlay: () => void = () => {};
   onSelectSpeed: (rate: number) => void = (_rate: number) => {};
-  onQuality: () => void = () => {};
+  onSelectQuality: (index: number) => void = (_index: number) => {};
   onFullscreen: () => void = () => {};
   onInteract: () => void = () => {};
   onSeekStart: () => void = () => {};
@@ -130,7 +122,6 @@ export struct GalleryVideoOverlayChrome {
   onVerticalAdjustEnd: () => void = () => {};
 
   @State private barW: number = 1;
-  @State private speedMenuOpen: boolean = false;
   private dragStartRatio: number = 0;
 
   private fillPercent(): number {
@@ -145,35 +136,48 @@ export struct GalleryVideoOverlayChrome {
     return this.landscape ? $r('sys.symbol.exit_full_screen') : $r('sys.symbol.full_screen');
   }
 
-  private speedCheckIcon(rate: number): SymbolGlyphModifier {
-    const color: ResourceColor = this.isCurrentSpeed(rate) ?
-      $r('app.color.icon_primary') : Color.Transparent;
-    return new SymbolGlyphModifier($r('sys.symbol.checkmark'))
-      .fontSize(18)
-      .fontColor([color]);
-  }
-
   @Builder
   private speedMenu() {
     Menu() {
-      ForEach(GALLERY_VIDEO_SPEED_OPTIONS, (opt: GalleryVideoSpeedOption) => {
-        MenuItem({
-          content: opt.label,
-          symbolEndIcon: this.speedCheckIcon(opt.rate)
+      MenuItem({ content: '0.25X' })
+        .selected(this.isCurrentSpeed(0.25))
+        .onClick((): void => {
+          this.onSelectSpeed(0.25);
         })
-          .onClick((): void => {
-            this.speedMenuOpen = false;
-            this.onSelectSpeed(opt.rate);
-          })
-      }, (opt: GalleryVideoSpeedOption) => `${opt.rate}`)
+      MenuItem({ content: '0.5X' })
+        .selected(this.isCurrentSpeed(0.5))
+        .onClick((): void => {
+          this.onSelectSpeed(0.5);
+        })
+      MenuItem({ content: '1.0X' })
+        .selected(this.isCurrentSpeed(1.0))
+        .onClick((): void => {
+          this.onSelectSpeed(1.0);
+        })
+      MenuItem({ content: '1.5X' })
+        .selected(this.isCurrentSpeed(1.5))
+        .onClick((): void => {
+          this.onSelectSpeed(1.5);
+        })
+      MenuItem({ content: '2.0X' })
+        .selected(this.isCurrentSpeed(2.0))
+        .onClick((): void => {
+          this.onSelectSpeed(2.0);
+        })
     }
-    .radius(22)
-    .menuItemDivider({
-      strokeWidth: LengthMetrics.vp(0.5),
-      color: '#1A000000',
-      startMargin: LengthMetrics.vp(12),
-      endMargin: LengthMetrics.vp(12)
-    })
+  }
+
+  @Builder
+  private qualityMenu() {
+    Menu() {
+      ForEach(this.qualityLabels, (label: string, idx: number) => {
+        MenuItem({ content: label })
+          .selected(idx === this.qualityIndex)
+          .onClick((): void => {
+            this.onSelectQuality(idx);
+          })
+      }, (label: string, idx: number) => `q_${idx}_${label}`)
+    }
   }
 
   @Builder
@@ -217,8 +221,63 @@ export struct GalleryVideoOverlayChrome {
       .height(30)
   }
 
+  @Builder
+  private videoGestureLayer() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Default)
+      .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+        if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+          return GestureJudgeResult.CONTINUE;
+        }
+        const pan = event as PanGestureEvent;
+        if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
+          return GestureJudgeResult.REJECT;
+        }
+        return GestureJudgeResult.CONTINUE;
+      })
+      .gesture(
+        GestureGroup(GestureMode.Exclusive,
+          PanGesture({ direction: PanDirection.Vertical, distance: 8 })
+            .onActionStart((event: GestureEvent): void => {
+              this.onVerticalAdjustStart(event);
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.onVerticalAdjustUpdate(event);
+            })
+            .onActionEnd((): void => {
+              this.onVerticalAdjustEnd();
+            })
+            .onActionCancel((): void => {
+              this.onVerticalAdjustEnd();
+            }),
+          LongPressGesture({ repeat: false })
+            .onAction((): void => {
+              this.onHoldSpeedStart();
+            })
+            .onActionEnd((): void => {
+              this.onHoldSpeedEnd();
+            })
+            .onActionCancel((): void => {
+              this.onHoldSpeedEnd();
+            }),
+          TapGesture({ count: 2 })
+            .onAction((): void => {
+              this.onDoubleTap();
+            }),
+          TapGesture({ count: 1 })
+            .onAction((): void => {
+              this.onSingleTap();
+            })
+        )
+      )
+  }
+
   build() {
     Stack() {
+      this.videoGestureLayer()
+
       if (this.visible && this.showCenterPlay) {
         Stack({ alignContent: Alignment.Center }) {
           GalleryOverlayHdsCapsule({
@@ -240,58 +299,60 @@ export struct GalleryVideoOverlayChrome {
       }
 
       if (this.visible) {
-        Stack({ alignContent: Alignment.Bottom }) {
-          Column({ space: 10 }) {
-            Stack({ alignContent: Alignment.Center }) {
-            Row() {
+        Column({ space: 10 }) {
+          Row() {
+            Stack() {
               GalleryOverlayHdsCapsule({
                 widthValue: OVERLAY_SPEED_WIDTH_VP,
                 heightValue: OVERLAY_PILL_HEIGHT_VP,
                 radiusValue: OVERLAY_PILL_HEIGHT_VP / 2,
-                enableBarClick: true,
-                onBarClick: (): void => {
-                  this.onInteract();
-                  this.speedMenuOpen = true;
-                },
+                blockHit: true,
+                enableBarClick: false,
                 label: (): void => {
                   this.speedLabel();
                 }
               })
-                .bindMenu(this.speedMenuOpen, this.speedMenu, {
-                  placement: Placement.TopLeft,
-                  onDisappear: (): void => {
-                    this.speedMenuOpen = false;
-                  }
-                })
-                .gesture(
-                  LongPressGesture({ repeat: false })
-                    .onAction((): void => {
-                      this.onQuality();
-                    })
-                )
-
-              Blank()
-                .layoutWeight(1)
-                .hitTestBehavior(HitTestMode.None)
-
-              GalleryOverlayHdsCapsule({
-                widthValue: OVERLAY_LANDSCAPE_SIZE_VP,
-                heightValue: OVERLAY_LANDSCAPE_SIZE_VP,
-                radiusValue: OVERLAY_LANDSCAPE_SIZE_VP / 2,
-                enableBarClick: true,
-                onBarClick: (): void => {
-                  this.onInteract();
-                  this.onFullscreen();
-                },
-                label: (): void => {
-                  this.landscapeLabel();
-                }
-              })
             }
-            .width('100%')
+            .width(OVERLAY_SPEED_WIDTH_VP)
             .height(OVERLAY_PILL_HEIGHT_VP)
-            .alignItems(VerticalAlign.Center)
+            .hitTestBehavior(HitTestMode.Default)
+            .bindMenu(this.speedMenu, fnHdsBindMenuOptions(
+              Placement.TopLeft,
+              (): void => {},
+              (): void => {
+                this.onInteract();
+              }
+            ))
+            .bindContextMenu(this.qualityMenu, ResponseType.LongPress, fnHdsBindContextMenuOptions(
+              Placement.TopLeft,
+              (): void => {
+                this.onInteract();
+              }
+            ))
 
+            Blank()
+              .layoutWeight(1)
+              .hitTestBehavior(HitTestMode.None)
+
+            GalleryOverlayHdsCapsule({
+              widthValue: OVERLAY_LANDSCAPE_SIZE_VP,
+              heightValue: OVERLAY_LANDSCAPE_SIZE_VP,
+              radiusValue: OVERLAY_LANDSCAPE_SIZE_VP / 2,
+              enableBarClick: true,
+              onBarClick: (): void => {
+                this.onInteract();
+                this.onFullscreen();
+              },
+              label: (): void => {
+                this.landscapeLabel();
+              }
+            })
+          }
+          .width('100%')
+          .height(OVERLAY_PILL_HEIGHT_VP)
+          .alignItems(VerticalAlign.Center)
+
+          Stack({ alignContent: Alignment.Center }) {
             GalleryOverlayHdsCapsule({
               widthValue: OVERLAY_TIME_WIDTH_VP,
               heightValue: OVERLAY_PILL_HEIGHT_VP,
@@ -304,6 +365,7 @@ export struct GalleryVideoOverlayChrome {
           }
           .width('100%')
           .height(OVERLAY_PILL_HEIGHT_VP)
+          .hitTestBehavior(HitTestMode.None)
 
           Stack({ alignContent: Alignment.Start }) {
             Row()
@@ -357,59 +419,11 @@ export struct GalleryVideoOverlayChrome {
           right: 16,
           bottom: 8 + this.bottomPadding
         })
-        }
-        .width('100%')
-        .height('100%')
+        .align(Alignment.Bottom)
         .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(HitTestMode.Default)
-    .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
-      if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
-        return GestureJudgeResult.CONTINUE;
-      }
-      const pan = event as PanGestureEvent;
-      if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
-        return GestureJudgeResult.REJECT;
-      }
-      return GestureJudgeResult.CONTINUE;
-    })
-    .gesture(
-      GestureGroup(GestureMode.Exclusive,
-        PanGesture({ direction: PanDirection.Vertical, distance: 8 })
-          .onActionStart((event: GestureEvent): void => {
-            this.onVerticalAdjustStart(event);
-          })
-          .onActionUpdate((event: GestureEvent): void => {
-            this.onVerticalAdjustUpdate(event);
-          })
-          .onActionEnd((): void => {
-            this.onVerticalAdjustEnd();
-          })
-          .onActionCancel((): void => {
-            this.onVerticalAdjustEnd();
-          }),
-        LongPressGesture({ repeat: false })
-          .onAction((): void => {
-            this.onHoldSpeedStart();
-          })
-          .onActionEnd((): void => {
-            this.onHoldSpeedEnd();
-          })
-          .onActionCancel((): void => {
-            this.onHoldSpeedEnd();
-          }),
-        TapGesture({ count: 2 })
-          .onAction((): void => {
-            this.onDoubleTap();
-          }),
-        TapGesture({ count: 1 })
-          .onAction((): void => {
-            this.onSingleTap();
-          })
-      )
-    )
   }
 }

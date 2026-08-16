@@ -25,6 +25,7 @@ import {
   FN_ENDPOINT_SWITCH_VERSION
 } from '../network/LoginEndpointAutoSwitch';
 import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
+import { fnHdsSheetOptions } from '../common/FnHdsOverlay';
 import {
   buildEndpointProbeDisplay,
   FnEndpointProbeLineItem,
@@ -318,6 +319,7 @@ struct MePanel {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(Color.Transparent)
   }
 
   @Builder
@@ -474,18 +476,15 @@ struct MePanel {
       .clip(true)
     }
     .width('100%')
-    .bindSheet(this.probeSheetVisible, this.endpointProbeSheetBuilder, {
-      height: '50%',
-      title: { title: $r('app.string.nas_endpoint_probe_title') },
-      showClose: true,
-      dragBar: true,
-      backgroundColor: $r('app.color.card_background'),
-      onDisappear: (): void => {
+    .bindSheet(this.probeSheetVisible, this.endpointProbeSheetBuilder, fnHdsSheetOptions(
+      $r('app.string.nas_endpoint_probe_title'),
+      (): void => {
         this.probeSheetVisible = false;
         this.probeSeq = this.probeSeq + 1;
         this.probeSheetLoading = false;
-      }
-    })
+      },
+      '50%'
+    ))
   }
 
   @Builder
@@ -665,16 +664,13 @@ struct MePanel {
     }
     .width('100%')
     .height('100%')
-    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, {
-      height: '56%',
-      title: { title: '传输队列' },
-      showClose: true,
-      dragBar: true,
-      backgroundColor: $r('app.color.card_background'),
-      onDisappear: (): void => {
+    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsSheetOptions(
+      '传输队列',
+      (): void => {
         this.transferQueueVisible = false;
-      }
-    })
+      },
+      '56%'
+    ))
   }
 }
 

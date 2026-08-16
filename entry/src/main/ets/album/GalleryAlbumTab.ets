@@ -72,7 +72,6 @@ import {
   galleryAlbumTopBarChromeHeightVp,
   GalleryAlbumTopBar
 } from './galleryAlbumTab/GalleryAlbumTopBar';
-import { GalleryAlbumMoreMenu } from './galleryAlbumTab/GalleryAlbumMoreMenu';
 import { gallerySlideshowLaunch } from './slideshow/GallerySlideshowLauncher';
 import {
   GallerySlideshowConfig,
@@ -129,9 +128,12 @@ import {
 } from './GalleryBatchDownload';
 import { gallerySelectionContainsLive } from './livephoto/LivePhotoDetect';
 import {
+  askLivePhotoSaveChoice,
   LivePhotoSaveActionSheet,
-  LivePhotoSaveChoice
+  LivePhotoSaveChoice,
+  LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
 } from './livephoto/LivePhotoSaveActionSheet';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
 import {
   galleryAlbumApplyDeleteSyncIfNeeded,
   galleryAlbumConfirmAndBatchDelete,
@@ -496,6 +498,9 @@ export struct GalleryAlbumTab {
   @State private gallerySelectedCount: number = 0;
   @State private selectionHasLivePhoto: boolean = false;
   @State private liveSaveSheetVisible: boolean = false;
+  @State private choiceSheetVisible: boolean = false;
+  @State private choiceSheetTitle: string = '';
+  @State private choiceSheetButtons: string[] = [];
   @State @Watch('onBottomDockVisibilityChanged') private galleryBatchDeleting: boolean = false;
   @State private galleryBatchDownloading: boolean = false;
   /**
@@ -847,13 +852,23 @@ export struct GalleryAlbumTab {
   }
 
   private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
 
   private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    return askLivePhotoSaveChoice(
+      (title: string, buttons: string[]): Promise<number> => this.askChoice(title, buttons),
+      (): Promise<boolean> => this.askLivePhotoPrivilege()
+    );
+  }
+
+  private askLivePhotoPrivilege(): Promise<boolean> {
     if (this.liveSaveSheetVisible) {
-      return Promise.resolve('cancel' as LivePhotoSaveChoice);
+      return Promise.resolve(false);
     }
-    return new Promise<LivePhotoSaveChoice>((resolve: (choice: LivePhotoSaveChoice) => void) => {
-      this.liveSaveResolver = resolve;
+    return new Promise<boolean>((resolve: (ok: boolean) => void) => {
+      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+        resolve(choice === 'privilege');
+      };
       this.liveSaveSheetVisible = true;
     });
   }
@@ -874,6 +889,37 @@ export struct GalleryAlbumTab {
         this.completeLivePhotoSave(choice);
       }
     })
+  }
+
+  @Builder
+  private choiceSheetBuilder() {
+    FnHdsChoiceSheet({
+      buttons: this.choiceSheetButtons,
+      onSelect: (index: number): void => {
+        this.completeChoice(index);
+      }
+    })
+  }
+
+  private askChoice(title: string, buttons: string[]): Promise<number> {
+    if (this.choiceSheetVisible) {
+      return Promise.resolve(-1);
+    }
+    return new Promise<number>((resolve: (index: number) => void) => {
+      this.choiceSheetTitle = title;
+      this.choiceSheetButtons = buttons;
+      this.choiceSheetResolver = resolve;
+      this.choiceSheetVisible = true;
+    });
+  }
+
+  private completeChoice(index: number): void {
+    const resolver = this.choiceSheetResolver;
+    this.choiceSheetResolver = undefined;
+    this.choiceSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(index);
+    }
   }
 
   private dismissMoreMenu(): void {
@@ -1026,6 +1072,7 @@ export struct GalleryAlbumTab {
       flatItems(): GalleryListItem[] { return galleryAlbumFlatItems(self.asVisibleLoadHost()); }
       rebuildFlow(): void { galleryAlbumRebuildFlow(self.asVisibleLoadHost()); }
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
+      askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
     return new BatchActionHostBridge();
   }
@@ -2275,6 +2322,14 @@ export struct GalleryAlbumTab {
   }
 
   private tryConsumeSurfaceBack(): boolean {
+    if (this.choiceSheetVisible) {
+      this.completeChoice(-1);
+      return true;
+    }
+    if (this.liveSaveSheetVisible) {
+      this.completeLivePhotoSave('cancel');
+      return true;
+    }
     if (this.slideshowSettingsVisible) {
       this.dismissSlideshowSettings();
       return true;
@@ -2558,31 +2613,6 @@ export struct GalleryAlbumTab {
   build() {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Stack({ alignContent: Alignment.TopStart }) {
-        if (this.moreMenuExpanded) {
-          GalleryAlbumMoreMenu({
-            expanded: this.moreMenuExpanded,
-            topSafeInsetVp: this.topSafeInsetVp,
-            showMultiselect: this.inSearchMode,
-            showAutoSync: this.shouldShowAutoSyncInMoreMenu(),
-            autoSyncBadgeCount: this.autoSyncBadgeCount,
-            onDismiss: (): void => {
-              this.dismissMoreMenu();
-            },
-            onEnterMultiselect: (): void => {
-              this.enterSearchMultiselectFromMoreMenu();
-            },
-            onStartAutoSync: (): void => {
-              this.startAutoSyncFromMoreMenu();
-            },
-            onOpenSlideshow: (): void => {
-              this.openSlideshowSettings();
-            }
-          })
-            .width('100%')
-            .height('100%')
-            .zIndex(40)
-        }
-
         if (this.slideshowSettingsVisible) {
           GallerySlideshowSettingsSheet({
             scope: this.gallerySlideshowScope(),
@@ -2637,6 +2667,21 @@ export struct GalleryAlbumTab {
           },
           onShowMoreMenu: (): void => {
             this.showMoreMenu();
+          },
+          onDismissMoreMenu: (): void => {
+            this.dismissMoreMenu();
+          },
+          showMoreMultiselect: this.inSearchMode,
+          showMoreAutoSync: this.shouldShowAutoSyncInMoreMenu(),
+          moreAutoSyncBadgeCount: this.autoSyncBadgeCount,
+          onEnterMultiselectFromMore: (): void => {
+            this.enterSearchMultiselectFromMoreMenu();
+          },
+          onOpenSlideshowFromMore: (): void => {
+            this.openSlideshowSettings();
+          },
+          onStartAutoSyncFromMore: (): void => {
+            this.startAutoSyncFromMoreMenu();
           }
         }) {
         Stack({ alignContent: Alignment.TopStart }) {
@@ -3167,12 +3212,24 @@ export struct GalleryAlbumTab {
       if (this.slideshowPreparing) {
         FnFullLoadingMask({ text: '正在准备幻灯片...', topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
-      if (this.liveSaveSheetVisible) {
-        this.liveSaveSheetBuilder()
-      }
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.liveSaveSheetVisible, this.liveSaveSheetBuilder, fnHdsSaveButtonSheetOptions(
+          LIVE_PHOTO_PRIVILEGE_SHEET_TITLE,
+          (): void => {
+            this.completeLivePhotoSave('cancel');
+          }
+        ))
     }
     .width('100%')
     .height('100%')
+    .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
+      this.choiceSheetTitle,
+      (): void => {
+        this.completeChoice(-1);
+      }
+    ))
   }
 }
 

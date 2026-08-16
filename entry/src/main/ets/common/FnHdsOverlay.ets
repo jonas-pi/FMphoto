@@ -1,0 +1,185 @@
+/**
+ * 弹出层走华为官方能力，不要自绘玻璃底：
+ * - 半模态 bindSheet：backgroundColor Transparent + systemMaterial（官方沉浸光感示例）
+ * - 菜单 bindMenu / bindContextMenu + Menu / MenuItem（菜单默认支持沉浸光感）
+ * - 有 systemMaterial 时不要再叠 blurStyle / 不透明底，否则材质会被盖住
+ */
+import { uiMaterial } from '@kit.ArkUI';
+import { fnCurrentSdkApiVersion } from './FnImmersiveSettings';
+
+/** ArkUI 组件级 systemMaterial（bindSheet / bindMenu）起始 API */
+const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
+
+let cachedSheetMaterial: uiMaterial.Material | undefined = undefined;
+let cachedMenuMaterial: uiMaterial.Material | undefined = undefined;
+
+function fnCanUseArkUiSystemMaterial(): boolean {
+  return fnCurrentSdkApiVersion() >= FN_ARKUI_SYSTEM_MATERIAL_API;
+}
+
+export function fnHdsSheetBackgroundColor(_canUseHds: boolean): ResourceColor {
+  return Color.Transparent;
+}
+
+/**
+ * 仅 API 26 以下回退：官方旧示例用 BlurStyle.Thick。
+ * API 26+ 必须返回 undefined，避免模糊盖住 systemMaterial。
+ */
+export function fnHdsSheetBlurStyle(): BlurStyle | undefined {
+  if (fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  return BlurStyle.Thick;
+}
+
+/** 官方 bindSheet 示例：ULTRA_THICK + 透明底 */
+export function fnHdsSheetSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedSheetMaterial === undefined) {
+    // @SuppressWarnings compatibility
+    cachedSheetMaterial = new uiMaterial.ImmersiveMaterial({
+      style: uiMaterial.ImmersiveStyle.ULTRA_THICK
+    });
+  }
+  return cachedSheetMaterial;
+}
+
+/** 官方 bindMenu 示例：THICK */
+export function fnHdsMenuSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedMenuMaterial === undefined) {
+    // @SuppressWarnings compatibility
+    cachedMenuMaterial = new uiMaterial.ImmersiveMaterial({
+      style: uiMaterial.ImmersiveStyle.THICK
+    });
+  }
+  return cachedMenuMaterial;
+}
+
+export function fnHdsSheetOptions(
+  title: ResourceStr,
+  onDisappear: () => void,
+  height: SheetSize | Length = SheetSize.FIT_CONTENT
+): SheetOptions {
+  const options: SheetOptions = {
+    height: height,
+    title: { title: title },
+    showClose: true,
+    dragBar: true,
+    preferType: SheetType.BOTTOM,
+    backgroundColor: Color.Transparent,
+    onDisappear: onDisappear
+  };
+  const material = fnHdsSheetSystemMaterial();
+  if (material !== undefined) {
+    // @SuppressWarnings compatibility
+    options.systemMaterial = material;
+  } else {
+    options.blurStyle = BlurStyle.Thick;
+  }
+  return options;
+}
+
+export function fnHdsFitContentSheetOptions(title: string, onDisappear: () => void): SheetOptions {
+  return fnHdsSheetOptions(title, onDisappear, SheetSize.FIT_CONTENT);
+}
+
+/**
+ * SaveButton 专用半模态：实底、无模糊/材质，避免安全控件授权失败。
+ */
+export function fnHdsSaveButtonSheetOptions(title: string, onDisappear: () => void): SheetOptions {
+  return {
+    height: SheetSize.FIT_CONTENT,
+    title: {
+      title: title,
+      subtitle: '写入系统图库后可长按播放'
+    },
+    showClose: true,
+    dragBar: true,
+    preferType: SheetType.BOTTOM,
+    backgroundColor: $r('app.color.page_background'),
+    onDisappear: onDisappear
+  };
+}
+
+export function fnHdsBindMenuOptions(
+  placement: Placement,
+  onDisappear?: () => void,
+  onAppear?: () => void
+): MenuOptions {
+  const options: MenuOptions = {
+    placement: placement
+  };
+  if (onDisappear !== undefined) {
+    options.onDisappear = onDisappear;
+  }
+  if (onAppear !== undefined) {
+    options.onAppear = onAppear;
+  }
+  const material = fnHdsMenuSystemMaterial();
+  if (material !== undefined) {
+    // @SuppressWarnings compatibility
+    options.systemMaterial = material;
+  }
+  return options;
+}
+
+export function fnHdsBindContextMenuOptions(
+  placement: Placement,
+  onAppear?: () => void
+): ContextMenuOptions {
+  const options: ContextMenuOptions = {
+    placement: placement
+  };
+  if (onAppear !== undefined) {
+    options.onAppear = onAppear;
+  }
+  const material = fnHdsMenuSystemMaterial();
+  if (material !== undefined) {
+    // @SuppressWarnings compatibility
+    options.systemMaterial = material;
+  }
+  return options;
+}
+
+/**
+ * 半模态选项列表。内容保持透明，材质由 bindSheet.systemMaterial 提供。
+ */
+@Component
+export struct FnHdsChoiceSheet {
+  @Prop buttons: string[] = [];
+  @Prop selectedIndex: number = -1;
+
+  onSelect: (index: number) => void = (_: number): void => {};
+
+  build() {
+    Column() {
+      ForEach(this.buttons, (label: string, idx: number) => {
+        Row() {
+          Text(label)
+            .fontSize(16)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+          if (this.selectedIndex === idx) {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(18)
+              .fontColor([$r('sys.color.ohos_id_color_activated')])
+          }
+        }
+        .width('100%')
+        .height(48)
+        .padding({ left: 16, right: 16 })
+        .onClick((): void => {
+          this.onSelect(idx);
+        })
+      }, (label: string, idx: number) => `hds_choice_${idx}_${label}`)
+    }
+    .width('100%')
+    .padding({ top: 4, bottom: 16 })
+    .backgroundColor(Color.Transparent)
+  }
+}

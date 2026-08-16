@@ -23,6 +23,7 @@ export interface RecycleBinActionsHost {
   toast(msg: string): void;
   exitSelection(): void;
   askLivePhotoSave(): Promise<LivePhotoSaveChoice>;
+  askChoice(title: string, buttons: string[]): Promise<number>;
 }
 
 export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<void> {
@@ -85,21 +86,14 @@ export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<vo
 export async function recycleBinAskBatchDownloadQuality(
   host: RecycleBinActionsHost
 ): Promise<'original' | 'thumb' | 'cancel'> {
-  try {
-    const choice = await host.getUIContext().getPromptAction().showActionMenu({
-      title: '批量下载图片',
-      buttons: [
-        { text: '原图（体积较大）', color: '#007AFF' },
-        { text: '缩略图（更快）', color: '#007AFF' }
-      ]
-    });
-    if (choice.index < 0) {
-      return 'cancel';
-    }
-    return choice.index === 0 ? 'original' : 'thumb';
-  } catch (_e) {
+  const choiceIdx = await host.askChoice('批量下载图片', [
+    '原图（体积较大）',
+    '缩略图（更快）'
+  ]);
+  if (choiceIdx < 0) {
     return 'cancel';
   }
+  return choiceIdx === 0 ? 'original' : 'thumb';
 }
 
 export async function recycleBinConfirmBatchDownload(host: RecycleBinActionsHost): Promise<void> {
