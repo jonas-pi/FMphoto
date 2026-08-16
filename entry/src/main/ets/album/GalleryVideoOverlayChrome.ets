@@ -15,6 +15,10 @@ const OVERLAY_SPEED_WIDTH_VP: number = 60;
 const OVERLAY_TIME_WIDTH_VP: number = 124;
 const OVERLAY_LANDSCAPE_SIZE_VP: number = 36;
 const OVERLAY_PLAY_SIZE_VP: number = 72;
+/** 左亮度 / 右音量热区宽度占屏比；中间留给左右切页 */
+const VIDEO_SIDE_ADJUST_WIDTH_RATIO: number = 0.28;
+/** 上下各留出一段，避免抢占上滑详情 / 下滑退出 */
+const VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO: number = 0.20;
 
 @Component
 struct GalleryOverlayHdsCapsule {
@@ -122,7 +126,18 @@ export struct GalleryVideoOverlayChrome {
   onVerticalAdjustEnd: () => void = () => {};
 
   @State private barW: number = 1;
+  @State private overlayW: number = 360;
+  @State private overlayH: number = 780;
   private dragStartRatio: number = 0;
+
+  private isBrightnessVolumeZone(localX: number, localY: number): boolean {
+    const edgeW = this.overlayW * VIDEO_SIDE_ADJUST_WIDTH_RATIO;
+    if (localX > edgeW && localX < this.overlayW - edgeW) {
+      return false;
+    }
+    const insetH = this.overlayH * VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO;
+    return localY >= insetH && localY <= this.overlayH - insetH;
+  }
 
   private fillPercent(): number {
     return Math.round(Math.max(0, Math.min(1, this.progress)) * 100);
@@ -227,12 +242,27 @@ export struct GalleryVideoOverlayChrome {
       .width('100%')
       .height('100%')
       .hitTestBehavior(HitTestMode.Default)
+      .onAreaChange((_old, area): void => {
+        const w = area.width as number;
+        const h = area.height as number;
+        if (w > 1) {
+          this.overlayW = w;
+        }
+        if (h > 1) {
+          this.overlayH = h;
+        }
+      })
       .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
         if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
           return GestureJudgeResult.CONTINUE;
         }
         const pan = event as PanGestureEvent;
         if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
+          return GestureJudgeResult.REJECT;
+        }
+        const fingers = pan.fingerList;
+        if (fingers !== undefined && fingers.length > 0 &&
+          !this.isBrightnessVolumeZone(fingers[0].localX, fingers[0].localY)) {
           return GestureJudgeResult.REJECT;
         }
         return GestureJudgeResult.CONTINUE;
