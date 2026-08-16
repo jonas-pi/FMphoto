@@ -82,7 +82,11 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { GALLERY_PREVIEW_HERO_ACTIVE_KEY } from '../album/GallerySharedTransition';
+import {
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  GALLERY_SHARED_TRANSITION_CURVE,
+  GALLERY_SHARED_TRANSITION_DURATION
+} from '../album/GallerySharedTransition';
 import {
   GalleryViewGranularity,
   galleryViewGranularityLabel,
@@ -1497,7 +1501,12 @@ struct Home {
   pageTransition(): void {
     if (this.previewHeroActive) {
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({
+        type: RouteType.None,
+        duration: GALLERY_SHARED_TRANSITION_DURATION,
+        curve: GALLERY_SHARED_TRANSITION_CURVE
+      })
+        .opacity(1)
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

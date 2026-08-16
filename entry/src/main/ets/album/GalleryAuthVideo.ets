@@ -8,7 +8,7 @@
  *      每次 startPlay() 入口同步递增 gen，后续所有异步检查点均比较 gen，
  *      不匹配则说明已被更新的调用取代，直接退出。
  *   3. 进页只展示网格封面，不自动 prepare/play；点击播放后再拉流。
- *      Surface 盖住封面会造成「封面 → 首帧」跳变，故未起播前保持透明并叠封面。
+ *      全屏海报会盖住 sharedTransition，封面由预览页 clip 容器承担。
  */
 import { media } from '@kit.MediaKit';
 import { audio, AVVolumePanel } from '@kit.AudioKit';
@@ -83,8 +83,6 @@ export struct GalleryAuthVideo {
   @Prop maxResolutionP: number = 1080;
   /** 幻灯片等场景需要进页即起播；普通预览保持封面等待点击 */
   @Prop autoStart: boolean = false;
-  /** 网格同款封面，盖住 Surface 直到真正 playing */
-  posterPix: PixelMap | undefined = undefined;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   /** 仅在用户点击播放（或幻灯片自动起播）后转圈 */
   @State private videoLoading: boolean = false;
@@ -1324,9 +1322,10 @@ export struct GalleryAuthVideo {
         type: 'surface',
         controller: this.xController
       })
-        .width('100%')
-        .height('100%')
+        .width(this.videoSurfaceVisible ? '100%' : 1)
+        .height(this.videoSurfaceVisible ? '100%' : 1)
         .backgroundColor(this.hostBackgroundColor())
+        .opacity(this.videoSurfaceVisible ? 1 : 0)
         .hitTestBehavior(HitTestMode.None)
         .onLoad((): void => {
           this.surfaceReady = true;
@@ -1337,16 +1336,6 @@ export struct GalleryAuthVideo {
         .onDestroy((): void => {
           this.surfaceReady = false;
         });
-
-      if (!this.videoSurfaceVisible && this.posterPix !== undefined) {
-        Image(this.posterPix)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Contain)
-          .autoResize(false)
-          .hitTestBehavior(HitTestMode.None)
-          .draggable(false)
-      }
 
       if (this.videoLoading) {
         Column({ space: 10 }) {

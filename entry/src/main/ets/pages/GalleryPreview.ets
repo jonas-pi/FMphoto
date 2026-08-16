@@ -14,6 +14,8 @@ import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
+  GALLERY_SCRIM_FADE_DELAY,
+  GALLERY_SCRIM_FADE_DURATION,
   GALLERY_SHARED_TRANSITION_CURVE,
   GALLERY_SHARED_TRANSITION_DURATION,
   setGalleryPreviewHeroActive
@@ -94,7 +96,7 @@ struct GalleryPreview {
   @State private previewZoomLocked: boolean = false;
   @State private totalCount: number = 0;
   @State private dismissDragProgress: number = 0;
-  /** 预览背景遮罩：展开/收回与共享元素同步淡入淡出，避免瞬间切色闪烁 */
+  /** 预览背景遮罩：展开快结束时再淡入，收回快结束时再淡出 */
   @State private scrimOpacity: number = 0;
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
@@ -173,7 +175,8 @@ struct GalleryPreview {
       this.clearChromeRevealTimer();
       setGalleryPreviewToolbarVisible(false);
       this.getUIContext().animateTo({
-        duration: GALLERY_SHARED_TRANSITION_DURATION,
+        duration: GALLERY_SCRIM_FADE_DURATION,
+        delay: GALLERY_SCRIM_FADE_DELAY,
         curve: GALLERY_SHARED_TRANSITION_CURVE
       }, (): void => {
         this.scrimOpacity = 0;
@@ -433,7 +436,8 @@ struct GalleryPreview {
     }
     this.heroScrimEntered = true;
     this.getUIContext().animateTo({
-      duration: GALLERY_SHARED_TRANSITION_DURATION,
+      duration: GALLERY_SCRIM_FADE_DURATION,
+      delay: GALLERY_SCRIM_FADE_DELAY,
       curve: GALLERY_SHARED_TRANSITION_CURVE
     }, (): void => {
       this.scrimOpacity = 1;
@@ -847,6 +851,7 @@ struct GalleryPreview {
         .curve(FN_SWIPER_CURVE)
         .cachedCount(1)
         .disableSwipe(this.swiperLocked)
+        .backgroundColor(Color.Transparent)
         .id('gallery_preview_swiper')
         .onClick((): void => {
           if (this.currentItemIsVideo()) {
@@ -1008,7 +1013,6 @@ struct GalleryPreview {
         .opacity(0)
         .scale({ x: 0.95, y: 0.95 })
     } else {
-      // 进场 duration 0，背景由 scrim 淡入；退场保持时长让遮罩与共享元素一起淡出
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
       PageTransitionExit({
         type: RouteType.None,

@@ -2,14 +2,20 @@
  * 图库全屏预览「从哪来回哪去」共享元素转场。
  *
  * 官方能力：router 跨页使用 Image.sharedTransition，id 相同的组件在 push/back 时
- * 做位置与大小匹配（一镜到底）。pageTransition 需 duration 0，避免页面位移动画抢戏。
+ * 做位置与大小匹配（一镜到底）。
+ * 目标页 enter 用 duration 0，避免整页位移抢戏；源页 exit 保持相同时长且不透明，
+ * 网格才能留到展开末期。遮罩单独延后淡入，不要一进页就把背景滤成窗体底色。
  * 文档：https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-transition-animation-shared-elements
+ * 最佳实践：https://developer.huawei.com/consumer/cn/doc/best-practices/bpta-one-shot-to-the-end
  */
 export const GALLERY_PREVIEW_HERO_ACTIVE_KEY: string = 'galleryPreviewHeroActive';
 
 /** 与系统图库接近的展开/收回时长 */
 export const GALLERY_SHARED_TRANSITION_DURATION: number = 220;
 export const GALLERY_SHARED_TRANSITION_CURVE: Curve = Curve.EaseInOut;
+/** 遮罩在共享元素快结束时再淡入/淡出，避免一开始滤掉网格 */
+export const GALLERY_SCRIM_FADE_DURATION: number = 90;
+export const GALLERY_SCRIM_FADE_DELAY: number = 110;
 
 AppStorage.setOrCreate(GALLERY_PREVIEW_HERO_ACTIVE_KEY, false);
 

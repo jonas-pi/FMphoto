@@ -29,6 +29,8 @@ import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
 import {
   GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  GALLERY_SHARED_TRANSITION_CURVE,
+  GALLERY_SHARED_TRANSITION_DURATION,
   gallerySharedTransitionId
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
@@ -1503,7 +1505,12 @@ struct CategoryGallery {
   pageTransition(): void {
     if (this.previewHeroActive) {
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({
+        type: RouteType.None,
+        duration: GALLERY_SHARED_TRANSITION_DURATION,
+        curve: GALLERY_SHARED_TRANSITION_CURVE
+      })
+        .opacity(1)
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

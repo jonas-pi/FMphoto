@@ -45,6 +45,7 @@ import {
 } from './livephoto/LivePhotoSandbox';
 import { GalleryPreviewEntryCache } from './GalleryPreviewEntryGate';
 import {
+  GALLERY_SHARED_TRANSITION_DURATION,
   galleryContainFrame,
   galleryPixelAspect,
   gallerySharedTransitionId,
@@ -121,6 +122,8 @@ export struct GalleryPreviewSlide {
   @State private viewH: number = 780;
   /** 当前展示图宽高比，用于 Contain 默认框 */
   @State private contentAspect: number = 0;
+  /** 一镜到底结束前不挂播放器，避免全屏封面盖住共享元素 */
+  @State private videoOverlayRevealed: boolean = false;
 
   private pinchBaseScale: number = 1;
   private panBaseX: number = 0;
@@ -135,6 +138,7 @@ export struct GalleryPreviewSlide {
   private liveController: MovingPhotoViewController = new MovingPhotoViewController();
   /** onComplete 后若迟迟没有 onPrepared，超时揭开控件，避免一直盖着静帧 */
   private liveRevealTimer: number = 0;
+  private videoOverlayRevealTimer: number = 0;
   private boundItemKey: string = '';
   private pinchParticipationActive: boolean = false;
   private pinchGestureRecognizing: boolean = false;
@@ -254,9 +258,11 @@ export struct GalleryPreviewSlide {
     this.isDarkTheme = this.colorMode === 1;
     this.initViewportFromDisplay();
     this.syncBoundItemAndPrepare();
+    this.armVideoOverlayReveal();
   }
 
   aboutToDisappear(): void {
+    this.clearVideoOverlayRevealTimer();
     this.invalidateAsyncLoads();
     this.disposeTransientMedia();
     this.boundItemKey = '';
@@ -344,10 +350,13 @@ export struct GalleryPreviewSlide {
     }
   }
 
-  /** 全屏预览默认 Contain 框；未知比例时铺满，避免首帧空白 */
+  /** 全屏预览默认 Contain 框；未知比例时图片可铺满，视频不能铺满以免一镜到底被全屏封面打断 */
   private heroFrameW(): Length {
     const frame = galleryContainFrame(this.contentAspect, this.viewW, this.viewH);
     if (frame.w <= 0) {
+      if (this.isVideo() && this.enableSharedTransition) {
+        return 1;
+      }
       return '100%';
     }
     return frame.w;
@@ -356,6 +365,9 @@ export struct GalleryPreviewSlide {
   private heroFrameH(): Length {
     const frame = galleryContainFrame(this.contentAspect, this.viewW, this.viewH);
     if (frame.h <= 0) {
+      if (this.isVideo() && this.enableSharedTransition) {
+        return 1;
+      }
       return '100%';
     }
     return frame.h;
@@ -399,6 +411,31 @@ export struct GalleryPreviewSlide {
       clearTimeout(this.liveRevealTimer);
       this.liveRevealTimer = 0;
     }
+  }
+
+  private clearVideoOverlayRevealTimer(): void {
+    if (this.videoOverlayRevealTimer !== 0) {
+      clearTimeout(this.videoOverlayRevealTimer);
+      this.videoOverlayRevealTimer = 0;
+    }
+  }
+
+  /** 共享元素走完再挂播放器，避免全屏封面抢在动画前面 */
+  private armVideoOverlayReveal(): void {
+    this.clearVideoOverlayRevealTimer();
+    if (!this.isVideo()) {
+      this.videoOverlayRevealed = true;
+      return;
+    }
+    if (!this.enableSharedTransition || this.autoStartVideo || !this.active) {
+      this.videoOverlayRevealed = true;
+      return;
+    }
+    this.videoOverlayRevealed = false;
+    this.videoOverlayRevealTimer = setTimeout((): void => {
+      this.videoOverlayRevealTimer = 0;
+      this.videoOverlayRevealed = true;
+    }, GALLERY_SHARED_TRANSITION_DURATION);
   }
 
   /** 仅 Playing 时 stop，对齐官方「非播放态不要空 stop」。 */
@@ -869,7 +906,7 @@ export struct GalleryPreviewSlide {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isVideo()) {
-        // 底层封面参与 sharedTransition；播放器未起播时透明叠封面，避免首帧跳变
+        // 底层封面参与 sharedTransition；播放器等转场结束后再出现，避免全屏封面抢戏
         Stack({ alignContent: Alignment.Center }) {
           if (this.thumbPix !== undefined) {
             Stack() {
@@ -887,16 +924,17 @@ export struct GalleryPreviewSlide {
             .hitTestBehavior(HitTestMode.None)
             .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
           }
-          GalleryAuthVideo({
-            videoUrl: this.videoSrc,
-            active: this.active,
-            bottomPadding: this.videoBottomPadding,
-            maxResolutionP: this.videoMaxResolutionP(),
-            autoStart: this.autoStartVideo,
-            posterPix: this.thumbPix
-          })
-            .width('100%')
-            .height('100%')
+          if (this.videoOverlayRevealed) {
+            GalleryAuthVideo({
+              videoUrl: this.videoSrc,
+              active: this.active,
+              bottomPadding: this.videoBottomPadding,
+              maxResolutionP: this.videoMaxResolutionP(),
+              autoStart: this.autoStartVideo
+            })
+              .width('100%')
+              .height('100%')
+          }
         }
         .width('100%')
         .height('100%')
