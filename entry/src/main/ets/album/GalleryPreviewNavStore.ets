@@ -5,6 +5,12 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
+import {
+  GalleryPreviewEntryCache,
+  cancelVideoWarmup,
+  setGalleryPreviewOpening,
+  warmupPreviewStartItem
+} from './GalleryPreviewEntryGate';
 import { GallerySlideshowStreamStore } from './slideshow/GallerySlideshowStreamStore';
 
 const DOMAIN = 0xFF00;
@@ -25,6 +31,8 @@ export class GalleryPreviewNavStore {
   static slideshow: GalleryPreviewSlideshowSession = new GalleryPreviewSlideshowSession();
   /** 与 items 对齐：每条在图库时间轴全局序列中的下标（0-based） */
   static slideshowGlobalIndices: number[] = [];
+  private static opening: boolean = false;
+  private static openGen: number = 0;
 
   static openPreview(
     uiCtx: UIContext,
@@ -32,6 +40,18 @@ export class GalleryPreviewNavStore {
     items: GalleryListItem[],
     startIndex: number
   ): void {
+    void GalleryPreviewNavStore.openPreviewWhenReady(uiCtx, baseUrl, items, startIndex);
+  }
+
+  private static async openPreviewWhenReady(
+    uiCtx: UIContext,
+    baseUrl: string,
+    items: GalleryListItem[],
+    startIndex: number
+  ): Promise<void> {
+    if (GalleryPreviewNavStore.opening) {
+      return;
+    }
     GalleryPreviewNavStore.resetSlideshow();
     GalleryPreviewNavStore.baseUrl = baseUrl;
     GalleryPreviewNavStore.items = items.slice();
@@ -41,12 +61,34 @@ export class GalleryPreviewNavStore {
       hilog.warn(DOMAIN, TAG, 'openPreview skipped: empty list');
       return;
     }
-    uiCtx.getRouter().pushUrl({
-      url: 'pages/GalleryPreview',
-      params: { idx: `${GalleryPreviewNavStore.startIndex}` }
-    }).catch((e: Error) => {
+    const gen = ++GalleryPreviewNavStore.openGen;
+    GalleryPreviewNavStore.opening = true;
+    setGalleryPreviewOpening(true);
+    const startItem = GalleryPreviewNavStore.items[GalleryPreviewNavStore.startIndex];
+    try {
+      if (startItem !== undefined) {
+        await warmupPreviewStartItem(uiCtx, baseUrl, startItem);
+      }
+    } catch (_e) {
+    }
+    if (gen !== GalleryPreviewNavStore.openGen) {
+      GalleryPreviewNavStore.opening = false;
+      return;
+    }
+    try {
+      await uiCtx.getRouter().pushUrl({
+        url: 'pages/GalleryPreview',
+        params: { idx: `${GalleryPreviewNavStore.startIndex}` }
+      });
+    } catch (e) {
+      GalleryPreviewEntryCache.discard();
+      setGalleryPreviewOpening(false);
       hilog.error(DOMAIN, TAG, 'pushUrl GalleryPreview: %{public}s', String(e));
-    });
+    } finally {
+      if (gen === GalleryPreviewNavStore.openGen) {
+        GalleryPreviewNavStore.opening = false;
+      }
+    }
   }
 
   static openSlideshowPreview(
@@ -91,6 +133,9 @@ export class GalleryPreviewNavStore {
     GalleryPreviewNavStore.startIndex = 0;
     GalleryPreviewNavStore.slideshowGlobalIndices = [];
     GalleryPreviewNavStore.resetSlideshow();
+    GalleryPreviewEntryCache.discard();
+    cancelVideoWarmup();
+    setGalleryPreviewOpening(false);
     GallerySlideshowStreamStore.clear();
   }
 }

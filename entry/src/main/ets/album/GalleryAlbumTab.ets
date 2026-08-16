@@ -44,6 +44,8 @@ import {
 } from './GalleryAlbumCommon';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
+import { GALLERY_PREVIEW_OPENING_KEY } from './GalleryPreviewEntryGate';
+import { GalleryPreviewOpeningMask } from './GalleryPreviewOpeningMask';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { openPersonAlbumById } from './PersonAlbumOpenHelper';
 import { openRecentAddedGallery } from './RecentAddedOpenHelper';
@@ -440,6 +442,7 @@ export struct GalleryAlbumTab {
   onViewGranularityChange: (mode: GalleryViewGranularity) => void = (_: GalleryViewGranularity): void => {};
   /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
+  @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
 
   @State private bootLoading: boolean = false;
   @State private loadError: string = '';
@@ -3211,6 +3214,9 @@ export struct GalleryAlbumTab {
       }
       if (this.slideshowPreparing) {
         FnFullLoadingMask({ text: '正在准备幻灯片...', topOffsetVp: this.loadingMaskTopOffsetVp() })
+      }
+      if (this.previewOpening) {
+        GalleryPreviewOpeningMask({ topOffsetVp: this.loadingMaskTopOffsetVp() })
       }
       Column()
         .width(1)

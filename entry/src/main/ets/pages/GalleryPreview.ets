@@ -12,6 +12,7 @@ import { UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
   GallerySlideshowStreamStore
 } from '../album/slideshow/GallerySlideshowStreamStore';
@@ -117,6 +118,8 @@ struct GalleryPreview {
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
+  /** 视频进页后挡住白屏，直到本页 AVPlayer 进入 prepared（已能播放） */
+  @State private videoEntryCoverVisible: boolean = false;
 
   private itemSource: PreviewItemsDataSource = new PreviewItemsDataSource();
   private previewItems: GalleryListItem[] = [];
@@ -127,6 +130,7 @@ struct GalleryPreview {
   private slideshowLibraryTotal: number = 0;
   private slideshowGlobalIndices: number[] = [];
   private slideshowTimerId: number = -1;
+  private videoEntryCoverTimer: number = -1;
   private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
   private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
 
@@ -192,6 +196,15 @@ struct GalleryPreview {
     }
     // 工具栏显隐不进本页 @State，避免点击切换时整页（含 Swiper）重绘。
     setGalleryPreviewToolbarVisible(!this.slideshowEnabled);
+    const startItem = (this.swiperIndex >= 0 && this.swiperIndex < this.previewItems.length)
+      ? this.previewItems[this.swiperIndex]
+      : undefined;
+    this.videoEntryCoverVisible = !this.slideshowEnabled && startItem !== undefined && isVideoItem(startItem);
+    if (this.videoEntryCoverVisible) {
+      this.armVideoEntryCoverTimeout();
+    } else {
+      setGalleryPreviewOpening(false);
+    }
     if (this.slideshowEnabled) {
       this.maybePrefetchSlideshowItems();
     }
@@ -300,6 +313,7 @@ struct GalleryPreview {
 
   aboutToDisappear(): void {
     this.clearSlideshowTimer();
+    this.clearVideoEntryCoverTimer();
     this.detailsVisible = false;
     this.detailsLoading = false;
     this.detailsError = '';
@@ -374,6 +388,42 @@ struct GalleryPreview {
     try {
       this.getUIContext().getPromptAction().showToast({ message: msg });
     } catch (_e) {}
+  }
+
+  private clearVideoEntryCoverTimer(): void {
+    if (this.videoEntryCoverTimer < 0) {
+      return;
+    }
+    clearTimeout(this.videoEntryCoverTimer);
+    this.videoEntryCoverTimer = -1;
+  }
+
+  private armVideoEntryCoverTimeout(): void {
+    this.clearVideoEntryCoverTimer();
+    this.videoEntryCoverTimer = setTimeout((): void => {
+      this.videoEntryCoverTimer = -1;
+      if (!this.videoEntryCoverVisible) {
+        return;
+      }
+      this.toast('视频加载超时');
+      this.revealVideoEntry();
+    }, 15000);
+  }
+
+  /** 预览页播放器已能播放（或失败/超时），揭开进页遮罩 */
+  private revealVideoEntry(): void {
+    this.clearVideoEntryCoverTimer();
+    if (this.videoEntryCoverVisible) {
+      this.videoEntryCoverVisible = false;
+    }
+    setGalleryPreviewOpening(false);
+  }
+
+  private onStartVideoFirstFrame(): void {
+    if (!this.videoEntryCoverVisible) {
+      return;
+    }
+    this.revealVideoEntry();
   }
 
   private currentItem(): GalleryListItem | null {
@@ -757,6 +807,9 @@ struct GalleryPreview {
                   this.originalShowing = false;
                   this.toast(msg);
                 }
+              },
+              onVideoFirstFrame: (): void => {
+                this.onStartVideoFirstFrame();
               }
             })
           }, (item: GalleryListItem, i: number) => `gp_${item.id}_${i}`)
@@ -888,6 +941,24 @@ struct GalleryPreview {
           text: '加载人物媒体中…',
           topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
         })
+      }
+
+      if (this.videoEntryCoverVisible) {
+        Column({ space: 10 }) {
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            .color(this.isDark() ? Color.White : '#5B6675')
+          Text('加载中…')
+            .fontSize(14)
+            .fontColor(this.isDark() ? '#CCCCCC' : '#5B6675')
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor(this.pageBg())
+        .hitTestBehavior(HitTestMode.Block)
       }
 
       Column()

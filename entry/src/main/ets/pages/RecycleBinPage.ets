@@ -40,6 +40,8 @@ import {
   LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
 } from '../album/livephoto/LivePhotoSaveActionSheet';
 import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
+import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
+import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
@@ -110,6 +112,7 @@ struct RecycleBinPage {
   @State private rbThumbLoadingPaused: boolean = false;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
+  @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
 
   private rbLongPressIgnoreUntil: number = 0;
   private rbThumbHitBounds: Map<string, RbThumbHitRect> = new Map();
@@ -904,6 +907,9 @@ struct RecycleBinPage {
               text: this.restoring ? '正在还原…' : '下载中…',
               topOffsetVp: this.contentInsetTopVp()
             })
+          }
+          if (this.previewOpening) {
+            GalleryPreviewOpeningMask({ topOffsetVp: this.contentInsetTopVp() })
           }
         }
         .layoutWeight(1)

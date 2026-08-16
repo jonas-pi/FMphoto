@@ -79,8 +79,10 @@ export struct GalleryAuthVideo {
   @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private previewToolbarVisible: boolean = true;
   /** 当前视频允许的最大清晰度（p），由上游按原始分辨率估算传入 */
   @Prop maxResolutionP: number = 1080;
+  onFirstFrame: () => void = () => {};
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
-  @State private videoLoading: boolean = false;
+  /** 初值即遮罩，避免首帧白屏等 onUrlChange 才转圈 */
+  @State private videoLoading: boolean = true;
   @State private hint: string = '';
   @State private isDarkTheme: boolean = false;
   /** 播放链路失败时可手动重试（与「清晰度超限」等提示区分） */
@@ -151,8 +153,25 @@ export struct GalleryAuthVideo {
   private adjustHudHideTimer: number = 0;
   private chromeHideTimer: number = 0;
 
+  /** 视频 Surface 跟随深浅色，避免浅色模式铺白、深色模式铺黑不一致 */
   private surfaceBackgroundColor(): ResourceColor {
     return this.isDarkTheme ? Color.Black : Color.White;
+  }
+
+  private finishVideoLoading(): void {
+    if (!this.videoLoading) {
+      return;
+    }
+    this.videoLoading = false;
+    this.onFirstFrame();
+  }
+
+  private loadingSpinnerColor(): ResourceColor {
+    return this.isDarkTheme ? Color.White : '#5B6675';
+  }
+
+  private loadingHintColor(): ResourceColor {
+    return this.isDarkTheme ? '#CCCCCC' : '#5B6675';
   }
 
   private controlPrimaryTextColor(): ResourceColor {
@@ -161,10 +180,6 @@ export struct GalleryAuthVideo {
 
   private effectiveBottomPadding(): number {
     return this.previewToolbarVisible ? this.bottomPadding : 0;
-  }
-
-  private loadingIndicatorColor(): ResourceColor {
-    return this.isDarkTheme ? Color.White : $r('app.color.brand_primary');
   }
 
   private hintTextColor(): ResourceColor {
@@ -252,6 +267,7 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = false;
     this.lastTogglePlaySeq = this.togglePlaySeq;
     this.lastToggleMuteSeq = this.toggleMuteSeq;
+    this.videoLoading = this.active && this.videoUrl.length > 0;
     this.onPlaybackChromeChanged();
     void this.initWindowBrightness();
     void this.initMediaVolume();
@@ -809,6 +825,7 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = true;
     this.videoLoading = false;
     this.isPlaying = false;
+    this.onFirstFrame();
   }
 
   /** 用户点击重试：清空失败态，允许再次走自动自愈计数，并重建播放。 */
@@ -1135,7 +1152,11 @@ export struct GalleryAuthVideo {
           });
         };
         try {
-          const strategy: media.PlaybackStrategy = { showFirstFrameOnPrepare: true };
+          const strategy: media.PlaybackStrategy = {
+            showFirstFrameOnPrepare: true,
+            // 起播水线：够播即可，不要攒到接近整段缓冲。取值范围 [0, 20]s。
+            preferredBufferDurationForPlaying: 0.3
+          };
           player.setPlaybackStrategy(strategy).then((): void => {
             if (gen !== this.playGen) {
               return;
@@ -1148,7 +1169,6 @@ export struct GalleryAuthVideo {
           runPrepare();
         }
       } else if (state === 'prepared') {
-        this.videoLoading = false;
         this.durationMs = player.duration > 0 ? player.duration : this.durationMs;
         this.applyContainMode(player);
         this.applyPlayerMute(player);
@@ -1188,11 +1208,12 @@ export struct GalleryAuthVideo {
             hilog.error(DOMAIN, TAG, 'play err: %{public}s', String(e));
             this.setPlaybackFailureHint('视频播放失败');
           });
-        } else {
-          this.videoLoading = false;
         }
+        // 官方：prepared = 已能播放；showFirstFrameOnPrepare 会在此时送出首帧。
+        // startRenderFrame 要等 play() 进入 playing 后才回调，不能作为进页条件。
+        this.finishVideoLoading();
       } else if (state === 'playing') {
-        this.videoLoading = false;
+        this.finishVideoLoading();
         this.hint = '';
         this.showPlaybackRetry = false;
         this.isPlaying = true;
@@ -1275,22 +1296,35 @@ export struct GalleryAuthVideo {
         });
 
       if (this.videoLoading) {
-        Column({ space: 12 }) {
-          LoadingProgress().width(48).height(48).color(this.loadingIndicatorColor())
+        Column({ space: 10 }) {
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            .color(this.loadingSpinnerColor())
+          Text('加载中…')
+            .fontSize(14)
+            .fontColor(this.loadingHintColor())
         }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor(this.surfaceBackgroundColor())
         .hitTestBehavior(HitTestMode.None)
       }
 
-      GalleryVideoGestureHud({
-        visible: this.adjustHudVisible,
-        isBrightness: this.adjustIsBrightness,
-        brightnessValue: this.screenBrightness,
-        volumeValue: this.mediaVolume,
-        volumeMax: this.mediaVolumeMax
-      })
-        .width('100%')
-        .height('100%')
-        .hitTestBehavior(HitTestMode.None)
+      if (!this.videoLoading) {
+        GalleryVideoGestureHud({
+          visible: this.adjustHudVisible,
+          isBrightness: this.adjustIsBrightness,
+          brightnessValue: this.screenBrightness,
+          volumeValue: this.mediaVolume,
+          volumeMax: this.mediaVolumeMax
+        })
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
+      }
 
       AVVolumePanel({
         volumeLevel: this.mediaVolume,
@@ -1305,7 +1339,8 @@ export struct GalleryAuthVideo {
         .height(1)
         .hitTestBehavior(HitTestMode.None)
 
-      GalleryVideoOverlayChrome({
+      if (!this.videoLoading) {
+        GalleryVideoOverlayChrome({
         visible: this.previewToolbarVisible,
         showCenterPlay: this.showCenterPlay(),
         landscape: this.landscape,
@@ -1395,6 +1430,7 @@ export struct GalleryAuthVideo {
       })
         .width('100%')
         .height('100%')
+      }
 
       // 必须放在全屏控制层之后：否则底部 Column 的占位区会优先命中，重试按钮点击无响应。
       if (this.hint.length > 0) {
@@ -1423,8 +1459,6 @@ export struct GalleryAuthVideo {
     }
     .width('100%')
     .height('100%')
-    // 透明背景：XComponent 表面始终为黑（视频渲染区域），四周留白区域由父组件
-    // GalleryPreviewSlide 的主题背景透出（深色模式=黑，浅色模式=白），跟随系统主题
     .backgroundColor(this.surfaceBackgroundColor())
     .onAreaChange((_old, area): void => {
       const w = area.width as number;

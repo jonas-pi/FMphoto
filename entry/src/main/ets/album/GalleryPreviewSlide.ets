@@ -41,6 +41,7 @@ import {
   materializeLivePhotoPair,
   unlinkLivePhotoPair
 } from './livephoto/LivePhotoSandbox';
+import { GalleryPreviewEntryCache } from './GalleryPreviewEntryGate';
 
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
@@ -86,6 +87,8 @@ export struct GalleryPreviewSlide {
   onOriginalLoaded: () => void = () => {};
   /** 原图加载失败后通知父页面，父页面可提示用户并保持可重试 */
   onOriginalLoadFailed: (msg: string) => void = (_: string) => {};
+  /** 当前页视频已送出首帧（或播放失败需揭层） */
+  onVideoFirstFrame: () => void = () => {};
 
   @State private thumbPix: PixelMap | undefined = undefined;
   @State private fullPix: PixelMap | undefined = undefined;
@@ -96,6 +99,8 @@ export struct GalleryPreviewSlide {
   @State private gifTempPath: string = '';
   @State private movingPhoto: photoAccessHelper.MovingPhoto | undefined = undefined;
   @State private liveReady: boolean = false;
+  /** MovingPhotoView 已出静帧且视频层就绪；此前用静帧盖住，避免切层闪烁 */
+  @State private liveViewPrepared: boolean = false;
   @State private livePlayState: GalleryLivePlayState = GalleryLivePlayState.Idle;
   /** 沙箱静帧 URI，缩略图缓存未命中时垫图 */
   @State private liveStillUri: string = '';
@@ -116,6 +121,8 @@ export struct GalleryPreviewSlide {
   private livePair: LivePhotoPairFiles | undefined = undefined;
   private liveLoadInFlight: boolean = false;
   private liveController: MovingPhotoViewController = new MovingPhotoViewController();
+  /** onComplete 后若迟迟没有 onPrepared，超时揭开控件，避免一直盖着静帧 */
+  private liveRevealTimer: number = 0;
   private boundItemKey: string = '';
   private pinchParticipationActive: boolean = false;
   private pinchGestureRecognizing: boolean = false;
@@ -127,6 +134,9 @@ export struct GalleryPreviewSlide {
   private isDark(): boolean { return this.isDarkTheme; }
   private spinnerColor(): ResourceColor { return this.isDarkTheme ? Color.White : Color.Black; }
   private hintColor(): string { return this.isDarkTheme ? '#CCCCCC' : '#666666'; }
+  private slideBackgroundColor(): ResourceColor {
+    return this.isDark() ? Color.Black : Color.White;
+  }
 
   private invalidateAsyncLoads(): void {
     this.thumbLoadToken++;
@@ -178,6 +188,8 @@ export struct GalleryPreviewSlide {
     this.gifTempPath = '';
     this.movingPhoto = undefined;
     this.liveReady = false;
+    this.liveViewPrepared = false;
+    this.clearLiveRevealTimer();
     this.liveStillUri = '';
     this.liveLoadInFlight = false;
     this.livePair = undefined;
@@ -309,7 +321,16 @@ export struct GalleryPreviewSlide {
     this.haltLivePlayback();
     this.movingPhoto = undefined;
     this.liveReady = false;
+    this.liveViewPrepared = false;
+    this.clearLiveRevealTimer();
     this.livePlayState = GalleryLivePlayState.Idle;
+  }
+
+  private clearLiveRevealTimer(): void {
+    if (this.liveRevealTimer !== 0) {
+      clearTimeout(this.liveRevealTimer);
+      this.liveRevealTimer = 0;
+    }
   }
 
   /** 仅 Playing 时 stop，对齐官方「非播放态不要空 stop」。 */
@@ -326,6 +347,26 @@ export struct GalleryPreviewSlide {
 
   private onLivePrepared(): void {
     this.livePlayState = GalleryLivePlayState.Prepared;
+    this.clearLiveRevealTimer();
+    // 视频层贴上后还可能有一帧合成，稍后再揭垫图
+    this.liveRevealTimer = setTimeout((): void => {
+      this.liveRevealTimer = 0;
+      this.liveViewPrepared = true;
+    }, 120);
+  }
+
+  /**
+   * 静帧已进控件，但视频层可能尚未贴上。延迟揭开，避免 onComplete 瞬间卸垫图闪一帧。
+   */
+  private onLiveImageComplete(): void {
+    if (this.liveViewPrepared) {
+      return;
+    }
+    this.clearLiveRevealTimer();
+    this.liveRevealTimer = setTimeout((): void => {
+      this.liveRevealTimer = 0;
+      this.liveViewPrepared = true;
+    }, 180);
   }
 
   private onLiveStart(): void {
@@ -375,6 +416,21 @@ export struct GalleryPreviewSlide {
       return;
     }
     const requestKey = this.currentItemKey();
+    const warmed = GalleryPreviewEntryCache.takeLive(requestKey);
+    if (warmed !== undefined) {
+      this.livePair = warmed.pair;
+      if (warmed.pair !== undefined && warmed.pair.imageUri.length > 0) {
+        this.liveStillUri = warmed.pair.imageUri;
+      }
+      if (warmed.moving !== undefined) {
+        this.liveController = new MovingPhotoViewController();
+        this.movingPhoto = warmed.moving;
+        this.liveViewPrepared = false;
+        this.liveReady = true;
+        this.livePlayState = GalleryLivePlayState.Idle;
+        return;
+      }
+    }
     this.liveLoadInFlight = true;
     try {
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -404,6 +460,7 @@ export struct GalleryPreviewSlide {
       }
       this.liveController = new MovingPhotoViewController();
       this.movingPhoto = moving;
+      this.liveViewPrepared = false;
       this.liveReady = true;
       this.livePlayState = GalleryLivePlayState.Idle;
     } catch (_e) {
@@ -416,7 +473,9 @@ export struct GalleryPreviewSlide {
 
   private async prepareGifContent(): Promise<void> {
     const src = this.gifSourceUrl();
-    if (src.length === 0) { return; }
+    if (src.length === 0) {
+      return;
+    }
     const token = ++this.gifLoadToken;
     this.fullLoading = true;
     try {
@@ -744,7 +803,12 @@ export struct GalleryPreviewSlide {
           videoUrl: this.videoSrc,
           active: this.active,
           bottomPadding: this.videoBottomPadding,
-          maxResolutionP: this.videoMaxResolutionP()
+          maxResolutionP: this.videoMaxResolutionP(),
+          onFirstFrame: (): void => {
+            if (this.active) {
+              this.onVideoFirstFrame();
+            }
+          }
         })
           .width('100%')
           .height('100%')
@@ -763,6 +827,9 @@ export struct GalleryPreviewSlide {
                   .repeatPlay(false)
                   .enableAnalyzer(false)
                   .objectFit(ImageFit.Contain)
+                  .onComplete((): void => {
+                    this.onLiveImageComplete();
+                  })
                   .onPrepared((): void => {
                     this.onLivePrepared();
                   })
@@ -781,19 +848,20 @@ export struct GalleryPreviewSlide {
                   .onError((): void => {
                     this.livePlayState = GalleryLivePlayState.Idle;
                   })
-              } else {
-                GalleryLivePreviewLayer({
-                  stillUri: this.liveStillUri,
-                  hintColor: this.hintColor(),
-                  thumbPix: this.thumbPix,
-                  fullPix: this.fullPix,
-                  showOriginal: this.showingOriginal,
-                  spinnerColor: this.spinnerColor()
-                })
-                  .width('100%')
-                  .height('100%')
-                  .hitTestBehavior(HitTestMode.Transparent)
               }
+              GalleryLivePreviewLayer({
+                stillUri: this.liveStillUri,
+                hintColor: this.hintColor(),
+                showLoading: !this.liveReady,
+                thumbPix: this.liveStillUri.length > 0 ? undefined : this.thumbPix,
+                fullPix: this.fullPix,
+                showOriginal: this.showingOriginal,
+                spinnerColor: this.spinnerColor()
+              })
+                .width('100%')
+                .height('100%')
+                .visibility(this.liveViewPrepared ? Visibility.Hidden : Visibility.Visible)
+                .hitTestBehavior(HitTestMode.Transparent)
             }
             .width('100%')
             .height('100%')
@@ -980,7 +1048,7 @@ export struct GalleryPreviewSlide {
       }
     }
     .width('100%').height('100%')
-    .backgroundColor(this.isDark() ? Color.Black : Color.White)
+    .backgroundColor(this.slideBackgroundColor())
     .onAreaChange((_old, newArea): void => {
       const w = newArea.width as number;
       const h = newArea.height as number;
