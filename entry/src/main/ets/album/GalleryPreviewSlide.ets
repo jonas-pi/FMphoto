@@ -2,7 +2,8 @@
  * 单页大图/视频预览。
  *
  * 跳变修复：始终使用 objectFit.Contain 真实比例显示，配合同步缓存读取，
- * 首帧即展示正确比例的图片，页面转场用 scale+opacity，无 sharedTransition。
+ * 首帧即展示正确比例的图片。跨页转场走官方 sharedTransition：
+ * 官方示例把转场绑在 clip 容器上、子图铺满，宽高分别插值（非四边等比）。
  *
  * 平移限位：基于视口尺寸精确计算，超界 50% 阻力，松手 EaseOut 弹回。
  */
@@ -24,6 +25,7 @@ import {
   pickVideo
 } from './GalleryAlbumCommon';
 import { common } from '@kit.AbilityKit';
+import { display } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { photoAccessHelper, MovingPhotoView, MovingPhotoViewController } from '@kit.MediaLibraryKit';
 import { GalleryAuthVideo } from './GalleryAuthVideo';
@@ -42,6 +44,12 @@ import {
   unlinkLivePhotoPair
 } from './livephoto/LivePhotoSandbox';
 import { GalleryPreviewEntryCache } from './GalleryPreviewEntryGate';
+import {
+  galleryContainFrame,
+  galleryPixelAspect,
+  gallerySharedTransitionId,
+  gallerySharedTransitionOptions
+} from './GallerySharedTransition';
 
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
@@ -62,6 +70,8 @@ export struct GalleryPreviewSlide {
   @Prop @Watch('onItemChanged') item: GalleryListItem | null = null;
   /** 当前是否为 Swiper 可见页（用于控制视频/实况播放器活跃态，避免串音） */
   @Prop @Watch('onActiveChanged') active: boolean = true;
+  /** 幻灯片模式关闭共享元素，避免与切页动画叠在一起 */
+  @Prop enableSharedTransition: boolean = true;
   /** 视频模式下，控件距屏幕底部的额外偏移（避开外部工具栏） */
   @Prop videoBottomPadding: number = 0;
   /** 跟随系统深浅色模式，用于 loading 指示器颜色 */
@@ -109,6 +119,8 @@ export struct GalleryPreviewSlide {
   @State private previewPanY: number = 0;
   @State private viewW: number = 360;
   @State private viewH: number = 780;
+  /** 当前展示图宽高比，用于 Contain 默认框 */
+  @State private contentAspect: number = 0;
 
   private pinchBaseScale: number = 1;
   private panBaseX: number = 0;
@@ -181,6 +193,7 @@ export struct GalleryPreviewSlide {
     const oldLive = this.livePair;
     this.thumbPix = undefined;
     this.fullPix = undefined;
+    this.contentAspect = 0;
     this.showingOriginal = false;
     this.fullLoading = false;
     this.videoSrc = '';
@@ -236,6 +249,7 @@ export struct GalleryPreviewSlide {
 
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
+    this.initViewportFromDisplay();
     this.syncBoundItemAndPrepare();
   }
 
@@ -255,9 +269,11 @@ export struct GalleryPreviewSlide {
     if (this.item === null) { return; }
     if (this.isVideo()) {
       this.videoSrc = nasUrl(this.baseUrl, pickVideo(this.item as GalleryListItem));
+      this.prepareStillThumb();
       return;
     }
     if (this.isGif()) {
+      this.prepareStillThumb();
       void this.prepareGifContent();
       return;
     }
@@ -276,12 +292,14 @@ export struct GalleryPreviewSlide {
     if (cached !== undefined) {
       if (token === this.thumbLoadToken) {
         this.thumbPix = cached;
+        this.syncContentAspect(cached);
       }
       return;
     }
     void loadThumbPix(tUrl).then((p: PixelMap | undefined) => {
       if (token === this.thumbLoadToken) {
         this.thumbPix = p;
+        this.syncContentAspect(p);
       }
     });
   }
@@ -291,6 +309,53 @@ export struct GalleryPreviewSlide {
       return '';
     }
     return String(this.item.id);
+  }
+
+  /** 仅当前可见页参与配对，左右滑后回到对应缩略图 */
+  private heroShareId(): string {
+    if (!this.enableSharedTransition || !this.active) {
+      return '';
+    }
+    return gallerySharedTransitionId(this.currentItemKey());
+  }
+
+  private initViewportFromDisplay(): void {
+    try {
+      const d = display.getDefaultDisplaySync();
+      const w = this.getUIContext().px2vp(d.width);
+      const h = this.getUIContext().px2vp(d.height);
+      if (w > 1) {
+        this.viewW = w;
+      }
+      if (h > 1) {
+        this.viewH = h;
+      }
+    } catch (_e) {
+    }
+  }
+
+  private syncContentAspect(pix: PixelMap | undefined): void {
+    const aspect = galleryPixelAspect(pix);
+    if (aspect > 0) {
+      this.contentAspect = aspect;
+    }
+  }
+
+  /** 全屏预览默认 Contain 框；未知比例时铺满，避免首帧空白 */
+  private heroFrameW(): Length {
+    const frame = galleryContainFrame(this.contentAspect, this.viewW, this.viewH);
+    if (frame.w <= 0) {
+      return '100%';
+    }
+    return frame.w;
+  }
+
+  private heroFrameH(): Length {
+    const frame = galleryContainFrame(this.contentAspect, this.viewW, this.viewH);
+    if (frame.h <= 0) {
+      return '100%';
+    }
+    return frame.h;
   }
 
   /** 点击切工具栏会重绘父页，@Prop item 深拷贝会被当成新对象；同一张不得中断实况加载。 */
@@ -536,6 +601,9 @@ export struct GalleryPreviewSlide {
       }
       this.fullLoading = false;
       this.fullPix = p;
+      if (p !== undefined && this.originalPreviewEnabled) {
+        this.syncContentAspect(p);
+      }
       this.showingOriginal = p !== undefined && this.originalPreviewEnabled;
       if (this.showingOriginal) {
         this.onOriginalLoaded();
@@ -798,20 +866,40 @@ export struct GalleryPreviewSlide {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isVideo()) {
-        // 视频：鉴权 AVPlayer + Surface；勿在外层挂缩放手势，避免抢占播放控件触摸
-        GalleryAuthVideo({
-          videoUrl: this.videoSrc,
-          active: this.active,
-          bottomPadding: this.videoBottomPadding,
-          maxResolutionP: this.videoMaxResolutionP(),
-          onFirstFrame: (): void => {
-            if (this.active) {
-              this.onVideoFirstFrame();
+        // 底层静帧参与 sharedTransition；播放器盖在上面
+        Stack({ alignContent: Alignment.Center }) {
+          if (this.thumbPix !== undefined) {
+            Stack() {
+              Image(this.thumbPix)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .autoResize(false)
+                .hitTestBehavior(HitTestMode.None)
+                .draggable(false)
             }
+            .width(this.heroFrameW())
+            .height(this.heroFrameH())
+            .clip(true)
+            .hitTestBehavior(HitTestMode.None)
+            .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
           }
-        })
-          .width('100%')
-          .height('100%')
+          GalleryAuthVideo({
+            videoUrl: this.videoSrc,
+            active: this.active,
+            bottomPadding: this.videoBottomPadding,
+            maxResolutionP: this.videoMaxResolutionP(),
+            onFirstFrame: (): void => {
+              if (this.active) {
+                this.onVideoFirstFrame();
+              }
+            }
+          })
+            .width('100%')
+            .height('100%')
+        }
+        .width('100%')
+        .height('100%')
       } else {
         Column() {
           if (this.isLive()) {
@@ -826,7 +914,7 @@ export struct GalleryPreviewSlide {
                   .autoPlay(false)
                   .repeatPlay(false)
                   .enableAnalyzer(false)
-                  .objectFit(ImageFit.Contain)
+                  .objectFit(ImageFit.Cover)
                   .onComplete((): void => {
                     this.onLiveImageComplete();
                   })
@@ -863,15 +951,26 @@ export struct GalleryPreviewSlide {
                 .visibility(this.liveViewPrepared ? Visibility.Hidden : Visibility.Visible)
                 .hitTestBehavior(HitTestMode.Transparent)
             }
-            .width('100%')
-            .height('100%')
+            .width(this.heroFrameW())
+            .height(this.heroFrameH())
+            .clip(true)
+            .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
           } else {
             Stack({ alignContent: Alignment.Center }) {
               if (this.isGif() && this.gifUri.length > 0) {
-                Image(this.gifUri)
-                  .width('100%')
-                  .height('100%')
-                  .objectFit(ImageFit.Contain)
+                Stack() {
+                  Image(this.gifUri)
+                    .width('100%')
+                    .height('100%')
+                    .objectFit(ImageFit.Cover)
+                    .autoResize(false)
+                    .syncLoad(true)
+                    .draggable(false)
+                }
+                .width(this.heroFrameW())
+                .height(this.heroFrameH())
+                .clip(true)
+                .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
               } else if (this.isGif()) {
                 Blank()
                   .width('100%')
@@ -881,11 +980,20 @@ export struct GalleryPreviewSlide {
                   .width('100%')
                   .height('100%')
               } else {
-                Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
-                  .width('100%')
-                  .height('100%')
-                  .objectFit(ImageFit.Contain)
-                  .dynamicRangeMode(DynamicRangeMode.HIGH)
+                Stack() {
+                  Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
+                    .width('100%')
+                    .height('100%')
+                    .objectFit(ImageFit.Cover)
+                    .autoResize(false)
+                    .dynamicRangeMode(DynamicRangeMode.HIGH)
+                    .syncLoad(true)
+                    .draggable(false)
+                }
+                .width(this.heroFrameW())
+                .height(this.heroFrameH())
+                .clip(true)
+                .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
               }
             }
             .width('100%')

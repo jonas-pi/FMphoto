@@ -19,14 +19,16 @@ export struct GalleryLivePreviewLayer {
         Image(this.stillUri)
           .width('100%')
           .height('100%')
-          .objectFit(ImageFit.Contain)
+          .objectFit(ImageFit.Cover)
+          .autoResize(false)
           .syncLoad(true)
           .draggable(false)
       } else if (this.thumbPix !== undefined) {
         Image(this.showOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
           .width('100%')
           .height('100%')
-          .objectFit(ImageFit.Contain)
+          .objectFit(ImageFit.Cover)
+          .autoResize(false)
           .draggable(false)
       } else {
         Blank()

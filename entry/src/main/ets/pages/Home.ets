@@ -82,6 +82,7 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { GALLERY_PREVIEW_HERO_ACTIVE_KEY } from '../album/GallerySharedTransition';
 import {
   GalleryViewGranularity,
   galleryViewGranularityLabel,
@@ -699,6 +700,7 @@ struct Home {
   @State private gallerySelectionDockActive: boolean = false;
   @State private gallerySelectionDockPrivilege: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  @StorageProp(GALLERY_PREVIEW_HERO_ACTIVE_KEY) private previewHeroActive: boolean = false;
   private gallerySelectionDockDownloadAction: () => void = () => {};
   private gallerySelectionDockDeleteAction: () => void = () => {};
   private gallerySelectionDockTimer: number = -1;
@@ -1493,11 +1495,16 @@ struct Home {
   }
 
   pageTransition(): void {
-    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
-      .opacity(0)
-      .translate({ x: 12, y: 0 });
-    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
-      .opacity(0)
-      .translate({ x: -8, y: 0 });
+    if (this.previewHeroActive) {
+      PageTransitionEnter({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
+    } else {
+      PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+        .opacity(0)
+        .translate({ x: 12, y: 0 });
+      PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+        .opacity(0)
+        .translate({ x: -8, y: 0 });
+    }
   }
 }

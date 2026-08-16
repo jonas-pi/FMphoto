@@ -3,6 +3,7 @@ import { FnListDataSource } from '../../common/FnListDataSource';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
+import { gallerySharedTransitionId } from '../GallerySharedTransition';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
@@ -362,6 +363,7 @@ export struct GalleryAlbumSearchModeView {
         isGif: isGifItem(item),
         isLive: isLivePhotoItem(item),
         paused: this.searchThumbLoadingPaused,
+        sharedTransitionId: gallerySharedTransitionId(this.itemIdOf(item))
       })
         .width('100%')
         .aspectRatio(1)

@@ -11,6 +11,7 @@ import {
   setGalleryPreviewOpening,
   warmupPreviewStartItem
 } from './GalleryPreviewEntryGate';
+import { setGalleryPreviewHeroActive } from './GallerySharedTransition';
 import { GallerySlideshowStreamStore } from './slideshow/GallerySlideshowStreamStore';
 
 const DOMAIN = 0xFF00;
@@ -63,7 +64,7 @@ export class GalleryPreviewNavStore {
     }
     const gen = ++GalleryPreviewNavStore.openGen;
     GalleryPreviewNavStore.opening = true;
-    setGalleryPreviewOpening(true);
+    setGalleryPreviewHeroActive(true);
     const startItem = GalleryPreviewNavStore.items[GalleryPreviewNavStore.startIndex];
     try {
       if (startItem !== undefined) {
@@ -73,6 +74,7 @@ export class GalleryPreviewNavStore {
     }
     if (gen !== GalleryPreviewNavStore.openGen) {
       GalleryPreviewNavStore.opening = false;
+      setGalleryPreviewHeroActive(false);
       return;
     }
     try {
@@ -82,6 +84,7 @@ export class GalleryPreviewNavStore {
       });
     } catch (e) {
       GalleryPreviewEntryCache.discard();
+      setGalleryPreviewHeroActive(false);
       setGalleryPreviewOpening(false);
       hilog.error(DOMAIN, TAG, 'pushUrl GalleryPreview: %{public}s', String(e));
     } finally {
@@ -112,6 +115,7 @@ export class GalleryPreviewNavStore {
       GalleryPreviewNavStore.resetSlideshow();
       return;
     }
+    setGalleryPreviewHeroActive(false);
     uiCtx.getRouter().pushUrl({
       url: 'pages/GalleryPreview',
       params: { idx: '0', slideshow: '1' }

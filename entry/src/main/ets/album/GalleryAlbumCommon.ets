@@ -8,6 +8,7 @@ import { AppSession } from '../auth/AppSession';
 import { GalleryListItem, GalleryThumbnailBlock } from '../model/FnApiTypes';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
+import { gallerySharedTransitionOptions } from './GallerySharedTransition';
 
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
@@ -1074,6 +1075,8 @@ export struct GalleryNetworkThumb {
   @Prop @Watch('onUriChange') uri: string = '';
   @Prop isVideo: boolean = false;
   @Prop isGif: boolean = false;
+  /** 与预览页 Image.sharedTransition 配对，实现从哪来回哪去 */
+  @Prop sharedTransitionId: string = '';
   /** 实况/动态照片：仅右下角标识，封面仍走静帧缩略图 */
   @Prop isLive: boolean = false;
   /** true 时仅显示骨架占位，不发起真实图加载 */
@@ -1222,6 +1225,7 @@ export struct GalleryNetworkThumb {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
+          .autoResize(false)
           .opacity(this.pixAlpha)
           .draggable(false)
       }
@@ -1266,6 +1270,7 @@ export struct GalleryNetworkThumb {
     .borderRadius(0)
     .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
+    .sharedTransition(this.sharedTransitionId, gallerySharedTransitionOptions())
     // 防止子节点未覆盖区域仍响应系统拖拽
     .draggable(false)
     // Image/骨架会参与命中并吞掉长按与 Pan，父级 Stack 上的多选手势永远收不到；整卡不参与命中，事件落到外层图库格

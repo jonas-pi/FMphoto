@@ -41,6 +41,10 @@ import {
 } from '../album/livephoto/LivePhotoSaveActionSheet';
 import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
+import {
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  gallerySharedTransitionId
+} from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
@@ -113,6 +117,7 @@ struct RecycleBinPage {
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
+  @StorageProp(GALLERY_PREVIEW_HERO_ACTIVE_KEY) private previewHeroActive: boolean = false;
 
   private rbLongPressIgnoreUntil: number = 0;
   private rbThumbHitBounds: Map<string, RbThumbHitRect> = new Map();
@@ -632,6 +637,7 @@ struct RecycleBinPage {
           isVideo: false,
           isGif: false,
           paused: this.rbThumbLoadingPaused,
+          sharedTransitionId: nid >= 0 ? gallerySharedTransitionId(`${nid}`) : ''
         })
           .width('100%')
           .aspectRatio(1)
@@ -942,11 +948,16 @@ struct RecycleBinPage {
   }
 
   pageTransition(): void {
-    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
-      .opacity(0)
-      .translate({ x: 12, y: 0 });
-    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
-      .opacity(0)
-      .translate({ x: -8, y: 0 });
+    if (this.previewHeroActive) {
+      PageTransitionEnter({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
+    } else {
+      PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+        .opacity(0)
+        .translate({ x: 12, y: 0 });
+      PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+        .opacity(0)
+        .translate({ x: -8, y: 0 });
+    }
   }
 }

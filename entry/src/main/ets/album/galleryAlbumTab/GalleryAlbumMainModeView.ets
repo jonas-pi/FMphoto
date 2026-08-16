@@ -15,6 +15,7 @@ import {
   setThumbHighThroughputLevel
 } from '../GalleryAlbumCommon';
 import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
+import { gallerySharedTransitionId } from '../GallerySharedTransition';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
 import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
@@ -465,7 +466,8 @@ export struct GalleryAlbumMainModeView {
         paused: this.timelineSidebarDragging || this.isDraggingOrFling,
         fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY,
         cacheIdentity: thumbIdentityOfItem(item),
-        cacheRank: thumbDensityCacheRank(this.currentThumbDensity())
+        cacheRank: thumbDensityCacheRank(this.currentThumbDensity()),
+        sharedTransitionId: gallerySharedTransitionId(this.itemIdOf(item))
       })
         .width('100%')
         .aspectRatio(1)

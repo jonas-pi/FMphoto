@@ -27,6 +27,10 @@ import { galleryItemsMatchingSelectedIds } from '../album/GalleryBatchDownload';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
+import {
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  gallerySharedTransitionId
+} from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { FnListDataSource } from '../common/FnListDataSource';
@@ -120,6 +124,7 @@ struct CategoryGallery {
   @State private isDarkTheme: boolean = false;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
+  @StorageProp(GALLERY_PREVIEW_HERO_ACTIVE_KEY) private previewHeroActive: boolean = false;
   private flatItems: GalleryListItem[] = [];
   private groupOffsets: number[] = [];
   private handledDeleteSyncVersion: number = 0;
@@ -1100,7 +1105,8 @@ struct CategoryGallery {
         isLive: isLivePhotoItem(item),
         paused: this.cgThumbLoadingPaused,
         cacheIdentity: thumbIdentityOfItem(item),
-        cacheRank: 3
+        cacheRank: 3,
+        sharedTransitionId: gallerySharedTransitionId(this.itemIdOf(item))
       })
         .width('100%')
         .aspectRatio(1)
@@ -1495,11 +1501,16 @@ struct CategoryGallery {
   }
 
   pageTransition(): void {
-    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
-      .opacity(0)
-      .translate({ x: 12, y: 0 });
-    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
-      .opacity(0)
-      .translate({ x: -8, y: 0 });
+    if (this.previewHeroActive) {
+      PageTransitionEnter({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
+    } else {
+      PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+        .opacity(0)
+        .translate({ x: 12, y: 0 });
+      PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+        .opacity(0)
+        .translate({ x: -8, y: 0 });
+    }
   }
 }

@@ -14,6 +14,10 @@ import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
+  GALLERY_SHARED_TRANSITION_DURATION,
+  setGalleryPreviewHeroActive
+} from '../album/GallerySharedTransition';
+import {
   GallerySlideshowStreamStore
 } from '../album/slideshow/GallerySlideshowStreamStore';
 import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
@@ -131,6 +135,7 @@ struct GalleryPreview {
   private slideshowGlobalIndices: number[] = [];
   private slideshowTimerId: number = -1;
   private videoEntryCoverTimer: number = -1;
+  private chromeRevealTimer: number = -1;
   private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
   private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
 
@@ -195,7 +200,7 @@ struct GalleryPreview {
       this.slideshowLibraryTotal = GallerySlideshowStreamStore.getLibraryTotalCount();
     }
     // 工具栏显隐不进本页 @State，避免点击切换时整页（含 Swiper）重绘。
-    setGalleryPreviewToolbarVisible(!this.slideshowEnabled);
+    this.armChromeReveal();
     const startItem = (this.swiperIndex >= 0 && this.swiperIndex < this.previewItems.length)
       ? this.previewItems[this.swiperIndex]
       : undefined;
@@ -314,6 +319,7 @@ struct GalleryPreview {
   aboutToDisappear(): void {
     this.clearSlideshowTimer();
     this.clearVideoEntryCoverTimer();
+    this.clearChromeRevealTimer();
     this.detailsVisible = false;
     this.detailsLoading = false;
     this.detailsError = '';
@@ -330,6 +336,9 @@ struct GalleryPreview {
       client.cancelPendingRequests();
     }
     GalleryPreviewNavStore.clear();
+    setTimeout((): void => {
+      setGalleryPreviewHeroActive(false);
+    }, GALLERY_SHARED_TRANSITION_DURATION + 80);
     setGalleryPreviewToolbarVisible(true);
     resetGalleryPreviewVideoChrome();
     void restoreGalleryPreviewPortrait(this.getUIContext());
@@ -396,6 +405,27 @@ struct GalleryPreview {
     }
     clearTimeout(this.videoEntryCoverTimer);
     this.videoEntryCoverTimer = -1;
+  }
+
+  private clearChromeRevealTimer(): void {
+    if (this.chromeRevealTimer < 0) {
+      return;
+    }
+    clearTimeout(this.chromeRevealTimer);
+    this.chromeRevealTimer = -1;
+  }
+
+  private armChromeReveal(): void {
+    this.clearChromeRevealTimer();
+    if (this.slideshowEnabled) {
+      setGalleryPreviewToolbarVisible(false);
+      return;
+    }
+    setGalleryPreviewToolbarVisible(false);
+    this.chromeRevealTimer = setTimeout((): void => {
+      this.chromeRevealTimer = -1;
+      setGalleryPreviewToolbarVisible(true);
+    }, GALLERY_SHARED_TRANSITION_DURATION);
   }
 
   private armVideoEntryCoverTimeout(): void {
@@ -772,6 +802,7 @@ struct GalleryPreview {
               loadOriginalToken: this.loadOriginalToken,
               originalPreviewEnabled: idx === this.swiperIndex && this.originalPreviewEnabled,
               active: idx === this.swiperIndex,
+              enableSharedTransition: !this.slideshowEnabled,
               videoBottomPadding: this.videoControlsBottomPadding(),
               onZoomLockChange: (locked: boolean): void => {
                 this.runScopedTask((): void => {
@@ -994,11 +1025,17 @@ struct GalleryPreview {
   }
 
   pageTransition(): void {
-    PageTransitionEnter({ duration: FN_PREVIEW_PAGE_ENTER_DURATION, curve: FN_PREVIEW_PAGE_ENTER_CURVE })
-      .opacity(0)
-      .scale({ x: 0.95, y: 0.95 })
-    PageTransitionExit({ duration: FN_PREVIEW_PAGE_EXIT_DURATION, curve: FN_PREVIEW_PAGE_EXIT_CURVE })
-      .opacity(0)
-      .scale({ x: 0.95, y: 0.95 })
+    if (this.slideshowEnabled || GalleryPreviewNavStore.slideshow.enabled) {
+      PageTransitionEnter({ duration: FN_PREVIEW_PAGE_ENTER_DURATION, curve: FN_PREVIEW_PAGE_ENTER_CURVE })
+        .opacity(0)
+        .scale({ x: 0.95, y: 0.95 })
+      PageTransitionExit({ duration: FN_PREVIEW_PAGE_EXIT_DURATION, curve: FN_PREVIEW_PAGE_EXIT_CURVE })
+        .opacity(0)
+        .scale({ x: 0.95, y: 0.95 })
+    } else {
+      // 官方示例：共享元素转场时页面本身 duration 0，只让 sharedTransition 做位置大小匹配
+      PageTransitionEnter({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
+    }
   }
 }
