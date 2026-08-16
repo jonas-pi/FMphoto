@@ -10,15 +10,18 @@ import {
   HdsNavigationTitleMode,
   HdsTabs,
   IconStyleMode,
+  ScrollEffectOptions,
+  ScrollEffectType,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import {
   fnBottomDockBottomGap,
   fnHdsBottomDockActionTabStyle,
+  fnHdsChromeButtonBackgroundColor,
+  fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsImmersiveSystemMaterialEffect,
   fnHdsImmersiveTabsFloatingStyle,
   fnHdsNavChromeBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts,
   fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
@@ -164,22 +167,47 @@ export struct GalleryPreviewChrome {
     return backIcon;
   }
 
+  private overlayButtonBg(): ResourceColor {
+    // 官方：图标背板透明，由 titleBar.systemMaterialEffect 出圆形模糊材质；
+    // 无沉浸光感时退回浅灰玻璃底，避免按钮融进照片。
+    return this.canUseHds() ? fnHdsChromeButtonBackgroundColor() : fnHdsChromeButtonFallbackBackgroundColor();
+  }
+
+  /**
+   * 全屏预览顶栏：不要列表页的沉浸渐变模糊。
+   * 官方大图预览是透明底 + 圆形图标背板；IMMERSIVE_GRADIENT_BLUR 会在照片上方画出一层渐变阴影。
+   */
+  private overlayScrollEffectOpts(): ScrollEffectOptions {
+    return {
+      enableScrollEffect: false,
+      scrollEffectType: ScrollEffectType.COMMON_BLUR
+    };
+  }
+
   private topTitleBarOriginalStyle(): HdsNavigationTitleBarStyle {
+    const chipBg: ResourceColor = this.overlayButtonBg();
     return {
       backgroundStyle: fnHdsNavChromeBackgroundStyle(),
       contentStyle: {
         titleStyle: {
           mainTitleColor: this.fgColor,
-          subTitleColor: this.fgColor
+          subTitleColor: this.fgColor,
+          // 关掉标题投影：透明顶栏时默认灰投影会看成一条阴影
+          mainTitleShadowColor: Color.Transparent,
+          subTitleShadowColor: Color.Transparent
         },
+        // 官方悬浮按钮：menu / back 各自一块圆形背板，不是整条顶栏
         menuStyle: {
-          backgroundColor: this.buttonBg,
+          backgroundColor: chipBg,
           iconColor: this.fgColor,
           textColor: this.fgColor
         },
         backIconStyle: {
-          backgroundColor: this.buttonBg,
+          backgroundColor: chipBg,
           iconColor: this.fgColor
+        },
+        dividerStyle: {
+          dividerColor: Color.Transparent
         }
       }
     };
@@ -217,8 +245,8 @@ export struct GalleryPreviewChrome {
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        // @SuppressWarnings compatibility
+        scrollEffectOpts: this.overlayScrollEffectOpts(),
+        // 材质只作用在返回/菜单圆钮上；顶栏背板仍透明（blurRadius 0）
         systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
         originalStyle: this.topTitleBarOriginalStyle(),
         scrollEffectStyle: {
@@ -232,7 +260,7 @@ export struct GalleryPreviewChrome {
       enableComponentSafeArea: false,
       style: {
         blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        scrollEffectOpts: this.overlayScrollEffectOpts(),
         originalStyle: this.topTitleBarOriginalStyle(),
         scrollEffectStyle: {
           backgroundStyle: fnHdsNavChromeBackgroundStyle()
