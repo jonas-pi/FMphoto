@@ -299,7 +299,8 @@ export struct GalleryVideoOverlayChrome {
       }
 
       if (this.visible) {
-        Column({ space: 10 }) {
+        Stack({ alignContent: Alignment.Bottom }) {
+          Column({ space: 10 }) {
           Row() {
             Stack() {
               GalleryOverlayHdsCapsule({
@@ -412,14 +413,16 @@ export struct GalleryVideoOverlayChrome {
             }
             this.onSeekTapRatio(Math.max(0, Math.min(1, ts[0].x / this.barW)));
           })
+          }
+          .width('100%')
+          .padding({
+            left: 16,
+            right: 16,
+            bottom: 8 + this.bottomPadding
+          })
         }
         .width('100%')
-        .padding({
-          left: 16,
-          right: 16,
-          bottom: 8 + this.bottomPadding
-        })
-        .align(Alignment.Bottom)
+        .height('100%')
         .hitTestBehavior(HitTestMode.Transparent)
       }
     }
