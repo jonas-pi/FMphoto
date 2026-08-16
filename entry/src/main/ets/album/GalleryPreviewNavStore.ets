@@ -66,16 +66,9 @@ export class GalleryPreviewNavStore {
     GalleryPreviewNavStore.opening = true;
     setGalleryPreviewHeroActive(true);
     const startItem = GalleryPreviewNavStore.items[GalleryPreviewNavStore.startIndex];
-    try {
-      if (startItem !== undefined) {
-        await warmupPreviewStartItem(uiCtx, baseUrl, startItem);
-      }
-    } catch (_e) {
-    }
-    if (gen !== GalleryPreviewNavStore.openGen) {
-      GalleryPreviewNavStore.opening = false;
-      setGalleryPreviewHeroActive(false);
-      return;
+    // 网格可见项缩略图已在缓存，先 push 开启动画；实况预热并行，不挡跟手。
+    if (startItem !== undefined) {
+      void warmupPreviewStartItem(uiCtx, baseUrl, startItem);
     }
     try {
       await uiCtx.getRouter().pushUrl({

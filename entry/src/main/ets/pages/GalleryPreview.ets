@@ -14,6 +14,7 @@ import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
+  GALLERY_SHARED_TRANSITION_CURVE,
   GALLERY_SHARED_TRANSITION_DURATION,
   setGalleryPreviewHeroActive
 } from '../album/GallerySharedTransition';
@@ -93,6 +94,8 @@ struct GalleryPreview {
   @State private previewZoomLocked: boolean = false;
   @State private totalCount: number = 0;
   @State private dismissDragProgress: number = 0;
+  /** 预览背景遮罩：展开/收回与共享元素同步淡入淡出，避免瞬间切色闪烁 */
+  @State private scrimOpacity: number = 0;
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
   @State private liveSaveSheetVisible: boolean = false;
@@ -136,12 +139,14 @@ struct GalleryPreview {
   private slideshowTimerId: number = -1;
   private videoEntryCoverTimer: number = -1;
   private chromeRevealTimer: number = -1;
+  private heroScrimEntered: boolean = false;
   private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
   private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBar(true);
+    this.playHeroScrimEnterIfNeeded();
     if (this.slideshowEnabled) {
       this.armSlideshowTimer();
     }
@@ -167,6 +172,16 @@ struct GalleryPreview {
 
   private navigateBack(): void {
     void restoreGalleryPreviewPortrait(this.getUIContext());
+    if (!this.slideshowEnabled) {
+      this.clearChromeRevealTimer();
+      setGalleryPreviewToolbarVisible(false);
+      this.getUIContext().animateTo({
+        duration: GALLERY_SHARED_TRANSITION_DURATION,
+        curve: GALLERY_SHARED_TRANSITION_CURVE
+      }, (): void => {
+        this.scrimOpacity = 0;
+      });
+    }
     this.getUIContext().getRouter().back();
   }
 
@@ -201,6 +216,10 @@ struct GalleryPreview {
     }
     // 工具栏显隐不进本页 @State，避免点击切换时整页（含 Swiper）重绘。
     this.armChromeReveal();
+    if (this.slideshowEnabled) {
+      this.scrimOpacity = 1;
+      this.heroScrimEntered = true;
+    }
     const startItem = (this.swiperIndex >= 0 && this.swiperIndex < this.previewItems.length)
       ? this.previewItems[this.swiperIndex]
       : undefined;
@@ -426,6 +445,23 @@ struct GalleryPreview {
       this.chromeRevealTimer = -1;
       setGalleryPreviewToolbarVisible(true);
     }, GALLERY_SHARED_TRANSITION_DURATION);
+  }
+
+  private playHeroScrimEnterIfNeeded(): void {
+    if (this.slideshowEnabled || this.heroScrimEntered) {
+      return;
+    }
+    this.heroScrimEntered = true;
+    this.getUIContext().animateTo({
+      duration: GALLERY_SHARED_TRANSITION_DURATION,
+      curve: GALLERY_SHARED_TRANSITION_CURVE
+    }, (): void => {
+      this.scrimOpacity = 1;
+    });
+  }
+
+  private scrimVisualOpacity(): number {
+    return Math.max(0, Math.min(1, this.scrimOpacity * (1 - this.dismissDragProgress)));
   }
 
   private armVideoEntryCoverTimeout(): void {
@@ -793,6 +829,13 @@ struct GalleryPreview {
 
   build() {
     Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.pageBg())
+        .opacity(this.scrimVisualOpacity())
+        .hitTestBehavior(HitTestMode.None)
+
       if (this.totalCount > 0) {
         Swiper(this.swiperCtrl) {
           LazyForEach(this.itemSource, (item: GalleryListItem, idx: number) => {
@@ -988,7 +1031,7 @@ struct GalleryPreview {
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-        .backgroundColor(this.pageBg())
+        .backgroundColor(Color.Transparent)
         .hitTestBehavior(HitTestMode.Block)
       }
 
@@ -1013,7 +1056,7 @@ struct GalleryPreview {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.pageBg())
+    .backgroundColor(Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, fnHdsSheetOptions(
       this.previewSheetTitle(),
@@ -1033,9 +1076,13 @@ struct GalleryPreview {
         .opacity(0)
         .scale({ x: 0.95, y: 0.95 })
     } else {
-      // 官方示例：共享元素转场时页面本身 duration 0，只让 sharedTransition 做位置大小匹配
+      // 进场 duration 0，背景由 scrim 淡入；退场保持时长让遮罩与共享元素一起淡出
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({
+        type: RouteType.None,
+        duration: GALLERY_SHARED_TRANSITION_DURATION,
+        curve: GALLERY_SHARED_TRANSITION_CURVE
+      })
     }
   }
 }

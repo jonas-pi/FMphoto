@@ -1,5 +1,5 @@
 /**
- * 进入全屏预览前的闸门：当前页转圈，首项就绪后再 push。
+ * 进入全屏预览：缩略图已在网格缓存时立刻 push，实况等预热放后台，不挡跟手动画。
  */
 import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';

@@ -8,7 +8,7 @@
 export const GALLERY_PREVIEW_HERO_ACTIVE_KEY: string = 'galleryPreviewHeroActive';
 
 /** 与系统图库接近的展开/收回时长 */
-export const GALLERY_SHARED_TRANSITION_DURATION: number = 320;
+export const GALLERY_SHARED_TRANSITION_DURATION: number = 220;
 export const GALLERY_SHARED_TRANSITION_CURVE: Curve = Curve.EaseInOut;
 
 AppStorage.setOrCreate(GALLERY_PREVIEW_HERO_ACTIVE_KEY, false);

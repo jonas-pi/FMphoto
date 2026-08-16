@@ -147,6 +147,9 @@ export struct GalleryPreviewSlide {
   private spinnerColor(): ResourceColor { return this.isDarkTheme ? Color.White : Color.Black; }
   private hintColor(): string { return this.isDarkTheme ? '#CCCCCC' : '#666666'; }
   private slideBackgroundColor(): ResourceColor {
+    if (this.enableSharedTransition) {
+      return Color.Transparent;
+    }
     return this.isDark() ? Color.Black : Color.White;
   }
 
