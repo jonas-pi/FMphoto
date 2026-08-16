@@ -6,6 +6,33 @@
 
 ---
 
+## [1.3.2-beta.1] - 2026-08-16
+
+在 [1.3.1] 上打磨预览进页与系统弹出层：视频以「能播」为进页条件，不再白屏空等，也不再等到整段下完。
+
+### 改进
+
+- **官方弹出层**：下载质量、实况保存、幻灯片设置、更多菜单改用系统 `bindSheet` / `Menu`，不再自绘全屏玻璃层。实况保存的 SaveButton 保持实底，避免模糊父级导致临时授权失败。
+- **预览进页闸门**：点进预览先在当前页显示加载；照片 / 实况等首项就绪后再进入全屏预览。
+- **视频能播即进**：以预览页自己的 AVPlayer `prepared` 为就绪（官方：播放引擎已就绪）。开启 `showFirstFrameOnPrepare` 送出首帧，并把 `preferredBufferDurationForPlaying` 设为 0.3s。不等整段下载，也不等 `startRenderFrame`（该事件要等 `play()` 之后）。
+- **视频加载遮罩**：出画面前用主题实底挡住 Surface，避免浅色白屏、深色空黑窗。
+- **实况预览衔接**：静帧垫图保持在树上，优先用 MovingPhoto 同源静帧，就绪后再揭开，减少闪一下。
+
+### 修复
+
+- **视频进预览白屏**：不再用隐藏小播放器的 `prepared` 当进页条件（释放后再新建播放器等于重新拉流）。
+- **分类页点不动**：全屏加载遮罩仅在真正打开预览时挂载，避免空层挡住点击。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.3.1` 的设备可直接覆盖升级（`versionCode` 1003004）。
+
+---
+
 ## [1.3.1] - 2026-08-16
 
 在 [1.3.0] 基础上补齐实况下载：底栏下载按钮与普通图片统一，点下去后经中间层写入系统动态照片。
@@ -230,6 +257,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.2-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.1...v1.3.2-beta.1
 [1.3.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/jonas-pi/FMphoto/compare/v1.3.0-beta.1...v1.3.0
 [1.3.0-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.2.0...v1.3.0-beta.1
