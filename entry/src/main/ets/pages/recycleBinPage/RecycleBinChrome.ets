@@ -21,6 +21,7 @@ import {
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsChromeButtonForegroundColor,
   fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrolledBackgroundStyle,
   fnHdsNavChromeScrollEffectOpts
 } from '../../common/FnUiCommon';
 import {
@@ -157,7 +158,7 @@ export struct RecycleBinChrome {
         systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
         originalStyle: this.titleBarOriginalStyle(),
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: this.titleBarContent()
@@ -170,7 +171,7 @@ export struct RecycleBinChrome {
         scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         originalStyle: this.titleBarOriginalStyle(),
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: this.titleBarContent()

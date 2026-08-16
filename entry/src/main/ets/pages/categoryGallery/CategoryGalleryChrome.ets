@@ -23,6 +23,7 @@ import {
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsChromeButtonForegroundColor,
   fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrolledBackgroundStyle,
   fnHdsNavChromeScrollEffectOpts
 } from '../../common/FnUiCommon';
 import {
@@ -191,7 +192,7 @@ export struct CategoryGalleryChrome {
         systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
         originalStyle: this.titleBarOriginalStyle(),
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: this.titleBarContent()
@@ -204,7 +205,7 @@ export struct CategoryGalleryChrome {
         scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         originalStyle: this.titleBarOriginalStyle(),
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: this.titleBarContent()

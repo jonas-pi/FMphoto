@@ -109,6 +109,10 @@
       "value": "#2BFFFFFF"
     },
     {
+      "name": "gallery_nav_scrolled_bg",
+      "value": "#59000000"
+    },
+    {
       "name": "gallery_material_surface_strong_bg",
       "value": "#36FFFFFF"
     },

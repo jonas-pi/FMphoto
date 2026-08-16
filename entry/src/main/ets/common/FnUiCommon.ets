@@ -5,7 +5,7 @@
  * - FnFullLoadingMask: 统一全屏阻断式加载遮罩
  */
 
-import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI';
 import {
   hdsEffect,
   HdsNavigationBackgroundStyle,
@@ -61,8 +61,8 @@ export function fnHdsChromeButtonFallbackBackgroundColor(): ResourceColor {
 }
 
 /**
- * 顶栏整条背景：强制透明，去掉 HdsNavigation 默认灰底长条。
- * GRADIENT_BLUR + systemMaterialEffect 且 enableScrollEffect=false 时系统会刷灰底。
+ * 顶端初始样式：透明、无模糊。
+ * 勿用于 scrollEffectStyle：强制 blurRadius 0 会让离开顶端后模糊无法保持。
  */
 export function fnHdsNavChromeBackgroundStyle(): HdsNavigationBackgroundStyle {
   return {
@@ -72,12 +72,29 @@ export function fnHdsNavChromeBackgroundStyle(): HdsNavigationBackgroundStyle {
   };
 }
 
-/** 官方图库沉浸场景：IMMERSIVE_GRADIENT_BLUR + 滚动联动（需 bindToScrollable）。 */
+/**
+ * 离开顶端后的标题栏背板。
+ * blurRadius 用官方 scrollEffectStyle 默认 16（带 systemMaterialEffect 时系统默认是 12）。
+ * 叠一层半透明色：官方 GRADIENT_BLUR 滚动后默认 #99000000，这里按浅色白霜 / 深色黑罩各取约 1/3 透明度，避免整条实心底。
+ */
+export function fnHdsNavChromeScrolledBackgroundStyle(): HdsNavigationBackgroundStyle {
+  return {
+    backgroundColor: $r('app.color.gallery_nav_scrolled_bg'),
+    blurRadius: 16
+  };
+}
+
+/**
+ * 官方：按内容区总偏移在 originalStyle → scrollEffectStyle 之间线性过渡。
+ * 超过 blurEffectiveEndOffset 后固定为滚动后样式，不是「仅手指滚动时才模糊」。
+ */
 export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
   return {
     enableScrollEffect: true,
     // @SuppressWarnings compatibility
-    scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
+    scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR,
+    blurEffectiveStartOffset: LengthMetrics.vp(0),
+    blurEffectiveEndOffset: LengthMetrics.vp(20)
   };
 }
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;

@@ -29,6 +29,7 @@ import {
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsChromeButtonForegroundColor,
   fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrolledBackgroundStyle,
   fnHdsNavChromeScrollEffectOpts,
   FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../common/FnUiCommon';
@@ -170,7 +171,7 @@ struct Settings {
             systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
             originalStyle: this.titleBarOriginalStyle(),
             scrollEffectStyle: {
-              backgroundStyle: fnHdsNavChromeBackgroundStyle()
+              backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
             }
           },
           content: this.titleBarContent()
@@ -183,7 +184,7 @@ struct Settings {
             scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
             originalStyle: this.titleBarOriginalStyle(),
             scrollEffectStyle: {
-              backgroundStyle: fnHdsNavChromeBackgroundStyle()
+              backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
             }
           },
           content: this.titleBarContent()

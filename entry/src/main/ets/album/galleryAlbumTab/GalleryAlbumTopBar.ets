@@ -20,6 +20,7 @@ import {
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsChromeButtonForegroundColor,
   fnHdsNavChromeBackgroundStyle,
+  fnHdsNavChromeScrolledBackgroundStyle,
   fnHdsNavChromeScrollEffectOpts,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
@@ -77,8 +78,8 @@ export struct GalleryAlbumTopBar {
 
   /** 真实可滚动内容：图库/相册/分类等页面 Stack，由调用方通过尾随闭包传入。 */
   @BuilderParam pageContent: () => void = galleryAlbumTopBarEmptyPageContent;
-  /** 联动沉浸滚动光感的 Scroller 列表，随 bindToScrollable 传给 HdsNavigation。 */
-  scrollerList: Scroller[] = [];
+  /** 当前可见列表的 Scroller；只绑这一条，闲置 Scroller 停在顶端会把模糊打回初始态。 */
+  @Prop scrollerList: Scroller[] = [];
 
   onSearchQueryChange: (value: string) => void = (_: string) => {};
   onSearchSubmit: () => void = () => {};
@@ -376,7 +377,7 @@ export struct GalleryAlbumTopBar {
           }
         },
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: {
@@ -416,7 +417,7 @@ export struct GalleryAlbumTopBar {
           }
         },
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: {
@@ -463,7 +464,7 @@ export struct GalleryAlbumTopBar {
           }
         },
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: {
@@ -509,7 +510,7 @@ export struct GalleryAlbumTopBar {
           }
         },
         scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
         }
       },
       content: {

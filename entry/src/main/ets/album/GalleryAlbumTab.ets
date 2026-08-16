@@ -2213,6 +2213,17 @@ export struct GalleryAlbumTab {
     return galleryAlbumIsAlbumsHomeSurface(this.asRootSurfaceHost());
   }
 
+  /** 只把当前可见列表绑到顶栏；闲置 Scroller 停在 0 会把模糊打回初始态。 */
+  private currentTitleBarScrollers(): Scroller[] {
+    if (this.inSearchMode) {
+      return [this.searchScroller];
+    }
+    if (this.isAlbumsHomeSurface()) {
+      return [this.albumsScroller];
+    }
+    return [this.scrollerRef];
+  }
+
   private setRootPhotosScrollTitle(title: string): void {
     if (this.rootPhotosScrollTitle === title) {
       return;
@@ -2646,7 +2657,7 @@ export struct GalleryAlbumTab {
           searchQuery: this.searchQuery,
           topSafeInsetVp: this.topSafeInsetVp,
           pageShowSignal: this.pageShowSignal,
-          scrollerList: [this.scrollerRef, this.albumsScroller, this.searchScroller],
+          scrollerList: this.currentTitleBarScrollers(),
           onSearchQueryChange: (value: string): void => {
             this.searchQuery = value;
           },
