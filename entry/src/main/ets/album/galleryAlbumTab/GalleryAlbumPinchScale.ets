@@ -17,17 +17,13 @@ export class GalleryPinchScaleUpdater extends AttributeUpdater<ListAttribute> {
   }
 
   applyScale(scale: number, centerX: number, centerY: number): void {
-    const attr = this.attribute;
-    if (attr === undefined) {
-      return;
-    }
     let next = scale;
     if (next < PINCH_SCALE_MIN) {
       next = PINCH_SCALE_MIN;
     } else if (next > PINCH_SCALE_MAX) {
       next = PINCH_SCALE_MAX;
     }
-    attr.scale({ x: next, y: next, centerX: centerX, centerY: centerY });
+    this.attribute?.scale({ x: next, y: next, centerX: centerX, centerY: centerY });
   }
 
   resetScale(): void {

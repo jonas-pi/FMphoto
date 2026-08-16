@@ -9,16 +9,13 @@ import {
   fnHdsBindMenuOptions
 } from '../common/FnHdsOverlay';
 import { fnHdsImmersiveTabsFloatingStyle } from '../common/FnUiCommon';
+import { galleryIsVideoBrightnessVolumeZone } from './GalleryPreviewVerticalGesture';
 
 const OVERLAY_PILL_HEIGHT_VP: number = 36;
 const OVERLAY_SPEED_WIDTH_VP: number = 60;
 const OVERLAY_TIME_WIDTH_VP: number = 124;
 const OVERLAY_LANDSCAPE_SIZE_VP: number = 36;
 const OVERLAY_PLAY_SIZE_VP: number = 72;
-/** 左亮度 / 右音量热区宽度占屏比；中间留给左右切页 */
-const VIDEO_SIDE_ADJUST_WIDTH_RATIO: number = 0.28;
-/** 上下各留出一段，避免抢占上滑详情 / 下滑退出 */
-const VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO: number = 0.20;
 
 @Component
 struct GalleryOverlayHdsCapsule {
@@ -131,12 +128,7 @@ export struct GalleryVideoOverlayChrome {
   private dragStartRatio: number = 0;
 
   private isBrightnessVolumeZone(localX: number, localY: number): boolean {
-    const edgeW = this.overlayW * VIDEO_SIDE_ADJUST_WIDTH_RATIO;
-    if (localX > edgeW && localX < this.overlayW - edgeW) {
-      return false;
-    }
-    const insetH = this.overlayH * VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO;
-    return localY >= insetH && localY <= this.overlayH - insetH;
+    return galleryIsVideoBrightnessVolumeZone(localX, localY, this.overlayW, this.overlayH);
   }
 
   private fillPercent(): number {

@@ -6,6 +6,8 @@
  * 官方示例把转场绑在 clip 容器上、子图铺满，宽高分别插值（非四边等比）。
  *
  * 平移限位：基于视口尺寸精确计算，超界 50% 阻力，松手 EaseOut 弹回。
+ * 未放大时纵向手势对齐系统图库：下滑跟手退出（sharedTransition 收回），
+ * 上滑打开官方 bindSheet 详情（MEDIUM/LARGE 档位跟手）。
  */
 import {
   itemFileExt,
@@ -25,7 +27,7 @@ import {
   pickVideo
 } from './GalleryAlbumCommon';
 import { common } from '@kit.AbilityKit';
-import { display } from '@kit.ArkUI';
+import { AnimatorResult, display } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { photoAccessHelper, MovingPhotoView, MovingPhotoViewController } from '@kit.MediaLibraryKit';
 import { GalleryAuthVideo } from './GalleryAuthVideo';
@@ -51,6 +53,28 @@ import {
   gallerySharedTransitionId,
   gallerySharedTransitionOptions
 } from './GallerySharedTransition';
+import {
+  GALLERY_DETAILS_DISTANCE_VP,
+  GALLERY_DETAILS_DRAG_GAIN,
+  GALLERY_ANIMATOR_FRAME_RATE,
+  GALLERY_VERTICAL_ANIMATOR_EASING,
+  GALLERY_VERTICAL_PAN_DISTANCE,
+  addGalleryPreviewDetailsFitListener,
+  galleryDetailsFit,
+  galleryDismissProgress,
+  galleryDismissScale,
+  galleryIsVideoBrightnessVolumeZone,
+  GalleryPreviewClipUpdater,
+  GalleryPreviewSlideTransformUpdater,
+  galleryShouldCloseDetails,
+  galleryShouldDismissPage,
+  galleryShouldOpenDetails,
+  galleryVerticalPanIsHorizontal,
+  getGalleryPreviewDetailsSheetHeight,
+  quietFinishAnimator,
+  removeGalleryPreviewDetailsFitListener,
+  setGalleryPreviewDismissProgress
+} from './GalleryPreviewVerticalGesture';
 
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
@@ -77,6 +101,10 @@ export struct GalleryPreviewSlide {
   @Prop videoBottomPadding: number = 0;
   /** 幻灯片进页即播；普通预览只展示封面 */
   @Prop autoStartVideo: boolean = false;
+  /** 详情半模态已展开时，下滑改为收起面板而不是退出预览 */
+  @Prop detailsShowing: boolean = false;
+  /** 幻灯片关闭上下滑，避免和自动切页抢手势 */
+  @Prop allowVerticalGesture: boolean = true;
   /** 跟随系统深浅色模式，用于 loading 指示器颜色 */
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   /**
@@ -93,8 +121,8 @@ export struct GalleryPreviewSlide {
 
   onZoomLockChange: (locked: boolean) => void = () => {};
   onPinchGestureActiveChange: (active: boolean) => void = (_: boolean) => {};
-  onVerticalDragProgress: (progress: number) => void = (_: number) => {};
   onVerticalDismiss: () => void = () => {};
+  onVerticalDetails: () => void = () => {};
   onRequestPageSwitch: (delta: number) => void = (_: number) => {};
   /** 原图加载完成后通知父页面，父页面可据此隐藏"原图"按钮 */
   onOriginalLoaded: () => void = () => {};
@@ -146,6 +174,24 @@ export struct GalleryPreviewSlide {
   private singleFingerPanActive: boolean = false;
   private singleFingerPanLastX: number = 0;
   private singleFingerPanLastY: number = 0;
+  private verticalPanActive: boolean = false;
+  private verticalOffsetY: number = 0;
+  private verticalLastOffsetY: number = 0;
+  private verticalLastTs: number = 0;
+  private verticalVelocityY: number = 0;
+  private panScale: number = 1;
+  private panY: number = 0;
+  private transformUpdater: GalleryPreviewSlideTransformUpdater = new GalleryPreviewSlideTransformUpdater();
+  private clipUpdater: GalleryPreviewClipUpdater = new GalleryPreviewClipUpdater();
+  private transformAnimator: AnimatorResult | undefined = undefined;
+  private readonly onDetailsFitHeight = (): void => {
+    this.applyComposedTransform();
+  };
+  private imagePanOptions: PanGestureOptions = new PanGestureOptions({
+    fingers: 1,
+    direction: PanDirection.All,
+    distance: GALLERY_VERTICAL_PAN_DISTANCE
+  });
 
   private isDark(): boolean { return this.isDarkTheme; }
   private spinnerColor(): ResourceColor { return this.isDarkTheme ? Color.White : Color.Black; }
@@ -226,6 +272,9 @@ export struct GalleryPreviewSlide {
   }
 
   onActiveChanged(): void {
+    if (!this.active) {
+      this.resetVerticalDragInstant();
+    }
     if (!this.isLive()) {
       return;
     }
@@ -259,9 +308,13 @@ export struct GalleryPreviewSlide {
     this.initViewportFromDisplay();
     this.syncBoundItemAndPrepare();
     this.armVideoOverlayReveal();
+    addGalleryPreviewDetailsFitListener(this.onDetailsFitHeight);
+    this.applyComposedTransform();
   }
 
   aboutToDisappear(): void {
+    removeGalleryPreviewDetailsFitListener(this.onDetailsFitHeight);
+    this.cancelTransformAnimator();
     this.clearVideoOverlayRevealTimer();
     this.invalidateAsyncLoads();
     this.disposeTransientMedia();
@@ -269,7 +322,7 @@ export struct GalleryPreviewSlide {
     this.pinchGestureRecognizing = false;
     this.pinchParticipationActive = false;
     this.scheduleDeferredParentGestureReset();
-    this.onVerticalDragProgress(0);
+    this.resetVerticalDragInstant();
   }
 
   // ── 数据加载 ─────────────────────────────────────────────────────────────
@@ -347,6 +400,7 @@ export struct GalleryPreviewSlide {
     const aspect = galleryPixelAspect(pix);
     if (aspect > 0) {
       this.contentAspect = aspect;
+      this.applyComposedTransform();
     }
   }
 
@@ -385,13 +439,13 @@ export struct GalleryPreviewSlide {
       this.previewScale = 1;
       this.previewPanX = 0;
       this.previewPanY = 0;
+      this.resetVerticalDragInstant();
       this.singleFingerPanActive = false;
       this.singleFingerPanLastX = 0;
       this.singleFingerPanLastY = 0;
       this.pinchGestureRecognizing = false;
       this.pinchParticipationActive = false;
       this.scheduleDeferredParentGestureReset();
-      this.onVerticalDragProgress(0);
     }
     this.boundItemKey = key;
     this.prepareContent();
@@ -489,6 +543,7 @@ export struct GalleryPreviewSlide {
 
   private onPreviewPinchStart(): void {
     this.haltLivePlayback();
+    this.resetVerticalDragInstant();
     this.pinchGestureRecognizing = true;
     this.pinchBaseScale = this.previewScale;
     this.reportPinchParticipation(true);
@@ -726,6 +781,196 @@ export struct GalleryPreviewSlide {
   private emitZoomLock(): void {
     this.cancelDeferredParentGestureReset();
     this.onZoomLockChange(this.isImageZoomed());
+    this.syncImagePanDistance();
+  }
+
+  private syncImagePanDistance(): void {
+    this.imagePanOptions.setDistance(
+      this.isImageZoomed() ? PREVIEW_ZOOM_PAN_DISTANCE : GALLERY_VERTICAL_PAN_DISTANCE
+    );
+  }
+
+  private lockParentForVertical(active: boolean): void {
+    if (active) {
+      this.onPinchGestureActiveChange(true);
+      return;
+    }
+    if (!this.pinchParticipationActive) {
+      this.onPinchGestureActiveChange(false);
+    }
+  }
+
+  private noteVerticalVelocity(offsetY: number): void {
+    const now = Date.now();
+    if (this.verticalLastTs > 0) {
+      const dt = now - this.verticalLastTs;
+      if (dt > 0) {
+        this.verticalVelocityY = (offsetY - this.verticalLastOffsetY) / dt * 1000;
+      }
+    }
+    this.verticalLastOffsetY = offsetY;
+    this.verticalLastTs = now;
+  }
+
+  private resetVerticalDragInstant(): void {
+    this.cancelTransformAnimator();
+    this.verticalPanActive = false;
+    this.verticalOffsetY = 0;
+    this.verticalLastOffsetY = 0;
+    this.verticalLastTs = 0;
+    this.verticalVelocityY = 0;
+    this.panScale = 1;
+    this.panY = 0;
+    this.applyComposedTransform();
+    setGalleryPreviewDismissProgress(0);
+  }
+
+  private cancelTransformAnimator(): void {
+    quietFinishAnimator(this.transformAnimator);
+    this.transformAnimator = undefined;
+  }
+
+  private applyComposedTransform(): void {
+    const fit = galleryDetailsFit(
+      getGalleryPreviewDetailsSheetHeight(),
+      this.viewW,
+      this.viewH,
+      this.contentAspect
+    );
+    this.transformUpdater.apply(this.panScale * fit.scale, this.panY + fit.translateY);
+    this.clipUpdater.apply(fit.clipHeight, this.viewH);
+  }
+
+  private beginVerticalPan(): void {
+    this.cancelTransformAnimator();
+    this.haltLivePlayback();
+    this.verticalPanActive = true;
+    this.verticalLastTs = 0;
+    this.verticalVelocityY = 0;
+    this.lockParentForVertical(true);
+  }
+
+  private applyVerticalOffset(offsetY: number): void {
+    this.verticalOffsetY = offsetY;
+    this.noteVerticalVelocity(offsetY);
+    if (this.detailsShowing) {
+      this.panScale = 1;
+      this.panY = 0;
+      this.applyComposedTransform();
+      return;
+    }
+    if (offsetY >= 0) {
+      const progress = galleryDismissProgress(offsetY, this.viewH);
+      this.panY = offsetY;
+      this.panScale = galleryDismissScale(progress);
+      this.applyComposedTransform();
+      setGalleryPreviewDismissProgress(progress);
+      return;
+    }
+    const capped = Math.max(offsetY, -this.viewH * 0.36);
+    this.panY = capped * GALLERY_DETAILS_DRAG_GAIN;
+    this.panScale = 1;
+    this.applyComposedTransform();
+    setGalleryPreviewDismissProgress(Math.min(1, -offsetY / (GALLERY_DETAILS_DISTANCE_VP * 1.6)));
+  }
+
+  private springVerticalHome(): void {
+    this.verticalOffsetY = 0;
+    this.verticalLastTs = 0;
+    this.verticalVelocityY = 0;
+    const fromScale = this.panScale;
+    const fromY = this.panY;
+    if (Math.abs(fromScale - 1) < 0.002 && Math.abs(fromY) < 0.5) {
+      this.panScale = 1;
+      this.panY = 0;
+      this.applyComposedTransform();
+      setGalleryPreviewDismissProgress(0);
+      return;
+    }
+    this.cancelTransformAnimator();
+    try {
+      const animator = this.getUIContext().createAnimator({
+        duration: 350,
+        easing: GALLERY_VERTICAL_ANIMATOR_EASING,
+        delay: 0,
+        fill: 'forwards',
+        direction: 'normal',
+        iterations: 1,
+        begin: 0,
+        end: 1
+      });
+      animator.setExpectedFrameRateRange(GALLERY_ANIMATOR_FRAME_RATE);
+      animator.onFrame = (t: number): void => {
+        this.panScale = fromScale + (1 - fromScale) * t;
+        this.panY = fromY * (1 - t);
+        this.applyComposedTransform();
+      };
+      animator.onFinish = (): void => {
+        this.transformAnimator = undefined;
+        this.panScale = 1;
+        this.panY = 0;
+        this.applyComposedTransform();
+      };
+      this.transformAnimator = animator;
+      animator.play();
+    } catch (_e) {
+      this.panScale = 1;
+      this.panY = 0;
+      this.applyComposedTransform();
+    }
+    setGalleryPreviewDismissProgress(0);
+  }
+
+  private finishVerticalPan(cancelled: boolean): void {
+    this.verticalPanActive = false;
+    this.lockParentForVertical(false);
+    if (cancelled) {
+      this.springVerticalHome();
+      return;
+    }
+    if (this.detailsShowing) {
+      if (galleryShouldCloseDetails(this.verticalOffsetY, this.verticalVelocityY)) {
+        this.springVerticalHome();
+        this.onVerticalDismiss();
+        return;
+      }
+      this.springVerticalHome();
+      return;
+    }
+    if (galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH)) {
+      this.onVerticalDismiss();
+      return;
+    }
+    if (galleryShouldOpenDetails(this.verticalOffsetY, this.verticalVelocityY)) {
+      this.resetVerticalDragInstant();
+      this.onVerticalDetails();
+      return;
+    }
+    this.springVerticalHome();
+  }
+
+  private canAcceptVerticalPagePan(event: BaseGestureEvent): boolean {
+    if (!this.allowVerticalGesture || this.isImageZoomed() || this.pinchGestureRecognizing) {
+      return false;
+    }
+    const pan = event as PanGestureEvent;
+    if (galleryVerticalPanIsHorizontal(pan.offsetX, pan.offsetY)) {
+      return false;
+    }
+    return true;
+  }
+
+  private canAcceptVideoPagePan(event: BaseGestureEvent): boolean {
+    if (!this.canAcceptVerticalPagePan(event)) {
+      return false;
+    }
+    const pan = event as PanGestureEvent;
+    const fingers = pan.fingerList;
+    if (fingers !== undefined && fingers.length > 0 &&
+      galleryIsVideoBrightnessVolumeZone(fingers[0].localX, fingers[0].localY, this.viewW, this.viewH)) {
+      return false;
+    }
+    return true;
   }
 
   private readTouchPointWindow(ev: TouchEvent): GalleryPreviewTouchPoint | null {
@@ -854,7 +1099,6 @@ export struct GalleryPreviewSlide {
     }
     this.singleFingerPanActive = false;
     this.springBackIfNeeded();
-    this.onVerticalDragProgress(0);
   }
 
   private handleZoomedSingleFingerTouch(event: TouchEvent): void {
@@ -891,7 +1135,6 @@ export struct GalleryPreviewSlide {
       this.singleFingerPanLastY = pt.y;
       this.previewPanX = this.resist(this.previewPanX + dx * PAN_DRAG_GAIN, this.maxPanX());
       this.previewPanY = this.resist(this.previewPanY + dy * PAN_DRAG_GAIN, this.maxPanY());
-      this.onVerticalDragProgress(0);
       event.stopPropagation();
       return;
     }
@@ -905,6 +1148,7 @@ export struct GalleryPreviewSlide {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      Stack({ alignContent: Alignment.Center }) {
       if (this.isVideo()) {
         // 底层封面参与 sharedTransition；播放器等转场结束后再出现，避免全屏封面抢戏
         Stack({ alignContent: Alignment.Center }) {
@@ -930,14 +1174,43 @@ export struct GalleryPreviewSlide {
               active: this.active,
               bottomPadding: this.videoBottomPadding,
               maxResolutionP: this.videoMaxResolutionP(),
-              autoStart: this.autoStartVideo
+              autoStart: this.autoStartVideo,
+              detailsShowing: this.detailsShowing,
+              onDetailsTapDismiss: (): void => {
+                this.onVerticalDismiss();
+              }
             })
-              .width('100%')
-              .height('100%')
+              .width(this.heroFrameW())
+              .height(this.heroFrameH())
           }
         }
         .width('100%')
         .height('100%')
+        .priorityGesture(
+          PanGesture({
+            fingers: 1,
+            direction: PanDirection.Vertical,
+            distance: GALLERY_VERTICAL_PAN_DISTANCE
+          })
+            .onActionStart((): void => {
+              this.beginVerticalPan();
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.applyVerticalOffset(event.offsetY);
+            })
+            .onActionEnd((): void => {
+              this.finishVerticalPan(false);
+            })
+            .onActionCancel((): void => {
+              this.finishVerticalPan(true);
+            })
+        )
+        .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+          if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+            return GestureJudgeResult.CONTINUE;
+          }
+          return this.canAcceptVideoPagePan(event) ? GestureJudgeResult.CONTINUE : GestureJudgeResult.REJECT;
+        })
       } else {
         Column() {
           if (this.isLive()) {
@@ -1062,24 +1335,23 @@ export struct GalleryPreviewSlide {
               })
           )
         , this.isLive() ? GestureMask.Normal : GestureMask.IgnoreInternal)
-        // 未放大时仅处理纵向下拉关闭（保留 Swiper 左右切页）；
-        // 放大后切换为全向拖拽，支持单指左右平移。
+        // 未放大：纵向跟手（上滑详情 / 下滑退出），横向 REJECT 给 Swiper。
+        // 放大后全向拖拽平移。距离用 PanGestureOptions 动态切换。
         .gesture(
-          PanGesture({
-            fingers: 1,
-            direction: PanDirection.All,
-            distance: PREVIEW_ZOOM_PAN_DISTANCE
-          })
-            .onActionStart((): void => {
-              if (!this.isImageZoomed()) {
+          PanGesture(this.imagePanOptions)
+            .onActionStart((event: GestureEvent): void => {
+              if (this.isImageZoomed()) {
+                this.panBaseX = this.clampedPanX();
+                this.panBaseY = this.clampedPanY();
+                this.lastPanUpdateMs = 0;
                 return;
               }
-              this.panBaseX = this.clampedPanX();
-              this.panBaseY = this.clampedPanY();
-              this.lastPanUpdateMs = 0;
+              this.beginVerticalPan();
+              this.applyVerticalOffset(event.offsetY);
             })
             .onActionUpdate((event: GestureEvent): void => {
               if (!this.isImageZoomed()) {
+                this.applyVerticalOffset(event.offsetY);
                 return;
               }
               const now = Date.now();
@@ -1093,35 +1365,33 @@ export struct GalleryPreviewSlide {
               const nextY = this.panBaseY + event.offsetY * gain;
               this.previewPanX = this.resist(nextX, this.maxPanX());
               this.previewPanY = this.resist(nextY, this.maxPanY());
-              this.onVerticalDragProgress(0);
             })
             .onActionEnd((): void => {
               if (!this.isImageZoomed()) {
+                this.finishVerticalPan(false);
                 return;
               }
               this.springBackIfNeeded();
-              this.onVerticalDragProgress(0);
             })
-            // 与 Swiper/系统手势竞争时 Pan 可能被 Cancel 而不走 onActionEnd，残留 previewPanY 或 dismiss 进度会导致后续上下滑「失灵」
             .onActionCancel((): void => {
               if (!this.isImageZoomed()) {
+                this.finishVerticalPan(true);
                 return;
               }
               this.springBackIfNeeded();
-              this.onVerticalDragProgress(0);
             })
         )
-        .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+        .onGestureJudgeBegin((gestureInfo: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
           if (gestureInfo.type === GestureControl.GestureType.LONG_PRESS_GESTURE) {
             return this.pinchGestureRecognizing ? GestureJudgeResult.REJECT : GestureJudgeResult.CONTINUE;
           }
           if (gestureInfo.type !== GestureControl.GestureType.PAN_GESTURE) {
             return GestureJudgeResult.CONTINUE;
           }
-          if (galleryLiveIsPlaying(this.livePlayState)) {
-            return GestureJudgeResult.REJECT;
+          if (this.isImageZoomed()) {
+            return GestureJudgeResult.CONTINUE;
           }
-          return this.isImageZoomed() ? GestureJudgeResult.CONTINUE : GestureJudgeResult.REJECT;
+          return this.canAcceptVerticalPagePan(event) ? GestureJudgeResult.CONTINUE : GestureJudgeResult.REJECT;
         })
         .scale({
           x: this.previewScale,
@@ -1193,13 +1463,31 @@ export struct GalleryPreviewSlide {
         .hitTestBehavior(HitTestMode.Transparent)
       }
     }
+    .width('100%')
+    .height('100%')
+    .attributeModifier(this.transformUpdater)
+    }
     .width('100%').height('100%')
     .backgroundColor(this.slideBackgroundColor())
+    .attributeModifier(this.clipUpdater)
     .onAreaChange((_old, newArea): void => {
+      if (this.verticalPanActive || getGalleryPreviewDetailsSheetHeight() > 0.5) {
+        return;
+      }
       const w = newArea.width as number;
       const h = newArea.height as number;
-      if (w > 0) { this.viewW = w; }
-      if (h > 0) { this.viewH = h; }
+      let changed = false;
+      if (w > 0 && Math.abs(w - this.viewW) > 0.5) {
+        this.viewW = w;
+        changed = true;
+      }
+      if (h > 0 && Math.abs(h - this.viewH) > 0.5) {
+        this.viewH = h;
+        changed = true;
+      }
+      if (changed) {
+        this.applyComposedTransform();
+      }
     })
   }
 }

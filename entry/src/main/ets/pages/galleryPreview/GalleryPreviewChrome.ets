@@ -42,6 +42,12 @@ import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../commo
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
 import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
 import {
+  addGalleryPreviewDismissListener,
+  GalleryPreviewOpacityUpdater,
+  getGalleryPreviewDismissProgress,
+  removeGalleryPreviewDismissListener
+} from '../../album/GalleryPreviewVerticalGesture';
+import {
   GALLERY_PREVIEW_VIDEO_ACTIVE_KEY,
   GALLERY_PREVIEW_VIDEO_DOCK_EXPANDED_KEY,
   GALLERY_PREVIEW_VIDEO_MUTED_KEY,
@@ -56,19 +62,19 @@ const GALLERY_PREVIEW_VIDEO_PLAYING_DOCK_WIDTH_VP: number = 372;
 @Component
 export struct GalleryPreviewChrome {
   /** 自己订阅显隐，父页切换工具栏时不会整页重绘 Swiper */
-  @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private toolbarVisible: boolean = true;
+  @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) @Watch('onChromeFadeInputsChanged')
+  private toolbarVisible: boolean = true;
   @StorageProp(GALLERY_PREVIEW_VIDEO_ACTIVE_KEY) private videoActive: boolean = false;
   @StorageProp(GALLERY_PREVIEW_VIDEO_DOCK_EXPANDED_KEY) private videoDockExpanded: boolean = false;
   @StorageProp(GALLERY_PREVIEW_VIDEO_PLAYING_KEY) private videoPlaying: boolean = false;
   @StorageProp(GALLERY_PREVIEW_VIDEO_MUTED_KEY) private videoMuted: boolean = false;
-  @Prop dismissDragProgress: number = 0;
   @Prop titleText: string = '';
   @Prop toolbarBg: string = '#FF000000';
   @Prop buttonBg: string = '#33000000';
   @Prop fgColor: ResourceColor = Color.White;
   @Prop showOriginalAction: boolean = false;
   @Prop originalShowing: boolean = false;
-  @Prop detailsShowing: boolean = false;
+  @Prop @Watch('onChromeFadeInputsChanged') detailsShowing: boolean = false;
   @Prop sharing: boolean = false;
   @Prop downloading: boolean = false;
   @Prop downloadProgressPct: number = 0;
@@ -90,16 +96,41 @@ export struct GalleryPreviewChrome {
   onFavorite: () => void = () => {};
   onDelete: () => void = () => {};
   onBottomBarHeightChange: (height: number) => void = (_: number) => {};
+  private chromeOpacityUpdater: GalleryPreviewOpacityUpdater = new GalleryPreviewOpacityUpdater();
+  private readonly onDismissProgress = (_progress: number): void => {
+    this.syncChromeOpacity();
+  };
+
+  aboutToAppear(): void {
+    addGalleryPreviewDismissListener(this.onDismissProgress);
+    this.syncChromeOpacity();
+  }
+
+  aboutToDisappear(): void {
+    removeGalleryPreviewDismissListener(this.onDismissProgress);
+  }
+
+  onChromeFadeInputsChanged(): void {
+    this.syncChromeOpacity();
+  }
 
   private dimmedColor(): ResourceColor {
     return this.darkMaterial ? '#80FFFFFF' : '#805B6675';
   }
 
+  private chromeInteractive(): boolean {
+    return this.toolbarVisible && !this.detailsShowing;
+  }
+
   private chromeOpacity(): number {
-    if (!this.toolbarVisible) {
+    if (!this.chromeInteractive()) {
       return 0;
     }
-    return galleryPreviewToolbarAlpha(this.dismissDragProgress);
+    return galleryPreviewToolbarAlpha(getGalleryPreviewDismissProgress());
+  }
+
+  private syncChromeOpacity(): void {
+    this.chromeOpacityUpdater.apply(this.chromeOpacity());
   }
 
   private normalizedDownloadProgress(): number {
@@ -557,7 +588,7 @@ export struct GalleryPreviewChrome {
         }
         .width('100%')
         .padding({ top: this.topSafeInsetVp })
-        .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
+        .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Default : HitTestMode.None)
       }
       .width('100%')
       .height('100%')
@@ -577,7 +608,7 @@ export struct GalleryPreviewChrome {
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
-        .hitTestBehavior(this.toolbarVisible ? HitTestMode.Default : HitTestMode.None)
+        .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Default : HitTestMode.None)
       }
       .width('100%')
       .height('100%')
@@ -587,7 +618,6 @@ export struct GalleryPreviewChrome {
     .width('100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.Transparent)
-    .opacity(this.chromeOpacity())
-    .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
+    .attributeModifier(this.chromeOpacityUpdater)
   }
 }

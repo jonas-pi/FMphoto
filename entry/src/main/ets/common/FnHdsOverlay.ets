@@ -89,6 +89,23 @@ export function fnHdsFitContentSheetOptions(title: string, onDisappear: () => vo
 }
 
 /**
+ * 图库详情半模态：官方 BOTTOM + MEDIUM/LARGE 档位跟手，
+ * 高度变化回调用于把预览缩进剩余区域。
+ * 文档：https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-sheet-page
+ */
+export function fnHdsGalleryDetailsSheetOptions(
+  title: ResourceStr,
+  onDisappear: () => void,
+  onHeightDidChange: (heightPx: number) => void
+): SheetOptions {
+  const options = fnHdsSheetOptions(title, onDisappear, SheetSize.MEDIUM);
+  options.detents = [SheetSize.MEDIUM, SheetSize.LARGE];
+  options.enableOutsideInteractive = true;
+  options.onHeightDidChange = onHeightDidChange;
+  return options;
+}
+
+/**
  * SaveButton 专用半模态：实底、无模糊/材质，避免安全控件授权失败。
  */
 export function fnHdsSaveButtonSheetOptions(title: string, onDisappear: () => void): SheetOptions {

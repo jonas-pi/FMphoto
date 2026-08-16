@@ -83,6 +83,9 @@ export struct GalleryAuthVideo {
   @Prop maxResolutionP: number = 1080;
   /** 幻灯片等场景需要进页即起播；普通预览保持封面等待点击 */
   @Prop autoStart: boolean = false;
+  /** 详情半模态展开时，单击剩余区优先收起详情，不切工具栏 */
+  @Prop detailsShowing: boolean = false;
+  onDetailsTapDismiss: () => void = () => {};
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   /** 仅在用户点击播放（或幻灯片自动起播）后转圈 */
   @State private videoLoading: boolean = false;
@@ -741,6 +744,10 @@ export struct GalleryAuthVideo {
   }
 
   private onVideoSingleTap(): void {
+    if (this.detailsShowing) {
+      this.onDetailsTapDismiss();
+      return;
+    }
     const showing = this.previewToolbarVisible;
     setGalleryPreviewToolbarVisible(!showing);
     if (!showing && this.isPlaying) {

@@ -8,11 +8,25 @@
  * Cursor/VS Code 静态分析器不包含 HMS SDK 路径，linter 会误报 MODULE_NOT_FOUND，
  * 这属 IDE 配置限制，不影响实际构建。
  */
-import { UIContext, window } from '@kit.ArkUI';
+import { AnimatorResult, display, UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
+import {
+  addGalleryPreviewDismissListener,
+  GALLERY_ANIMATOR_FRAME_RATE,
+  GALLERY_SHEET_ANIMATOR_EASING,
+  galleryDetailsMediumHeightVp,
+  GalleryPreviewOpacityUpdater,
+  getGalleryPreviewDetailsSheetHeight,
+  getGalleryPreviewDismissProgress,
+  quietFinishAnimator,
+  removeGalleryPreviewDismissListener,
+  resetGalleryPreviewDetailsFit,
+  setGalleryPreviewDetailsSheetHeight,
+  setGalleryPreviewDismissProgress
+} from '../album/GalleryPreviewVerticalGesture';
 import {
   GALLERY_SCRIM_FADE_DELAY,
   GALLERY_SCRIM_FADE_DURATION,
@@ -40,7 +54,7 @@ import {
   FN_SYSTEM_TOP_INSET_VP_KEY,
   fnPublishSystemAvoidArea
 } from '../common/FnSystemAvoidArea';
-import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions, fnHdsSheetOptions } from '../common/FnHdsOverlay';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsGalleryDetailsSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
 import {
   FN_FLOATING_TOP_TOTAL_HEIGHT_VP,
   fnBottomDockBottomGap,
@@ -95,7 +109,6 @@ struct GalleryPreview {
   @State private pinchGestureActive: boolean = false;
   @State private previewZoomLocked: boolean = false;
   @State private totalCount: number = 0;
-  @State private dismissDragProgress: number = 0;
   /** 预览背景遮罩：展开快结束时再淡入，收回快结束时再淡出 */
   @State private scrimOpacity: number = 0;
   @State private loadOriginalToken: number = 0;
@@ -111,6 +124,10 @@ struct GalleryPreview {
   @State private previewSheetVisible: boolean = false;
   @State private deleting: boolean = false;
   @State private detailsVisible: boolean = false;
+  @State private previewViewportH: number = 780;
+  /** 进出场动画期间忽略终值回调，避免面板到位后预览跳变 */
+  private detailsSheetSettled: boolean = false;
+  private sheetHeightAnimator: AnimatorResult | undefined = undefined;
   @State private detailsLoading: boolean = false;
   @State private detailsError: string = '';
   @State private detailsData: GalleryPhotoDetailData | undefined = undefined;
@@ -165,6 +182,10 @@ struct GalleryPreview {
       this.completeLivePhotoSave('cancel');
       return true;
     }
+    if (this.detailsVisible || this.previewSheetVisible) {
+      this.closeDetailsPanel();
+      return true;
+    }
     this.navigateBack();
     return true;
   }
@@ -192,6 +213,7 @@ struct GalleryPreview {
     this.totalCount = this.previewItems.length;
     this.swiperIndex = GalleryPreviewNavStore.startIndex;
     this.isDarkTheme = this.colorMode === 1;
+    this.initPreviewViewportH();
     const routeParams = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (routeParams !== undefined && routeParams['idx'] !== undefined) {
       const n = Number(routeParams['idx']);
@@ -331,6 +353,11 @@ struct GalleryPreview {
     this.clearSlideshowTimer();
     this.clearChromeRevealTimer();
     this.detailsVisible = false;
+    this.previewSheetVisible = false;
+    this.detailsSheetSettled = false;
+    this.cancelSheetHeightAnimator();
+    resetGalleryPreviewDetailsFit();
+    setGalleryPreviewDismissProgress(0);
     this.detailsLoading = false;
     this.detailsError = '';
     this.detailsData = undefined;
@@ -444,10 +471,6 @@ struct GalleryPreview {
     });
   }
 
-  private scrimVisualOpacity(): number {
-    return Math.max(0, Math.min(1, this.scrimOpacity * (1 - this.dismissDragProgress)));
-  }
-
   private currentItem(): GalleryListItem | null {
     if (this.totalCount === 0 || this.swiperIndex >= this.totalCount) {
       return null;
@@ -528,8 +551,88 @@ struct GalleryPreview {
     return '照片详情';
   }
 
-  private previewSheetHeight(): Length {
-    return '50%';
+  private initPreviewViewportH(): void {
+    try {
+      const d = display.getDefaultDisplaySync();
+      const h = this.getUIContext().px2vp(d.height);
+      if (h > 1) {
+        this.previewViewportH = h;
+      }
+    } catch (_e) {
+    }
+  }
+
+  private cancelSheetHeightAnimator(): void {
+    quietFinishAnimator(this.sheetHeightAnimator);
+    this.sheetHeightAnimator = undefined;
+  }
+
+  private animateDetailsSheetHeight(targetVp: number): void {
+    const from = getGalleryPreviewDetailsSheetHeight();
+    const to = Math.max(0, targetVp);
+    if (Math.abs(from - to) < 0.5) {
+      setGalleryPreviewDetailsSheetHeight(to);
+      return;
+    }
+    this.cancelSheetHeightAnimator();
+    try {
+      const animator = this.getUIContext().createAnimator({
+        duration: 400,
+        easing: GALLERY_SHEET_ANIMATOR_EASING,
+        delay: 0,
+        fill: 'forwards',
+        direction: 'normal',
+        iterations: 1,
+        begin: from,
+        end: to
+      });
+      animator.setExpectedFrameRateRange(GALLERY_ANIMATOR_FRAME_RATE);
+      animator.onFrame = (value: number): void => {
+        setGalleryPreviewDetailsSheetHeight(value);
+      };
+      animator.onFinish = (): void => {
+        this.sheetHeightAnimator = undefined;
+        setGalleryPreviewDetailsSheetHeight(to);
+      };
+      this.sheetHeightAnimator = animator;
+      animator.play();
+    } catch (_e) {
+      setGalleryPreviewDetailsSheetHeight(to);
+    }
+  }
+
+  private previewDetailsSheetOptions(): SheetOptions {
+    const options = fnHdsGalleryDetailsSheetOptions(
+      this.previewSheetTitle(),
+      (): void => {
+        this.detailsSheetSettled = false;
+        this.closeDetailsPanel();
+      },
+      (heightPx: number): void => {
+        this.onDetailsSheetHeightDidChange(heightPx);
+      }
+    );
+    options.onWillAppear = (): void => {
+      this.detailsSheetSettled = false;
+      this.animateDetailsSheetHeight(galleryDetailsMediumHeightVp(this.previewViewportH));
+    };
+    options.onAppear = (): void => {
+      this.detailsSheetSettled = true;
+    };
+    options.onWillDisappear = (): void => {
+      this.detailsSheetSettled = false;
+      this.animateDetailsSheetHeight(0);
+    };
+    return options;
+  }
+
+  private onDetailsSheetHeightDidChange(heightPx: number): void {
+    if (!this.detailsSheetSettled) {
+      return;
+    }
+    const vp = Math.max(0, this.getUIContext().px2vp(heightPx));
+    this.cancelSheetHeightAnimator();
+    setGalleryPreviewDetailsSheetHeight(vp);
   }
 
   private toggleOriginalPreview(): void {
@@ -785,12 +888,10 @@ struct GalleryPreview {
 
   build() {
     Stack() {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(this.pageBg())
-        .opacity(this.scrimVisualOpacity())
-        .hitTestBehavior(HitTestMode.None)
+      GalleryPreviewScrim({
+        color: this.pageBg(),
+        baseOpacity: this.scrimOpacity
+      })
 
       if (this.totalCount > 0) {
         Swiper(this.swiperCtrl) {
@@ -804,6 +905,8 @@ struct GalleryPreview {
               enableSharedTransition: !this.slideshowEnabled,
               autoStartVideo: this.slideshowEnabled,
               videoBottomPadding: this.videoControlsBottomPadding(),
+              detailsShowing: this.detailsVisible,
+              allowVerticalGesture: !this.slideshowEnabled,
               onZoomLockChange: (locked: boolean): void => {
                 this.runScopedTask((): void => {
                   this.previewZoomLocked = locked;
@@ -823,10 +926,16 @@ struct GalleryPreview {
                 }
                 this.swiperCtrl.changeIndex(targetIdx, true);
               },
-              onVerticalDragProgress: (p: number): void => {
-                this.dismissDragProgress = Math.max(0, Math.min(1, p));
+              onVerticalDismiss: (): void => {
+                if (this.detailsVisible) {
+                  this.closeDetailsPanel();
+                  return;
+                }
+                this.navigateBack();
               },
-              onVerticalDismiss: (): void => { this.navigateBack(); },
+              onVerticalDetails: (): void => {
+                this.openDetailsPanel();
+              },
               onOriginalLoaded: (): void => {
                 if (this.originalPreviewEnabled) {
                   this.originalShowing = true;
@@ -854,6 +963,10 @@ struct GalleryPreview {
         .backgroundColor(Color.Transparent)
         .id('gallery_preview_swiper')
         .onClick((): void => {
+          if (this.detailsVisible) {
+            this.closeDetailsPanel();
+            return;
+          }
           if (this.currentItemIsVideo()) {
             return;
           }
@@ -887,7 +1000,7 @@ struct GalleryPreview {
           this.pinchGestureActive = false;
           this.previewZoomLocked = false;
           this.syncSwiperLocked();
-          this.dismissDragProgress = 0;
+          setGalleryPreviewDismissProgress(0);
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
           setGalleryPreviewToolbarVisible(true);
@@ -907,9 +1020,18 @@ struct GalleryPreview {
             }
           }
           void this.refreshCollectStateFromGetOne(nextId);
+          if (this.detailsVisible) {
+            this.openDetailsPanel();
+          }
           if (this.slideshowEnabled) {
             this.armSlideshowTimer();
             this.maybePrefetchSlideshowItems();
+          }
+        })
+        .onAreaChange((_old, area): void => {
+          const h = area.height as number;
+          if (h > 1 && Math.abs(h - this.previewViewportH) > 0.5) {
+            this.previewViewportH = h;
           }
         })
       } else {
@@ -920,7 +1042,6 @@ struct GalleryPreview {
       }
 
       GalleryPreviewChrome({
-        dismissDragProgress: this.dismissDragProgress,
         titleText: this.titleCounter(),
         toolbarBg: this.toolbarBg(),
         buttonBg: this.btnBg(),
@@ -995,13 +1116,7 @@ struct GalleryPreview {
     .height('100%')
     .backgroundColor(Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, fnHdsSheetOptions(
-      this.previewSheetTitle(),
-      (): void => {
-        this.closeDetailsPanel();
-      },
-      this.previewSheetHeight()
-    ))
+    .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, this.previewDetailsSheetOptions())
   }
 
   pageTransition(): void {
@@ -1020,5 +1135,41 @@ struct GalleryPreview {
         curve: GALLERY_SHARED_TRANSITION_CURVE
       })
     }
+  }
+}
+
+@Component
+struct GalleryPreviewScrim {
+  @Prop color: ResourceColor = Color.Black;
+  @Prop @Watch('onScrimInputsChanged') baseOpacity: number = 0;
+  private opacityUpdater: GalleryPreviewOpacityUpdater = new GalleryPreviewOpacityUpdater();
+  private readonly onDismissProgress = (_progress: number): void => {
+    this.applyScrimOpacity();
+  };
+
+  aboutToAppear(): void {
+    addGalleryPreviewDismissListener(this.onDismissProgress);
+    this.applyScrimOpacity();
+  }
+
+  aboutToDisappear(): void {
+    removeGalleryPreviewDismissListener(this.onDismissProgress);
+  }
+
+  onScrimInputsChanged(): void {
+    this.applyScrimOpacity();
+  }
+
+  private applyScrimOpacity(): void {
+    this.opacityUpdater.apply(this.baseOpacity * (1 - getGalleryPreviewDismissProgress()));
+  }
+
+  build() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.color)
+      .attributeModifier(this.opacityUpdater)
+      .hitTestBehavior(HitTestMode.None)
   }
 }
