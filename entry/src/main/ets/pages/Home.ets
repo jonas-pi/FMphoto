@@ -3,6 +3,8 @@ import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import { BlurStrategy, DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { retargetGalleryAfterEndpointSwitch } from '../album/GalleryEndpointRetarget';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
+import { markPendingMediaWriteAuthorized } from '../album/GalleryBatchDownload';
+import { PrivilegeDownloadButton } from '../album/livephoto/PrivilegeDownloadButton';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
 import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
@@ -701,6 +703,7 @@ struct Home {
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onHomeEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   @State private gallerySelectionDockActive: boolean = false;
+  @State private gallerySelectionDockPrivilege: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   private gallerySelectionDockDownloadAction: () => void = () => {};
   private gallerySelectionDockDeleteAction: () => void = () => {};
@@ -917,10 +920,12 @@ struct Home {
   private onGallerySelectionDockStateChange(
     active: boolean,
     onDownload: () => void,
-    onDelete: () => void
+    onDelete: () => void,
+    privilegeDownload: boolean
   ): void {
     this.gallerySelectionDockDownloadAction = onDownload;
     this.gallerySelectionDockDeleteAction = onDelete;
+    this.gallerySelectionDockPrivilege = privilegeDownload;
     this.clearGallerySelectionDockTimer();
     this.gallerySelectionDockActive = active;
   }
@@ -1223,6 +1228,35 @@ struct Home {
   }
 
   @Builder
+  private floatingDockSelectionPrivilege() {
+    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+      Column() {
+        PrivilegeDownloadButton({
+          allowAuthorize: true,
+          onAuthorized: (): void => {
+            markPendingMediaWriteAuthorized();
+            this.gallerySelectionDockDownloadAction();
+          }
+        })
+      }
+      .layoutWeight(1)
+      .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+
+      this.floatingDockSelectionFallbackAction(1, $r('sys.symbol.trash'), '\u79fb\u5165\u56de\u6536\u7ad9', '#E11D48')
+    }
+    .width(FN_SELECTION_DOCK_WIDTH_VP)
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+    .backgroundColor(this.dockMaterialBackgroundColor())
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor(this.dockMaterialBorderColor())
+    .shadow({ radius: 20, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
+  }
+
+  @Builder
   private floatingDockSelectionFallbackTabs() {
     Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
       this.floatingDockSelectionFallbackAction(0, $r('sys.symbol.download'), '\u4e0b\u8f7d', $r('app.color.brand_primary'))
@@ -1335,7 +1369,9 @@ struct Home {
   private renderBottomDock() {
     if (this.gallerySelectionDockActive) {
       Row() {
-        if (this.canUseHds()) {
+        if (this.gallerySelectionDockPrivilege) {
+          this.floatingDockSelectionPrivilege()
+        } else if (this.canUseHds()) {
           this.floatingDockSelectionHdsTabs()
         } else {
           this.floatingDockSelectionFallbackTabs()
@@ -1432,8 +1468,8 @@ struct Home {
               onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
                 this.hideHomeBottomDock = hiddenBottomNav;
               },
-              onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void): void => {
-                this.onGallerySelectionDockStateChange(active, onDownload, onDelete);
+              onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void, privilegeDownload: boolean): void => {
+                this.onGallerySelectionDockStateChange(active, onDownload, onDelete, privilegeDownload);
               }
             })
               .width('100%')

@@ -1,7 +1,8 @@
 /**
- * 厂商单文件动图拆分：Motion Photo / Micro Video / 简单 livp(ZIP STORE)。
+ * 厂商单文件动图拆分：Motion Photo / Micro Video / livp(ZIP STORE 或 DEFLATE)。
  * 仅在已判定为实况但缺少独立 videoUrl 时调用。
  */
+import { zlib } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 
 const FTYP_0: number = 0x66;
@@ -247,21 +248,154 @@ function splitAppendedVideo(bytes: Uint8Array): SplitLivePhotoResult | undefined
 }
 
 /**
- * 从单文件 buffer 拆出静帧 + 短视频。失败返回 undefined。
+ * 是否为 ZIP 容器（含 .livp）。压缩条目需走 zlib，不可当拼接 MP4 扫。
+ */
+export function isZipLiveContainer(buffer: ArrayBuffer, fileExt: string): boolean {
+  if (buffer.byteLength < 4) {
+    return false;
+  }
+  if (fileExt.toLowerCase() === 'livp') {
+    return true;
+  }
+  return looksLikeZip(new Uint8Array(buffer));
+}
+
+/**
+ * 从单文件 buffer 拆出静帧 + 短视频。ZIP 仅处理 STORE；DEFLATE 返回 undefined。
  */
 export function splitEmbeddedLivePhoto(buffer: ArrayBuffer, fileExt: string): SplitLivePhotoResult | undefined {
   if (buffer.byteLength < 128) {
     return undefined;
   }
   const bytes = new Uint8Array(buffer);
-  const ext = fileExt.toLowerCase();
-  if (ext === 'livp' || looksLikeZip(bytes)) {
-    const zipSplit = splitZipStoredLivp(bytes);
-    if (zipSplit !== undefined) {
-      return zipSplit;
-    }
+  if (isZipLiveContainer(buffer, fileExt)) {
+    return splitZipStoredLivp(bytes);
   }
   return splitAppendedVideo(bytes);
+}
+
+function extOfName(name: string): string {
+  const base = name.replace(/\\/g, '/');
+  const slash = base.lastIndexOf('/');
+  const file = slash >= 0 ? base.substring(slash + 1) : base;
+  return extFromZipName(file);
+}
+
+async function removeDirTree(dirPath: string): Promise<void> {
+  if (dirPath.length === 0) {
+    return;
+  }
+  try {
+    const names = await fileIo.listFile(dirPath);
+    for (let i = 0; i < names.length; i++) {
+      const child = `${dirPath}/${names[i]}`;
+      try {
+        const st = await fileIo.stat(child);
+        if (st.isDirectory()) {
+          await removeDirTree(child);
+        } else {
+          await fileIo.unlink(child);
+        }
+      } catch (_e) {
+      }
+    }
+    await fileIo.rmdir(dirPath);
+  } catch (_e) {
+  }
+}
+
+export class UnzippedLivePaths {
+  imagePath: string = '';
+  videoPath: string = '';
+}
+
+async function collectUnzippedFiles(dirPath: string, into: string[], depth: number): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = await fileIo.listFile(dirPath);
+  } catch (_e) {
+    return;
+  }
+  for (let i = 0; i < names.length; i++) {
+    const full = `${dirPath}/${names[i]}`;
+    try {
+      const st = await fileIo.stat(full);
+      if (st.isDirectory()) {
+        if (depth < 2) {
+          await collectUnzippedFiles(full, into, depth + 1);
+        }
+      } else {
+        into.push(full);
+      }
+    } catch (_e) {
+    }
+  }
+}
+
+async function findUnzippedLivePaths(outDir: string): Promise<UnzippedLivePaths | undefined> {
+  const files: string[] = [];
+  await collectUnzippedFiles(outDir, files, 0);
+  let imagePath = '';
+  let videoPath = '';
+  for (let i = 0; i < files.length; i++) {
+    const ext = extOfName(files[i]);
+    if (imagePath.length === 0 && isImageExt(ext)) {
+      imagePath = files[i];
+    } else if (videoPath.length === 0 && isVideoExt(ext)) {
+      videoPath = files[i];
+    }
+    if (imagePath.length > 0 && videoPath.length > 0) {
+      break;
+    }
+  }
+  if (imagePath.length === 0 || videoPath.length === 0) {
+    return undefined;
+  }
+  const found = new UnzippedLivePaths();
+  found.imagePath = imagePath;
+  found.videoPath = videoPath;
+  return found;
+}
+
+/**
+ * 用系统 zlib 解压 .livp/.zip（含 DEFLATE），返回解压目录中的图/视频路径。
+ * zipPath 必须以 .zip 结尾。
+ */
+export async function unzipLivpArchive(zipPath: string, outDir: string): Promise<UnzippedLivePaths | undefined> {
+  if (zipPath.length === 0 || outDir.length === 0) {
+    return undefined;
+  }
+  try {
+    try {
+      await fileIo.mkdir(outDir);
+    } catch (_e) {
+    }
+    await zlib.decompressFile(zipPath, outDir);
+    const found = await findUnzippedLivePaths(outDir);
+    if (found === undefined) {
+      await removeDirTree(outDir);
+      return undefined;
+    }
+    return found;
+  } catch (_e) {
+    await removeDirTree(outDir);
+    return undefined;
+  }
+}
+
+export async function removeLiveUnzipDir(dirPath: string): Promise<void> {
+  await removeDirTree(dirPath);
+}
+
+export function extFromFilePath(path: string): string {
+  const norm = path.replace(/\\/g, '/');
+  const slash = norm.lastIndexOf('/');
+  const name = slash >= 0 ? norm.substring(slash + 1) : norm;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot >= name.length - 1) {
+    return '';
+  }
+  return name.substring(dot + 1).toLowerCase();
 }
 
 export async function writeBufferToFile(path: string, buffer: ArrayBuffer): Promise<boolean> {

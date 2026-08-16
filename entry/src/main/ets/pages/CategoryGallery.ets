@@ -15,7 +15,8 @@ import {
   thumbIdentityOfItem,
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
-import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
+import { gallerySelectionContainsLive, isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
+import { galleryItemsMatchingSelectedIds } from '../album/GalleryBatchDownload';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
@@ -121,6 +122,7 @@ struct CategoryGallery {
   @State private cgScrollEnabled: boolean = true;
   @State private cgBatchDeleting: boolean = false;
   @State private cgBatchDownloading: boolean = false;
+  @State private selectionHasLivePhoto: boolean = false;
   @State private cgThumbLoadingPaused: boolean = false;
   @State private cgBackgroundLoading: boolean = false;
   @State private moreMenuExpanded: boolean = false;
@@ -384,6 +386,8 @@ struct CategoryGallery {
 
   private setSelectedIdsState(value: string[]): void {
     this.selectedIds = value;
+    const selected = galleryItemsMatchingSelectedIds(this.flatItems, this.selectedIds);
+    this.selectionHasLivePhoto = gallerySelectionContainsLive(selected);
     galleryAlbumSyncSelectionVisualState(this.selectionMode, this.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
     if (this.selectedCount !== value.length) {
       this.selectedCount = value.length;
@@ -1301,6 +1305,7 @@ struct CategoryGallery {
                   GalleryAlbumBatchActionBar({
                     downloading: this.cgBatchDownloading,
                     deleting: this.cgBatchDeleting,
+                    privilegeDownload: this.selectionHasLivePhoto,
                     onDownload: (): void => {
                       void this.confirmCgBatchDownload();
                     },

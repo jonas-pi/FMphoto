@@ -1,6 +1,6 @@
 /**
  * 批量下载 NAS 图库媒体到本机相册。
- * 保留原有的批量选择与下载质量逻辑，只把最终保存出口改成系统相册保存确认。
+ * 普通图/视频走系统相册保存确认；实况在 SaveButton 授权下写成动态照片。
  */
 import { common } from '@kit.AbilityKit';
 import { fileIo, fileUri as fileUriUtil } from '@kit.CoreFileKit';
@@ -13,7 +13,12 @@ import { GalleryListItem } from '../model/FnApiTypes';
 import { copyGalleryUriContentToAlbumUri } from './GalleryAlbumSaveToAlbum';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from './GalleryAlbumCommon';
 import { isLivePhotoItem } from './livephoto/LivePhotoDetect';
-import { createMovingPhotoAsset } from './livephoto/LivePhotoSaveOps';
+import {
+  appendStillAndVideoToPrepare,
+  createMovingPhotoAsset,
+  sanitizeMediaTitle,
+  saveSandboxAssetWithPrivilege
+} from './livephoto/LivePhotoSaveOps';
 import { materializeLivePhotoPair, unlinkLivePhotoPair } from './livephoto/LivePhotoSandbox';
 
 function itemHasOriginalPhoto(it: GalleryListItem): boolean {
@@ -43,20 +48,9 @@ function suggestedSaveExt(it: GalleryListItem): string {
 
 function suggestedBaseName(it: GalleryListItem, idx: number): string {
   const raw = it.filename ?? it.name ?? it.title ?? '';
-  const trimmed = raw.trim();
-  if (trimmed.length > 0) {
-    const dot = trimmed.lastIndexOf('.');
-    const base = dot > 0 ? trimmed.substring(0, dot) : trimmed;
-    const safe = base.replace(/[\\/:*?"<>|]/g, '_');
-    if (safe.length > 0) {
-      return safe.length > 80 ? safe.substring(0, 80) : safe;
-    }
-  }
   const id = it.id !== undefined && it.id !== null ? String(it.id).trim() : '';
-  if (id.length > 0) {
-    return `nas_${id}`;
-  }
-  return `nas_${idx}_${Date.now()}`;
+  const fallback = id.length > 0 ? `nas_${id}` : `nas_${idx}_${Date.now()}`;
+  return sanitizeMediaTitle(raw, fallback);
 }
 
 async function copyPreparedFilesToAlbum(
@@ -114,19 +108,51 @@ export function galleryItemsMatchingSelectedIds(
   return out;
 }
 
+function liveSaveSummary(movingCount: number, pairCount: number): string {
+  const parts: string[] = [];
+  if (movingCount > 0) {
+    parts.push(`${movingCount} 张动态照片`);
+  }
+  if (pairCount > 0) {
+    parts.push(`${pairCount} 组封面和视频`);
+  }
+  return parts.join('、');
+}
+
+let pendingMediaWriteAuthorized: boolean = false;
+
+/** SaveButton 点击成功后、真正开始批量下载前标记特权写入。 */
+export function markPendingMediaWriteAuthorized(): void {
+  pendingMediaWriteAuthorized = true;
+}
+
+function consumePendingMediaWriteAuthorized(): boolean {
+  const v: boolean = pendingMediaWriteAuthorized;
+  pendingMediaWriteAuthorized = false;
+  return v;
+}
+
 /**
- * 批量下载：先拉到应用缓存，再弹系统相册保存确认。
- * 图片仍按原逻辑可选原图/缩略图，视频始终下载原文件。
+ * 批量下载：先拉到应用缓存，再写入相册。
+ * mediaWriteAuthorized 为 true 时，实况写成系统动态照片。
  */
 export function runBatchDownloadGalleryItemsInBackground(
   baseUrl: string,
   items: GalleryListItem[],
   hostContext: common.UIAbilityContext,
   toastMsg: (msg: string) => void,
-  askBatchImageQuality: () => Promise<'original' | 'thumb' | 'cancel'>
+  askBatchImageQuality: () => Promise<'original' | 'thumb' | 'cancel'>,
+  mediaWriteAuthorized: boolean = false
 ): void {
   void (async (): Promise<void> => {
-    await runBatchDownloadGalleryItems(baseUrl, items, hostContext, toastMsg, askBatchImageQuality);
+    await runBatchDownloadGalleryItems(
+      baseUrl,
+      items,
+      hostContext,
+      toastMsg,
+      askBatchImageQuality,
+      mediaWriteAuthorized
+    );
   })();
 }
 
@@ -135,7 +161,8 @@ export async function runBatchDownloadGalleryItems(
   items: GalleryListItem[],
   hostContext: common.UIAbilityContext,
   toastMsg: (msg: string) => void,
-  askBatchImageQuality: () => Promise<'original' | 'thumb' | 'cancel'>
+  askBatchImageQuality: () => Promise<'original' | 'thumb' | 'cancel'>,
+  mediaWriteAuthorized: boolean = false
 ): Promise<void> {
   if (items.length === 0) {
     toastMsg('没有可下载的项目');
@@ -146,6 +173,7 @@ export async function runBatchDownloadGalleryItems(
     toastMsg('未登录');
     return;
   }
+  const writeAuthorized = mediaWriteAuthorized || consumePendingMediaWriteAuthorized();
 
   let useOriginalForImages = false;
   let anyOriginal = false;
@@ -166,12 +194,13 @@ export async function runBatchDownloadGalleryItems(
   BackgroundKeepAliveController.beginDataTransfer(hostContext, 'batch-download');
   const label = fnTransferDirectionLabel(FnTransferDirection.DOWNLOAD);
   const taskId = FnTransferQueueStore.begin(FnTransferDirection.DOWNLOAD, label, items.length);
-  try {
   const preparedFileUris: string[] = [];
   const preparedConfigs: photoAccessHelper.PhotoCreationConfig[] = [];
   const tempPaths: string[] = [];
-  let liveSavedCount = 0;
-  let liveFallbackCount = 0;
+  let livePairCount = 0;
+  let liveMovingCount = 0;
+  let privilegeSavedCount = 0;
+  try {
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     FnTransferQueueStore.update(taskId, i + 1, suggestedBaseName(it, i));
@@ -179,22 +208,37 @@ export async function runBatchDownloadGalleryItems(
     if (!isVideo && isLivePhotoItem(it)) {
       const pair = await materializeLivePhotoPair(hostContext, baseUrl, it, useOriginalForImages);
       if (pair !== undefined) {
-        const moved = await createMovingPhotoAsset(hostContext, pair, suggestedBaseName(it, i));
-        if (moved) {
-          liveSavedCount++;
+        const liveTitle = suggestedBaseName(it, i);
+        if (writeAuthorized && await createMovingPhotoAsset(hostContext, pair, liveTitle)) {
+          liveMovingCount++;
           await unlinkLivePhotoPair(pair);
           continue;
         }
-        liveFallbackCount++;
+        if (writeAuthorized) {
+          const imgOk = await saveSandboxAssetWithPrivilege(
+            hostContext,
+            pair.imageUri,
+            liveTitle,
+            suggestedSaveExt(it),
+            photoAccessHelper.PhotoType.IMAGE
+          );
+          const vidOk = await saveSandboxAssetWithPrivilege(
+            hostContext,
+            pair.videoUri,
+            `${liveTitle}_live`,
+            'mp4',
+            photoAccessHelper.PhotoType.VIDEO
+          );
+          if (imgOk && vidOk) {
+            livePairCount++;
+            await unlinkLivePhotoPair(pair);
+            continue;
+          }
+        }
+        appendStillAndVideoToPrepare(pair, liveTitle, preparedFileUris, preparedConfigs);
         tempPaths.push(pair.imagePath);
         tempPaths.push(pair.videoPath);
-        preparedFileUris.push(pair.imageUri);
-        const imgExt = itemFileExt(it);
-        preparedConfigs.push({
-          title: suggestedBaseName(it, i),
-          fileNameExtension: imgExt.length > 0 ? imgExt : 'jpg',
-          photoType: photoAccessHelper.PhotoType.IMAGE
-        });
+        livePairCount++;
         continue;
       }
     }
@@ -212,15 +256,26 @@ export async function runBatchDownloadGalleryItems(
 
     const ext = suggestedSaveExt(it);
     const tempPath = `${hostContext.cacheDir}/batch_download_${Date.now()}_${i}.${ext}`;
+    const itemTitle = suggestedBaseName(it, i);
     if (isVideo) {
       const downloaded = await client.downloadGalleryAssetToFile(url, tempPath, 600000);
       if (!downloaded) {
         continue;
       }
+      const videoUri = fileUriUtil.getUriFromPath(tempPath);
+      if (writeAuthorized &&
+        await saveSandboxAssetWithPrivilege(hostContext, videoUri, itemTitle, ext, photoAccessHelper.PhotoType.VIDEO)) {
+        privilegeSavedCount++;
+        try {
+          await fileIo.unlink(tempPath);
+        } catch (_e) {
+        }
+        continue;
+      }
       tempPaths.push(tempPath);
-      preparedFileUris.push(fileUriUtil.getUriFromPath(tempPath));
+      preparedFileUris.push(videoUri);
       preparedConfigs.push({
-        title: suggestedBaseName(it, i),
+        title: itemTitle,
         fileNameExtension: ext,
         photoType: photoAccessHelper.PhotoType.VIDEO
       });
@@ -241,10 +296,20 @@ export async function runBatchDownloadGalleryItems(
       await fileIo.write(saveFile.fd, buf);
       await fileIo.close(saveFile.fd);
 
+      const imageUri = fileUriUtil.getUriFromPath(tempPath);
+      if (writeAuthorized &&
+        await saveSandboxAssetWithPrivilege(hostContext, imageUri, itemTitle, ext, photoAccessHelper.PhotoType.IMAGE)) {
+        privilegeSavedCount++;
+        try {
+          await fileIo.unlink(tempPath);
+        } catch (_e) {
+        }
+        continue;
+      }
       tempPaths.push(tempPath);
-      preparedFileUris.push(fileUriUtil.getUriFromPath(tempPath));
+      preparedFileUris.push(imageUri);
       preparedConfigs.push({
-        title: suggestedBaseName(it, i),
+        title: itemTitle,
         fileNameExtension: ext,
         photoType: photoAccessHelper.PhotoType.IMAGE
       });
@@ -252,11 +317,13 @@ export async function runBatchDownloadGalleryItems(
     }
   }
 
+  const directCount = liveMovingCount + privilegeSavedCount;
   if (preparedFileUris.length === 0) {
-    if (liveSavedCount > 0) {
-      const extra = liveFallbackCount > 0 ? `，${liveFallbackCount} 张仅保存封面` : '';
-      FnTransferQueueStore.finish(taskId, true, `已保存 ${liveSavedCount} 张动态照片${extra}`);
-      toastMsg(`已保存 ${liveSavedCount} 张动态照片${extra}`);
+    if (directCount > 0) {
+      const liveText = liveSaveSummary(liveMovingCount, livePairCount);
+      const liveHint = liveText.length > 0 ? `（含 ${liveText}）` : '';
+      FnTransferQueueStore.finish(taskId, true, `已保存 ${directCount}/${items.length} 项`);
+      toastMsg(`已保存 ${directCount}/${items.length} 项${liveHint}`);
       return;
     }
     FnTransferQueueStore.finish(taskId, false, '没有可下载的项目');
@@ -271,17 +338,19 @@ export async function runBatchDownloadGalleryItems(
       toastMsg('保存失败，请重试');
       return;
     }
-    if (savedCount === 0) {
+    if (savedCount === 0 && directCount === 0) {
       FnTransferQueueStore.finish(taskId, true, '已取消保存');
       toastMsg('已取消保存');
       return;
     }
-    FnTransferQueueStore.finish(taskId, true, `已保存 ${savedCount}/${items.length} 项`);
-    const liveHint = liveSavedCount > 0 ? `（含 ${liveSavedCount} 张动态照片）` : '';
-    const fallHint = liveFallbackCount > 0 ? `，${liveFallbackCount} 张仅保存封面` : '';
-    toastMsg(`已保存 ${savedCount}/${items.length} 项${liveHint}${fallHint}`);
+    const totalSaved = directCount + Math.max(0, savedCount);
+    const liveText = liveSaveSummary(liveMovingCount, livePairCount);
+    const liveHint = liveText.length > 0 ? `（含 ${liveText}）` : '';
+    FnTransferQueueStore.finish(taskId, true, `已保存 ${totalSaved}/${items.length} 项`);
+    toastMsg(`已保存 ${totalSaved}/${items.length} 项${liveHint}`);
   } catch (_e) {
     toastMsg('保存失败，请重试');
+  }
   } finally {
     for (let i = 0; i < tempPaths.length; i++) {
       try {
@@ -289,8 +358,6 @@ export async function runBatchDownloadGalleryItems(
       } catch (_e) {
       }
     }
-  }
-  } finally {
     BackgroundKeepAliveController.endDataTransfer('batch-download');
   }
 }

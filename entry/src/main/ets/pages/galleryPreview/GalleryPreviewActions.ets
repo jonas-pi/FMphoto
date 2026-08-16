@@ -10,7 +10,8 @@ import { copyGalleryUriContentToAlbumUri } from '../../album/GalleryAlbumSaveToA
 import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshStore';
 import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../../album/livephoto/LivePhotoDetect';
-import { materializeLivePhotoPair } from '../../album/livephoto/LivePhotoSandbox';
+import { sanitizeMediaTitle, saveLivePhotoToAlbum } from '../../album/livephoto/LivePhotoSaveOps';
+import { materializeLivePhotoPair, unlinkLivePhotoPair } from '../../album/livephoto/LivePhotoSandbox';
 import { openPersonAlbumById } from '../../album/PersonAlbumOpenHelper';
 import { AppSession } from '../../auth/AppSession';
 import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
@@ -51,12 +52,6 @@ export interface GalleryPreviewActionsHost {
   downloadProgressPct: number;
   downloadProgressKnown: boolean;
   sharing: boolean;
-  liveSaveVisible: boolean;
-  liveSaveImageUri: string;
-  liveSaveVideoUri: string;
-  liveSaveImagePath: string;
-  liveSaveVideoPath: string;
-  liveSaveTitle: string;
   previewItems: GalleryListItem[];
   itemSource: PreviewItemsDataSource;
   swiperCtrl: SwiperController;
@@ -547,13 +542,16 @@ export async function galleryPreviewOnPersonInPhotoClick(
   }
 }
 
-export function galleryPreviewDownloadCurrentImage(host: GalleryPreviewActionsHost): void {
+export function galleryPreviewDownloadCurrentImage(
+  host: GalleryPreviewActionsHost,
+  mediaWriteAuthorized: boolean = false
+): void {
   if (host.downloading) {
     return;
   }
   galleryPreviewResetDownloadProgress(host);
   host.downloading = true;
-  void galleryPreviewDoDownload(host).finally((): void => {
+  void galleryPreviewDoDownload(host, mediaWriteAuthorized).finally((): void => {
     galleryPreviewResetDownloadProgress(host);
     host.downloading = false;
   });
@@ -561,24 +559,41 @@ export function galleryPreviewDownloadCurrentImage(host: GalleryPreviewActionsHo
 
 async function galleryPreviewDoDownloadLive(
   host: GalleryPreviewActionsHost,
-  item: GalleryListItem
+  item: GalleryListItem,
+  mediaWriteAuthorized: boolean
 ): Promise<boolean> {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
   const pair = await materializeLivePhotoPair(ctx, host.baseUrl, item, true);
   if (pair === undefined) {
     return false;
   }
-  host.liveSaveImageUri = pair.imageUri;
-  host.liveSaveVideoUri = pair.videoUri;
-  host.liveSaveImagePath = pair.imagePath;
-  host.liveSaveVideoPath = pair.videoPath;
   const rawName = item.filename ?? item.fileName ?? item.name ?? item.title ?? '';
-  host.liveSaveTitle = rawName.trim().length > 0 ? rawName.trim() : `live_${Date.now()}`;
-  host.liveSaveVisible = true;
-  return true;
+  const title = sanitizeMediaTitle(rawName, `live_${Date.now()}`);
+  try {
+    const kind = await saveLivePhotoToAlbum(ctx, pair, title, mediaWriteAuthorized);
+    if (kind === 'moving') {
+      host.toast('已保存为动态照片');
+      return true;
+    }
+    if (kind === 'pair') {
+      host.toast('已保存封面和视频到相册');
+      return true;
+    }
+    if (kind === 'cancel') {
+      host.toast('已取消保存');
+      return true;
+    }
+    host.toast('保存失败，请重试');
+    return true;
+  } finally {
+    await unlinkLivePhotoPair(pair);
+  }
 }
 
-async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promise<void> {
+async function galleryPreviewDoDownload(
+  host: GalleryPreviewActionsHost,
+  mediaWriteAuthorized: boolean
+): Promise<void> {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
   await BackgroundKeepAliveController.withDataTransfer(ctx, 'preview-download', async (): Promise<void> => {
   const isVideo = galleryPreviewCurrentItemIsVideo(host);
@@ -616,7 +631,7 @@ async function galleryPreviewDoDownload(host: GalleryPreviewActionsHost): Promis
 
   const liveItem = host.currentItem();
   if (liveItem !== null && isLivePhotoItem(liveItem)) {
-    const liveOk = await galleryPreviewDoDownloadLive(host, liveItem);
+    const liveOk = await galleryPreviewDoDownloadLive(host, liveItem, mediaWriteAuthorized);
     if (liveOk) {
       return;
     }

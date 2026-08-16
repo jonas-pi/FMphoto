@@ -119,3 +119,12 @@ export function isLivePhotoItem(it: GalleryListItem): boolean {
   }
   return pickLiveVideo(it).length > 0;
 }
+
+export function gallerySelectionContainsLive(items: GalleryListItem[]): boolean {
+  for (let i = 0; i < items.length; i++) {
+    if (isLivePhotoItem(items[i])) {
+      return true;
+    }
+  }
+  return false;
+}

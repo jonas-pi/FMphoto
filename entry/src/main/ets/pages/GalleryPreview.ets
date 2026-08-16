@@ -18,6 +18,7 @@ import {
 import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
+import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -55,8 +56,6 @@ import {
 import { GalleryPreviewChrome } from './galleryPreview/GalleryPreviewChrome';
 import { PreviewItemsDataSource } from './galleryPreview/GalleryPreviewDataSource';
 import { GalleryPreviewDetailsSheet } from './galleryPreview/GalleryPreviewDetailsSheet';
-import { LivePhotoSaveSheet } from '../album/livephoto/LivePhotoSave';
-import { unlinkLivePhotoPair, LivePhotoPairFiles } from '../album/livephoto/LivePhotoSandbox';
 import {
   galleryPreviewCurrentHasOriginal,
   galleryPreviewFavoriteStarTint,
@@ -87,14 +86,8 @@ struct GalleryPreview {
   @State private downloadProgressPct: number = 0;
   @State private downloadProgressKnown: boolean = false;
   @State private sharing: boolean = false;
-  @State private liveSaveVisible: boolean = false;
-  /** 详情与实况保存共用一个 bindSheet；同一节点挂两个会互相挤掉，只剩闪一下 */
+  /** 详情半模态 */
   @State private previewSheetVisible: boolean = false;
-  @State private liveSaveImageUri: string = '';
-  @State private liveSaveVideoUri: string = '';
-  @State private liveSaveImagePath: string = '';
-  @State private liveSaveVideoPath: string = '';
-  @State private liveSaveTitle: string = '';
   @State private deleting: boolean = false;
   @State private detailsVisible: boolean = false;
   @State private detailsLoading: boolean = false;
@@ -387,6 +380,11 @@ struct GalleryPreview {
     return galleryPreviewCurrentHasOriginal(this.currentItem());
   }
 
+  private currentIsLivePhoto(): boolean {
+    const item = this.currentItem();
+    return item !== null && isLivePhotoItem(item);
+  }
+
   private titleCounter(): string {
     if (this.slideshowEnabled && this.slideshowLibraryTotal > 0) {
       const globalIdx = this.slideshowGlobalIndexAt(this.swiperIndex);
@@ -430,17 +428,14 @@ struct GalleryPreview {
   }
 
   private syncPreviewSheetVisible(): void {
-    this.previewSheetVisible = this.detailsVisible || this.liveSaveVisible;
+    this.previewSheetVisible = this.detailsVisible;
   }
 
   private previewSheetTitle(): string {
-    return this.liveSaveVisible ? '保存动态照片' : '照片详情';
+    return '照片详情';
   }
 
   private previewSheetHeight(): Length {
-    if (this.liveSaveVisible) {
-      return 220;
-    }
     return '50%';
   }
 
@@ -492,7 +487,11 @@ struct GalleryPreview {
   }
 
   private downloadCurrentImage(): void {
-    galleryPreviewDownloadCurrentImage(this.asActionsHost());
+    galleryPreviewDownloadCurrentImage(this.asActionsHost(), false);
+  }
+
+  private downloadCurrentLiveWithPrivilege(): void {
+    galleryPreviewDownloadCurrentImage(this.asActionsHost(), true);
   }
 
   private shareCurrentImage(): void {
@@ -564,27 +563,6 @@ struct GalleryPreview {
       get sharing(): boolean { return self.sharing; }
       set sharing(v: boolean) { self.sharing = v; }
 
-      get liveSaveVisible(): boolean { return self.liveSaveVisible; }
-      set liveSaveVisible(v: boolean) {
-        self.liveSaveVisible = v;
-        self.syncPreviewSheetVisible();
-      }
-
-      get liveSaveImageUri(): string { return self.liveSaveImageUri; }
-      set liveSaveImageUri(v: string) { self.liveSaveImageUri = v; }
-
-      get liveSaveVideoUri(): string { return self.liveSaveVideoUri; }
-      set liveSaveVideoUri(v: string) { self.liveSaveVideoUri = v; }
-
-      get liveSaveImagePath(): string { return self.liveSaveImagePath; }
-      set liveSaveImagePath(v: string) { self.liveSaveImagePath = v; }
-
-      get liveSaveVideoPath(): string { return self.liveSaveVideoPath; }
-      set liveSaveVideoPath(v: string) { self.liveSaveVideoPath = v; }
-
-      get liveSaveTitle(): string { return self.liveSaveTitle; }
-      set liveSaveTitle(v: string) { self.liveSaveTitle = v; }
-
       get previewItems(): GalleryListItem[] { return self.previewItems; }
       set previewItems(v: GalleryListItem[]) { self.previewItems = v; }
 
@@ -606,48 +584,8 @@ struct GalleryPreview {
   }
 
   @Builder
-  private liveSaveSheetBuilder() {
-    LivePhotoSaveSheet({
-      imageUri: this.liveSaveImageUri,
-      videoUri: this.liveSaveVideoUri,
-      imagePath: this.liveSaveImagePath,
-      videoPath: this.liveSaveVideoPath,
-      saveTitle: this.liveSaveTitle,
-      isDark: this.isDark(),
-      onSaved: (): void => {
-        this.toast('已保存为动态照片');
-        this.closeLiveSaveSheet(true);
-      },
-      onFailed: (): void => {
-        this.toast('动态效果未写入，请重试或仅保存封面');
-        this.closeLiveSaveSheet(false);
-      }
-    })
-  }
-
-  private closeLiveSaveSheet(unlinkFiles: boolean): void {
-    if (unlinkFiles) {
-      const pair = new LivePhotoPairFiles();
-      pair.imagePath = this.liveSaveImagePath;
-      pair.videoPath = this.liveSaveVideoPath;
-      void unlinkLivePhotoPair(pair);
-    }
-    this.liveSaveVisible = false;
-    this.syncPreviewSheetVisible();
-    this.liveSaveImageUri = '';
-    this.liveSaveVideoUri = '';
-    this.liveSaveImagePath = '';
-    this.liveSaveVideoPath = '';
-    this.liveSaveTitle = '';
-  }
-
-  @Builder
   private previewSheetBuilder() {
-    if (this.liveSaveVisible) {
-      this.liveSaveSheetBuilder()
-    } else {
-      this.detailsSheetBuilder()
-    }
+    this.detailsSheetBuilder()
   }
 
   @Builder
@@ -809,6 +747,7 @@ struct GalleryPreview {
         detailsShowing: this.detailsVisible,
         sharing: this.sharing,
         downloading: this.downloading,
+        liveDownload: this.currentIsLivePhoto(),
         downloadProgressPct: this.downloadProgressPct,
         downloadProgressKnown: this.downloadProgressKnown,
         deleting: this.deleting,
@@ -829,6 +768,9 @@ struct GalleryPreview {
         },
         onDownload: (): void => {
           this.downloadCurrentImage();
+        },
+        onPrivilegeDownload: (): void => {
+          this.downloadCurrentLiveWithPrivilege();
         },
         onFavorite: (): void => {
           void this.toggleFavorite();
@@ -859,11 +801,7 @@ struct GalleryPreview {
       dragBar: true,
       backgroundColor: this.isDark() ? '#FF1C1C1E' : '#FFFFFFFF',
       onDisappear: (): void => {
-        if (this.liveSaveVisible) {
-          this.closeLiveSaveSheet(true);
-        } else {
-          this.closeDetailsPanel();
-        }
+        this.closeDetailsPanel();
       }
     })
   }

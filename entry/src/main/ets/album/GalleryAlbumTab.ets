@@ -58,10 +58,6 @@ import {
 } from './GalleryHomeTimelineCache';
 import { gallerySetAlbumBackHandler } from './GalleryAlbumHardwareBack';
 import {
-  galleryItemsMatchingSelectedIds,
-  runBatchDownloadGalleryItems
-} from './GalleryBatchDownload';
-import {
   playGalleryEnterSelectionHaptic,
   playGalleryPullRefreshThresholdHaptic
 } from './GallerySelectionHaptic';
@@ -129,7 +125,10 @@ import {
   loadSmartCategories as requestSmartCategories,
 } from './galleryAlbumTab/GalleryAlbumModeLoaders';
 import {
-  galleryAlbumAskBatchDownloadImageQuality,
+  galleryItemsMatchingSelectedIds
+} from './GalleryBatchDownload';
+import { gallerySelectionContainsLive } from './livephoto/LivePhotoDetect';
+import {
   galleryAlbumApplyDeleteSyncIfNeeded,
   galleryAlbumConfirmAndBatchDelete,
   galleryAlbumConfirmAndBatchDownload,
@@ -430,8 +429,8 @@ export struct GalleryAlbumTab {
   @Prop @Watch('onHomeSurfaceChanged') homeSurface: string = 'photos';
   @Prop @Watch('onViewGranularityChanged') viewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   onSearchModeVisibilityChange: (hiddenBottomNav: boolean) => void = (_: boolean): void => {};
-  onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void) => void =
-    (_: boolean, __: () => void, ___: () => void): void => {};
+  onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void, privilegeDownload: boolean) => void =
+    (_: boolean, __: () => void, ___: () => void, ____: boolean): void => {};
   onViewGranularityChange: (mode: GalleryViewGranularity) => void = (_: GalleryViewGranularity): void => {};
   /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
@@ -491,6 +490,7 @@ export struct GalleryAlbumTab {
   @State private gallerySelectionMode: boolean = false;
   private gallerySelectedIds: string[] = [];
   @State private gallerySelectedCount: number = 0;
+  @State private selectionHasLivePhoto: boolean = false;
   @State @Watch('onBottomDockVisibilityChanged') private galleryBatchDeleting: boolean = false;
   @State private galleryBatchDownloading: boolean = false;
   /**
@@ -822,6 +822,12 @@ export struct GalleryAlbumTab {
     return this.isRootPhotosSurfaceVisible() && this.gallerySelectionMode;
   }
 
+  private refreshSelectionHasLivePhoto(): void {
+    const list = this.inSearchMode ? this.searchResults : galleryAlbumFlatItems(this.asVisibleLoadHost());
+    const selected = galleryItemsMatchingSelectedIds(list, this.gallerySelectedIds);
+    this.selectionHasLivePhoto = gallerySelectionContainsLive(selected);
+  }
+
   private notifySelectionDockStateChange(): void {
     this.onSelectionDockStateChange(
       this.shouldUseHomeSelectionDock(),
@@ -830,7 +836,8 @@ export struct GalleryAlbumTab {
       },
       (): void => {
         void galleryAlbumConfirmAndBatchDelete(this.asBatchActionHost());
-      }
+      },
+      this.selectionHasLivePhoto
     );
   }
 
@@ -855,6 +862,7 @@ export struct GalleryAlbumTab {
 
   private setGallerySelectedIdsStateLocal(value: string[]): void {
     this.gallerySelectedIds = value;
+    this.refreshSelectionHasLivePhoto();
     galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
     if (this.gallerySelectedCount !== value.length) {
       this.gallerySelectedCount = value.length;
@@ -2609,6 +2617,7 @@ export struct GalleryAlbumTab {
           gallerySelectionMode: this.gallerySelectionMode,
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
+          privilegeDownload: this.selectionHasLivePhoto,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
           galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
@@ -2784,6 +2793,7 @@ export struct GalleryAlbumTab {
           showBatchActionBar: !this.shouldUseHomeSelectionDock(),
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
+          privilegeDownload: this.selectionHasLivePhoto,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
           galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,

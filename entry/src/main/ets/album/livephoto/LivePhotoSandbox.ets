@@ -8,7 +8,14 @@ import { AppSession } from '../../auth/AppSession';
 import { itemFileExt, nasUrl, pickOriginal, pickThumb } from '../GalleryAlbumCommon';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { isLivePhotoItem, pickLiveVideo } from './LivePhotoDetect';
-import { splitEmbeddedLivePhoto, writeBufferToFile } from './MotionPhotoSplit';
+import {
+  extFromFilePath,
+  isZipLiveContainer,
+  removeLiveUnzipDir,
+  splitEmbeddedLivePhoto,
+  unzipLivpArchive,
+  writeBufferToFile
+} from './MotionPhotoSplit';
 
 export class LivePhotoPairFiles {
   imagePath: string = '';
@@ -145,19 +152,62 @@ export async function materializeLivePhotoPair(
   if (buf === undefined || buf.byteLength === 0) {
     return undefined;
   }
-  const split = splitEmbeddedLivePhoto(buf, itemFileExt(item));
-  if (split === undefined) {
+  const fileExt = itemFileExt(item);
+  const split = splitEmbeddedLivePhoto(buf, fileExt);
+  if (split !== undefined) {
+    const imagePath = `${context.cacheDir}/live_${id}_img.${split.imageExt}`;
+    const videoPath = `${context.cacheDir}/live_${id}_vid.${split.videoExt}`;
+    const imgOk = await writeBufferToFile(imagePath, split.imageBytes);
+    const vidOk = await writeBufferToFile(videoPath, split.videoBytes);
+    if (!imgOk || !vidOk) {
+      await unlinkQuiet(imagePath);
+      await unlinkQuiet(videoPath);
+      return undefined;
+    }
+    return makePair(imagePath, videoPath);
+  }
+  if (!isZipLiveContainer(buf, fileExt)) {
     return undefined;
   }
-  const imagePath = `${context.cacheDir}/live_${id}_img.${split.imageExt}`;
-  const videoPath = `${context.cacheDir}/live_${id}_vid.${split.videoExt}`;
-  const imgOk = await writeBufferToFile(imagePath, split.imageBytes);
-  const vidOk = await writeBufferToFile(videoPath, split.videoBytes);
-  if (!imgOk || !vidOk) {
+  return materializeLivpWithZlib(context, buf, id);
+}
+
+async function materializeLivpWithZlib(
+  context: common.UIAbilityContext,
+  buf: ArrayBuffer,
+  id: string
+): Promise<LivePhotoPairFiles | undefined> {
+  const zipPath = `${context.cacheDir}/live_${id}_pack.zip`;
+  const outDir = `${context.cacheDir}/live_${id}_unzip`;
+  const zipOk = await writeBufferToFile(zipPath, buf);
+  if (!zipOk) {
+    return undefined;
+  }
+  const found = await unzipLivpArchive(zipPath, outDir);
+  await unlinkQuiet(zipPath);
+  if (found === undefined) {
+    return undefined;
+  }
+  let imageExt = extFromFilePath(found.imagePath);
+  let videoExt = extFromFilePath(found.videoPath);
+  if (imageExt.length === 0) {
+    imageExt = 'jpg';
+  }
+  if (videoExt.length === 0) {
+    videoExt = 'mp4';
+  }
+  const imagePath = `${context.cacheDir}/live_${id}_img.${imageExt}`;
+  const videoPath = `${context.cacheDir}/live_${id}_vid.${videoExt}`;
+  try {
+    await fileIo.copyFile(found.imagePath, imagePath);
+    await fileIo.copyFile(found.videoPath, videoPath);
+  } catch (_e) {
     await unlinkQuiet(imagePath);
     await unlinkQuiet(videoPath);
+    await removeLiveUnzipDir(outDir);
     return undefined;
   }
+  await removeLiveUnzipDir(outDir);
   return makePair(imagePath, videoPath);
 }
 

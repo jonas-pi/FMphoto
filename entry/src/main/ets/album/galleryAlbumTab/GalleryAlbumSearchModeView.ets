@@ -38,6 +38,7 @@ export struct GalleryAlbumSearchModeView {
   @Prop gallerySelectionMode: boolean = false;
   @Prop galleryBatchDownloading: boolean = false;
   @Prop galleryBatchDeleting: boolean = false;
+  @Prop privilegeDownload: boolean = false;
   @Prop galleryMainListScrollEnabled: boolean = true;
   @Prop gallerySlideGestureActive: boolean = false;
   @Prop galleryLongPressIgnoreClickUntil: number = 0;
@@ -584,6 +585,7 @@ export struct GalleryAlbumSearchModeView {
             GalleryAlbumBatchActionBar({
               downloading: this.galleryBatchDownloading,
               deleting: this.galleryBatchDeleting,
+              privilegeDownload: this.privilegeDownload,
               onDownload: this.onBatchDownload,
               onDelete: this.onBatchDelete
             })

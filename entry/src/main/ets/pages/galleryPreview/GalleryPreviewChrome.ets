@@ -38,6 +38,7 @@ import {
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
 import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
+import { PrivilegeDownloadButton } from '../../album/livephoto/PrivilegeDownloadButton';
 import {
   GALLERY_PREVIEW_VIDEO_ACTIVE_KEY,
   GALLERY_PREVIEW_VIDEO_DOCK_EXPANDED_KEY,
@@ -68,6 +69,7 @@ export struct GalleryPreviewChrome {
   @Prop detailsShowing: boolean = false;
   @Prop sharing: boolean = false;
   @Prop downloading: boolean = false;
+  @Prop liveDownload: boolean = false;
   @Prop downloadProgressPct: number = 0;
   @Prop downloadProgressKnown: boolean = false;
   @Prop deleting: boolean = false;
@@ -84,6 +86,7 @@ export struct GalleryPreviewChrome {
   onOpenDetails: () => void = () => {};
   onShare: () => void = () => {};
   onDownload: () => void = () => {};
+  onPrivilegeDownload: () => void = () => {};
   onFavorite: () => void = () => {};
   onDelete: () => void = () => {};
   onBottomBarHeightChange: (height: number) => void = (_: number) => {};
@@ -260,6 +263,12 @@ export struct GalleryPreviewChrome {
   private onDockDownload(): void {
     if (!this.downloading) {
       this.onDownload();
+    }
+  }
+
+  private onDockPrivilegeDownload(): void {
+    if (!this.downloading) {
+      this.onPrivilegeDownload();
     }
   }
 
@@ -448,6 +457,58 @@ export struct GalleryPreviewChrome {
   }
 
   @Builder
+  private previewLivePrivilegeDock() {
+    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
+      this.previewBottomFallbackAction(
+        0,
+        $r('sys.symbol.share'),
+        this.sharing ? '\u5206\u4eab\u4e2d' : '\u5206\u4eab',
+        this.previewActionColor(this.sharing)
+      )
+      Column() {
+        PrivilegeDownloadButton({
+          allowAuthorize: !this.downloading,
+          onAuthorized: (): void => {
+            this.onDockPrivilegeDownload();
+          }
+        })
+      }
+      .layoutWeight(1)
+      .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+
+      this.previewBottomFallbackAction(
+        2,
+        this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
+        '\u6536\u85cf',
+        this.previewActionColor(this.favoriteToggling, this.starFilled ? this.favoriteStarTint : this.fgColor)
+      )
+      this.previewBottomFallbackAction(
+        3,
+        $r('sys.symbol.trash'),
+        this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+        this.previewActionColor(this.deleting)
+      )
+    }
+    .width(this.dockWidth())
+    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .shadow({ radius: 18, color: '#28000000', offsetX: 0, offsetY: 8 })
+    .clip(false)
+    .onAreaChange((_old, area): void => {
+      const h = area.height as number;
+      if (h > 0) {
+        this.onBottomBarHeightChange(h);
+      }
+    })
+  }
+
+  @Builder
   private previewBottomFallbackTabs() {
     Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
       this.previewBottomFallbackAction(
@@ -538,7 +599,9 @@ export struct GalleryPreviewChrome {
 
       Stack({ alignContent: Alignment.Bottom }) {
         Row() {
-          if (this.canUseHds()) {
+          if (this.liveDownload) {
+            this.previewLivePrivilegeDock()
+          } else if (this.canUseHds()) {
             this.previewBottomHdsTabs()
           } else {
             this.previewBottomFallbackTabs()

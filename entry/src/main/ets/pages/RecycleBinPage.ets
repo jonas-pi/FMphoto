@@ -32,6 +32,7 @@ import {
   recycleBinLoadAll,
   RecycleBinActionsHost
 } from './recycleBinPage/RecycleBinActions';
+import { gallerySelectionContainsLive } from '../album/livephoto/LivePhotoDetect';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
@@ -40,6 +41,7 @@ import {
   galleryAlbumSyncSelectionVisualState
 } from '../album/galleryAlbumTab/GalleryAlbumSelectionOverlay';
 import {
+  recycleBinGalleryListForSelection,
   recycleBinBeginSlideSelectGesture,
   recycleBinDomId,
   recycleBinEndSlideSelectGesture,
@@ -91,6 +93,7 @@ struct RecycleBinPage {
   @State private selectionMode: boolean = false;
   private selectedIds: number[] = [];
   @State private selectedCount: number = 0;
+  @State private selectionHasLivePhoto: boolean = false;
   @State private rbSlideGestureActive: boolean = false;
   @State private rbScrollEnabled: boolean = true;
   @State private rbThumbLoadingPaused: boolean = false;
@@ -203,6 +206,8 @@ struct RecycleBinPage {
 
   private setSelectedIdsState(value: number[]): void {
     this.selectedIds = value;
+    const selected = recycleBinGalleryListForSelection(this.items, this.selectedIds);
+    this.selectionHasLivePhoto = gallerySelectionContainsLive(selected);
     galleryAlbumSyncSelectionVisualState(
       this.selectionMode,
       recycleBinSelectedIdStrings(this.selectedIds),
@@ -790,6 +795,7 @@ struct RecycleBinPage {
               RecycleBinBatchBar({
                 downloading: this.rbBatchDownloading,
                 restoring: this.restoring,
+                privilegeDownload: this.selectionHasLivePhoto,
                 onDownload: (): void => {
                   void this.confirmBatchDownloadRecycle();
                 },
