@@ -550,7 +550,7 @@ export struct GalleryAlbumTopBar {
     }
     const moreContent: HdsNavigationIconOptions = {
       label: '更多',
-      icon: $r('sys.symbol.more'),
+      icon: $r('sys.symbol.dot_grid_2x2'),
       type: IconStyleMode.NORMAL,
       isEnabled: true,
       action: (): void => {
@@ -611,7 +611,7 @@ export struct GalleryAlbumTopBar {
     if (!this.isAlbumsHomeSurface()) {
       const moreContent: HdsNavigationIconOptions = {
         label: '更多',
-        icon: $r('sys.symbol.more'),
+        icon: $r('sys.symbol.dot_grid_2x2'),
         type: IconStyleMode.NORMAL,
         isEnabled: true,
         action: (): void => {

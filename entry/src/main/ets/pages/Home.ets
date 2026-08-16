@@ -1051,8 +1051,8 @@ struct Home {
           .height('100%')
       }
       .tabBar(this.hdsBottomTabStyle(
-        $r('sys.symbol.rectangle_stack'),
-        $r('sys.symbol.square_stack_3d_fill'),
+        $r('sys.symbol.rectangle_on_rectangle'),
+        $r('sys.symbol.rectangle_on_rectangle_fill'),
         '\u76f8\u518c'
       ))
 
@@ -1121,7 +1121,7 @@ struct Home {
   private floatingDockFallbackTabs() {
     Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
       this.floatingDockFallbackItem(0, $r('sys.symbol.picture'), $r('sys.symbol.picture_fill'), '\u56fe\u5e93')
-      this.floatingDockFallbackItem(1, $r('sys.symbol.rectangle_stack'), $r('sys.symbol.square_stack_3d_fill'), '\u76f8\u518c')
+      this.floatingDockFallbackItem(1, $r('sys.symbol.rectangle_on_rectangle'), $r('sys.symbol.rectangle_on_rectangle_fill'), '\u76f8\u518c')
       this.floatingDockFallbackItem(2, $r('sys.symbol.person'), $r('sys.symbol.person_fill'), '\u6211\u7684')
     }
     .width(this.centerDockWidthVp())
