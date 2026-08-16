@@ -8,6 +8,10 @@ import {
   galleryItemsMatchingSelectedIds,
   runBatchDownloadGalleryItems
 } from '../../album/GalleryBatchDownload';
+import {
+  LivePhotoSaveChoice,
+  resolveLivePhotoWriteAuthorized
+} from '../../album/livephoto/LivePhotoSaveActionSheet';
 import { AppSession } from '../../auth/AppSession';
 import {
   buildCategoryGalleryInputOrderViewData,
@@ -29,6 +33,7 @@ export interface CategoryGalleryBatchActionsHost {
   cgBatchDownloading: boolean;
   toast(msg: string): void;
   exitSelection(): void;
+  askLivePhotoSave(): Promise<LivePhotoSaveChoice>;
 }
 
 export async function categoryGalleryAskBatchDownloadQuality(
@@ -60,6 +65,12 @@ export async function categoryGalleryConfirmBatchDownload(host: CategoryGalleryB
     host.toast('没有可下载的项');
     return;
   }
+  const authorized = await resolveLivePhotoWriteAuthorized(items, (): Promise<LivePhotoSaveChoice> => {
+    return host.askLivePhotoSave();
+  });
+  if (authorized === undefined) {
+    return;
+  }
   host.cgBatchDownloading = true;
   try {
     await runBatchDownloadGalleryItems(
@@ -69,7 +80,8 @@ export async function categoryGalleryConfirmBatchDownload(host: CategoryGalleryB
       (msg: string): void => {
         host.toast(msg);
       },
-      (): Promise<'original' | 'thumb' | 'cancel'> => categoryGalleryAskBatchDownloadQuality(host)
+      (): Promise<'original' | 'thumb' | 'cancel'> => categoryGalleryAskBatchDownloadQuality(host),
+      authorized
     );
   } finally {
     host.cgBatchDownloading = false;

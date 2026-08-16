@@ -3,6 +3,10 @@ import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { galleryItemsMatchingSelectedIds, runBatchDownloadGalleryItemsInBackground } from '../GalleryBatchDownload';
+import {
+  LivePhotoSaveChoice,
+  resolveLivePhotoWriteAuthorized
+} from '../livephoto/LivePhotoSaveActionSheet';
 import { GalleryDeleteSyncStore } from '../GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
@@ -23,6 +27,7 @@ export interface GalleryAlbumBatchActionsHost {
   itemIdOf(item: GalleryListItem): string;
   flatItems(): GalleryListItem[];
   rebuildFlow(): void;
+  askLivePhotoSave(): Promise<LivePhotoSaveChoice>;
 }
 
 export async function galleryAlbumConfirmAndBatchDelete(host: GalleryAlbumBatchActionsHost): Promise<void> {
@@ -99,16 +104,25 @@ export function galleryAlbumConfirmAndBatchDownload(host: GalleryAlbumBatchActio
     host.toast('没有可下载的项');
     return;
   }
-  host.exitGallerySelection();
-  runBatchDownloadGalleryItemsInBackground(
-    host.baseUrl,
-    items,
-    host.getUIContext().getHostContext() as common.UIAbilityContext,
-    (msg: string): void => {
-      host.toast(msg);
-    },
-    (): Promise<'original' | 'thumb' | 'cancel'> => galleryAlbumAskBatchDownloadImageQuality(host)
-  );
+  void (async (): Promise<void> => {
+    const authorized = await resolveLivePhotoWriteAuthorized(items, (): Promise<LivePhotoSaveChoice> => {
+      return host.askLivePhotoSave();
+    });
+    if (authorized === undefined) {
+      return;
+    }
+    host.exitGallerySelection();
+    runBatchDownloadGalleryItemsInBackground(
+      host.baseUrl,
+      items,
+      host.getUIContext().getHostContext() as common.UIAbilityContext,
+      (msg: string): void => {
+        host.toast(msg);
+      },
+      (): Promise<'original' | 'thumb' | 'cancel'> => galleryAlbumAskBatchDownloadImageQuality(host),
+      authorized
+    );
+  })();
 }
 
 export function galleryAlbumApplyDeleteSyncIfNeeded(host: GalleryAlbumBatchActionsHost): void {

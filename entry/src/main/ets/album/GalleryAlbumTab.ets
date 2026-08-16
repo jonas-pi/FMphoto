@@ -129,6 +129,10 @@ import {
 } from './GalleryBatchDownload';
 import { gallerySelectionContainsLive } from './livephoto/LivePhotoDetect';
 import {
+  LivePhotoSaveActionSheet,
+  LivePhotoSaveChoice
+} from './livephoto/LivePhotoSaveActionSheet';
+import {
   galleryAlbumApplyDeleteSyncIfNeeded,
   galleryAlbumConfirmAndBatchDelete,
   galleryAlbumConfirmAndBatchDownload,
@@ -491,6 +495,7 @@ export struct GalleryAlbumTab {
   private gallerySelectedIds: string[] = [];
   @State private gallerySelectedCount: number = 0;
   @State private selectionHasLivePhoto: boolean = false;
+  @State private liveSaveSheetVisible: boolean = false;
   @State @Watch('onBottomDockVisibilityChanged') private galleryBatchDeleting: boolean = false;
   @State private galleryBatchDownloading: boolean = false;
   /**
@@ -841,6 +846,36 @@ export struct GalleryAlbumTab {
     );
   }
 
+  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+
+  private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    if (this.liveSaveSheetVisible) {
+      return Promise.resolve('cancel' as LivePhotoSaveChoice);
+    }
+    return new Promise<LivePhotoSaveChoice>((resolve: (choice: LivePhotoSaveChoice) => void) => {
+      this.liveSaveResolver = resolve;
+      this.liveSaveSheetVisible = true;
+    });
+  }
+
+  private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
+    const resolver = this.liveSaveResolver;
+    this.liveSaveResolver = undefined;
+    this.liveSaveSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(choice);
+    }
+  }
+
+  @Builder
+  private liveSaveSheetBuilder() {
+    LivePhotoSaveActionSheet({
+      onSelect: (choice: LivePhotoSaveChoice): void => {
+        this.completeLivePhotoSave(choice);
+      }
+    })
+  }
+
   private dismissMoreMenu(): void {
     if (!this.moreMenuExpanded) {
       return;
@@ -990,6 +1025,7 @@ export struct GalleryAlbumTab {
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
       flatItems(): GalleryListItem[] { return galleryAlbumFlatItems(self.asVisibleLoadHost()); }
       rebuildFlow(): void { galleryAlbumRebuildFlow(self.asVisibleLoadHost()); }
+      askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
     }
     return new BatchActionHostBridge();
   }
@@ -2617,7 +2653,6 @@ export struct GalleryAlbumTab {
           gallerySelectionMode: this.gallerySelectionMode,
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
-          privilegeDownload: this.selectionHasLivePhoto,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
           galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
@@ -2793,7 +2828,6 @@ export struct GalleryAlbumTab {
           showBatchActionBar: !this.shouldUseHomeSelectionDock(),
           galleryBatchDownloading: this.galleryBatchDownloading,
           galleryBatchDeleting: this.galleryBatchDeleting,
-          privilegeDownload: this.selectionHasLivePhoto,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
           galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
@@ -3132,6 +3166,9 @@ export struct GalleryAlbumTab {
       }
       if (this.slideshowPreparing) {
         FnFullLoadingMask({ text: '正在准备幻灯片...', topOffsetVp: this.loadingMaskTopOffsetVp() })
+      }
+      if (this.liveSaveSheetVisible) {
+        this.liveSaveSheetBuilder()
       }
     }
     .width('100%')

@@ -16,6 +16,10 @@ import {
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
 import { gallerySelectionContainsLive, isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
+import {
+  LivePhotoSaveActionSheet,
+  LivePhotoSaveChoice
+} from '../album/livephoto/LivePhotoSaveActionSheet';
 import { galleryItemsMatchingSelectedIds } from '../album/GalleryBatchDownload';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
@@ -123,6 +127,7 @@ struct CategoryGallery {
   @State private cgBatchDeleting: boolean = false;
   @State private cgBatchDownloading: boolean = false;
   @State private selectionHasLivePhoto: boolean = false;
+  @State private liveSaveSheetVisible: boolean = false;
   @State private cgThumbLoadingPaused: boolean = false;
   @State private cgBackgroundLoading: boolean = false;
   @State private moreMenuExpanded: boolean = false;
@@ -954,6 +959,36 @@ struct CategoryGallery {
     return new CategoryGallerySelectionHostBridge();
   }
 
+  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+
+  private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    if (this.liveSaveSheetVisible) {
+      return Promise.resolve('cancel' as LivePhotoSaveChoice);
+    }
+    return new Promise<LivePhotoSaveChoice>((resolve: (choice: LivePhotoSaveChoice) => void) => {
+      this.liveSaveResolver = resolve;
+      this.liveSaveSheetVisible = true;
+    });
+  }
+
+  private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
+    const resolver = this.liveSaveResolver;
+    this.liveSaveResolver = undefined;
+    this.liveSaveSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(choice);
+    }
+  }
+
+  @Builder
+  private liveSaveSheetBuilder() {
+    LivePhotoSaveActionSheet({
+      onSelect: (choice: LivePhotoSaveChoice): void => {
+        this.completeLivePhotoSave(choice);
+      }
+    })
+  }
+
   private asBatchActionsHost(): CategoryGalleryBatchActionsHost {
     const self = this;
     class CategoryGalleryBatchActionsHostBridge implements CategoryGalleryBatchActionsHost {
@@ -988,6 +1023,7 @@ struct CategoryGallery {
 
       toast(msg: string): void { self.toast(msg); }
       exitSelection(): void { self.exitCgSelection(); }
+      askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
     }
     return new CategoryGalleryBatchActionsHostBridge();
   }
@@ -1305,7 +1341,6 @@ struct CategoryGallery {
                   GalleryAlbumBatchActionBar({
                     downloading: this.cgBatchDownloading,
                     deleting: this.cgBatchDeleting,
-                    privilegeDownload: this.selectionHasLivePhoto,
                     onDownload: (): void => {
                       void this.confirmCgBatchDownload();
                     },
@@ -1378,6 +1413,10 @@ struct CategoryGallery {
           .width('100%')
           .height('100%')
           .zIndex(30)
+      }
+
+      if (this.liveSaveSheetVisible) {
+        this.liveSaveSheetBuilder()
       }
     }
     .width('100%')

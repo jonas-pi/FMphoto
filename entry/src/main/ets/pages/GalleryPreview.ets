@@ -19,6 +19,10 @@ import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlidesh
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
+import {
+  LivePhotoSaveActionSheet,
+  LivePhotoSaveChoice
+} from '../album/livephoto/LivePhotoSaveActionSheet';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -83,6 +87,7 @@ struct GalleryPreview {
   @State private dismissDragProgress: number = 0;
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
+  @State private liveSaveSheetVisible: boolean = false;
   @State private downloadProgressPct: number = 0;
   @State private downloadProgressKnown: boolean = false;
   @State private sharing: boolean = false;
@@ -490,8 +495,32 @@ struct GalleryPreview {
     galleryPreviewDownloadCurrentImage(this.asActionsHost(), false);
   }
 
-  private downloadCurrentLiveWithPrivilege(): void {
-    galleryPreviewDownloadCurrentImage(this.asActionsHost(), true);
+  private onDownloadTapped(): void {
+    if (this.downloading || this.liveSaveSheetVisible) {
+      return;
+    }
+    if (this.currentIsLivePhoto()) {
+      this.liveSaveSheetVisible = true;
+      return;
+    }
+    this.downloadCurrentImage();
+  }
+
+  private onLiveSaveSelect(choice: LivePhotoSaveChoice): void {
+    this.liveSaveSheetVisible = false;
+    if (choice === 'cancel') {
+      return;
+    }
+    galleryPreviewDownloadCurrentImage(this.asActionsHost(), choice === 'privilege');
+  }
+
+  @Builder
+  private liveSaveSheetBuilder() {
+    LivePhotoSaveActionSheet({
+      onSelect: (choice: LivePhotoSaveChoice): void => {
+        this.onLiveSaveSelect(choice);
+      }
+    })
   }
 
   private shareCurrentImage(): void {
@@ -747,7 +776,6 @@ struct GalleryPreview {
         detailsShowing: this.detailsVisible,
         sharing: this.sharing,
         downloading: this.downloading,
-        liveDownload: this.currentIsLivePhoto(),
         downloadProgressPct: this.downloadProgressPct,
         downloadProgressKnown: this.downloadProgressKnown,
         deleting: this.deleting,
@@ -767,10 +795,7 @@ struct GalleryPreview {
           this.shareCurrentImage();
         },
         onDownload: (): void => {
-          this.downloadCurrentImage();
-        },
-        onPrivilegeDownload: (): void => {
-          this.downloadCurrentLiveWithPrivilege();
+          this.onDownloadTapped();
         },
         onFavorite: (): void => {
           void this.toggleFavorite();
@@ -788,6 +813,10 @@ struct GalleryPreview {
           text: '加载人物媒体中…',
           topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
         })
+      }
+
+      if (this.liveSaveSheetVisible) {
+        this.liveSaveSheetBuilder()
       }
     }
     .width('100%')

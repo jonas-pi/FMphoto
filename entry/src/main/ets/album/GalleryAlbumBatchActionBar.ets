@@ -21,8 +21,6 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
-import { PrivilegeDownloadButton } from './livephoto/PrivilegeDownloadButton';
-import { markPendingMediaWriteAuthorized } from './GalleryBatchDownload';
 
 const GALLERY_BATCH_ACTION_DOCK_WIDTH_VP: number = 228;
 
@@ -30,7 +28,6 @@ const GALLERY_BATCH_ACTION_DOCK_WIDTH_VP: number = 228;
 export struct GalleryAlbumBatchActionBar {
   @Prop downloading: boolean = false;
   @Prop deleting: boolean = false;
-  @Prop privilegeDownload: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onDownload: () => void = () => {};
@@ -113,40 +110,6 @@ export struct GalleryAlbumBatchActionBar {
   }
 
   @Builder
-  private privilegeDownloadDock() {
-    Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
-      Column() {
-        PrivilegeDownloadButton({
-          allowAuthorize: !this.downloading,
-          onAuthorized: (): void => {
-            markPendingMediaWriteAuthorized();
-            this.onDownload();
-          }
-        })
-      }
-      .layoutWeight(1)
-      .height(FN_BOTTOM_DOCK_ITEM_HEIGHT_VP)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-
-      this.batchFallbackAction(
-        1,
-        $r('sys.symbol.trash'),
-        $r('app.string.gallery_batch_delete'),
-        this.actionColor(this.deleting, true)
-      )
-    }
-    .width(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP)
-    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
-    .padding({ left: FN_BOTTOM_DOCK_INNER_PADDING_H_VP, right: FN_BOTTOM_DOCK_INNER_PADDING_H_VP })
-    .backgroundColor($r('app.color.gallery_material_surface_bg'))
-    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .shadow({ radius: 18, color: '#28000000', offsetX: 0, offsetY: 8 })
-  }
-
-  @Builder
   private batchFallbackAction(index: number, icon: Resource, label: ResourceStr, color: ResourceColor) {
     Column({ space: 2 }) {
       SymbolGlyph(icon)
@@ -201,9 +164,7 @@ export struct GalleryAlbumBatchActionBar {
 
   build() {
     Row() {
-      if (this.privilegeDownload) {
-        this.privilegeDownloadDock()
-      } else if (this.canUseHds()) {
+      if (this.canUseHds()) {
         this.batchHdsTabs()
       } else {
         this.batchFallbackTabs()

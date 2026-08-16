@@ -33,6 +33,10 @@ import {
   RecycleBinActionsHost
 } from './recycleBinPage/RecycleBinActions';
 import { gallerySelectionContainsLive } from '../album/livephoto/LivePhotoDetect';
+import {
+  LivePhotoSaveActionSheet,
+  LivePhotoSaveChoice
+} from '../album/livephoto/LivePhotoSaveActionSheet';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
@@ -94,6 +98,7 @@ struct RecycleBinPage {
   private selectedIds: number[] = [];
   @State private selectedCount: number = 0;
   @State private selectionHasLivePhoto: boolean = false;
+  @State private liveSaveSheetVisible: boolean = false;
   @State private rbSlideGestureActive: boolean = false;
   @State private rbScrollEnabled: boolean = true;
   @State private rbThumbLoadingPaused: boolean = false;
@@ -493,6 +498,36 @@ struct RecycleBinPage {
     return new RecycleBinSelectionHostBridge();
   }
 
+  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+
+  private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    if (this.liveSaveSheetVisible) {
+      return Promise.resolve('cancel' as LivePhotoSaveChoice);
+    }
+    return new Promise<LivePhotoSaveChoice>((resolve: (choice: LivePhotoSaveChoice) => void) => {
+      this.liveSaveResolver = resolve;
+      this.liveSaveSheetVisible = true;
+    });
+  }
+
+  private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
+    const resolver = this.liveSaveResolver;
+    this.liveSaveResolver = undefined;
+    this.liveSaveSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(choice);
+    }
+  }
+
+  @Builder
+  private liveSaveSheetBuilder() {
+    LivePhotoSaveActionSheet({
+      onSelect: (choice: LivePhotoSaveChoice): void => {
+        this.completeLivePhotoSave(choice);
+      }
+    })
+  }
+
   private asActionsHost(): RecycleBinActionsHost {
     const self = this;
     class RecycleBinActionsHostBridge implements RecycleBinActionsHost {
@@ -524,6 +559,7 @@ struct RecycleBinPage {
 
       toast(msg: string): void { self.toast(msg); }
       exitSelection(): void { self.exitSelection(); }
+      askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
     }
     return new RecycleBinActionsHostBridge();
   }
@@ -795,7 +831,6 @@ struct RecycleBinPage {
               RecycleBinBatchBar({
                 downloading: this.rbBatchDownloading,
                 restoring: this.restoring,
-                privilegeDownload: this.selectionHasLivePhoto,
                 onDownload: (): void => {
                   void this.confirmBatchDownloadRecycle();
                 },
@@ -813,6 +848,9 @@ struct RecycleBinPage {
               text: this.restoring ? '正在还原…' : '下载中…',
               topOffsetVp: this.contentInsetTopVp()
             })
+          }
+          if (this.liveSaveSheetVisible) {
+            this.liveSaveSheetBuilder()
           }
         }
         .layoutWeight(1)

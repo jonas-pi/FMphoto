@@ -16,6 +16,8 @@ export struct PrivilegeDownloadButton {
 
   build() {
     SaveButton(this.saveOptions)
+      .width('100%')
+      .height(44)
       .onClick((_event: ClickEvent, result: SaveButtonOnClickResult) => {
         if (result === SaveButtonOnClickResult.SUCCESS && this.allowAuthorize) {
           this.onAuthorized();

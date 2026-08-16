@@ -1,6 +1,10 @@
 import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { runBatchDownloadGalleryItems } from '../../album/GalleryBatchDownload';
+import {
+  LivePhotoSaveChoice,
+  resolveLivePhotoWriteAuthorized
+} from '../../album/livephoto/LivePhotoSaveActionSheet';
 import { AppSession } from '../../auth/AppSession';
 import { RecycleBinListItem } from '../../model/FnApiTypes';
 import { recycleBinGalleryListForSelection } from './RecycleBinSelectionController';
@@ -18,6 +22,7 @@ export interface RecycleBinActionsHost {
   selectedIds: number[];
   toast(msg: string): void;
   exitSelection(): void;
+  askLivePhotoSave(): Promise<LivePhotoSaveChoice>;
 }
 
 export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<void> {
@@ -106,6 +111,12 @@ export async function recycleBinConfirmBatchDownload(host: RecycleBinActionsHost
     host.toast('没有可下载的项');
     return;
   }
+  const authorized = await resolveLivePhotoWriteAuthorized(items, (): Promise<LivePhotoSaveChoice> => {
+    return host.askLivePhotoSave();
+  });
+  if (authorized === undefined) {
+    return;
+  }
   host.rbBatchDownloading = true;
   try {
     await runBatchDownloadGalleryItems(
@@ -115,7 +126,8 @@ export async function recycleBinConfirmBatchDownload(host: RecycleBinActionsHost
       (msg: string): void => {
         host.toast(msg);
       },
-      (): Promise<'original' | 'thumb' | 'cancel'> => recycleBinAskBatchDownloadQuality(host)
+      (): Promise<'original' | 'thumb' | 'cancel'> => recycleBinAskBatchDownloadQuality(host),
+      authorized
     );
   } finally {
     host.rbBatchDownloading = false;
