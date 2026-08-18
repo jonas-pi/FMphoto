@@ -1,10 +1,10 @@
 /**
  * 图库全屏预览「从哪来回哪去」共享元素转场。
  *
- * 官方能力：router 跨页使用 Image.sharedTransition，id 相同的组件在 push/back 时
- * 做位置与大小匹配（一镜到底）。
- * 目标页 enter 用 duration 0，避免整页位移抢戏；源页 exit 保持相同时长且不透明，
- * 网格才能留到展开末期。遮罩单独延后淡入，不要一进页就把背景滤成窗体底色。
+ * 官方能力：router 跨页使用 sharedTransition，id 相同且非空的组件在 push/back 时
+ * 做位置与大小匹配（一镜到底）。官方示例源/目标页 pageTransition 均为
+ * RouteType.None + duration 0，页面本身不做位移，完全由共享元素驱动。
+ * 源页（Home 等）仍按 heroActive 分支：预览走 None/0，其它路由保留滑入滑出。
  * 文档：https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-transition-animation-shared-elements
  * 最佳实践：https://developer.huawei.com/consumer/cn/doc/best-practices/bpta-one-shot-to-the-end
  */
@@ -16,11 +16,29 @@ export const GALLERY_SHARED_TRANSITION_CURVE: Curve = Curve.EaseInOut;
 /** 遮罩在共享元素快结束时再淡入/淡出，避免一开始滤掉网格 */
 export const GALLERY_SCRIM_FADE_DURATION: number = 90;
 export const GALLERY_SCRIM_FADE_DELAY: number = 110;
+/** 转场结束后再关 hero 开关，避免源页 pageTransition 中途翻分支 */
+const GALLERY_HERO_RESET_DELAY_MS: number = GALLERY_SHARED_TRANSITION_DURATION + 80;
 
 AppStorage.setOrCreate(GALLERY_PREVIEW_HERO_ACTIVE_KEY, false);
 
+/** 延迟复位代次：新会话 open 时自增，作废上一轮 setTimeout */
+let galleryHeroResetGen: number = 0;
+
 export function setGalleryPreviewHeroActive(active: boolean): void {
+  if (active) {
+    galleryHeroResetGen++;
+  }
   AppStorage.setOrCreate(GALLERY_PREVIEW_HERO_ACTIVE_KEY, active);
+}
+
+/** 预览页销毁后延迟关闭 hero；带代次校验，避免连点时旧定时器打断新转场 */
+export function scheduleGalleryPreviewHeroInactive(): void {
+  const gen = ++galleryHeroResetGen;
+  setTimeout((): void => {
+    if (gen === galleryHeroResetGen) {
+      AppStorage.setOrCreate(GALLERY_PREVIEW_HERO_ACTIVE_KEY, false);
+    }
+  }, GALLERY_HERO_RESET_DELAY_MS);
 }
 
 export function gallerySharedTransitionId(itemId: string): string {

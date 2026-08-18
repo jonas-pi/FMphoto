@@ -83,9 +83,7 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
-  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
-  GALLERY_SHARED_TRANSITION_CURVE,
-  GALLERY_SHARED_TRANSITION_DURATION
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY
 } from '../album/GallerySharedTransition';
 import {
   GalleryViewGranularity,
@@ -1500,13 +1498,9 @@ struct Home {
 
   pageTransition(): void {
     if (this.previewHeroActive) {
+      // 预览一镜到底：页面 None/0，避免与 sharedTransition 双重驱动；其它路由仍走滑入滑出
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({
-        type: RouteType.None,
-        duration: GALLERY_SHARED_TRANSITION_DURATION,
-        curve: GALLERY_SHARED_TRANSITION_CURVE
-      })
-        .opacity(1)
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

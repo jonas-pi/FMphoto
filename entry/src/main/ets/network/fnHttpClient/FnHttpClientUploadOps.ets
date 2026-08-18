@@ -1,6 +1,7 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { taskpool } from '@kit.ArkTS';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, genFnGalleryAuthxGet, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX, FN_PHOTO_API_V2_PREFIX, FN_PHOTO_H5_ALBUM_PAGE } from '../FnPhotoRoutes';
@@ -31,6 +32,53 @@ import {
 } from './FnHttpClientCommon';
 import { FnHttpClientUploadHost } from './FnHttpClientTypes';
 import { FnClientResult, GalleryListItem } from '../../model/FnApiTypes';
+
+/**
+ * 同步读整文件放到 TaskPool，避免主线程 openSync/readSync 冻 UI。
+ * 失败返回空 buffer，调用方按 byteLength<=0 处理。
+ */
+@Concurrent
+function readUploadFileAndMtimeConcurrent(uri: string): UploadFileReadResult {
+  const nowSec: number = Math.floor(Date.now() / 1000);
+  const empty: UploadFileReadResult = { buffer: new ArrayBuffer(0), mtimeSec: nowSec };
+  let fdNum: number = -1;
+  try {
+    const f = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+    fdNum = f.fd;
+    const st = fileIo.statSync(fdNum);
+    let mtimeSec: number = nowSec;
+    const rawMtime = st.mtime;
+    if (typeof rawMtime === 'number' && Number.isFinite(rawMtime) && rawMtime > 0) {
+      if (rawMtime > 1e15) {
+        mtimeSec = Math.floor(rawMtime / 1e9);
+      } else if (rawMtime > 1e12) {
+        mtimeSec = Math.floor(rawMtime / 1e3);
+      } else {
+        mtimeSec = Math.floor(rawMtime);
+      }
+    }
+    const size = Number(st.size);
+    if (!Number.isFinite(size) || size <= 0) {
+      return empty;
+    }
+    const whole = new ArrayBuffer(Math.floor(size));
+    const readLen = fileIo.readSync(fdNum, whole);
+    if (!Number.isFinite(readLen) || readLen <= 0) {
+      return empty;
+    }
+    const buffer = readLen < whole.byteLength ? whole.slice(0, readLen) : whole;
+    return { buffer: buffer, mtimeSec: mtimeSec };
+  } catch (_e) {
+    return empty;
+  } finally {
+    if (fdNum >= 0) {
+      try {
+        fileIo.closeSync(fdNum);
+      } catch (_e) {
+      }
+    }
+  }
+}
 
 /** 飞牛官方上传前存在性检查结果 */
 export type PhotoUploadExistCheck = 'exists' | 'missing' | 'unknown';
@@ -162,58 +210,18 @@ export class FnHttpClientUploadOps {
   }
 
   /**
-   * 将 @kit.CoreFileKit stat 的 mtime 规范为 Unix 秒（对齐 `getmtime` / Trim-Mtim）。
-   * 文档常见为纳秒时间戳；部分环境可能为毫秒或秒。
-   */
-  private static statMtimeToUnixSec(st: object): number {
-    const o = st as Record<string, number | bigint | string | undefined>;
-    const rawVal = o['mtime'];
-    if (rawVal === undefined || rawVal === null) {
-      return Math.floor(Date.now() / 1000);
-    }
-    const raw =
-      typeof rawVal === 'bigint' ? Number(rawVal) : Number(String(rawVal));
-    if (!Number.isFinite(raw) || raw <= 0) {
-      return Math.floor(Date.now() / 1000);
-    }
-    if (raw > 1e15) {
-      return Math.floor(raw / 1e9);
-    }
-    if (raw > 1e12) {
-      return Math.floor(raw / 1e3);
-    }
-    return Math.floor(raw);
-  }
-
-  /**
    * 一次 open 读出全文 + 修改时间，供 /upload 的 Trim-Mtim、Trim-Sign 与 notice 使用。
+   * 文件 IO 在 TaskPool 执行，避免主线程同步读整图冻 UI。
    */
-  private static readUploadFileAndMtime(uri: string): UploadFileReadResult | undefined {
-    let fdNum = -1;
+  private static async readUploadFileAndMtime(uri: string): Promise<UploadFileReadResult | undefined> {
     try {
-      const f = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
-      fdNum = f.fd;
-      const st = fileIo.statSync(fdNum);
-      const mtimeSec = FnHttpClientUploadOps.statMtimeToUnixSec(st);
-      const size = Number(st.size);
-      if (!Number.isFinite(size) || size <= 0) {
+      const pack = await taskpool.execute(readUploadFileAndMtimeConcurrent, uri) as UploadFileReadResult;
+      if (pack.buffer.byteLength <= 0) {
         return undefined;
       }
-      const whole = new ArrayBuffer(Math.floor(size));
-      const readLen = fileIo.readSync(fdNum, whole);
-      if (!Number.isFinite(readLen) || readLen <= 0) {
-        return undefined;
-      }
-      const buffer = readLen < whole.byteLength ? whole.slice(0, readLen) : whole;
-      return { buffer: buffer, mtimeSec: mtimeSec };
+      return pack;
     } catch (_e) {
       return undefined;
-    } finally {
-      if (fdNum >= 0) {
-        try {
-          fileIo.closeSync(fdNum);
-        } catch (_e) {}
-      }
     }
   }
 
@@ -771,7 +779,7 @@ export class FnHttpClientUploadOps {
       return { success: false, message: '文件 URI 为空' };
     }
     hilog.warn(DOMAIN, TAG, '[upload] enter uriLen=%{public}d timeoutMs=%{public}d', oneUri.length, timeoutMs);
-    const filePack = FnHttpClientUploadOps.readUploadFileAndMtime(oneUri);
+    const filePack = await FnHttpClientUploadOps.readUploadFileAndMtime(oneUri);
     if (filePack === undefined || filePack.buffer.byteLength <= 0) {
       hilog.warn(DOMAIN, TAG, '[upload] abort read file failed uriLen=%{public}d', oneUri.length);
       return { success: false, message: '读取待上传文件失败' };

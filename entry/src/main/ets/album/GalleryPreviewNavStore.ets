@@ -34,6 +34,9 @@ export class GalleryPreviewNavStore {
   static slideshowGlobalIndices: number[] = [];
   private static opening: boolean = false;
   private static openGen: number = 0;
+  private static lastEnterTs: number = 0;
+  /** 独立于 opening：pushUrl resolve 后 opening 立即复位，连点仍可能双压栈 */
+  private static readonly ENTER_DEBOUNCE_MS: number = 400;
 
   static openPreview(
     uiCtx: UIContext,
@@ -41,6 +44,11 @@ export class GalleryPreviewNavStore {
     items: GalleryListItem[],
     startIndex: number
   ): void {
+    const now = Date.now();
+    if (now - GalleryPreviewNavStore.lastEnterTs < GalleryPreviewNavStore.ENTER_DEBOUNCE_MS) {
+      return;
+    }
+    GalleryPreviewNavStore.lastEnterTs = now;
     void GalleryPreviewNavStore.openPreviewWhenReady(uiCtx, baseUrl, items, startIndex);
   }
 

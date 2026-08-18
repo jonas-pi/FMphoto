@@ -76,6 +76,12 @@ export default class EntryAbility extends UIAbility {
       // 首帧前即全屏无系统栏，与 StartWindow 居中基准一致
       fnApplySplashWindowChrome(mainWindow, dark, true);
       fnBindSystemAvoidArea(mainWindow);
+      try {
+        const ui = mainWindow.getUIContext();
+        ui.setImageCacheCount(100);
+        ui.setImageRawDataCacheSize(64 * 1024 * 1024);
+      } catch (_e) {
+      }
     }).catch((_e: Error): void => {
     });
 

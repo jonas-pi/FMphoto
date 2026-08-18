@@ -174,9 +174,14 @@ export function gallerySlideAutoScrollStop(): void {
   autoScrollRunning = false;
   if (autoScrollSync !== null) {
     try {
+      autoScrollSync.off('frame');
+    } catch (_e) {
+    }
+    try {
       autoScrollSync.stop();
     } catch (_e) {
     }
+    autoScrollSync = null;
   }
 }
 

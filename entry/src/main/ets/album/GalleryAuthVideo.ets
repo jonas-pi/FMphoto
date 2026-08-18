@@ -432,8 +432,32 @@ export struct GalleryAuthVideo {
     }, 30);
   }
 
+  private static unbindPlayerListeners(p: media.AVPlayer): void {
+    try {
+      p.off('error');
+    } catch (_e) {
+    }
+    try {
+      p.off('timeUpdate');
+    } catch (_e) {
+    }
+    try {
+      p.off('durationUpdate');
+    } catch (_e) {
+    }
+    try {
+      p.off('seekDone');
+    } catch (_e) {
+    }
+    try {
+      p.off('stateChange');
+    } catch (_e) {
+    }
+  }
+
   private static safeRelease(p: media.AVPlayer | null): void {
     if (p === null) { return; }
+    GalleryAuthVideo.unbindPlayerListeners(p);
     p.release().catch((): void => {});
   }
 
@@ -1059,6 +1083,7 @@ export struct GalleryAuthVideo {
     const old = this.avPlayer;
     this.avPlayer = null;
     if (old !== null) {
+      GalleryAuthVideo.unbindPlayerListeners(old);
       try { await old.release(); } catch (_e) {}
     }
     if (gen !== this.playGen) { return; }

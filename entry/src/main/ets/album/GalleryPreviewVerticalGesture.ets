@@ -82,6 +82,10 @@ export function quietFinishAnimator(animator: AnimatorResult | undefined): void 
   animator.onFinish = (): void => {
   };
   try {
+    animator.cancel();
+  } catch (_e) {
+  }
+  try {
     animator.finish();
   } catch (_e) {
   }

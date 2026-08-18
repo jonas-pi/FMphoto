@@ -32,7 +32,7 @@ import {
   GALLERY_SCRIM_FADE_DURATION,
   GALLERY_SHARED_TRANSITION_CURVE,
   GALLERY_SHARED_TRANSITION_DURATION,
-  setGalleryPreviewHeroActive
+  scheduleGalleryPreviewHeroInactive
 } from '../album/GallerySharedTransition';
 import {
   GallerySlideshowStreamStore
@@ -373,9 +373,7 @@ struct GalleryPreview {
       client.cancelPendingRequests();
     }
     GalleryPreviewNavStore.clear();
-    setTimeout((): void => {
-      setGalleryPreviewHeroActive(false);
-    }, GALLERY_SHARED_TRANSITION_DURATION + 80);
+    scheduleGalleryPreviewHeroInactive();
     setGalleryPreviewToolbarVisible(true);
     resetGalleryPreviewVideoChrome();
     void restoreGalleryPreviewPortrait(this.getUIContext());
@@ -1128,12 +1126,9 @@ struct GalleryPreview {
         .opacity(0)
         .scale({ x: 0.95, y: 0.95 })
     } else {
+      // 官方一镜到底：页面本身 None/0，位置与大小只由 sharedTransition 驱动
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({
-        type: RouteType.None,
-        duration: GALLERY_SHARED_TRANSITION_DURATION,
-        curve: GALLERY_SHARED_TRANSITION_CURVE
-      })
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
     }
   }
 }

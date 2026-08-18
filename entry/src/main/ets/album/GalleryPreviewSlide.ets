@@ -168,6 +168,10 @@ export struct GalleryPreviewSlide {
   private liveRevealTimer: number = 0;
   private videoOverlayRevealTimer: number = 0;
   private boundItemKey: string = '';
+  /** 转场窗口内冻结共享元素 id，避免 active 短暂翻转变成空串 */
+  private frozenHeroShareId: string = '';
+  private heroIdFrozen: boolean = false;
+  private heroFreezeTimer: number = 0;
   private pinchParticipationActive: boolean = false;
   private pinchGestureRecognizing: boolean = false;
   private deferredParentGestureResetTimer: number = 0;
@@ -272,6 +276,9 @@ export struct GalleryPreviewSlide {
   }
 
   onActiveChanged(): void {
+    if (this.active) {
+      this.armHeroIdFreeze(true);
+    }
     if (!this.active) {
       this.resetVerticalDragInstant();
     }
@@ -308,6 +315,7 @@ export struct GalleryPreviewSlide {
     this.initViewportFromDisplay();
     this.syncBoundItemAndPrepare();
     this.armVideoOverlayReveal();
+    this.armHeroIdFreeze(this.active);
     addGalleryPreviewDetailsFitListener(this.onDetailsFitHeight);
     this.applyComposedTransform();
   }
@@ -316,6 +324,10 @@ export struct GalleryPreviewSlide {
     removeGalleryPreviewDetailsFitListener(this.onDetailsFitHeight);
     this.cancelTransformAnimator();
     this.clearVideoOverlayRevealTimer();
+    this.clearHeroFreezeTimer();
+    if (this.enableSharedTransition && this.active) {
+      this.heroIdFrozen = true;
+    }
     this.invalidateAsyncLoads();
     this.disposeTransientMedia();
     this.boundItemKey = '';
@@ -373,12 +385,49 @@ export struct GalleryPreviewSlide {
     return String(this.item.id);
   }
 
-  /** 仅当前可见页参与配对，左右滑后回到对应缩略图 */
+  /** 仅当前可见页参与配对；转场窗口内冻结 id，避免空串导致官方定义下不构成共享元素 */
   private heroShareId(): string {
-    if (!this.enableSharedTransition || !this.active) {
+    if (!this.enableSharedTransition) {
+      this.frozenHeroShareId = '';
+      this.heroIdFrozen = false;
       return '';
     }
-    return gallerySharedTransitionId(this.currentItemKey());
+    const nextId = gallerySharedTransitionId(this.currentItemKey());
+    if (this.active && nextId.length > 0) {
+      this.frozenHeroShareId = nextId;
+      return nextId;
+    }
+    if (this.heroIdFrozen && this.frozenHeroShareId.length > 0) {
+      return this.frozenHeroShareId;
+    }
+    return '';
+  }
+
+  private clearHeroFreezeTimer(): void {
+    if (this.heroFreezeTimer === 0) {
+      return;
+    }
+    try {
+      clearTimeout(this.heroFreezeTimer);
+    } catch (_e) {
+    }
+    this.heroFreezeTimer = 0;
+  }
+
+  private armHeroIdFreeze(isActiveSlide: boolean): void {
+    if (!this.enableSharedTransition || !isActiveSlide) {
+      return;
+    }
+    const nextId = gallerySharedTransitionId(this.currentItemKey());
+    if (nextId.length > 0) {
+      this.frozenHeroShareId = nextId;
+    }
+    this.heroIdFrozen = true;
+    this.clearHeroFreezeTimer();
+    this.heroFreezeTimer = setTimeout((): void => {
+      this.heroFreezeTimer = 0;
+      this.heroIdFrozen = false;
+    }, GALLERY_SHARED_TRANSITION_DURATION + 80);
   }
 
   private initViewportFromDisplay(): void {
@@ -1144,45 +1193,120 @@ export struct GalleryPreviewSlide {
     }
   }
 
-  // ── UI ───────────────────────────────────────────────────────────────────
+  /**
+   * 唯一共享元素容器：id 只挂这一层，内层封面/实况/GIF/原图切换不改配对。
+   * 官方 Exchange 只过渡位置与大小，不支持内容过渡；转场窗口内勿拆掉此节点。
+   */
+  @Builder
+  private heroSharedLayer() {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.isVideo()) {
+        if (this.thumbPix !== undefined) {
+          Image(this.thumbPix)
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .autoResize(false)
+            .hitTestBehavior(HitTestMode.None)
+            .draggable(false)
+        }
+        if (this.videoOverlayRevealed) {
+          GalleryAuthVideo({
+            videoUrl: this.videoSrc,
+            active: this.active,
+            bottomPadding: this.videoBottomPadding,
+            maxResolutionP: this.videoMaxResolutionP(),
+            autoStart: this.autoStartVideo,
+            detailsShowing: this.detailsShowing,
+            onDetailsTapDismiss: (): void => {
+              this.onVerticalDismiss();
+            }
+          })
+            .width('100%')
+            .height('100%')
+        }
+      } else if (this.isLive()) {
+        if (this.liveReady && this.movingPhoto !== undefined) {
+          MovingPhotoView({
+            movingPhoto: this.movingPhoto,
+            controller: this.liveController
+          })
+            .width('100%')
+            .height('100%')
+            .autoPlay(false)
+            .repeatPlay(false)
+            .enableAnalyzer(false)
+            .objectFit(ImageFit.Cover)
+            .onComplete((): void => {
+              this.onLiveImageComplete();
+            })
+            .onPrepared((): void => {
+              this.onLivePrepared();
+            })
+            .onStart((): void => {
+              this.onLiveStart();
+            })
+            .onFinish((): void => {
+              this.onLivePlaybackSettled();
+            })
+            .onStop((): void => {
+              this.onLivePlaybackSettled();
+            })
+            .onPause((): void => {
+              this.onLivePlaybackSettled();
+            })
+            .onError((): void => {
+              this.livePlayState = GalleryLivePlayState.Idle;
+            })
+        }
+        GalleryLivePreviewLayer({
+          stillUri: this.liveStillUri,
+          hintColor: this.hintColor(),
+          showLoading: !this.liveReady,
+          thumbPix: this.liveStillUri.length > 0 ? undefined : this.thumbPix,
+          fullPix: this.fullPix,
+          showOriginal: this.showingOriginal,
+          spinnerColor: this.spinnerColor()
+        })
+          .width('100%')
+          .height('100%')
+          .visibility(this.liveViewPrepared ? Visibility.Hidden : Visibility.Visible)
+          .hitTestBehavior(HitTestMode.Transparent)
+      } else if (this.isGif() && this.gifUri.length > 0) {
+        Image(this.gifUri)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .autoResize(false)
+          .syncLoad(true)
+          .draggable(false)
+      } else if (this.isGif() || this.thumbPix === undefined) {
+        Column()
+          .width('100%')
+          .height('100%')
+      } else {
+        Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .autoResize(false)
+          .dynamicRangeMode(DynamicRangeMode.HIGH)
+          .syncLoad(true)
+          .draggable(false)
+      }
+    }
+    .width(this.heroFrameW())
+    .height(this.heroFrameH())
+    .clip(true)
+    .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
+  }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Stack({ alignContent: Alignment.Center }) {
       if (this.isVideo()) {
-        // 底层封面参与 sharedTransition；播放器等转场结束后再出现，避免全屏封面抢戏
         Stack({ alignContent: Alignment.Center }) {
-          if (this.thumbPix !== undefined) {
-            Stack() {
-              Image(this.thumbPix)
-                .width('100%')
-                .height('100%')
-                .objectFit(ImageFit.Cover)
-                .autoResize(false)
-                .hitTestBehavior(HitTestMode.None)
-                .draggable(false)
-            }
-            .width(this.heroFrameW())
-            .height(this.heroFrameH())
-            .clip(true)
-            .hitTestBehavior(HitTestMode.None)
-            .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
-          }
-          if (this.videoOverlayRevealed) {
-            GalleryAuthVideo({
-              videoUrl: this.videoSrc,
-              active: this.active,
-              bottomPadding: this.videoBottomPadding,
-              maxResolutionP: this.videoMaxResolutionP(),
-              autoStart: this.autoStartVideo,
-              detailsShowing: this.detailsShowing,
-              onDetailsTapDismiss: (): void => {
-                this.onVerticalDismiss();
-              }
-            })
-              .width(this.heroFrameW())
-              .height(this.heroFrameH())
-          }
+          this.heroSharedLayer()
         }
         .width('100%')
         .height('100%')
@@ -1213,103 +1337,7 @@ export struct GalleryPreviewSlide {
         })
       } else {
         Column() {
-          if (this.isLive()) {
-            Stack({ alignContent: Alignment.Center }) {
-              if (this.liveReady && this.movingPhoto !== undefined) {
-                MovingPhotoView({
-                  movingPhoto: this.movingPhoto,
-                  controller: this.liveController
-                })
-                  .width('100%')
-                  .height('100%')
-                  .autoPlay(false)
-                  .repeatPlay(false)
-                  .enableAnalyzer(false)
-                  .objectFit(ImageFit.Cover)
-                  .onComplete((): void => {
-                    this.onLiveImageComplete();
-                  })
-                  .onPrepared((): void => {
-                    this.onLivePrepared();
-                  })
-                  .onStart((): void => {
-                    this.onLiveStart();
-                  })
-                  .onFinish((): void => {
-                    this.onLivePlaybackSettled();
-                  })
-                  .onStop((): void => {
-                    this.onLivePlaybackSettled();
-                  })
-                  .onPause((): void => {
-                    this.onLivePlaybackSettled();
-                  })
-                  .onError((): void => {
-                    this.livePlayState = GalleryLivePlayState.Idle;
-                  })
-              }
-              GalleryLivePreviewLayer({
-                stillUri: this.liveStillUri,
-                hintColor: this.hintColor(),
-                showLoading: !this.liveReady,
-                thumbPix: this.liveStillUri.length > 0 ? undefined : this.thumbPix,
-                fullPix: this.fullPix,
-                showOriginal: this.showingOriginal,
-                spinnerColor: this.spinnerColor()
-              })
-                .width('100%')
-                .height('100%')
-                .visibility(this.liveViewPrepared ? Visibility.Hidden : Visibility.Visible)
-                .hitTestBehavior(HitTestMode.Transparent)
-            }
-            .width(this.heroFrameW())
-            .height(this.heroFrameH())
-            .clip(true)
-            .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
-          } else {
-            Stack({ alignContent: Alignment.Center }) {
-              if (this.isGif() && this.gifUri.length > 0) {
-                Stack() {
-                  Image(this.gifUri)
-                    .width('100%')
-                    .height('100%')
-                    .objectFit(ImageFit.Cover)
-                    .autoResize(false)
-                    .syncLoad(true)
-                    .draggable(false)
-                }
-                .width(this.heroFrameW())
-                .height(this.heroFrameH())
-                .clip(true)
-                .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
-              } else if (this.isGif()) {
-                Blank()
-                  .width('100%')
-                  .height('100%')
-              } else if (this.thumbPix === undefined) {
-                Blank()
-                  .width('100%')
-                  .height('100%')
-              } else {
-                Stack() {
-                  Image(this.showingOriginal && this.fullPix !== undefined ? this.fullPix : this.thumbPix)
-                    .width('100%')
-                    .height('100%')
-                    .objectFit(ImageFit.Cover)
-                    .autoResize(false)
-                    .dynamicRangeMode(DynamicRangeMode.HIGH)
-                    .syncLoad(true)
-                    .draggable(false)
-                }
-                .width(this.heroFrameW())
-                .height(this.heroFrameH())
-                .clip(true)
-                .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
-              }
-            }
-            .width('100%')
-            .height('100%')
-          }
+          this.heroSharedLayer()
         }
         .width('100%').height('100%')
         .justifyContent(FlexAlign.Center)
