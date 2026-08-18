@@ -8,24 +8,25 @@
  * Cursor/VS Code 静态分析器不包含 HMS SDK 路径，linter 会误报 MODULE_NOT_FOUND，
  * 这属 IDE 配置限制，不影响实际构建。
  */
-import { AnimatorResult, display, UIContext, window } from '@kit.ArkUI';
+import { display, UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
   addGalleryPreviewDismissListener,
-  GALLERY_ANIMATOR_FRAME_RATE,
-  GALLERY_SHEET_ANIMATOR_EASING,
   galleryDetailsMediumHeightVp,
   GalleryPreviewOpacityUpdater,
   getGalleryPreviewDetailsSheetHeight,
   getGalleryPreviewDismissProgress,
-  quietFinishAnimator,
+  isGalleryPreviewDetailsAvoidAnimating,
   removeGalleryPreviewDismissListener,
   resetGalleryPreviewDetailsFit,
+  setGalleryPreviewDetailsAvoidAnimating,
+  setGalleryPreviewDetailsFitNormVel,
   setGalleryPreviewDetailsSheetHeight,
-  setGalleryPreviewDismissProgress
+  setGalleryPreviewDismissProgress,
+  takeGalleryPreviewDetailsAvoidVelocity
 } from '../album/GalleryPreviewVerticalGesture';
 import {
   GALLERY_SCRIM_FADE_DELAY,
@@ -92,6 +93,7 @@ import {
   galleryPreviewTitleCounter
 } from './galleryPreview/GalleryPreviewDetailsLogic';
 import {
+  setGalleryPreviewDetailsCover,
   setGalleryPreviewToolbarVisible,
   toggleGalleryPreviewToolbarVisible
 } from './galleryPreview/GalleryPreviewToolbarStore';
@@ -109,7 +111,7 @@ struct GalleryPreview {
   @State private pinchGestureActive: boolean = false;
   @State private previewZoomLocked: boolean = false;
   @State private totalCount: number = 0;
-  /** 预览背景遮罩：展开快结束时再淡入，收回快结束时再淡出 */
+  /** 预览背景遮罩：共享元素展开完成后再淡入，收回完成后再淡出 */
   @State private scrimOpacity: number = 0;
   @State private loadOriginalToken: number = 0;
   @State private downloading: boolean = false;
@@ -125,9 +127,6 @@ struct GalleryPreview {
   @State private deleting: boolean = false;
   @State private detailsVisible: boolean = false;
   @State private previewViewportH: number = 780;
-  /** 进出场动画期间忽略终值回调，避免面板到位后预览跳变 */
-  private detailsSheetSettled: boolean = false;
-  private sheetHeightAnimator: AnimatorResult | undefined = undefined;
   @State private detailsLoading: boolean = false;
   @State private detailsError: string = '';
   @State private detailsData: GalleryPhotoDetailData | undefined = undefined;
@@ -158,6 +157,12 @@ struct GalleryPreview {
   private heroScrimEntered: boolean = false;
   private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
   private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+  /** 弹出/关闭弹簧播放中：忽略 onHeightDidChange 终值，避免截断避让动画 */
+  private detailsAvoidAnimating: boolean = false;
+  /** 拉起动画期间记下系统终值，播完再对齐，避免中途跳变 */
+  private pendingSheetHeightVp: number = -1;
+  /** 当前避让弹簧终点，用于避免 onWillAppear 再写一次 */
+  private detailsAvoidTargetVp: number = -1;
 
   onPageShow(): void {
     this.isDarkTheme = this.colorMode === 1;
@@ -354,9 +359,9 @@ struct GalleryPreview {
     this.clearChromeRevealTimer();
     this.detailsVisible = false;
     this.previewSheetVisible = false;
-    this.detailsSheetSettled = false;
-    this.cancelSheetHeightAnimator();
+    this.detailsAvoidAnimating = false;
     resetGalleryPreviewDetailsFit();
+    setGalleryPreviewDetailsCover(false);
     setGalleryPreviewDismissProgress(0);
     this.detailsLoading = false;
     this.detailsError = '';
@@ -542,7 +547,24 @@ struct GalleryPreview {
   }
 
   private syncPreviewSheetVisible(): void {
-    this.previewSheetVisible = this.detailsVisible;
+    const next = this.detailsVisible;
+    if (next && !this.previewSheetVisible) {
+      // 先开避让弹簧，再挂 bindSheet，避免等 onWillAppear 期间画面停一拍。
+      this.detailsAvoidAnimating = true;
+      this.pendingSheetHeightVp = -1;
+      this.animateDetailsSheetHeight(galleryDetailsMediumHeightVp(this.previewViewportH));
+      this.previewSheetVisible = true;
+      return;
+    }
+    if (!next && this.previewSheetVisible) {
+      // 应用侧关闭：立刻把 isShow 置 false，系统半模态马上离场。
+      this.detailsAvoidAnimating = true;
+      this.pendingSheetHeightVp = -1;
+      this.animateDetailsSheetHeight(0);
+      this.previewSheetVisible = false;
+      return;
+    }
+    this.previewSheetVisible = next;
   }
 
   private previewSheetTitle(): string {
@@ -560,76 +582,60 @@ struct GalleryPreview {
     }
   }
 
-  private cancelSheetHeightAnimator(): void {
-    quietFinishAnimator(this.sheetHeightAnimator);
-    this.sheetHeightAnimator = undefined;
-  }
-
+  /**
+   * 官方：自定义 createAnimator.onFrame 在 UI 线程算曲线会丢帧（最佳实践对比 9.2% vs 0）。
+   * 只写一次终点高度，由 Slide 用 animateTo + springMotion 在渲染线程插值 translate。
+   * 文档：bpta-fair-use-animation、arkts-attribute-animation-apis、arkts-spring-curve
+   */
   private animateDetailsSheetHeight(targetVp: number): void {
     const from = getGalleryPreviewDetailsSheetHeight();
     const to = Math.max(0, targetVp);
-    if (Math.abs(from - to) < 0.5) {
-      setGalleryPreviewDetailsSheetHeight(to);
+    if (Math.abs(this.detailsAvoidTargetVp - to) < 0.5 && isGalleryPreviewDetailsAvoidAnimating()) {
       return;
     }
-    this.cancelSheetHeightAnimator();
-    try {
-      const animator = this.getUIContext().createAnimator({
-        duration: 400,
-        easing: GALLERY_SHEET_ANIMATOR_EASING,
-        delay: 0,
-        fill: 'forwards',
-        direction: 'normal',
-        iterations: 1,
-        begin: from,
-        end: to
-      });
-      animator.setExpectedFrameRateRange(GALLERY_ANIMATOR_FRAME_RATE);
-      animator.onFrame = (value: number): void => {
-        setGalleryPreviewDetailsSheetHeight(value);
-      };
-      animator.onFinish = (): void => {
-        this.sheetHeightAnimator = undefined;
-        setGalleryPreviewDetailsSheetHeight(to);
-      };
-      this.sheetHeightAnimator = animator;
-      animator.play();
-    } catch (_e) {
-      setGalleryPreviewDetailsSheetHeight(to);
-    }
+    const delta = to - from;
+    const absVel = takeGalleryPreviewDetailsAvoidVelocity();
+    const normVel = Math.abs(delta) > 1 ? absVel / delta : 0;
+    setGalleryPreviewDetailsFitNormVel(normVel);
+    this.detailsAvoidTargetVp = to;
+    this.detailsAvoidAnimating = true;
+    setGalleryPreviewDetailsAvoidAnimating(true);
+    setGalleryPreviewDetailsSheetHeight(to);
   }
 
   private previewDetailsSheetOptions(): SheetOptions {
     const options = fnHdsGalleryDetailsSheetOptions(
       this.previewSheetTitle(),
       (): void => {
-        this.detailsSheetSettled = false;
+        this.pendingSheetHeightVp = -1;
         this.closeDetailsPanel();
+        if (!this.detailsAvoidAnimating && !isGalleryPreviewDetailsAvoidAnimating()) {
+          setGalleryPreviewDetailsSheetHeight(0);
+        }
       },
       (heightPx: number): void => {
         this.onDetailsSheetHeightDidChange(heightPx);
       }
     );
     options.onWillAppear = (): void => {
-      this.detailsSheetSettled = false;
       this.animateDetailsSheetHeight(galleryDetailsMediumHeightVp(this.previewViewportH));
     };
-    options.onAppear = (): void => {
-      this.detailsSheetSettled = true;
-    };
     options.onWillDisappear = (): void => {
-      this.detailsSheetSettled = false;
+      // 官方：onWillDisappear 是离场动画开始前，不改 @State。
+      // 顶底栏走 AppStorage，半模态一开始收就立刻重现，不等弹簧拖尾/onDisappear。
+      this.revealPreviewChrome();
       this.animateDetailsSheetHeight(0);
     };
     return options;
   }
 
   private onDetailsSheetHeightDidChange(heightPx: number): void {
-    if (!this.detailsSheetSettled) {
+    const vp = Math.max(0, this.getUIContext().px2vp(heightPx));
+    if (isGalleryPreviewDetailsAvoidAnimating()) {
+      this.pendingSheetHeightVp = vp;
       return;
     }
-    const vp = Math.max(0, this.getUIContext().px2vp(heightPx));
-    this.cancelSheetHeightAnimator();
+    this.detailsAvoidAnimating = false;
     setGalleryPreviewDetailsSheetHeight(vp);
   }
 
@@ -665,10 +671,19 @@ struct GalleryPreview {
   }
 
   private openDetailsPanel(): void {
+    setGalleryPreviewDetailsCover(true);
+    setGalleryPreviewDismissProgress(1);
     galleryPreviewOpenDetailsPanel(this.asActionsHost());
   }
 
+  private revealPreviewChrome(): void {
+    setGalleryPreviewDetailsCover(false);
+    setGalleryPreviewDismissProgress(0);
+    setGalleryPreviewToolbarVisible(true);
+  }
+
   private closeDetailsPanel(): void {
+    this.revealPreviewChrome();
     galleryPreviewCloseDetailsPanel(this.asActionsHost());
   }
 
@@ -961,8 +976,8 @@ struct GalleryPreview {
         .backgroundColor(Color.Transparent)
         .id('gallery_preview_swiper')
         .onClick((): void => {
+          // 详情展开时由 bindSheet 蒙层点击关闭，不走这里（否则会和双击放大抢识别、慢半拍）。
           if (this.detailsVisible) {
-            this.closeDetailsPanel();
             return;
           }
           if (this.currentItemIsVideo()) {
@@ -1049,7 +1064,6 @@ struct GalleryPreview {
         fgColor: this.fgColor(),
         showOriginalAction: this.currentHasOriginal(),
         originalShowing: this.originalPreviewEnabled,
-        detailsShowing: this.detailsVisible,
         sharing: this.sharing,
         downloading: this.downloading,
         downloadProgressPct: this.downloadProgressPct,
@@ -1114,6 +1128,8 @@ struct GalleryPreview {
     .height('100%')
     .backgroundColor(Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    // 不用 $$：遮罩关闭时立刻改 isShow 会重建整页 Swiper/图片，归位闪烁。
+    // 官方允许离场后再在 onDisappear 里同步 isShow（拖拽关闭本身也不改 isShow）。
     .bindSheet(this.previewSheetVisible, this.previewSheetBuilder, this.previewDetailsSheetOptions())
   }
 

@@ -1,6 +1,8 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="entry" type="OhosDebugTask" factoryName="OpenHarmony App">
     <MODULE_NAME>entry</MODULE_NAME>
+    <PRODUCT>default</PRODUCT>
+    <TARGET>default</TARGET>
     <REINSTALL_APPLICATION>true</REINSTALL_APPLICATION>
     <ENVIRONMENT_VARIABLES>[]</ENVIRONMENT_VARIABLES>
     <DEBUG_LINE_ENABLE_DATA>false</DEBUG_LINE_ENABLE_DATA>

@@ -29,7 +29,10 @@ import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
 import {
   GALLERY_PREVIEW_HERO_ACTIVE_KEY,
-  gallerySharedTransitionId
+  gallerySharedTransitionId,
+  GALLERY_SCRIM_FADE_DELAY,
+  GALLERY_SCRIM_FADE_DURATION,
+  GALLERY_SHARED_TRANSITION_CURVE
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
@@ -61,7 +64,8 @@ import { gallerySlideshowLaunch } from '../album/slideshow/GallerySlideshowLaunc
 import {
   GallerySlideshowConfig,
   GallerySlideshowScope,
-  GallerySlideshowScopeKind
+  GallerySlideshowScopeKind,
+  gallerySlideshowScopeLabel
 } from '../album/slideshow/GallerySlideshowTypes';
 import { GallerySlideshowSettingsSheet } from '../album/slideshow/GallerySlideshowSettingsSheet';
 import {
@@ -1034,6 +1038,16 @@ struct CategoryGallery {
     })
   }
 
+  @Builder
+  private slideshowSettingsBuilder() {
+    GallerySlideshowSettingsSheet({
+      preparing: this.slideshowPreparing,
+      onStart: (config: GallerySlideshowConfig): void => {
+        void this.startCategorySlideshow(config);
+      }
+    })
+  }
+
   private askChoice(title: string, buttons: string[]): Promise<number> {
     if (this.choiceSheetVisible) {
       return Promise.resolve(-1);
@@ -1446,23 +1460,6 @@ struct CategoryGallery {
         .backgroundColor($r('app.color.page_background'))
       }
 
-      if (this.slideshowSettingsVisible) {
-        GallerySlideshowSettingsSheet({
-          scope: this.categorySlideshowScope(),
-          visible: this.slideshowSettingsVisible,
-          preparing: this.slideshowPreparing,
-          onDismiss: (): void => {
-            this.dismissSlideshowSettings();
-          },
-          onStart: (config: GallerySlideshowConfig): void => {
-            void this.startCategorySlideshow(config);
-          }
-        })
-          .width('100%')
-          .height('100%')
-          .zIndex(20)
-      }
-
       if (this.slideshowPreparing) {
         FnFullLoadingMask({
           text: '正在准备幻灯片...',
@@ -1488,6 +1485,15 @@ struct CategoryGallery {
             this.completeLivePhotoSave('cancel');
           }
         ))
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.slideshowSettingsVisible, this.slideshowSettingsBuilder, fnHdsFitContentSheetOptions(
+          gallerySlideshowScopeLabel(this.categorySlideshowScope()),
+          (): void => {
+            this.dismissSlideshowSettings();
+          }
+        ))
     }
     .width('100%')
     .height('100%')
@@ -1503,7 +1509,13 @@ struct CategoryGallery {
   pageTransition(): void {
     if (this.previewHeroActive) {
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({
+        type: RouteType.None,
+        duration: GALLERY_SCRIM_FADE_DURATION,
+        delay: GALLERY_SCRIM_FADE_DELAY,
+        curve: GALLERY_SHARED_TRANSITION_CURVE
+      })
+        .opacity(0)
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

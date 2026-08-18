@@ -125,6 +125,8 @@ export struct GalleryVideoOverlayChrome {
   @State private barW: number = 1;
   @State private overlayW: number = 360;
   @State private overlayH: number = 780;
+  /** 官方 bindContextMenu(isShown)：长按由按钮自己触发，避免被全屏按住倍速抢走 */
+  @State private qualityMenuVisible: boolean = false;
   private dragStartRatio: number = 0;
 
   private isBrightnessVolumeZone(localX: number, localY: number): boolean {
@@ -181,6 +183,7 @@ export struct GalleryVideoOverlayChrome {
         MenuItem({ content: label })
           .selected(idx === this.qualityIndex)
           .onClick((): void => {
+            this.qualityMenuVisible = false;
             this.onSelectQuality(idx);
           })
       }, (label: string, idx: number) => `q_${idx}_${label}`)
@@ -245,6 +248,17 @@ export struct GalleryVideoOverlayChrome {
         }
       })
       .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+        if (info.type === GestureControl.GestureType.LONG_PRESS_GESTURE) {
+          const lp = event as BaseGestureEvent;
+          const fingers = lp.fingerList;
+          if (fingers !== undefined && fingers.length > 0 && this.visible) {
+            // 底栏控件区（倍速/进度）不走全屏按住倍速，把长按留给清晰度菜单
+            const y = fingers[0].localY;
+            if (y > this.overlayH - 120 - this.bottomPadding) {
+              return GestureJudgeResult.REJECT;
+            }
+          }
+        }
         if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
           return GestureJudgeResult.CONTINUE;
         }
@@ -338,7 +352,16 @@ export struct GalleryVideoOverlayChrome {
             }
             .width(OVERLAY_SPEED_WIDTH_VP)
             .height(OVERLAY_PILL_HEIGHT_VP)
+            .backgroundColor(Color.Transparent)
+            .draggable(false)
             .hitTestBehavior(HitTestMode.Default)
+            .priorityGesture(
+              LongPressGesture({ repeat: false })
+                .onAction((): void => {
+                  this.onInteract();
+                  this.qualityMenuVisible = true;
+                })
+            )
             .bindMenu(this.speedMenu, fnHdsBindMenuOptions(
               Placement.TopLeft,
               (): void => {},
@@ -346,10 +369,13 @@ export struct GalleryVideoOverlayChrome {
                 this.onInteract();
               }
             ))
-            .bindContextMenu(this.qualityMenu, ResponseType.LongPress, fnHdsBindContextMenuOptions(
+            .bindContextMenu(this.qualityMenuVisible, this.qualityMenu, fnHdsBindContextMenuOptions(
               Placement.TopLeft,
               (): void => {
                 this.onInteract();
+              },
+              (): void => {
+                this.qualityMenuVisible = false;
               }
             ))
 

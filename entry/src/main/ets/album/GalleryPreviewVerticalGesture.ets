@@ -3,14 +3,14 @@ import { AnimatorResult, AttributeUpdater } from '@kit.ArkUI';
 /**
  * 预览页纵向手势：未放大时下滑跟手退出、上滑打开官方 bindSheet 详情。
  *
- * 半模态展开后，媒体限制在剩余区域内（上下对称裁剪），并上移使画面中心落在剩余区中心。
- * 跟手走 AttributeUpdater，不写 @State，避免每帧重建 Swiper。
+ * 半模态是系统叠层，自身遮挡下层，不要 clipShape 裁出洞（会露出页面浅底）。
+ * 避让只把画面中心平移到剩余区；跟手走 AttributeUpdater，不写 @State。
  *
  * 文档：
  * https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-sheet-page
  * https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-universal-attributes-sheet-transition
  * https://developer.huawei.com/consumer/cn/doc/best-practices/bpta-picture-preview
- * https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-explicit-animation
+ * https://developer.huawei.com/consumer/cn/doc/harmonyos-faqs/faqs-arkui-1365
  */
 
 /** 未放大时纵向识别距离，避免微移抢走单击 */
@@ -30,15 +30,58 @@ export const VIDEO_SIDE_ADJUST_WIDTH_RATIO: number = 0.28;
 /** 上下各留出一段，避免抢占上滑详情 / 下滑退出 */
 export const VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO: number = 0.20;
 /**
- * createAnimator 不支持 spring-motion / responsive-spring-motion（非法曲线会回退 ease）。
- * 按官方默认弹簧换算 interpolating-spring(velocity, mass, stiffness, damping)：
- * stiffness = (2π / response)^2，damping = 4π * dampingFraction / response。
- * 文档：https://developer.huawei.com/consumer/cn/doc/harmonyos-references/js-apis-animator
+ * 官方：interpolatingSpring 是 0→1 阻尼弹簧，初速度要归一化（绝对速度/改变量），
+ * 时长由物理参数决定。ζ<1 会过冲，createAnimator 采样超出 [begin,end] 就是「动画逃逸」。
+ * 避让用临界阻尼 ζ=1，周期仍对齐 bindSheet 的 0.347。
+ * 文档：arkts-spring-curve、arkts-animation-smoothing、faqs-arkui-1365
  */
-export const GALLERY_SHEET_ANIMATOR_EASING: string = 'interpolating-spring(0, 1, 130.4, 18.85)';
-/** 对应 responsive-spring-motion(0.347, 0.99) */
+export const GALLERY_SHEET_SPRING_STIFFNESS: number = 327.8;
+/** 4π * 1.0 / 0.347，临界阻尼，避免过冲把画面推出剩余区 */
+export const GALLERY_SHEET_SPRING_DAMPING: number = 36.21;
+/** 对应 responsive-spring-motion(0.347, 0.99)，用于下滑跟手松手回弹 */
 export const GALLERY_VERTICAL_ANIMATOR_EASING: string = 'interpolating-spring(0, 1, 327.8, 35.85)';
 export const GALLERY_ANIMATOR_FRAME_RATE: ExpectedFrameRateRange = { min: 0, max: 120, expected: 120 };
+
+/** 弹出避让由 Slide 走 animateTo，true 时跟手高度不要再写 */
+let detailsAvoidAnimating: boolean = false;
+/** interpolatingSpring 归一化初速度，供避让属性动画继承跟手速度 */
+let detailsFitNormVel: number = 0;
+
+export function setGalleryPreviewDetailsAvoidAnimating(animating: boolean): void {
+  detailsAvoidAnimating = animating;
+}
+
+export function isGalleryPreviewDetailsAvoidAnimating(): boolean {
+  return detailsAvoidAnimating;
+}
+
+export function setGalleryPreviewDetailsFitNormVel(normalizedVelocity: number): void {
+  let v = normalizedVelocity;
+  if (v > 2.5) {
+    v = 2.5;
+  } else if (v < -0.5) {
+    v = -0.5;
+  }
+  detailsFitNormVel = v;
+}
+
+export function getGalleryPreviewDetailsFitNormVel(): number {
+  return detailsFitNormVel;
+}
+
+/** 松手时半模态高度方向的速度（vp/s），供避让弹簧继承，避免从 0 急刹停顿 */
+let detailsAvoidVelocityVpPerSec: number = 0;
+
+export function setGalleryPreviewDetailsAvoidVelocity(vpPerSec: number): void {
+  detailsAvoidVelocityVpPerSec = vpPerSec;
+}
+
+export function takeGalleryPreviewDetailsAvoidVelocity(): number {
+  const v = detailsAvoidVelocityVpPerSec;
+  detailsAvoidVelocityVpPerSec = 0;
+  return v;
+}
+
 /** 官方 SheetSize.MEDIUM：半模态父窗口高度的 60% */
 export const GALLERY_SHEET_MEDIUM_RATIO: number = 0.6;
 
@@ -98,16 +141,24 @@ export function galleryDetailsMediumHeightVp(viewportH: number): number {
   return viewportH * GALLERY_SHEET_MEDIUM_RATIO;
 }
 
+/** 跟手向上位移换算成半模态高度，使松手后避让动画从当前画面接着播 */
+export function gallerySheetHeightFromAvoidY(translateY: number): number {
+  if (translateY >= -0.5) {
+    return 0;
+  }
+  return -translateY * 2;
+}
+
 export class GalleryDetailsFit {
   scale: number = 1;
   translateY: number = 0;
-  /** 剩余区域高度；0 表示铺满视口、不裁切 */
-  clipHeight: number = 0;
 }
 
 /**
- * 半模态让位：媒体中心对齐剩余区中心，超出部分上下对称裁剪。
- * translateY = -sheetH / 2，使画面中心从视口中心落到剩余区中心。
+ * 半模态让位：画面中心对齐剩余区中心（translateY = -半模态高 / 2）。
+ * 官方 bindSheet 本身盖住下层，不裁切；FAQ 改的是 Video 布局高度，
+ * 这里 Swiper 子项写死 height 100%，改高度不生效，只平移让系统半模态遮挡下半。
+ * 文档：faqs-arkui-1365、ts-universal-attributes-sheet-transition
  */
 export function galleryDetailsFit(
   sheetHeightVp: number,
@@ -119,9 +170,8 @@ export function galleryDetailsFit(
   if (viewportH <= 1 || sheetHeightVp <= 0) {
     return out;
   }
-  const remainingH = Math.max(1, viewportH - sheetHeightVp);
-  out.clipHeight = remainingH;
-  out.translateY = -sheetHeightVp / 2;
+  const usedH = Math.min(sheetHeightVp, viewportH - 1);
+  out.translateY = -usedH / 2;
   return out;
 }
 
@@ -157,72 +207,55 @@ export function removeGalleryPreviewDetailsFitListener(cb: () => void): void {
 
 export function resetGalleryPreviewDetailsFit(): void {
   detailsSheetHeightVp = 0;
+  detailsAvoidVelocityVpPerSec = 0;
+  detailsFitNormVel = 0;
+  detailsAvoidAnimating = false;
   detailsFitListeners.splice(0, detailsFitListeners.length);
 }
 
-/** 跟手 scale/translate 直通渲染层；裁切窗口单独走 ClipUpdater，避免和位移绑在同一节点上把裁切一起带走。 */
+/** 跟手 scale/translate 直通渲染层；弹出避让改走 animateTo，不裁切。 */
 export class GalleryPreviewSlideTransformUpdater extends AttributeUpdater<StackAttribute> {
   private lastScale: number = 1;
   private lastY: number = 0;
+  /** 属性动画占用 translate 时不再直通，避免和 animateTo 抢同一属性 */
+  private translateLocked: boolean = false;
+
+  lockTranslate(locked: boolean): void {
+    this.translateLocked = locked;
+  }
+
+  getTranslateY(): number {
+    return this.lastY;
+  }
 
   initializeModifier(instance: StackAttribute): void {
     instance.scale({ x: this.lastScale, y: this.lastScale, centerX: '50%', centerY: '50%' });
-    instance.translate({ x: 0, y: this.lastY });
+    if (!this.translateLocked) {
+      instance.translate({ x: 0, y: this.lastY });
+    }
   }
 
   onComponentChanged(component: StackAttribute): void {
     component.scale({ x: this.lastScale, y: this.lastScale, centerX: '50%', centerY: '50%' });
-    component.translate({ x: 0, y: this.lastY });
+    if (!this.translateLocked) {
+      component.translate({ x: 0, y: this.lastY });
+    }
   }
 
   apply(scale: number, translateY: number): void {
     this.lastScale = scale;
-    this.lastY = translateY;
+    if (!this.translateLocked) {
+      this.lastY = translateY;
+    }
     this.attribute?.scale({ x: scale, y: scale, centerX: '50%', centerY: '50%' });
-    this.attribute?.translate({ x: 0, y: translateY });
+    if (!this.translateLocked) {
+      this.attribute?.translate({ x: 0, y: this.lastY });
+    }
   }
 
   reset(): void {
+    this.translateLocked = false;
     this.apply(1, 0);
-  }
-}
-
-/**
- * 视口裁切直通。保持布局高度 100%，只用 clipShape 限制在剩余区，
- * 这样媒体仍按全屏 Contain 居中，再配合上移即可上下等比例裁剪。
- */
-export class GalleryPreviewClipUpdater extends AttributeUpdater<StackAttribute> {
-  private lastClipH: number = 0;
-  private lastFullH: number = 0;
-
-  initializeModifier(instance: StackAttribute): void {
-    this.write(instance);
-  }
-
-  onComponentChanged(component: StackAttribute): void {
-    this.write(component);
-  }
-
-  apply(clipHeight: number, fullHeight: number): void {
-    this.lastClipH = clipHeight;
-    this.lastFullH = fullHeight;
-    const attr = this.attribute;
-    if (attr) {
-      this.write(attr);
-    }
-  }
-
-  reset(): void {
-    this.apply(0, this.lastFullH);
-  }
-
-  private write(target: StackAttribute): void {
-    const clipped = this.lastClipH > 1 && this.lastFullH > 1 && this.lastClipH < this.lastFullH - 0.5;
-    if (clipped) {
-      target.clipShape(new Rect({ width: '100%', height: this.lastClipH }));
-      return;
-    }
-    target.clipShape(new Rect({ width: '100%', height: '100%' }));
   }
 }
 

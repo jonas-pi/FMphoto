@@ -1,6 +1,6 @@
 /**
- * 运行时识别当前 NAS 连接（公网 / 内网），并支持在已登录状态下切换。
- * 中继暂不开放（官方隧道未对第三方提供可用 WSS）。
+ * 运行时识别当前 NAS 连接（公网 / 内网 / 官方中继），并支持在已登录状态下切换。
+ * 中继仅在云端 fn 主机可解析且 /trimcon 可达时使用；臆造的 {fnId}.fnos.net 常无 DNS。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -41,7 +41,7 @@ export interface EndpointConnectionInfo {
   hasPublic: boolean;
   /** 是否有内网可切换 */
   hasLan: boolean;
-  /** 是否有中继可切换（暂固定 false） */
+  /** 是否有中继可切换 */
   hasRelay: boolean;
   publicUrl: string;
   lanUrl: string;
@@ -98,7 +98,7 @@ function compactAddressFromUrl(baseUrl: string, fallbackInput: string): string {
   if (u.endsWith('/')) {
     u = u.substring(0, u.length - 1);
   }
-  // 中继门户显示 fnos.net/{fnId}
+  // 中继显示 {fnId}.5ddd.com / {fnId}.fnos.net
   if (isFnRelayBaseUrlImpl(u)) {
     return u.replace(/^https?:\/\//i, '');
   }
@@ -229,6 +229,7 @@ export function resolveStoredEndpointUrls(stored: StoredSession): StoredEndpoint
   if (relayUrl.length > 0 && isFnRelayBaseUrl(relayUrl)) {
     relayUrl = normalizeFnRelayBaseUrl(relayUrl);
   }
+  // 仅使用会话里已保存的中继；不要按 FN ID 臆造 {fnId}.5ddd.com（多数设备该主机名并不存在）
   const lanUrl = lanIpv4Url.length > 0 ? lanIpv4Url : lanIpv6Url;
   return {
     publicUrl,
@@ -238,7 +239,7 @@ export function resolveStoredEndpointUrls(stored: StoredSession): StoredEndpoint
     lanIpv4Url,
     lanIpv6Url,
     lanUrl,
-    relayUrl: ''
+    relayUrl
   };
 }
 
@@ -249,7 +250,8 @@ export function endpointPoolFromStored(stored: StoredSession): LoginEndpointPool
     lanIpv6Url: urls.lanIpv6Url,
     publicDomainUrl: urls.publicDomainUrl,
     publicIpv4Url: urls.publicIpv4Url,
-    publicIpv6Url: urls.publicIpv6Url
+    publicIpv6Url: urls.publicIpv6Url,
+    relayUrl: urls.relayUrl
   };
 }
 
@@ -273,6 +275,7 @@ function countDistinctEndpoints(urls: StoredEndpointUrls): number {
   pushUnique(urls.publicIpv6Url);
   pushUnique(urls.lanIpv4Url);
   pushUnique(urls.lanIpv6Url);
+  pushUnique(urls.relayUrl);
   return seen.length;
 }
 
@@ -304,20 +307,24 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
   const canSwitch = distinct >= 2;
   let kind = resolveKindByUrl(
     activeUrl, publicUrl, publicDomainUrl, publicIpUrl, urls.publicIpv6Url,
-    lanUrl, urls.lanIpv6Url, ''
+    lanUrl, urls.lanIpv6Url, urls.relayUrl
   );
-  if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
-    kind = ENDPOINT_KIND_UNKNOWN;
-  }
   if (!canSwitch) {
-    kind = ENDPOINT_KIND_SINGLE;
+    // 仅一条地址时仍保留公网/内网/中继标签，便于「我的」页展示
+    if (kind === ENDPOINT_KIND_UNKNOWN) {
+      kind = ENDPOINT_KIND_SINGLE;
+    }
   } else if (kind === ENDPOINT_KIND_UNKNOWN) {
     if (lanUrl.length > 0 && sameEndpoint(activeUrl, lanUrl)) {
       kind = LOGIN_ENDPOINT_PREF_LAN;
     } else if (urls.lanIpv6Url.length > 0 && sameEndpoint(activeUrl, urls.lanIpv6Url)) {
       kind = LOGIN_ENDPOINT_PREF_LAN;
+    } else if (urls.relayUrl.length > 0 && sameEndpoint(activeUrl, urls.relayUrl)) {
+      kind = LOGIN_ENDPOINT_PREF_RELAY;
     } else if (publicUrl.length > 0) {
       kind = LOGIN_ENDPOINT_PREF_PUBLIC;
+    } else if (urls.relayUrl.length > 0) {
+      kind = LOGIN_ENDPOINT_PREF_RELAY;
     } else {
       kind = LOGIN_ENDPOINT_PREF_LAN;
     }
@@ -329,6 +336,9 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
   } else if (kind === LOGIN_ENDPOINT_PREF_LAN) {
     const showLan = sameEndpoint(activeUrl, urls.lanIpv6Url) ? urls.lanIpv6Url : lanUrl;
     addressText = compactAddressFromUrl(showLan, stored.lanInput);
+  } else if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
+    const showRelay = urls.relayUrl.length > 0 ? urls.relayUrl : activeUrl;
+    addressText = compactAddressFromUrl(showRelay, '');
   } else if (activeUrl.length > 0) {
     addressText = compactAddressFromUrl(
       activeUrl,
@@ -338,6 +348,7 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
   const hasPublic = publicUrl.length > 0 || publicDomainUrl.length > 0 ||
     publicIpUrl.length > 0 || urls.publicIpv6Url.length > 0;
   const hasLan = lanUrl.length > 0 || urls.lanIpv6Url.length > 0;
+  const hasRelay = urls.relayUrl.length > 0;
   return {
     kind,
     label: endpointKindLabel(kind),
@@ -345,12 +356,12 @@ export function resolveEndpointConnectionInfo(stored: StoredSession | null): End
     canSwitch,
     hasPublic,
     hasLan,
-    hasRelay: false,
+    hasRelay,
     publicUrl: publicUrl.length > 0 ? publicUrl : preferPublicEndpointUrl(publicDomainUrl, publicIpUrl),
     lanUrl,
     lanIpv6Url: urls.lanIpv6Url,
     publicIpv6Url: urls.publicIpv6Url,
-    relayUrl: '',
+    relayUrl: urls.relayUrl,
     activeUrl
   };
 }
@@ -363,6 +374,10 @@ async function pickUrlForKind(stored: StoredSession, targetKind: string): Promis
   }
   if (targetKind === LOGIN_ENDPOINT_PREF_PUBLIC) {
     const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_PUBLIC);
+    return selected.server;
+  }
+  if (targetKind === LOGIN_ENDPOINT_PREF_RELAY) {
+    const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_RELAY);
     return selected.server;
   }
   return '';
@@ -489,8 +504,11 @@ export async function switchStoredLoginEndpoint(
     return { ok: false, message: '未登录' };
   }
   const info = resolveEndpointConnectionInfo(stored);
-  if (!info.canSwitch) {
+  if (!info.canSwitch && targetKind !== LOGIN_ENDPOINT_PREF_RELAY) {
     return { ok: false, message: '未配置多地址，无法切换' };
+  }
+  if (targetKind === LOGIN_ENDPOINT_PREF_RELAY && info.relayUrl.length === 0) {
+    return { ok: false, message: '未解析到官方中继地址' };
   }
   const nextUrl = await pickUrlForKind(stored, targetKind);
   if (nextUrl.length === 0) {
