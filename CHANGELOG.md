@@ -6,6 +6,28 @@
 
 ---
 
+## [1.3.2-beta.3] - 2026-08-18
+
+在 [1.3.2-beta.2] 上修一镜到底配对，并把 FN Connect 中继切到新集群。
+
+### 改进
+
+- **共享转场配对**：按官方一镜到底修正源/目标页转场；hero 复位加代次校验，减少连点进出预览时闪回。
+- **上传不冻界面**：读待上传文件改走 TaskPool，避免主线程同步读整图卡顿。
+- **FN Connect 中继**：支持新集群 `{fnId}.5ddd.com`（旧 `fnos.net` 仍识别）；登录可选中继通道，不再误补 5666/5667。
+- **幻灯片设置**：改用官方 `bindSheet` 半模态，不再自绘全屏卡片。
+- **搜索与菜单**：打开更多菜单时先收键盘，避免输入框和弹出层抢焦点。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.3.2-beta.2` 的设备可直接覆盖升级（`versionCode` 1003006）。
+
+---
+
 ## [1.3.2-beta.2] - 2026-08-16
 
 在 [1.3.2-beta.1] 上补齐系统图库式预览：宫格进预览走共享元素，未放大时可上滑详情、下滑退出。
@@ -284,6 +306,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.2-beta.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.2...v1.3.2-beta.3
 [1.3.2-beta.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.1...v1.3.2-beta.2
 [1.3.2-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.1...v1.3.2-beta.1
 [1.3.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.0...v1.3.1
