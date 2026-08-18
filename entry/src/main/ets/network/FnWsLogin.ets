@@ -1,10 +1,12 @@
 /**
  * fnOS 主通道 WebSocket 登录（wss://host/websocket?type=main）
  * getRSAPub -> encrypted(user.login) -> user.authToken（HMAC 前缀 + JSON）
+ * FN Connect 中继：握手带 Origin + Cookie（mode=relay），DNS 未就绪时短重试。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
+import { isFnRelayBaseUrl } from './FnConnectApi';
 import { buildFnMainWebSocketUrl } from './ServerUrl';
 import {
   fnWsAesCbcDecryptSecretToHmacKey,
@@ -26,6 +28,11 @@ const WS_CONNECT_PROBE_TIMEOUT_MS = 5000;
 const DEFAULT_BACK_ID = '0000000000000000';
 const WS_CONNECT_FAILED_CODE = '200';
 const WS_CERT_ERROR_CODES: number[] = [2300060, 2300058, 2300059, 2300077];
+/** 中继子域名 DNS 常滞后于隧道就绪；连接失败时短间隔再试，避免误报「找不到主机」 */
+const RELAY_WS_CONNECT_ATTEMPTS = 3;
+const RELAY_WS_RETRY_DELAY_MS = 1200;
+/** 整段登录超时（28s）最多再试 1 次，避免中继抖动时卡太久 */
+const RELAY_WS_TIMEOUT_RETRY_MAX = 1;
 
 export interface FnWsLoginResult {
   success: boolean;
@@ -329,13 +336,78 @@ async function probeHttpsCertificateFailure(httpBaseNoSlash: string): Promise<bo
   }
 }
 
-function buildWsConnectOptions(isTrustedHost: boolean): webSocket.WebSocketRequestOptions | undefined {
-  if (!isTrustedHost) {
-    return undefined;
+function delayMs(ms: number): Promise<void> {
+  return new Promise<void>((resolve: () => void) => {
+    setTimeout((): void => {
+      resolve();
+    }, ms);
+  });
+}
+
+/** 协议+主机（不含路径），与官方 os-web 的 Origin 一致 */
+function httpOriginOf(base: string): string {
+  let u = base.trim();
+  if (u.endsWith('/')) {
+    u = u.substring(0, u.length - 1);
   }
-  return {
-    skipServerCertVerification: true
+  const pe = u.indexOf('://');
+  if (pe < 0) {
+    return u;
+  }
+  const after = u.substring(pe + 3);
+  const slash = after.indexOf('/');
+  if (slash < 0) {
+    return u;
+  }
+  return u.substring(0, pe + 3 + slash);
+}
+
+/**
+ * WSS 握手头：官方 Web 在中继上会带 Origin 与 Cookie。
+ * 实测第三方同样可被 FN Connect 反代转发，缺这些头时部分集群会握手失败。
+ */
+function buildWsConnectOptions(httpBase: string, isTrustedHost: boolean): webSocket.WebSocketRequestOptions {
+  const opt: webSocket.WebSocketRequestOptions = {
+    header: {
+      'Origin': httpOriginOf(httpBase),
+      'Cookie': 'mode=relay; language=zh-CN'
+    }
   };
+  if (isTrustedHost) {
+    opt.skipServerCertVerification = true;
+  }
+  return opt;
+}
+
+function isTerminalWsLoginResult(r: FnWsLoginResult): boolean {
+  return r.success === true
+    || r.requires2fa === true
+    || r.requires2faSetup === true
+    || r.certificateError === true;
+}
+
+/** 仅连接层失败才重试；密码错 / 2FA / 证书不可信不重试 */
+function isRetryableRelayWsFailure(r: FnWsLoginResult): boolean {
+  if (isTerminalWsLoginResult(r)) {
+    return false;
+  }
+  const m = (r.message !== undefined ? r.message : '').toLowerCase();
+  if (m.indexOf('websocket 登录超时') >= 0) {
+    return true;
+  }
+  if (m.indexOf('无法连接') >= 0 || m.indexOf('连接失败') >= 0 || m.indexOf('打开失败') >= 0) {
+    return true;
+  }
+  if (m.indexOf('找不到') >= 0 || m.indexOf('host') >= 0 || m.indexOf('dns') >= 0) {
+    return true;
+  }
+  if (m.indexOf(`错误码 ${WS_CONNECT_FAILED_CODE}`) >= 0 || m.indexOf(`code: ${WS_CONNECT_FAILED_CODE}`) >= 0) {
+    return true;
+  }
+  if (m.indexOf('eof') >= 0) {
+    return true;
+  }
+  return false;
 }
 
 async function resolveWsFailure(
@@ -396,6 +468,35 @@ export async function fnWsLogin(
     return { success: false, message: '缺少设备标识 did' };
   }
   const did = deviceId.trim();
+  const maxAttempts = isFnRelayBaseUrl(httpBaseNoSlash) ? RELAY_WS_CONNECT_ATTEMPTS : 1;
+  let last: FnWsLoginResult = { success: false, message: '无法连接 WebSocket' };
+  let timeoutRetries = 0;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    last = await fnWsLoginOnce(httpBaseNoSlash, username, password, isTrustedHost, did);
+    if (!isRetryableRelayWsFailure(last) || attempt + 1 >= maxAttempts) {
+      return last;
+    }
+    const msg = last.message !== undefined ? last.message : '';
+    if (msg === 'WebSocket 登录超时') {
+      timeoutRetries++;
+      if (timeoutRetries > RELAY_WS_TIMEOUT_RETRY_MAX) {
+        return last;
+      }
+    }
+    hilog.info(DOMAIN, TAG, 'relay WSS retry %{public}d/%{public}d: %{public}s',
+      attempt + 1, maxAttempts - 1, msg);
+    await delayMs(RELAY_WS_RETRY_DELAY_MS);
+  }
+  return last;
+}
+
+async function fnWsLoginOnce(
+  httpBaseNoSlash: string,
+  username: string,
+  password: string,
+  isTrustedHost: boolean,
+  did: string
+): Promise<FnWsLoginResult> {
   fnWsResetReqIdCounter();
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
   hilog.info(DOMAIN, TAG, 'WS connect %{public}s trusted=%{public}s', wsUrl, String(isTrustedHost));
@@ -429,7 +530,7 @@ export async function fnWsLogin(
     let pendingAfterAuth: PendingAfterAuth | null = null;
 
     const ws = webSocket.createWebSocket();
-    const connectOptions = buildWsConnectOptions(isTrustedHost);
+    const connectOptions = buildWsConnectOptions(httpBaseNoSlash, isTrustedHost);
 
     const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
       if (done || failureInFlight) {
@@ -610,11 +711,7 @@ export async function fnWsLogin(
       }
     };
 
-    if (connectOptions !== undefined) {
-      ws.connect(wsUrl, connectOptions, onConnect);
-    } else {
-      ws.connect(wsUrl, onConnect);
-    }
+    ws.connect(wsUrl, connectOptions, onConnect);
   });
 }
 
@@ -675,7 +772,7 @@ export async function fnWs2faVerify(
     let pendingAfterAuth: PendingAfterAuth | null = null;
 
     const ws = webSocket.createWebSocket();
-    const connectOptions = buildWsConnectOptions(isTrustedHost);
+    const connectOptions = buildWsConnectOptions(httpBaseNoSlash, isTrustedHost);
 
     const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
       if (done || failureInFlight) {
@@ -831,10 +928,6 @@ export async function fnWs2faVerify(
       }
     };
 
-    if (connectOptions !== undefined) {
-      ws.connect(wsUrl, connectOptions, onConnect);
-    } else {
-      ws.connect(wsUrl, onConnect);
-    }
+    ws.connect(wsUrl, connectOptions, onConnect);
   });
 }

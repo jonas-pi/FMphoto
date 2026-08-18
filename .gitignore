@@ -52,3 +52,7 @@ entry/build/**/*-signed.hap
 /docs/review-test-photos-face-groups.jpg
 /docs/logo_split/fmphoto_*.png
 /docs/screenshots/review-1080x1920/
+
+# 本地中继探测会话（含 token，勿提交）
+/scripts/.fnos_relay_session.json
+**/.fnos_relay_session.json

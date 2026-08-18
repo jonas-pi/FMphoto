@@ -1,8 +1,9 @@
 /**
  * 登录前选路：短超时并行探测；公网拆成「域名 / IP」双候选，都通则优先域名。
+ * 中继走云端 `fn` 主机（可能是 *.fnos.net 或 *.5ddd.com），第三方 WSS 可被反代转发。
  */
 import { http } from '@kit.NetworkKit';
-import { extractFnId, fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
+import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
 import { preferPublicEndpointUrl } from './PublicDns';
 import { normalizeServerUrl } from './ServerUrl';
 
@@ -46,6 +47,9 @@ const FAST_MAX_BYTES = 8 * 1024;
 const BW_CONNECT_TIMEOUT_MS = 4500;
 const BW_READ_TIMEOUT_MS = 4500;
 const BW_MAX_BYTES = 512 * 1024;
+/** 中继隧道 DNS 可能短暂 NXDOMAIN；直连都失败后再短重试，不拖慢内网/公网选路 */
+const RELAY_PROBE_EXTRA_ATTEMPTS = 3;
+const RELAY_PROBE_RETRY_DELAY_MS = 1200;
 
 export interface LoginEndpointCandidate {
   kind: string;
@@ -155,6 +159,14 @@ function byteLengthOfResult(result: string | ArrayBuffer | object | undefined): 
   }
 }
 
+function delayMs(ms: number): Promise<void> {
+  return new Promise<void>((resolve: () => void) => {
+    setTimeout((): void => {
+      resolve();
+    }, ms);
+  });
+}
+
 async function probeEndpoint(
   candidate: LoginEndpointCandidate,
   bandwidthMode: boolean,
@@ -162,17 +174,12 @@ async function probeEndpoint(
 ): Promise<LoginEndpointProbeResult> {
   const req = http.createHttp();
   const startedAt = Date.now();
-  // 中继：门户 HTML 恒 200，改探测子域名 /trimcon（5ddd.com 或旧 fnos.net）
+  // 中继：门户 HTML 恒 200，改探测云端 fn 主机上的 /trimcon（保留 fnos.net / 5ddd.com 原集群）
   let probeUrl = `${candidate.baseUrl}/`;
   if (candidate.kind === LOGIN_ENDPOINT_PREF_RELAY || isFnRelayBaseUrl(candidate.baseUrl)) {
     const relayProbe = fnRelayProbeUrl(candidate.baseUrl);
     if (relayProbe.length > 0) {
       probeUrl = relayProbe;
-    } else {
-      const id = extractFnId(candidate.baseUrl);
-      if (id.length > 0) {
-        probeUrl = `https://${id}.5ddd.com/trimcon`;
-      }
     }
   }
   try {
@@ -250,6 +257,68 @@ function assignScores(
 
 function isRelayKind(kind: string): boolean {
   return kind === LOGIN_ENDPOINT_PREF_RELAY;
+}
+
+/** 自动选路或手动选中继时，才为中继 DNS 做额外等待 */
+function shouldRetryRelayProbe(preference: string): boolean {
+  return preference === LOGIN_ENDPOINT_PREF_RELAY
+    || preference === LOGIN_ENDPOINT_PREF_AUTO
+    || preference === LOGIN_ENDPOINT_PREF_BANDWIDTH
+    || preference === LOGIN_ENDPOINT_PREF_LATENCY
+    || preference.length === 0;
+}
+
+function findRelayCandidate(candidates: LoginEndpointCandidate[]): LoginEndpointCandidate | null {
+  for (let i = 0; i < candidates.length; i++) {
+    if (isRelayKind(candidates[i].kind) || isFnRelayBaseUrl(candidates[i].baseUrl)) {
+      return candidates[i];
+    }
+  }
+  return null;
+}
+
+function replaceRelayProbe(
+  scored: LoginEndpointProbeResult[],
+  retried: LoginEndpointProbeResult
+): LoginEndpointProbeResult[] {
+  const out: LoginEndpointProbeResult[] = [];
+  let replaced = false;
+  for (let i = 0; i < scored.length; i++) {
+    if (!replaced && isRelayKind(scored[i].candidate.kind)) {
+      out.push(retried);
+      replaced = true;
+    } else {
+      out.push(scored[i]);
+    }
+  }
+  if (!replaced) {
+    out.push(retried);
+  }
+  return out;
+}
+
+/** 并行探测失败后，再给中继几次短间隔机会（隧道 DNS 晚于直连探测结束） */
+async function retryRelayProbe(
+  candidate: LoginEndpointCandidate,
+  bandwidthMode: boolean,
+  probeTimeoutMs: number
+): Promise<LoginEndpointProbeResult> {
+  let last: LoginEndpointProbeResult = {
+    candidate,
+    ok: false,
+    latencyMs: 0,
+    bytesPerSecond: 0,
+    score: 0,
+    message: ''
+  };
+  for (let i = 0; i < RELAY_PROBE_EXTRA_ATTEMPTS; i++) {
+    await delayMs(RELAY_PROBE_RETRY_DELAY_MS);
+    last = await probeEndpoint(candidate, bandwidthMode, probeTimeoutMs);
+    if (last.ok) {
+      return last;
+    }
+  }
+  return last;
 }
 
 function pickBest(results: LoginEndpointProbeResult[]): LoginEndpointProbeResult | null {
@@ -562,10 +631,21 @@ export async function selectAmongEndpointPool(
   const probed = await Promise.all(
     candidates.map((c: LoginEndpointCandidate) => probeEndpoint(c, bandwidthMode, probeTimeoutMs))
   );
-  const scored = assignScores(probed, preference);
+  let scored = assignScores(probed, preference);
   let best = pickBest(scored);
+  // 直连都失败时：中继 DNS 可能尚未就绪，短间隔再探，不臆造其它集群
+  if (best === null && shouldRetryRelayProbe(preference)) {
+    const relayCand = findRelayCandidate(candidates);
+    if (relayCand !== null) {
+      const retried = await retryRelayProbe(relayCand, bandwidthMode, probeTimeoutMs);
+      scored = assignScores(replaceRelayProbe(scored, retried), preference);
+      if (retried.ok) {
+        best = pickBest(scored);
+      }
+    }
+  }
   if (best === null) {
-    // 全部探测失败：不要把 DNS 都解析不了的中继交给 WSS（会报「找不到主机」）
+    // 全部探测失败：自动选路不把尚未可达的中继交给 WSS；手动点中继仍试一次
     let fallbackBest: LoginEndpointProbeResult = scored.length > 0 ? scored[0] : {
       candidate: candidates[0],
       ok: false,
@@ -586,7 +666,6 @@ export async function selectAmongEndpointPool(
       fallbackPublic,
       '公网、内网与官方中继均不可达'
     );
-    // 用户在「我的」页手动点中继时，仍把地址交出去试一次 WSS
     if (preference !== LOGIN_ENDPOINT_PREF_RELAY) {
       failed.server = '';
     }

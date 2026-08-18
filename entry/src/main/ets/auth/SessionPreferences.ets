@@ -53,7 +53,7 @@ export interface StoredSession {
   endpointLanIpv6Url: string;
   /** 可切换的公网 IPv6 baseUrl（规范化） */
   endpointPublicIpv6Url: string;
-  /** 可切换的中继 baseUrl（规范化，如 https://{fnId}.5ddd.com） */
+  /** 可切换的中继 baseUrl（规范化，如 https://{fnId}.fnos.net 或 https://{fnId}.5ddd.com） */
   endpointRelayUrl: string;
   loginEndpointPreference: string;
   useHttps: boolean;

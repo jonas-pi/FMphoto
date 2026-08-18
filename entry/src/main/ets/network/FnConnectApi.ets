@@ -1,7 +1,7 @@
 /**
  * FN Connect：用 FN ID 向飞牛云端解析 NAS 可达地址（对齐官方 App / 社区 FnConnectApi）。
  * POST https://fnos.net/api/v1/fn/con → ipv4 / 中继 / 公网等，再交给登录测速选路。
- * 中继入口为 `{fnId}.5ddd.com`（旧集群 `{fnId}.fnos.net`），相册走官方 /p 反代。
+ * 中继入口以云端 `fn` 主机为准（`{fnId}.fnos.net` 或 `{fnId}.5ddd.com`），相册 /p 与 WSS 均可走该反代。
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -42,7 +42,7 @@ export interface FnConnectLookupResult {
   lanIpv4Server: string;
   /** 内网 IPv6（不含链路本地） */
   lanIpv6Server: string;
-  /** FN Connect 官方中继（子域名反代，如 https://{fnId}.5ddd.com） */
+  /** FN Connect 官方中继（子域名反代，如 https://{fnId}.fnos.net 或 https://{fnId}.5ddd.com） */
   relayServer: string;
   summary: string;
 }
@@ -606,7 +606,7 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
     }
     const lanServer = lanIpv4Server.length > 0 ? lanIpv4Server : lanIpv6Server;
     const publicIpServer = publicIpv4Server.length > 0 ? publicIpv4Server : publicIpv6Server;
-    // 只使用云端 fn 字段；不要臆造 {fnId}.5ddd.com（无证书/无 DNS 时 WSS 会报找不到主机）
+    // 只使用云端 fn 字段；不要臆造 {fnId}.5ddd.com（该主机可能无 DNS）
     if (publicDomainServer.length === 0 && publicIpServer.length === 0 &&
       lanServer.length === 0 && relayServer.length === 0) {
       return emptyLookup('FN Connect 未返回可用的公网、内网或中继地址');

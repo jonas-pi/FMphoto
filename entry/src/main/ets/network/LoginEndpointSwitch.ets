@@ -1,6 +1,7 @@
 /**
  * 运行时识别当前 NAS 连接（公网 / 内网 / 官方中继），并支持在已登录状态下切换。
- * 中继仅在云端 fn 主机可解析且 /trimcon 可达时使用；臆造的 {fnId}.fnos.net 常无 DNS。
+ * 中继使用云端返回的 fn 主机；隧道 DNS 可能短暂 NXDOMAIN，登录层会短重试。
+ * 不要按 FN ID 臆造未出现在云端解析结果里的集群。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
