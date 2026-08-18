@@ -392,12 +392,21 @@ export function galleryPreviewOpenDetailsPanel(host: GalleryPreviewActionsHost):
   if (host.detailsData !== undefined && host.detailsPhotoId === id) {
     return;
   }
-  host.detailsLoading = true;
-  host.detailsData = undefined;
-  host.personsInPhoto = [];
-  void galleryPreviewLoadPhotoDetails(host, id).finally((): void => {
-    host.detailsLoading = false;
-  });
+  // 详情请求晚一帧，避免和半模态拉起、媒体避让抢同一帧导致松手卡顿
+  setTimeout((): void => {
+    if (!host.detailsVisible || host.currentItemId() !== id) {
+      return;
+    }
+    if (host.detailsData !== undefined && host.detailsPhotoId === id) {
+      return;
+    }
+    host.detailsLoading = true;
+    host.detailsData = undefined;
+    host.personsInPhoto = [];
+    void galleryPreviewLoadPhotoDetails(host, id).finally((): void => {
+      host.detailsLoading = false;
+    });
+  }, 32);
 }
 
 export async function galleryPreviewLoadPhotoDetails(

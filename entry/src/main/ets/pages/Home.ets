@@ -12,6 +12,7 @@ import { SessionPreferences } from '../auth/SessionPreferences';
 import {
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_PUBLIC,
+  LOGIN_ENDPOINT_PREF_RELAY,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
 import {
@@ -83,7 +84,10 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
-  GALLERY_PREVIEW_HERO_ACTIVE_KEY
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  GALLERY_SCRIM_FADE_DELAY,
+  GALLERY_SCRIM_FADE_DURATION,
+  GALLERY_SHARED_TRANSITION_CURVE
 } from '../album/GallerySharedTransition';
 import {
   GalleryViewGranularity,
@@ -160,6 +164,9 @@ struct MePanel {
     if (kind === LOGIN_ENDPOINT_PREF_PUBLIC) {
       return '#FF2563EB';
     }
+    if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
+      return '#FFD97706';
+    }
     return $r('app.color.text_secondary');
   }
 
@@ -232,6 +239,9 @@ struct MePanel {
       return;
     }
     if (targetKind === LOGIN_ENDPOINT_PREF_LAN && !this.endpointInfo.hasLan) {
+      return;
+    }
+    if (targetKind === LOGIN_ENDPOINT_PREF_RELAY && !this.endpointInfo.hasRelay) {
       return;
     }
     this.endpointSwitching = true;
@@ -448,6 +458,9 @@ struct MePanel {
             }
             if (this.endpointInfo.hasLan) {
               this.endpointChannelTab('内网', LOGIN_ENDPOINT_PREF_LAN, true)
+            }
+            if (this.endpointInfo.hasRelay) {
+              this.endpointChannelTab('中继', LOGIN_ENDPOINT_PREF_RELAY, true)
             }
           }
           .width('100%')
@@ -1498,9 +1511,17 @@ struct Home {
 
   pageTransition(): void {
     if (this.previewHeroActive) {
-      // 预览一镜到底：页面 None/0，避免与 sharedTransition 双重驱动；其它路由仍走滑入滑出
+      // 官方一镜到底：页面本身不位移。源页背景等共享元素展开完再淡出，
+      // 避免 duration 0 时网格被立刻盖住、背景突兀消失。
+      // 文档：ts-page-transition-animation、bpta-one-shot-to-the-end
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({
+        type: RouteType.None,
+        duration: GALLERY_SCRIM_FADE_DURATION,
+        delay: GALLERY_SCRIM_FADE_DELAY,
+        curve: GALLERY_SHARED_TRANSITION_CURVE
+      })
+        .opacity(0)
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

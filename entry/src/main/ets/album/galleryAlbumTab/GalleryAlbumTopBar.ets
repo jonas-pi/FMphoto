@@ -66,7 +66,7 @@ export struct GalleryAlbumTopBar {
   @Prop inPersonMode: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
-  @Prop moreMenuExpanded: boolean = false;
+  @Prop @Watch('onMoreMenuExpandedChanged') moreMenuExpanded: boolean = false;
   @Prop showMoreMultiselect: boolean = false;
   @Prop showMoreAutoSync: boolean = false;
   @Prop moreAutoSyncBadgeCount: number = 0;
@@ -180,7 +180,43 @@ export struct GalleryAlbumTopBar {
   }
 
   private shouldAutoFocusSearchInput(): boolean {
-    return this.inSearchMode && !this.suppressSearchAutoFocus && !this.searchSubmitted;
+    // 更多菜单展开时不要把焦点抢回输入框，否则软键盘会再次拉起并和菜单抢布局
+    return this.inSearchMode && !this.suppressSearchAutoFocus && !this.searchSubmitted &&
+      !this.moreMenuExpanded;
+  }
+
+  /**
+   * 官方：弹出菜单前用 stopEditing + clearFocus 收起软键盘，避免「弹窗被键盘顶起」。
+   * 文档：arkts-manage-keyboard、bpta-keyboard-layout-adapt
+   */
+  private releaseSearchImeForOverlay(): void {
+    this.clearSearchFocusKickTimer();
+    this.suppressSearchAutoFocus = true;
+    this.blurSearchInput();
+    try {
+      this.getUIContext().getFocusController().clearFocus();
+    } catch (_e) {
+    }
+  }
+
+  private onMoreMenuExpandedChanged(): void {
+    if (this.moreMenuExpanded && this.inSearchMode) {
+      this.releaseSearchImeForOverlay();
+      return;
+    }
+    if (!this.moreMenuExpanded && this.inSearchMode) {
+      // 菜单收起后恢复可点输入框，但不 defaultFocus，避免软键盘立刻再弹
+      this.clearSearchFocusKickTimer();
+      this.suppressSearchAutoFocus = false;
+      this.searchSubmitted = true;
+    }
+  }
+
+  private onMoreMenuAction(): void {
+    if (this.inSearchMode) {
+      this.releaseSearchImeForOverlay();
+    }
+    this.onShowMoreMenu();
   }
 
   private onSearchTextChange(value: string): void {
@@ -306,8 +342,8 @@ export struct GalleryAlbumTopBar {
           .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
           .height('100%')
           .defaultFocus(this.shouldAutoFocusSearchInput())
-          .enableKeyboardOnFocus(true)
-          .enabled(!this.suppressSearchAutoFocus)
+          .enableKeyboardOnFocus(this.inSearchMode && !this.moreMenuExpanded)
+          .enabled(!this.moreMenuExpanded && !this.suppressSearchAutoFocus)
           .backgroundColor(Color.Transparent)
           .fontSize(13)
           .fontColor($r('app.color.text_primary'))
@@ -555,7 +591,7 @@ export struct GalleryAlbumTopBar {
       type: IconStyleMode.NORMAL,
       isEnabled: true,
       action: (): void => {
-        this.onShowMoreMenu();
+        this.onMoreMenuAction();
       }
     };
     return [this.menuItem(moreContent)];
@@ -616,7 +652,7 @@ export struct GalleryAlbumTopBar {
         type: IconStyleMode.NORMAL,
         isEnabled: true,
         action: (): void => {
-          this.onShowMoreMenu();
+          this.onMoreMenuAction();
         }
       };
       items.push(this.menuItem(moreContent));
@@ -673,6 +709,8 @@ export struct GalleryAlbumTopBar {
         .height(40)
         .margin({ top: this.topSafeInsetVp + 8, right: 8 })
         .hitTestBehavior(HitTestMode.None)
+        // 官方：标题/菜单锚点设置 KEYBOARD 安全区，避免软键盘 OFFSET 把菜单锚点顶上去
+        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
         .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
           Placement.BottomLeft,
           (): void => {

@@ -201,16 +201,17 @@ function isDirectParsedAuthority(p: ParsedAuthority): boolean {
   return isIpv4Literal(p.hostRaw);
 }
 
-/** 是否为 FN Connect 官方域名（中继门户 / *.fnos.net），勿改写为 5666/5667 */
-function isFnosNetAuthority(authority: string): boolean {
+/** 是否为 FN Connect 官方中继域名（*.5ddd.com / *.fnos.net），勿改写为 5666/5667 */
+function isFnConnectRelayAuthority(authority: string): boolean {
   const a = authority.trim().toLowerCase();
   const colon = a.lastIndexOf(':');
   const host = colon > 0 && /^\d+$/.test(a.substring(colon + 1)) ? a.substring(0, colon) : a;
-  return host === 'fnos.net' || host === 'www.fnos.net' || host.endsWith('.fnos.net');
+  return host === 'fnos.net' || host === 'www.fnos.net' || host.endsWith('.fnos.net') ||
+    host === '5ddd.com' || host === 'www.5ddd.com' || host.endsWith('.5ddd.com');
 }
 
-/** 去掉 fnos.net 上误带的常见端口，保留主机名 */
-function stripFnosNetPort(authority: string): string {
+/** 去掉中继域名上误带的常见端口，保留主机名 */
+function stripFnConnectRelayPort(authority: string): string {
   const colon = authority.lastIndexOf(':');
   if (colon <= 0 || authority.startsWith('[')) {
     return authority;
@@ -251,8 +252,8 @@ function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https'): string
     return trimTrailingSlash(url);
   }
   // FN Connect 门户 / 中继域名固定 443，不补 NAS 默认端口，并保留 /{fnId}
-  if (isFnosNetAuthority(authority)) {
-    const hostOnly = stripFnosNetPort(authority);
+  if (isFnConnectRelayAuthority(authority)) {
+    const hostOnly = stripFnConnectRelayPort(authority);
     return trimTrailingSlash(`${prefix}${hostOnly}${pathSuffix}`);
   }
   const parsed = parseAuthority(authority);
@@ -297,10 +298,10 @@ export function fnWebUiBaseUrl(apiBaseNoSlash: string, sessionUseHttps: boolean)
   }
   const slash = rest.indexOf('/');
   const authority = slash >= 0 ? rest.substring(0, slash) : rest;
-  // FN Connect：保持 https://fnos.net/{fnId} 或 https://{fnId}.fnos.net
-  if (isFnosNetAuthority(authority)) {
+  // FN Connect：保持 https://{fnId}.5ddd.com 或路径门户，勿改写为 :5666/:5667
+  if (isFnConnectRelayAuthority(authority)) {
     const path = slash >= 0 ? rest.substring(slash) : '';
-    return trimTrailingSlash(`https://${stripFnosNetPort(authority)}${path}`);
+    return trimTrailingSlash(`https://${stripFnConnectRelayPort(authority)}${path}`);
   }
   const parsed = parseAuthority(authority);
   const defPort = sessionUseHttps ? FN_DEFAULT_PORT_HTTPS : FN_DEFAULT_PORT_HTTP;
@@ -326,9 +327,9 @@ export function fnWebViewBaseUrl(apiBaseNoSlash: string): string {
   const slash = rest.indexOf('/');
   const authority = slash >= 0 ? rest.substring(0, slash) : rest;
   // FN Connect 门户保留 path，勿改写为 :5667
-  if (isFnosNetAuthority(authority)) {
+  if (isFnConnectRelayAuthority(authority)) {
     const path = slash >= 0 ? rest.substring(slash) : '';
-    return trimTrailingSlash(`https://${stripFnosNetPort(authority)}${path}`);
+    return trimTrailingSlash(`https://${stripFnConnectRelayPort(authority)}${path}`);
   }
   const parsed = parseAuthority(authority);
   const parsedForBuild: ParsedAuthority = isDirectParsedAuthority(parsed)

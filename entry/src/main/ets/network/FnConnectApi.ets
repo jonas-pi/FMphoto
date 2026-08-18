@@ -1,6 +1,7 @@
 /**
  * FN Connect：用 FN ID 向飞牛云端解析 NAS 可达地址（对齐官方 App / 社区 FnConnectApi）。
  * POST https://fnos.net/api/v1/fn/con → ipv4 / 中继 / 公网等，再交给登录测速选路。
+ * 中继入口为 `{fnId}.5ddd.com`（旧集群 `{fnId}.fnos.net`），相册走官方 /p 反代。
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -41,7 +42,7 @@ export interface FnConnectLookupResult {
   lanIpv4Server: string;
   /** 内网 IPv6（不含链路本地） */
   lanIpv6Server: string;
-  /** FN Connect 中继（暂不使用，固定空串） */
+  /** FN Connect 官方中继（子域名反代，如 https://{fnId}.5ddd.com） */
   relayServer: string;
   summary: string;
 }
@@ -132,19 +133,79 @@ export function isFnId(input: string): boolean {
   return /^[a-zA-Z][a-zA-Z0-9-]{4,31}$/.test(t) && !t.endsWith('-');
 }
 
-/** 是否为 FN Connect 中继域名（*.fnos.net / fnos.net/...） */
-export function isFnRelayBaseUrl(baseUrl: string): boolean {
-  const u = baseUrl.trim().toLowerCase();
-  if (u.length === 0) {
-    return false;
+/** 当前官方中继集群（旧集群为 fnos.net，已限速并逐步停用） */
+export const FN_RELAY_CLUSTER_CURRENT = '5ddd.com';
+/** 旧 FN Connect 中继集群 */
+export const FN_RELAY_CLUSTER_LEGACY = 'fnos.net';
+
+function hostWithoutPort(authority: string): string {
+  const a = authority.trim();
+  if (a.length === 0 || a.startsWith('[')) {
+    return a;
   }
-  return u.indexOf('.fnos.net') >= 0 || u.indexOf('://fnos.net/') >= 0 ||
-    u.indexOf('://www.fnos.net/') >= 0;
+  const colon = a.lastIndexOf(':');
+  if (colon > 0 && /^\d+$/.test(a.substring(colon + 1))) {
+    return a.substring(0, colon);
+  }
+  return a;
+}
+
+function matchesRelayApex(text: string, apex: string): boolean {
+  const h = text.trim().toLowerCase();
+  if (h === apex || h === `www.${apex}`) {
+    return true;
+  }
+  if (h.endsWith(`.${apex}`)) {
+    return true;
+  }
+  if (h.indexOf(`://${apex}/`) >= 0 || h.indexOf(`://${apex}:`) >= 0) {
+    return true;
+  }
+  if (h.indexOf(`://www.${apex}/`) >= 0 || h.indexOf(`://www.${apex}:`) >= 0) {
+    return true;
+  }
+  if (h.indexOf(`.${apex}/`) >= 0 || h.indexOf(`.${apex}:`) >= 0) {
+    return true;
+  }
+  return h.endsWith(`://${apex}`);
+}
+
+/**
+ * 从主机名或完整 URL 识别 FN Connect 集群。
+ * 新集群 5ddd.com；旧集群 fnos.net。
+ */
+export function fnRelayClusterOfHost(hostOrUrl: string): string {
+  const h = hostOrUrl.trim().toLowerCase();
+  if (matchesRelayApex(h, FN_RELAY_CLUSTER_CURRENT)) {
+    return FN_RELAY_CLUSTER_CURRENT;
+  }
+  if (matchesRelayApex(h, FN_RELAY_CLUSTER_LEGACY)) {
+    return FN_RELAY_CLUSTER_LEGACY;
+  }
+  return '';
+}
+
+/** 是否为 FN Connect 官方中继（*.5ddd.com / *.fnos.net 及路径门户） */
+export function isFnRelayBaseUrl(baseUrl: string): boolean {
+  return fnRelayClusterOfHost(baseUrl) !== '';
+}
+
+function extractFnIdFromRelayHost(hostOnly: string): string {
+  const m = hostOnly.match(/^([a-zA-Z][a-zA-Z0-9-]{4,31})\.(?:fnos\.net|5ddd\.com)$/i);
+  if (m !== null && m[1] !== undefined && isFnId(m[1])) {
+    return m[1];
+  }
+  return '';
+}
+
+function isRelayApexAuthority(authLower: string, apex: string): boolean {
+  return authLower === apex || authLower === `www.${apex}` ||
+    authLower.startsWith(`${apex}:`) || authLower.startsWith(`www.${apex}:`);
 }
 
 /**
  * 从用户输入提取 FN ID。
- * 支持：纯 FN ID、`xxx.fnos.net`、`https://fnos.net/xxx`、`https://xxx.fnos.net`
+ * 支持：纯 FN ID、`xxx.5ddd.com` / `xxx.fnos.net`、以及 `https://5ddd.com/xxx` 路径门户。
  */
 export function extractFnId(input: string): string {
   let t = input.trim();
@@ -169,22 +230,20 @@ export function extractFnId(input: string): string {
   const pathPart = slash >= 0 ? t.substring(slash + 1) : '';
   const pathSeg = pathPart.split('/')[0].split('?')[0].trim();
 
-  // fnos.net/{fnId} 或 www.fnos.net/{fnId}
+  // 5ddd.com/{fnId} 或 fnos.net/{fnId}（NAS 设置页常见展示形态）
   const authLower = authority.toLowerCase();
-  if (authLower === 'fnos.net' || authLower === 'www.fnos.net' ||
-    authLower.startsWith('fnos.net:') || authLower.startsWith('www.fnos.net:')) {
+  if (isRelayApexAuthority(authLower, FN_RELAY_CLUSTER_CURRENT) ||
+    isRelayApexAuthority(authLower, FN_RELAY_CLUSTER_LEGACY)) {
     if (isFnId(pathSeg)) {
       return pathSeg;
     }
   }
 
-  // {fnId}.fnos.net[:port]
-  const hostOnly = authority.indexOf(':') > 0 && !authority.startsWith('[')
-    ? authority.substring(0, authority.lastIndexOf(':'))
-    : authority;
-  const m = hostOnly.match(/^([a-zA-Z][a-zA-Z0-9-]{4,31})\.fnos\.net$/i);
-  if (m !== null && m[1] !== undefined && isFnId(m[1])) {
-    return m[1];
+  // {fnId}.5ddd.com / {fnId}.fnos.net[:port] —— 实际 HTTPS 反代入口
+  const hostOnly = hostWithoutPort(authority);
+  const fromSub = extractFnIdFromRelayHost(hostOnly);
+  if (fromSub.length > 0) {
+    return fromSub;
   }
 
   if (isFnId(t)) {
@@ -267,15 +326,22 @@ function addrPriority(a: FnConnectAddr): number {
   return 9;
 }
 
-function toBaseUrl(addr: FnConnectAddr, useHttps: boolean): string {
+function toBaseUrl(addr: FnConnectAddr, useHttps: boolean, fnId: string): string {
   const host = addr.host.indexOf(':') >= 0 && addr.host.indexOf('.') < 0
     ? `[${addr.host}]`
     : addr.host;
   const hostLower = addr.host.toLowerCase();
-  // FN Connect 中继：官方入口为 https://fnos.net/{fnId}（443），绝不能带 NAS 本地 5666/5667
-  if (addr.type === 'relay' || hostLower.endsWith('.fnos.net')) {
-    const relay = normalizeFnRelayBaseUrl(addr.host);
-    return relay.length > 0 ? relay : `https://${host}`;
+  // 中继走官方 HTTPS 反代（443），绝不能带 NAS 本地 5666/5667
+  if (addr.type === 'relay' || fnRelayClusterOfHost(hostLower).length > 0) {
+    const fromHost = normalizeFnRelayBaseUrl(addr.host);
+    if (fromHost.length > 0) {
+      return fromHost;
+    }
+    const cluster = fnRelayClusterOfHost(hostLower);
+    if (fnId.length > 0 && cluster.length > 0) {
+      return buildFnRelayBaseUrl(fnId, cluster);
+    }
+    return fnId.length > 0 ? buildFnRelayBaseUrl(fnId, FN_RELAY_CLUSTER_CURRENT) : '';
   }
   if (addr.port === 443) {
     return `https://${host}`;
@@ -298,19 +364,49 @@ function toBaseUrl(addr: FnConnectAddr, useHttps: boolean): string {
 }
 
 /**
- * 规范中继 baseUrl：官方 FN Connect 入口 `https://fnos.net/{fnId}`（443，无本地端口）。
- * 兼容旧写法 `{fnId}.fnos.net` / `https://{fnId}.fnos.net`。
+ * 组装中继 API/WSS 入口：必须用 `{fnId}.{cluster}` 子域名。
+ * 路径门户（5ddd.com/{fnId}）只是 Connect SPA，相册 /p 与 websocket 需走子域名反代。
+ */
+export function buildFnRelayBaseUrl(fnId: string, cluster: string = FN_RELAY_CLUSTER_CURRENT): string {
+  const id = fnId.trim();
+  const apex = cluster.trim().toLowerCase() === FN_RELAY_CLUSTER_LEGACY
+    ? FN_RELAY_CLUSTER_LEGACY
+    : FN_RELAY_CLUSTER_CURRENT;
+  if (!isFnId(id)) {
+    return '';
+  }
+  return `https://${id}.${apex}`;
+}
+
+/**
+ * 规范中继 baseUrl 为 `https://{fnId}.5ddd.com`（或旧集群 `.fnos.net`）。
+ * 输入可以是纯 FN ID、子域名、或设置页展示的路径门户。
  */
 export function normalizeFnRelayBaseUrl(fnIdOrUrl: string): string {
-  const id = extractFnId(fnIdOrUrl);
-  if (id.length > 0) {
-    return `https://fnos.net/${id}`;
+  const raw = fnIdOrUrl.trim();
+  if (raw.length === 0) {
+    return '';
   }
-  const bare = fnIdOrUrl.trim();
-  if (isFnId(bare)) {
-    return `https://fnos.net/${bare}`;
+  const id = extractFnId(raw);
+  const clusterHint = fnRelayClusterOfHost(raw);
+  const cluster = clusterHint.length > 0 ? clusterHint : FN_RELAY_CLUSTER_CURRENT;
+  if (id.length > 0) {
+    return buildFnRelayBaseUrl(id, cluster);
+  }
+  if (isFnId(raw)) {
+    return buildFnRelayBaseUrl(raw, FN_RELAY_CLUSTER_CURRENT);
   }
   return '';
+}
+
+/** 中继连通性探测：子域名 /trimcon（门户 HTML 恒 200，不能当可达依据） */
+export function fnRelayProbeUrl(baseUrl: string): string {
+  const normalized = normalizeFnRelayBaseUrl(baseUrl);
+  if (normalized.length > 0) {
+    return `${normalized}/trimcon`;
+  }
+  const u = baseUrl.trim().replace(/\/$/, '');
+  return u.length > 0 ? `${u}/trimcon` : '';
 }
 
 function readStringArray(obj: Record<string, Object | undefined>, key: string): string[] {
@@ -443,16 +539,20 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
     let publicDomainServer = '';
     let publicIpv4Server = '';
     let publicIpv6Server = '';
+    let relayServer = '';
     const labels: string[] = [];
     for (let i = 0; i < addrs.length; i++) {
       const a = addrs[i];
-      const url = normalizeServerUrl(toBaseUrl(a, useHttps), useHttps);
+      const url = normalizeServerUrl(toBaseUrl(a, useHttps, id), useHttps);
       if (url.length === 0) {
         continue;
       }
       labels.push(`${a.type}`);
       if (a.type === 'relay') {
-        // 官方中继隧道未对第三方开放：忽略 fn / *.fnos.net 门户地址
+        // 相册是官方 /p 应用，走 FN Connect HTTPS 反代即可
+        if (relayServer.length === 0) {
+          relayServer = url;
+        }
         continue;
       }
       if (a.type === 'ddns') {
@@ -506,14 +606,15 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
     }
     const lanServer = lanIpv4Server.length > 0 ? lanIpv4Server : lanIpv6Server;
     const publicIpServer = publicIpv4Server.length > 0 ? publicIpv4Server : publicIpv6Server;
+    // 只使用云端 fn 字段；不要臆造 {fnId}.5ddd.com（无证书/无 DNS 时 WSS 会报找不到主机）
     if (publicDomainServer.length === 0 && publicIpServer.length === 0 &&
-      lanServer.length === 0) {
-      return emptyLookup('FN Connect 未返回可用的公网或内网地址');
+      lanServer.length === 0 && relayServer.length === 0) {
+      return emptyLookup('FN Connect 未返回可用的公网、内网或中继地址');
     }
     const summary = `FN Connect 已解析 ${id}（${labels.join('/')}）`;
     hilog.info(DOMAIN, TAG,
-      'lookup ok fnId=%{public}s domain=%{public}s v4=%{public}s v6=%{public}s lan4=%{public}s lan6=%{public}s',
-      id, publicDomainServer, publicIpv4Server, publicIpv6Server, lanIpv4Server, lanIpv6Server);
+      'lookup ok fnId=%{public}s domain=%{public}s v4=%{public}s v6=%{public}s lan4=%{public}s lan6=%{public}s relay=%{public}s',
+      id, publicDomainServer, publicIpv4Server, publicIpv6Server, lanIpv4Server, lanIpv6Server, relayServer);
     return {
       ok: true,
       message: '',
@@ -524,7 +625,7 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
       lanServer,
       lanIpv4Server,
       lanIpv6Server,
-      relayServer: '',
+      relayServer,
       summary
     };
   } catch (e) {
@@ -538,7 +639,7 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
   }
 }
 
-/** 云端失败：不再回退到中继门户（第三方无法用其做 NAS 登录） */
+/** 云端失败时不臆造中继（FN ID 可能无效）；有有效解析时才拼 {fnId}.5ddd.com */
 function fallbackFnosNet(fnId: string, _useHttps: boolean, reason: string): FnConnectLookupResult {
   hilog.warn(DOMAIN, TAG, 'fallback fail fnId=%{public}s reason=%{public}s', fnId, reason);
   return emptyLookup(reason);

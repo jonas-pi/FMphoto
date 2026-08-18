@@ -89,9 +89,11 @@ export function fnHdsFitContentSheetOptions(title: string, onDisappear: () => vo
 }
 
 /**
- * 图库详情半模态：官方 BOTTOM + MEDIUM/LARGE 档位跟手，
- * 高度变化回调用于把预览缩进剩余区域。
- * 文档：https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-sheet-page
+ * 图库详情半模态：官方 BOTTOM + MEDIUM/LARGE 档位跟手。
+ * 底部弹窗默认不允许下层交互、显示蒙层；点击剩余区即点击遮罩，立刻离场。
+ * 不要 enableOutsideInteractive=true：会关掉蒙层，点击落到预览还要等双击识别，收回会慢半拍。
+ * 蒙层透明，剩余区照片仍由半模态叠层遮挡，不额外压暗。
+ * 文档：ts-universal-attributes-sheet-transition（enableOutsideInteractive / maskColor）
  */
 export function fnHdsGalleryDetailsSheetOptions(
   title: ResourceStr,
@@ -100,7 +102,7 @@ export function fnHdsGalleryDetailsSheetOptions(
 ): SheetOptions {
   const options = fnHdsSheetOptions(title, onDisappear, SheetSize.MEDIUM);
   options.detents = [SheetSize.MEDIUM, SheetSize.LARGE];
-  options.enableOutsideInteractive = true;
+  options.maskColor = Color.Transparent;
   options.onHeightDidChange = onHeightDidChange;
   return options;
 }
@@ -123,6 +125,9 @@ export function fnHdsSaveButtonSheetOptions(title: string, onDisappear: () => vo
   };
 }
 
+/** bindMenu.keyboardAvoidMode 起始 API（官方示例 20） */
+const FN_MENU_KEYBOARD_AVOID_API: number = 23;
+
 export function fnHdsBindMenuOptions(
   placement: Placement,
   onDisappear?: () => void,
@@ -142,18 +147,29 @@ export function fnHdsBindMenuOptions(
     // @SuppressWarnings compatibility
     options.systemMaterial = material;
   }
+  // 官方：输入法弹出时菜单与软键盘会互相顶布局。先收键盘再弹菜单，菜单本身不避让，
+  // 避免 TRANSLATE_AND_RESIZE 与键盘收起动画抢位移。
+  // 文档：ts-universal-attributes-menu 示例 20；bpta-keyboard-layout-adapt
+  if (fnCurrentSdkApiVersion() >= FN_MENU_KEYBOARD_AVOID_API) {
+    // @SuppressWarnings compatibility
+    options.keyboardAvoidMode = MenuKeyboardAvoidMode.NONE;
+  }
   return options;
 }
 
 export function fnHdsBindContextMenuOptions(
   placement: Placement,
-  onAppear?: () => void
+  onAppear?: () => void,
+  onDisappear?: () => void
 ): ContextMenuOptions {
   const options: ContextMenuOptions = {
     placement: placement
   };
   if (onAppear !== undefined) {
     options.onAppear = onAppear;
+  }
+  if (onDisappear !== undefined) {
+    options.onDisappear = onDisappear;
   }
   const material = fnHdsMenuSystemMaterial();
   if (material !== undefined) {

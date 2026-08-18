@@ -50,7 +50,7 @@ function notifyEndpointSwitched(message: string): void {
 }
 
 function applyLookupToStored(stored: StoredSession, lookedLan4: string, lookedLan6: string,
-  lookedPub4: string, lookedPub6: string, lookedDomain: string): void {
+  lookedPub4: string, lookedPub6: string, lookedDomain: string, lookedRelay: string): void {
   if (lookedLan4.length > 0) {
     stored.endpointLanUrl = lookedLan4;
   }
@@ -65,6 +65,9 @@ function applyLookupToStored(stored: StoredSession, lookedLan4: string, lookedLa
   }
   if (stored.domainInput.trim().length === 0 && lookedDomain.length > 0) {
     stored.endpointPublicDomainUrl = lookedDomain;
+  }
+  if (lookedRelay.length > 0) {
+    stored.endpointRelayUrl = lookedRelay;
   }
   stored.endpointPublicUrl = preferPublicEndpointUrl(
     stored.endpointPublicDomainUrl,
@@ -88,17 +91,22 @@ async function refreshFnConnectAddresses(stored: StoredSession): Promise<boolean
     looked.lanIpv6Server,
     looked.publicIpv4Server,
     looked.publicIpv6Server,
-    looked.publicDomainServer
+    looked.publicDomainServer,
+    looked.relayServer
   );
   return true;
 }
 
 function poolKey(pool: LoginEndpointPool): string {
-  return `${pool.lanIpv4Url}|${pool.lanIpv6Url}|${pool.publicDomainUrl}|${pool.publicIpv4Url}|${pool.publicIpv6Url}`;
+  return `${pool.lanIpv4Url}|${pool.lanIpv6Url}|${pool.publicDomainUrl}|${pool.publicIpv4Url}|${pool.publicIpv6Url}|${pool.relayUrl}`;
 }
 
 async function probeAndSwitch(ctx: common.UIAbilityContext, stored: StoredSession): Promise<void> {
   const pool = endpointPoolFromStored(stored);
+  // 把由 FN ID 推导出的中继写回会话，便于「我的」页展示与手动切换
+  if (stored.endpointRelayUrl.trim().length === 0 && pool.relayUrl.length > 0) {
+    stored.endpointRelayUrl = pool.relayUrl;
+  }
   const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_AUTO, AUTO_PROBE_TIMEOUT_MS);
   if (selected.server.length === 0) {
     return;

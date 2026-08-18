@@ -27,7 +27,7 @@ import {
   pickVideo
 } from './GalleryAlbumCommon';
 import { common } from '@kit.AbilityKit';
-import { AnimatorResult, display } from '@kit.ArkUI';
+import { AnimatorResult, curves, display } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
 import { photoAccessHelper, MovingPhotoView, MovingPhotoViewController } from '@kit.MediaLibraryKit';
 import { GalleryAuthVideo } from './GalleryAuthVideo';
@@ -57,6 +57,8 @@ import {
   GALLERY_DETAILS_DISTANCE_VP,
   GALLERY_DETAILS_DRAG_GAIN,
   GALLERY_ANIMATOR_FRAME_RATE,
+  GALLERY_SHEET_SPRING_DAMPING,
+  GALLERY_SHEET_SPRING_STIFFNESS,
   GALLERY_VERTICAL_ANIMATOR_EASING,
   GALLERY_VERTICAL_PAN_DISTANCE,
   addGalleryPreviewDetailsFitListener,
@@ -64,15 +66,20 @@ import {
   galleryDismissProgress,
   galleryDismissScale,
   galleryIsVideoBrightnessVolumeZone,
-  GalleryPreviewClipUpdater,
   GalleryPreviewSlideTransformUpdater,
   galleryShouldCloseDetails,
   galleryShouldDismissPage,
   galleryShouldOpenDetails,
+  gallerySheetHeightFromAvoidY,
   galleryVerticalPanIsHorizontal,
+  getGalleryPreviewDetailsFitNormVel,
   getGalleryPreviewDetailsSheetHeight,
+  isGalleryPreviewDetailsAvoidAnimating,
   quietFinishAnimator,
   removeGalleryPreviewDetailsFitListener,
+  setGalleryPreviewDetailsAvoidAnimating,
+  setGalleryPreviewDetailsAvoidVelocity,
+  setGalleryPreviewDetailsSheetHeight,
   setGalleryPreviewDismissProgress
 } from './GalleryPreviewVerticalGesture';
 
@@ -152,6 +159,11 @@ export struct GalleryPreviewSlide {
   @State private contentAspect: number = 0;
   /** 一镜到底结束前不挂播放器，避免全屏封面盖住共享元素 */
   @State private videoOverlayRevealed: boolean = false;
+  /** 弹出避让走官方 animateTo；为 true 时 translate 由本状态驱动，系统渲染线程插值 */
+  @State private avoidAnimOn: boolean = false;
+  @State private avoidAnimY: number = 0;
+  /** 打断上一次 animateTo 时作废旧 onFinish，避免把位移写回已取消的终点 */
+  private avoidAnimGen: number = 0;
 
   private pinchBaseScale: number = 1;
   private panBaseX: number = 0;
@@ -186,10 +198,9 @@ export struct GalleryPreviewSlide {
   private panScale: number = 1;
   private panY: number = 0;
   private transformUpdater: GalleryPreviewSlideTransformUpdater = new GalleryPreviewSlideTransformUpdater();
-  private clipUpdater: GalleryPreviewClipUpdater = new GalleryPreviewClipUpdater();
   private transformAnimator: AnimatorResult | undefined = undefined;
   private readonly onDetailsFitHeight = (): void => {
-    this.applyComposedTransform();
+    this.syncDetailsAvoidTransform();
   };
   private imagePanOptions: PanGestureOptions = new PanGestureOptions({
     fingers: 1,
@@ -322,6 +333,9 @@ export struct GalleryPreviewSlide {
 
   aboutToDisappear(): void {
     removeGalleryPreviewDetailsFitListener(this.onDetailsFitHeight);
+    this.transformUpdater.lockTranslate(false);
+    this.avoidAnimOn = false;
+    this.avoidAnimGen++;
     this.cancelTransformAnimator();
     this.clearVideoOverlayRevealTimer();
     this.clearHeroFreezeTimer();
@@ -880,14 +894,90 @@ export struct GalleryPreviewSlide {
   }
 
   private applyComposedTransform(): void {
+    // 上滑跟手与半模态避让共用同一套 translate，避免松手换公式时停一拍。
+    const dragH = gallerySheetHeightFromAvoidY(this.panY);
+    const sheetH = getGalleryPreviewDetailsSheetHeight();
     const fit = galleryDetailsFit(
-      getGalleryPreviewDetailsSheetHeight(),
+      Math.max(sheetH, dragH),
       this.viewW,
       this.viewH,
       this.contentAspect
     );
-    this.transformUpdater.apply(this.panScale * fit.scale, this.panY + fit.translateY);
-    this.clipUpdater.apply(fit.clipHeight, this.viewH);
+    const extraY = this.panY > 0 ? this.panY : 0;
+    this.transformUpdater.apply(this.panScale * fit.scale, extraY + fit.translateY);
+  }
+
+  /**
+   * 官方：弹出/收回避让用 animateTo + 与 bindSheet 同一套弹簧插值 translate。
+   * 不要在 onFinish 里切换 translate 绑定来源（会闪一帧）；结束回调尽量不用。
+   * 文档：arkts-attribute-animation-apis、bpta-fair-use-animation、arkts-spring-curve
+   */
+  private syncDetailsAvoidTransform(): void {
+    if (!this.active) {
+      this.applyComposedTransform();
+      return;
+    }
+    const dragH = gallerySheetHeightFromAvoidY(this.panY);
+    const sheetH = getGalleryPreviewDetailsSheetHeight();
+    const fit = galleryDetailsFit(
+      Math.max(sheetH, dragH),
+      this.viewW,
+      this.viewH,
+      this.contentAspect
+    );
+    const toY = (this.panY > 0 ? this.panY : 0) + fit.translateY;
+    if (!isGalleryPreviewDetailsAvoidAnimating()) {
+      // 半模态已落下：继续停在避让位移上，不要把 translate 清 0（会跳回全屏中心）
+      if (this.avoidAnimOn) {
+        this.avoidAnimY = toY;
+        this.transformUpdater.apply(this.panScale * fit.scale, toY);
+        return;
+      }
+      this.applyComposedTransform();
+      return;
+    }
+    const fromY = this.avoidAnimOn ? this.avoidAnimY : this.transformUpdater.getTranslateY();
+    if (Math.abs(fromY - toY) < 0.5) {
+      this.avoidAnimGen++;
+      this.settleAvoidPropertyAnim(toY);
+      return;
+    }
+    this.transformUpdater.lockTranslate(true);
+    this.avoidAnimGen++;
+    const gen = this.avoidAnimGen;
+    const vel = getGalleryPreviewDetailsFitNormVel();
+    // overlapDuration：官方弹簧打断时平滑衔接，避免先跳到旧终点再归位
+    const curve = Math.abs(vel) > 0.02 ?
+      curves.interpolatingSpring(vel, 1, GALLERY_SHEET_SPRING_STIFFNESS, GALLERY_SHEET_SPRING_DAMPING) :
+      curves.springMotion(0.347, 1.0, 0.25);
+    this.getUIContext().animateTo({
+      curve: curve,
+      expectedFrameRateRange: GALLERY_ANIMATOR_FRAME_RATE,
+      onFinish: (): void => {
+        // 官方：被打断的动画会 REMOVED 并立刻 onFinish；旧回调不能再写终点
+        if (gen !== this.avoidAnimGen) {
+          return;
+        }
+        this.settleAvoidPropertyAnim(toY);
+      }
+    }, (): void => {
+      this.avoidAnimOn = true;
+      this.avoidAnimY = toY;
+    });
+  }
+
+  /** 只同步终点，不切换 .translate 绑定来源（官方：尽量不要用结束回调做时序） */
+  private settleAvoidPropertyAnim(toY: number): void {
+    setGalleryPreviewDetailsAvoidAnimating(false);
+    this.avoidAnimY = toY;
+    this.transformUpdater.apply(this.panScale, toY);
+    if (Math.abs(toY) >= 0.5) {
+      this.transformUpdater.lockTranslate(true);
+      this.avoidAnimOn = true;
+      return;
+    }
+    // 归位后仍走 avoidAnimY=0，跟手开始时再交给 AttributeUpdater
+    this.transformUpdater.lockTranslate(false);
   }
 
   private beginVerticalPan(): void {
@@ -897,6 +987,12 @@ export struct GalleryPreviewSlide {
     this.verticalLastTs = 0;
     this.verticalVelocityY = 0;
     this.lockParentForVertical(true);
+    // 跟手改走 AttributeUpdater；先对齐再关 avoidAnimOn，避免 translate 换绑闪一帧
+    if (this.avoidAnimOn) {
+      this.transformUpdater.lockTranslate(false);
+      this.transformUpdater.apply(this.panScale, this.avoidAnimY);
+      this.avoidAnimOn = false;
+    }
   }
 
   private applyVerticalOffset(offsetY: number): void {
@@ -972,12 +1068,13 @@ export struct GalleryPreviewSlide {
 
   private finishVerticalPan(cancelled: boolean): void {
     this.verticalPanActive = false;
-    this.lockParentForVertical(false);
     if (cancelled) {
+      this.lockParentForVertical(false);
       this.springVerticalHome();
       return;
     }
     if (this.detailsShowing) {
+      this.lockParentForVertical(false);
       if (galleryShouldCloseDetails(this.verticalOffsetY, this.verticalVelocityY)) {
         this.springVerticalHome();
         this.onVerticalDismiss();
@@ -987,14 +1084,32 @@ export struct GalleryPreviewSlide {
       return;
     }
     if (galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH)) {
+      this.lockParentForVertical(false);
       this.onVerticalDismiss();
       return;
     }
     if (galleryShouldOpenDetails(this.verticalOffsetY, this.verticalVelocityY)) {
-      this.resetVerticalDragInstant();
+      // 官方：离手弹簧要继承跟手速度，从 0 起速会像急刹停顿。sheetH = -panY*2。
+      // 文档：arkts-animation-smoothing
+      const velSheet = -this.verticalVelocityY * GALLERY_DETAILS_DRAG_GAIN * 2;
+      setGalleryPreviewDetailsAvoidVelocity(velSheet);
+      this.cancelTransformAnimator();
+      this.verticalOffsetY = 0;
+      this.verticalLastOffsetY = 0;
+      this.verticalLastTs = 0;
+      this.verticalVelocityY = 0;
+      const startH = gallerySheetHeightFromAvoidY(this.panY);
+      this.panScale = 1;
+      this.panY = 0;
+      setGalleryPreviewDetailsSheetHeight(startH);
+      this.applyComposedTransform();
+      // 工具栏保持收起，避免 dismissProgress 归零又闪出来
+      setGalleryPreviewDismissProgress(1);
       this.onVerticalDetails();
+      this.lockParentForVertical(false);
       return;
     }
+    this.lockParentForVertical(false);
     this.springVerticalHome();
   }
 
@@ -1493,13 +1608,15 @@ export struct GalleryPreviewSlide {
     }
     .width('100%')
     .height('100%')
+    .translate({ y: this.avoidAnimOn ? this.avoidAnimY : this.transformUpdater.getTranslateY() })
     .attributeModifier(this.transformUpdater)
     }
     .width('100%').height('100%')
+    .clip(true)
     .backgroundColor(this.slideBackgroundColor())
-    .attributeModifier(this.clipUpdater)
     .onAreaChange((_old, newArea): void => {
-      if (this.verticalPanActive || getGalleryPreviewDetailsSheetHeight() > 0.5) {
+      if (this.verticalPanActive || isGalleryPreviewDetailsAvoidAnimating() ||
+        getGalleryPreviewDetailsSheetHeight() > 0.5) {
         return;
       }
       const w = newArea.width as number;

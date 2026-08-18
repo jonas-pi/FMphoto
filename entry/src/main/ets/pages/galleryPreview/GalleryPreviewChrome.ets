@@ -40,7 +40,7 @@ import {
 } from '../../common/FnImmersiveSettings';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
-import { GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
+import { GALLERY_PREVIEW_DETAILS_COVER_KEY, GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
 import {
   addGalleryPreviewDismissListener,
   GalleryPreviewOpacityUpdater,
@@ -64,6 +64,8 @@ export struct GalleryPreviewChrome {
   /** 自己订阅显隐，父页切换工具栏时不会整页重绘 Swiper */
   @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) @Watch('onChromeFadeInputsChanged')
   private toolbarVisible: boolean = true;
+  @StorageProp(GALLERY_PREVIEW_DETAILS_COVER_KEY) @Watch('onChromeFadeInputsChanged')
+  private detailsCover: boolean = false;
   @StorageProp(GALLERY_PREVIEW_VIDEO_ACTIVE_KEY) private videoActive: boolean = false;
   @StorageProp(GALLERY_PREVIEW_VIDEO_DOCK_EXPANDED_KEY) private videoDockExpanded: boolean = false;
   @StorageProp(GALLERY_PREVIEW_VIDEO_PLAYING_KEY) private videoPlaying: boolean = false;
@@ -74,7 +76,6 @@ export struct GalleryPreviewChrome {
   @Prop fgColor: ResourceColor = Color.White;
   @Prop showOriginalAction: boolean = false;
   @Prop originalShowing: boolean = false;
-  @Prop @Watch('onChromeFadeInputsChanged') detailsShowing: boolean = false;
   @Prop sharing: boolean = false;
   @Prop downloading: boolean = false;
   @Prop downloadProgressPct: number = 0;
@@ -119,7 +120,7 @@ export struct GalleryPreviewChrome {
   }
 
   private chromeInteractive(): boolean {
-    return this.toolbarVisible && !this.detailsShowing;
+    return this.toolbarVisible && !this.detailsCover;
   }
 
   private chromeOpacity(): number {

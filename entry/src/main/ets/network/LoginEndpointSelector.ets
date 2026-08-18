@@ -2,7 +2,7 @@
  * 登录前选路：短超时并行探测；公网拆成「域名 / IP」双候选，都通则优先域名。
  */
 import { http } from '@kit.NetworkKit';
-import { extractFnId, isFnRelayBaseUrl } from './FnConnectApi';
+import { extractFnId, fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
 import { preferPublicEndpointUrl } from './PublicDns';
 import { normalizeServerUrl } from './ServerUrl';
 
@@ -23,6 +23,8 @@ export interface LoginEndpointPool {
   publicDomainUrl: string;
   publicIpv4Url: string;
   publicIpv6Url: string;
+  /** FN Connect 官方中继，仅作内网/公网都不可达时的兜底 */
+  relayUrl: string;
 }
 
 export function emptyEndpointPool(): LoginEndpointPool {
@@ -31,7 +33,8 @@ export function emptyEndpointPool(): LoginEndpointPool {
     lanIpv6Url: '',
     publicDomainUrl: '',
     publicIpv4Url: '',
-    publicIpv6Url: ''
+    publicIpv6Url: '',
+    relayUrl: ''
   };
 }
 
@@ -159,12 +162,17 @@ async function probeEndpoint(
 ): Promise<LoginEndpointProbeResult> {
   const req = http.createHttp();
   const startedAt = Date.now();
-  // 中继：官方门户 HTML 恒为 200，改探测 {fnId}.fnos.net/trimcon（与 Connect SPA 一致）
+  // 中继：门户 HTML 恒 200，改探测子域名 /trimcon（5ddd.com 或旧 fnos.net）
   let probeUrl = `${candidate.baseUrl}/`;
   if (candidate.kind === LOGIN_ENDPOINT_PREF_RELAY || isFnRelayBaseUrl(candidate.baseUrl)) {
-    const id = extractFnId(candidate.baseUrl);
-    if (id.length > 0) {
-      probeUrl = `https://${id}.fnos.net/trimcon`;
+    const relayProbe = fnRelayProbeUrl(candidate.baseUrl);
+    if (relayProbe.length > 0) {
+      probeUrl = relayProbe;
+    } else {
+      const id = extractFnId(candidate.baseUrl);
+      if (id.length > 0) {
+        probeUrl = `https://${id}.5ddd.com/trimcon`;
+      }
     }
   }
   try {
@@ -240,18 +248,30 @@ function assignScores(
   return results;
 }
 
+function isRelayKind(kind: string): boolean {
+  return kind === LOGIN_ENDPOINT_PREF_RELAY;
+}
+
 function pickBest(results: LoginEndpointProbeResult[]): LoginEndpointProbeResult | null {
-  let best: LoginEndpointProbeResult | null = null;
+  let bestDirect: LoginEndpointProbeResult | null = null;
+  let bestRelay: LoginEndpointProbeResult | null = null;
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (!r.ok) {
       continue;
     }
-    if (best === null || r.score > best.score) {
-      best = r;
+    // 中继只作兜底：只要内网/公网任一可达，就不选中继
+    if (isRelayKind(r.candidate.kind)) {
+      if (bestRelay === null || r.score > bestRelay.score) {
+        bestRelay = r;
+      }
+      continue;
+    }
+    if (bestDirect === null || r.score > bestDirect.score) {
+      bestDirect = r;
     }
   }
-  return best;
+  return bestDirect !== null ? bestDirect : bestRelay;
 }
 
 /** 公网域名与公网 IP 都通时，强制优先域名 */
@@ -323,6 +343,7 @@ function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidat
   push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, pool.publicDomainUrl);
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, pool.publicIpv4Url);
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, pool.publicIpv6Url);
+  push(LOGIN_ENDPOINT_PREF_RELAY, pool.relayUrl);
   return out;
 }
 
@@ -347,6 +368,15 @@ function filterCandidatesByPreference(
       }
     }
     return publicOnly.length > 0 ? publicOnly : candidates;
+  }
+  if (preference === LOGIN_ENDPOINT_PREF_RELAY) {
+    const relayOnly: LoginEndpointCandidate[] = [];
+    for (let k = 0; k < candidates.length; k++) {
+      if (isRelayKind(candidates[k].kind)) {
+        relayOnly.push(candidates[k]);
+      }
+    }
+    return relayOnly.length > 0 ? relayOnly : candidates;
   }
   return candidates;
 }
@@ -510,7 +540,8 @@ function selectionFromProbes(
 }
 
 /**
- * 在内网 V4/V6、公网域名 / IPv4 / IPv6 中并行短探测选路。
+ * 在内网 V4/V6、公网域名 / IPv4 / IPv6、官方中继中并行短探测选路。
+ * 中继优先级最低：仅当直连候选都不可达时选用。
  */
 export async function selectAmongEndpointPool(
   pool: LoginEndpointPool,
@@ -534,7 +565,8 @@ export async function selectAmongEndpointPool(
   const scored = assignScores(probed, preference);
   let best = pickBest(scored);
   if (best === null) {
-    const fallbackBest: LoginEndpointProbeResult = scored.length > 0 ? scored[0] : {
+    // 全部探测失败：不要把 DNS 都解析不了的中继交给 WSS（会报「找不到主机」）
+    let fallbackBest: LoginEndpointProbeResult = scored.length > 0 ? scored[0] : {
       candidate: candidates[0],
       ok: false,
       latencyMs: 0,
@@ -542,12 +574,23 @@ export async function selectAmongEndpointPool(
       score: -1,
       message: ''
     };
-    return selectionFromProbes(
+    for (let i = 0; i < scored.length; i++) {
+      if (isRelayKind(scored[i].candidate.kind)) {
+        fallbackBest = scored[i];
+        break;
+      }
+    }
+    const failed = selectionFromProbes(
       fallbackBest,
       scored.length > 0 ? scored : [fallbackBest],
       fallbackPublic,
-      '连通性探测均失败，已按优先级尝试'
+      '公网、内网与官方中继均不可达'
     );
+    // 用户在「我的」页手动点中继时，仍把地址交出去试一次 WSS
+    if (preference !== LOGIN_ENDPOINT_PREF_RELAY) {
+      failed.server = '';
+    }
+    return failed;
   }
   best = preferDomainIfBothPublicOk(scored, best);
   return selectionFromProbes(
@@ -573,7 +616,8 @@ export async function selectAmongEndpoints(
     lanIpv6Url: '',
     publicDomainUrl: publicDomainUrl,
     publicIpv4Url: publicIpUrl,
-    publicIpv6Url: ''
+    publicIpv6Url: '',
+    relayUrl: relayUrl
   }, preference);
 }
 

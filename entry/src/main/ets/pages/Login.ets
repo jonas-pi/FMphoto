@@ -1,5 +1,5 @@
 /**
- * NAS 登录：FN ID（FN Connect 解析公网/内网）或内网 IP 共用一栏，公网域名可选；
+ * NAS 登录：FN ID（FN Connect 解析公网/内网/官方中继）或内网 IP 共用一栏，公网域名可选；
  * 经 fnOS WebSocket 主通道（wss …/websocket?type=main）
  * getRSAPub → encrypted(user.login)；会话持久化 token 与 wsSignKeyB64（后续 WS 帧 HMAC 用）
  */
@@ -129,7 +129,7 @@ struct Login {
   }
 
   /**
-   * 共用输入栏：纯 FN ID / fnos.net 形态 → FN Connect；其余按内网地址。
+   * 共用输入栏：纯 FN ID / fnos.net / 5ddd.com 形态 → FN Connect；其余按内网地址。
    * @returns [fnId, lanRaw]
    */
   private parseSharedHostInput(raw: string): [string, string] {
@@ -141,7 +141,8 @@ struct Login {
       return [t, ''];
     }
     const id = extractFnId(t);
-    if (id.length > 0 && t.toLowerCase().indexOf('fnos.net') >= 0) {
+    if (id.length > 0 && (t.toLowerCase().indexOf('fnos.net') >= 0 ||
+      t.toLowerCase().indexOf('5ddd.com') >= 0)) {
       return [id, ''];
     }
     return ['', t];
@@ -427,11 +428,11 @@ struct Login {
         }
       }
 
-      // FN ID：FN Connect 补齐公网 / 内网 V4/V6；手填域名优先于云端 DDNS
+      // FN ID：FN Connect 补齐公网 / 内网 V4/V6 以及官方中继；手填域名优先于云端 DDNS
       if (fnId.length > 0) {
         const looked = await lookupFnConnect(fnId, this.useHttps);
         const hasAny = looked.publicDomainServer.length > 0 || looked.publicIpServer.length > 0 ||
-          looked.lanServer.length > 0;
+          looked.lanServer.length > 0 || looked.relayServer.length > 0;
         if (!looked.ok || !hasAny) {
           this.errorText = looked.message.length > 0 ? looked.message : 'FN ID 解析失败';
           return;
@@ -451,6 +452,9 @@ struct Login {
         if (this.pendingEndpointLanIpv6Url.length === 0 && looked.lanIpv6Server.length > 0) {
           this.pendingEndpointLanIpv6Url = looked.lanIpv6Server;
         }
+        if (looked.relayServer.length > 0) {
+          this.pendingEndpointRelayUrl = looked.relayServer;
+        }
         fnSummary = looked.summary;
       }
 
@@ -459,23 +463,25 @@ struct Login {
         this.pendingEndpointPublicIpUrl.length > 0 ?
           this.pendingEndpointPublicIpUrl : this.pendingEndpointPublicIpv6Url
       );
-      this.pendingEndpointRelayUrl = '';
 
       const selected = await selectAmongEndpointPool({
         lanIpv4Url: this.pendingEndpointLanUrl,
         lanIpv6Url: this.pendingEndpointLanIpv6Url,
         publicDomainUrl: this.pendingEndpointPublicDomainUrl,
         publicIpv4Url: this.pendingEndpointPublicIpUrl,
-        publicIpv6Url: this.pendingEndpointPublicIpv6Url
+        publicIpv6Url: this.pendingEndpointPublicIpv6Url,
+        relayUrl: this.pendingEndpointRelayUrl
       }, this.endpointPreference);
-      if (selected.server.length === 0) {
-        this.errorText = '请填写可用的 FN ID / 内网 IP 或公网域名';
+      this.applyProbeSelection(fnSummary, selected);
+      if (selected.server.length === 0 || !selected.selectedOk) {
+        this.errorText = selected.summary.length > 0
+          ? selected.summary
+          : '公网、内网与官方中继均不可达';
         return;
       }
       if (selected.preferredPublicUrl.length > 0) {
         this.pendingEndpointPublicUrl = selected.preferredPublicUrl;
       }
-      this.applyProbeSelection(fnSummary, selected);
       await this.attemptLoginWebSocketOnly(ctx, selected.server, this.username.trim(), this.password);
     } catch (e) {
       const msg = this.describeLoginError(e);

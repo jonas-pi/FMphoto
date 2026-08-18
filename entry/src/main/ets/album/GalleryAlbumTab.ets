@@ -78,7 +78,8 @@ import { gallerySlideshowLaunch } from './slideshow/GallerySlideshowLauncher';
 import {
   GallerySlideshowConfig,
   GallerySlideshowScope,
-  GallerySlideshowScopeKind
+  GallerySlideshowScopeKind,
+  gallerySlideshowScopeLabel
 } from './slideshow/GallerySlideshowTypes';
 import { GallerySlideshowSettingsSheet } from './slideshow/GallerySlideshowSettingsSheet';
 import { GalleryAlbumAlbumsHomeView } from './galleryAlbumTab/GalleryAlbumAlbumsHomeView';
@@ -900,6 +901,16 @@ export struct GalleryAlbumTab {
       buttons: this.choiceSheetButtons,
       onSelect: (index: number): void => {
         this.completeChoice(index);
+      }
+    })
+  }
+
+  @Builder
+  private slideshowSettingsBuilder() {
+    GallerySlideshowSettingsSheet({
+      preparing: this.slideshowPreparing,
+      onStart: (config: GallerySlideshowConfig): void => {
+        void this.startGallerySlideshow(config);
       }
     })
   }
@@ -2627,23 +2638,6 @@ export struct GalleryAlbumTab {
   build() {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Stack({ alignContent: Alignment.TopStart }) {
-        if (this.slideshowSettingsVisible) {
-          GallerySlideshowSettingsSheet({
-            scope: this.gallerySlideshowScope(),
-            visible: this.slideshowSettingsVisible,
-            preparing: this.slideshowPreparing,
-            onDismiss: (): void => {
-              this.dismissSlideshowSettings();
-            },
-            onStart: (config: GallerySlideshowConfig): void => {
-              void this.startGallerySlideshow(config);
-            }
-          })
-            .width('100%')
-            .height('100%')
-            .zIndex(20)
-        }
-
         GalleryAlbumTopBar({
           homeSurface: this.isAlbumsHomeSurface() ? 'albums' : 'photos',
           inSearchMode: this.inSearchMode,
@@ -3236,6 +3230,15 @@ export struct GalleryAlbumTab {
           LIVE_PHOTO_PRIVILEGE_SHEET_TITLE,
           (): void => {
             this.completeLivePhotoSave('cancel');
+          }
+        ))
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.slideshowSettingsVisible, this.slideshowSettingsBuilder, fnHdsFitContentSheetOptions(
+          gallerySlideshowScopeLabel(this.gallerySlideshowScope()),
+          (): void => {
+            this.dismissSlideshowSettings();
           }
         ))
     }
