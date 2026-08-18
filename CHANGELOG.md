@@ -6,6 +6,31 @@
 
 ---
 
+## [1.3.2-beta.4] - 2026-08-18
+
+在 [1.3.2-beta.3] 上修「我的」连接探测，并支持切换通道时的 2FA。
+
+### 修复
+
+- **中继探测行**：与公网 DDNS 同主机时不再被去重丢掉；探测结果始终带中继。
+- **探测半模态**：2FA 与探测面板分宿主绑定，避免互相覆盖；内容不再被卡片裁切。
+
+### 改进
+
+- **切换通道 2FA**：切公网 / 内网 / 中继遇到双因素时，用官方半模态完成验证。
+- **半模态布局**：探测与传输队列改用官方 `SheetSize.MEDIUM` / `LARGE` 档位，列表配 `nestedScroll`，便于滚到中继行。
+- **中继连接**：DNS 短间隔重试，避免解析未就绪时误判失败。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.3.2-beta.3` 的设备可直接覆盖升级（`versionCode` 1003007）。
+
+---
+
 ## [1.3.2-beta.3] - 2026-08-18
 
 在 [1.3.2-beta.2] 上修一镜到底配对，并把 FN Connect 中继切到新集群。
@@ -306,6 +331,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.2-beta.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.3...v1.3.2-beta.4
 [1.3.2-beta.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.2...v1.3.2-beta.3
 [1.3.2-beta.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.1...v1.3.2-beta.2
 [1.3.2-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.1...v1.3.2-beta.1

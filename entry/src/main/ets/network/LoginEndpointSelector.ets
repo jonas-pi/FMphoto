@@ -399,12 +399,21 @@ function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidat
     if (u.length === 0) {
       return;
     }
-    for (let i = 0; i < seen.length; i++) {
-      if (seen[i] === u) {
-        return;
+    // 中继即使与公网 DDNS 同主机也要单独成行，否则「我的」探测列表看不到中继
+    if (kind !== LOGIN_ENDPOINT_PREF_RELAY) {
+      for (let i = 0; i < seen.length; i++) {
+        if (seen[i] === u) {
+          return;
+        }
+      }
+      seen.push(u);
+    } else {
+      for (let j = 0; j < out.length; j++) {
+        if (out[j].kind === LOGIN_ENDPOINT_PREF_RELAY && out[j].baseUrl === u) {
+          return;
+        }
       }
     }
-    seen.push(u);
     out.push({ kind, baseUrl: u });
   };
   push(LOGIN_ENDPOINT_PREF_LAN, pool.lanIpv4Url);
@@ -414,6 +423,50 @@ function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidat
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, pool.publicIpv6Url);
   push(LOGIN_ENDPOINT_PREF_RELAY, pool.relayUrl);
   return out;
+}
+
+function hasRelayProbeLine(lines: LoginEndpointProbeLine[]): boolean {
+  const relayLabel = endpointLabel(LOGIN_ENDPOINT_PREF_RELAY);
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].label === relayLabel) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 会话里有中继地址时，探测结果必须带上中继行 */
+function ensureRelayProbeLine(
+  lines: LoginEndpointProbeLine[],
+  pool: LoginEndpointPool,
+  scored: LoginEndpointProbeResult[]
+): LoginEndpointProbeLine[] {
+  const relayUrl = pool.relayUrl.trim();
+  if (relayUrl.length === 0 || hasRelayProbeLine(lines)) {
+    return lines;
+  }
+  let ok = false;
+  let latencyMs = 0;
+  for (let i = 0; i < scored.length; i++) {
+    if (isRelayKind(scored[i].candidate.kind) || scored[i].candidate.baseUrl === relayUrl) {
+      ok = scored[i].ok;
+      latencyMs = scored[i].ok ? scored[i].latencyMs : 0;
+      break;
+    }
+  }
+  const extra: LoginEndpointProbeLine[] = [];
+  for (let j = 0; j < lines.length; j++) {
+    extra.push(lines[j]);
+  }
+  extra.push({
+    label: endpointLabel(LOGIN_ENDPOINT_PREF_RELAY),
+    address: compactProbeAddress(relayUrl),
+    baseUrl: relayUrl,
+    ok,
+    latencyMs,
+    selected: false
+  });
+  return extra;
 }
 
 function filterCandidatesByPreference(
@@ -666,18 +719,21 @@ export async function selectAmongEndpointPool(
       fallbackPublic,
       '公网、内网与官方中继均不可达'
     );
+    failed.probeLines = ensureRelayProbeLine(failed.probeLines, pool, scored);
     if (preference !== LOGIN_ENDPOINT_PREF_RELAY) {
       failed.server = '';
     }
     return failed;
   }
   best = preferDomainIfBothPublicOk(scored, best);
-  return selectionFromProbes(
+  const selected = selectionFromProbes(
     best,
     scored,
     preferredPublicFromProbes(scored, pool),
     describeProbeChoice(best, scored)
   );
+  selected.probeLines = ensureRelayProbeLine(selected.probeLines, pool, scored);
+  return selected;
 }
 
 /**

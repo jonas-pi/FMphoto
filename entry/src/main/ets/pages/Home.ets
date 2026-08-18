@@ -29,7 +29,10 @@ import {
   FN_ENDPOINT_SWITCH_VERSION
 } from '../network/LoginEndpointAutoSwitch';
 import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
-import { fnHdsFitContentSheetOptions, fnHdsSheetOptions } from '../common/FnHdsOverlay';
+import {
+  fnHdsFitContentSheetOptions,
+  fnHdsMediumDetentSheetOptions
+} from '../common/FnHdsOverlay';
 import {
   buildEndpointProbeDisplay,
   FnEndpointProbeLineItem,
@@ -224,7 +227,7 @@ struct MePanel {
       if (seq !== this.probeSeq) {
         return;
       }
-      const display = buildEndpointProbeDisplay(selected, stored.baseUrl, '');
+      const display = buildEndpointProbeDisplay(selected, stored.baseUrl, selected.summary);
       this.probeHint = display.hintText;
       this.probeSelectedLabel = display.selectedLabel;
       this.probeSelectedAddress = display.selectedAddress;
@@ -443,7 +446,8 @@ struct MePanel {
         selectedAddress: this.probeSelectedAddress,
         selectedLatencyText: this.probeSelectedLatencyText,
         otherItems: this.probeOtherItems,
-        useCardStyle: false
+        useCardStyle: false,
+        fillSheet: true
       })
     }
     .width('100%')
@@ -595,90 +599,93 @@ struct MePanel {
 
   @Builder
   private connectionStatusRow() {
+    // 两个 bindSheet 不能绑在同一节点；clip 也不能绑在探测半模态宿主上，否则内容被裁切。
     Column() {
-      Column({ space: 14 }) {
-        Row() {
-          Text('NAS 连接')
-            .fontSize(13)
-            .fontWeight(FontWeight.Regular)
-            .fontColor($r('app.color.text_secondary'))
-            .layoutWeight(1)
+      Column() {
+        Column({ space: 14 }) {
+          Row() {
+            Text('NAS 连接')
+              .fontSize(13)
+              .fontWeight(FontWeight.Regular)
+              .fontColor($r('app.color.text_secondary'))
+              .layoutWeight(1)
 
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
-            .fontColor([$r('app.color.text_secondary')])
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .onClick((): void => {
-          this.openEndpointProbeSheet();
-        })
-
-        Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([$r('app.color.text_secondary')])
+          }
           .width('100%')
+          .alignItems(VerticalAlign.Center)
           .onClick((): void => {
             this.openEndpointProbeSheet();
           })
 
-        if (this.endpointInfo.canSwitch) {
-          Row() {
-            if (this.endpointInfo.hasPublic) {
-              this.endpointChannelTab('公网', LOGIN_ENDPOINT_PREF_PUBLIC, true)
-            }
-            if (this.endpointInfo.hasLan) {
-              this.endpointChannelTab('内网', LOGIN_ENDPOINT_PREF_LAN, true)
-            }
-            if (this.endpointInfo.hasRelay) {
-              this.endpointChannelTab('中继', LOGIN_ENDPOINT_PREF_RELAY, true)
-            }
-          }
-          .width('100%')
-          .borderRadius(12)
-          .borderWidth(1)
-          .borderColor($r('app.color.immersive_panel_border'))
-        } else if (this.endpointInfo.label.length > 0) {
-          Text(this.endpointInfo.label)
-            .fontSize(12)
+          Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
+            .fontSize(18)
             .fontWeight(FontWeight.Medium)
-            .fontColor(Color.White)
-            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-            .backgroundColor(this.endpointKindBadgeColor(this.endpointInfo.kind))
-            .borderRadius(8)
-            .alignSelf(ItemAlign.Start)
+            .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
             .onClick((): void => {
               this.openEndpointProbeSheet();
             })
+
+          if (this.endpointInfo.canSwitch) {
+            Row() {
+              if (this.endpointInfo.hasPublic) {
+                this.endpointChannelTab('公网', LOGIN_ENDPOINT_PREF_PUBLIC, true)
+              }
+              if (this.endpointInfo.hasLan) {
+                this.endpointChannelTab('内网', LOGIN_ENDPOINT_PREF_LAN, true)
+              }
+              if (this.endpointInfo.hasRelay) {
+                this.endpointChannelTab('中继', LOGIN_ENDPOINT_PREF_RELAY, true)
+              }
+            }
+            .width('100%')
+            .borderRadius(12)
+            .borderWidth(1)
+            .borderColor($r('app.color.immersive_panel_border'))
+          } else if (this.endpointInfo.label.length > 0) {
+            Text(this.endpointInfo.label)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .backgroundColor(this.endpointKindBadgeColor(this.endpointInfo.kind))
+              .borderRadius(8)
+              .alignSelf(ItemAlign.Start)
+              .onClick((): void => {
+                this.openEndpointProbeSheet();
+              })
+          }
         }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+        .backgroundColor($r('app.color.card_background'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .linearGradient(fnLiquidGlassGradient())
+        .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .clip(true)
       }
       .width('100%')
-      .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-      .backgroundColor($r('app.color.card_background'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
-      .borderWidth(1)
-      .borderColor($r('app.color.immersive_panel_border'))
-      .clip(true)
+      .bindSheet(this.twofaSheetVisible, this.endpointTwofaSheetBuilder, fnHdsFitContentSheetOptions(
+        $r('app.string.twofa_switch_title'),
+        (): void => {
+          this.onSwitchTwofaSheetDisappear();
+        }
+      ))
     }
     .width('100%')
-    .bindSheet(this.probeSheetVisible, this.endpointProbeSheetBuilder, fnHdsSheetOptions(
+    .bindSheet(this.probeSheetVisible, this.endpointProbeSheetBuilder, fnHdsMediumDetentSheetOptions(
       $r('app.string.nas_endpoint_probe_title'),
       (): void => {
         this.probeSheetVisible = false;
         this.probeSeq = this.probeSeq + 1;
         this.probeSheetLoading = false;
-      },
-      '50%'
-    ))
-    .bindSheet(this.twofaSheetVisible, this.endpointTwofaSheetBuilder, fnHdsFitContentSheetOptions(
-      $r('app.string.twofa_switch_title'),
-      (): void => {
-        this.onSwitchTwofaSheetDisappear();
       }
     ))
   }
@@ -860,12 +867,11 @@ struct MePanel {
     }
     .width('100%')
     .height('100%')
-    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsSheetOptions(
+    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsMediumDetentSheetOptions(
       '传输队列',
       (): void => {
         this.transferQueueVisible = false;
-      },
-      '56%'
+      }
     ))
   }
 }

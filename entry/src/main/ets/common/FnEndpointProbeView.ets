@@ -1,5 +1,7 @@
 /**
  * 登录页与「我的」共用的路径探测结果展示。
+ * 同类条目用 List + ListItem（arkts-layout-development-create-list）；
+ * 半模态内 List 配 nestedScroll PARENT_FIRST / SELF_FIRST（arkts-sheet-page）。
  */
 import { LoginEndpointProbeLine, LoginEndpointSelectionResult } from '../network/LoginEndpointSelector';
 
@@ -95,78 +97,128 @@ export struct FnEndpointProbeView {
   @Prop selectedLatencyText: string = '';
   @Prop otherItems: FnEndpointProbeLineItem[] = [];
   @Prop useCardStyle: boolean = false;
+  /** 半模态内铺满并滚动；登录页卡片内按内容撑开 */
+  @Prop fillSheet: boolean = false;
 
-  build() {
-    Column({ space: 8 }) {
-      if (this.probing) {
-        Text($r('app.string.login_probe_status'))
-          .fontSize(13)
+  @Builder
+  private selectedBlock() {
+    Column({ space: 6 }) {
+      if (this.hintText.length > 0) {
+        Text(this.hintText)
+          .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
       }
 
-      if (this.selectedLabel.length > 0) {
-        if (this.hintText.length > 0) {
-          Text(this.hintText)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-        }
-
-        Row() {
-          Text(this.selectedTitle)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-          Text(this.selectedLabel)
+      Row() {
+        Text(this.selectedTitle)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+        Text(this.selectedLabel)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.brand_primary'))
+          .margin({ left: 6 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        if (this.selectedLatencyText.length > 0) {
+          Text(this.selectedLatencyText)
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.brand_primary'))
-            .margin({ left: 6 })
-          Blank()
-          if (this.selectedLatencyText.length > 0) {
-            Text(this.selectedLatencyText)
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.brand_primary'))
-          }
         }
-        .width('100%')
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
-        if (this.selectedAddress.length > 0) {
-          Text(this.selectedAddress)
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-        }
-
-        ForEach(this.otherItems, (item: FnEndpointProbeLineItem) => {
-          Row() {
-            Text(item.label)
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-              .constraintSize({ minWidth: 80 })
-            Text(item.address)
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-              .layoutWeight(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ left: 8, right: 8 })
-            Text(item.latencyText)
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-          }
-          .width('100%')
-        }, (item: FnEndpointProbeLineItem) => item.key)
-      } else if (!this.probing) {
-        Text('暂无探测结果')
-          .fontSize(13)
+      if (this.selectedAddress.length > 0) {
+        Text(this.selectedAddress)
+          .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
     }
     .width('100%')
-    .padding(this.useCardStyle ? 12 : 20)
+    .padding({ top: 12, bottom: 12 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private otherRow(item: FnEndpointProbeLineItem) {
+    Row() {
+      Text(item.label)
+        .fontSize(16)
+        .fontColor($r('app.color.text_primary'))
+        .constraintSize({ minWidth: 72 })
+      Text(item.address)
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .margin({ left: 8, right: 8 })
+      Text(item.latencyText)
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+    }
+    .width('100%')
+    .height(48)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  build() {
+    Column({ space: 0 }) {
+      if (this.probing) {
+        Text($r('app.string.login_probe_status'))
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .padding({ top: 8, bottom: 4 })
+      }
+
+      if (this.selectedLabel.length > 0) {
+        List() {
+          ListItem() {
+            this.selectedBlock()
+          }
+
+          ForEach(this.otherItems, (item: FnEndpointProbeLineItem) => {
+            ListItem() {
+              this.otherRow(item)
+            }
+          }, (item: FnEndpointProbeLineItem) => item.key)
+        }
+        .width('100%')
+        .layoutWeight(this.fillSheet ? 1 : 0)
+        .alignListItem(ListItemAlign.Start)
+        .divider({
+          strokeWidth: 0.5,
+          color: $r('app.color.immersive_panel_border'),
+          startMargin: 0,
+          endMargin: 0
+        })
+        .scrollBar(this.fillSheet ? BarState.Auto : BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .nestedScroll({
+          scrollForward: NestedScrollMode.PARENT_FIRST,
+          scrollBackward: NestedScrollMode.SELF_FIRST
+        })
+      } else if (!this.probing) {
+        Text('暂无探测结果')
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .padding({ top: 12, bottom: 12 })
+      }
+    }
+    .width('100%')
+    .layoutWeight(this.fillSheet ? 1 : 0)
+    .padding(this.useCardStyle ?
+      { left: 12, right: 12, top: 12, bottom: 12 } :
+      { left: 16, right: 16, top: 4, bottom: 12 })
     .borderRadius(this.useCardStyle ? $r('app.float.radius_medium') : 0)
     .backgroundColor(this.useCardStyle ? $r('app.color.card_background') : Color.Transparent)
     .alignItems(HorizontalAlign.Start)

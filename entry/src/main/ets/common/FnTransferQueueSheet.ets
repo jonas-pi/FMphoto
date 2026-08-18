@@ -170,10 +170,15 @@ export struct FnTransferQueueSheet {
           }, (task: FnTransferTaskSnapshot): string => `${task.id}_${task.updatedAt}`)
         }
         .width('100%')
+        .height('100%')
         .layoutWeight(1)
         .padding({ left: 16, right: 16, bottom: 12 })
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Off)
+        .nestedScroll({
+          scrollForward: NestedScrollMode.PARENT_FIRST,
+          scrollBackward: NestedScrollMode.SELF_FIRST
+        })
       }
     }
     .width('100%')

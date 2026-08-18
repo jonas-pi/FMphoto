@@ -89,6 +89,16 @@ export function fnHdsFitContentSheetOptions(title: ResourceStr, onDisappear: () 
 }
 
 /**
+ * 内容可滚动的底部半模态：官方 arkts-sheet-page 用 SheetSize 档位，不写百分比高度。
+ * 默认 MEDIUM，可上滑 LARGE；List/Scroll 需配 nestedScroll PARENT_FIRST / SELF_FIRST。
+ */
+export function fnHdsMediumDetentSheetOptions(title: ResourceStr, onDisappear: () => void): SheetOptions {
+  const options = fnHdsSheetOptions(title, onDisappear, SheetSize.MEDIUM);
+  options.detents = [SheetSize.MEDIUM, SheetSize.LARGE];
+  return options;
+}
+
+/**
  * 图库详情半模态：官方 BOTTOM + MEDIUM/LARGE 档位跟手。
  * 底部弹窗默认不允许下层交互、显示蒙层；点击剩余区即点击遮罩，立刻离场。
  * 不要 enableOutsideInteractive=true：会关掉蒙层，点击落到预览还要等双击识别，收回会慢半拍。
