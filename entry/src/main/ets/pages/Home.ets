@@ -10,13 +10,16 @@ import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import {
+  LOGIN_ENDPOINT_PREF_AUTO,
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_PUBLIC,
   LOGIN_ENDPOINT_PREF_RELAY,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
 import {
+  completeStoredEndpointSwitchWith2fa,
   EndpointConnectionInfo,
+  EndpointSwitchResult,
   endpointPoolFromStored,
   resolveEndpointConnectionInfo,
   switchStoredLoginEndpoint
@@ -26,7 +29,7 @@ import {
   FN_ENDPOINT_SWITCH_VERSION
 } from '../network/LoginEndpointAutoSwitch';
 import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
-import { fnHdsSheetOptions } from '../common/FnHdsOverlay';
+import { fnHdsFitContentSheetOptions, fnHdsSheetOptions } from '../common/FnHdsOverlay';
 import {
   buildEndpointProbeDisplay,
   FnEndpointProbeLineItem,
@@ -125,12 +128,21 @@ struct MePanel {
   @State private probeSelectedAddress: string = '';
   @State private probeSelectedLatencyText: string = '';
   @State private probeOtherItems: FnEndpointProbeLineItem[] = [];
+  @State private twofaSheetVisible: boolean = false;
+  @State private twofaLoading: boolean = false;
+  @State private twofaCode: string = '';
+  @State private twofaError: string = '';
+  @State private twofaTrustDevice: boolean = true;
+  @State private pendingTwofaAccessToken: string = '';
+  @State private pendingTwofaTargetUrl: string = '';
+  @State private pendingTwofaDeviceId: string = '';
   @State private transferQueueVisible: boolean = false;
   @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   private lastImmersiveToggleAt: number = 0;
   private probeSeq: number = 0;
+  private twofaSwitchCompleted: boolean = false;
 
   private refreshTransferQueueTasks(): void {
     this.transferQueueTasks = FnTransferQueueStore.getTasks();
@@ -204,9 +216,10 @@ struct MePanel {
       return;
     }
     try {
+      // 「我的」页列出全部路径（含中继），不按登录时的内网/公网偏好过滤
       const selected = await selectAmongEndpointPool(
         endpointPoolFromStored(stored),
-        stored.loginEndpointPreference
+        LOGIN_ENDPOINT_PREF_AUTO
       );
       if (seq !== this.probeSeq) {
         return;
@@ -268,12 +281,115 @@ struct MePanel {
         res = { ok: false, message: '已取消信任证书' };
       }
     }
+    if (res.requires2faSetup === true) {
+      this.endpointSwitching = false;
+      this.showEndpointToast(res.message);
+      return;
+    }
+    if (res.requires2fa === true) {
+      this.openSwitchTwofaSheet(res);
+      return;
+    }
     this.endpointSwitching = false;
     this.refreshEndpointInfo();
     this.showEndpointToast(res.message);
     if (res.ok) {
       this.onEndpointSwitched();
     }
+  }
+
+  private openSwitchTwofaSheet(res: EndpointSwitchResult): void {
+    this.pendingTwofaAccessToken = res.accessToken !== undefined ? res.accessToken : '';
+    this.pendingTwofaTargetUrl = res.targetUrl !== undefined ? res.targetUrl : '';
+    this.pendingTwofaDeviceId = res.deviceId !== undefined ? res.deviceId : '';
+    this.twofaCode = '';
+    this.twofaError = '';
+    this.twofaTrustDevice = true;
+    this.twofaLoading = false;
+    this.twofaSwitchCompleted = false;
+    this.twofaSheetVisible = true;
+  }
+
+  private clearSwitchTwofaState(): void {
+    this.twofaSheetVisible = false;
+    this.twofaLoading = false;
+    this.twofaCode = '';
+    this.twofaError = '';
+    this.pendingTwofaAccessToken = '';
+    this.pendingTwofaTargetUrl = '';
+    this.pendingTwofaDeviceId = '';
+  }
+
+  private onSwitchTwofaSheetDisappear(): void {
+    if (this.twofaSwitchCompleted) {
+      this.twofaSwitchCompleted = false;
+      return;
+    }
+    this.endpointSwitching = false;
+    this.clearSwitchTwofaState();
+  }
+
+  private async onSwitchTwofaVerifyClick(): Promise<void> {
+    const code = this.twofaCode.trim();
+    if (!/^\d{6}$/.test(code)) {
+      this.twofaError = '请输入身份验证器中的 6 位动态验证码';
+      return;
+    }
+    if (this.pendingTwofaAccessToken.length === 0 || this.pendingTwofaTargetUrl.length === 0 ||
+      this.pendingTwofaDeviceId.length === 0) {
+      this.twofaError = '验证会话已失效，请重新切换';
+      return;
+    }
+    this.twofaLoading = true;
+    this.twofaError = '';
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    let res = await completeStoredEndpointSwitchWith2fa(
+      ctx,
+      this.pendingTwofaTargetUrl,
+      this.pendingTwofaAccessToken,
+      code,
+      this.twofaTrustDevice,
+      this.pendingTwofaDeviceId
+    );
+    if (res.certificateError === true && res.targetUrl !== undefined && res.targetUrl.length > 0) {
+      try {
+        const dlg = await this.getUIContext().getPromptAction().showDialog({
+          title: '证书不可信',
+          message: '切换目标地址证书未信任。是否信任并继续？',
+          buttons: [
+            { text: '取消', color: '#99000000' },
+            { text: '信任并继续', color: '#FF2563EB' }
+          ]
+        });
+        if (dlg.index === 1) {
+          CertPolicy.addTrusted(res.targetUrl);
+          CertPolicy.addTrusted(fnWebViewBaseUrl(res.targetUrl));
+          res = await completeStoredEndpointSwitchWith2fa(
+            ctx,
+            this.pendingTwofaTargetUrl,
+            this.pendingTwofaAccessToken,
+            code,
+            this.twofaTrustDevice,
+            this.pendingTwofaDeviceId
+          );
+        } else {
+          res = { ok: false, message: '已取消信任证书' };
+        }
+      } catch (_e) {
+        res = { ok: false, message: '已取消信任证书' };
+      }
+    }
+    this.twofaLoading = false;
+    if (!res.ok) {
+      this.twofaError = res.message;
+      return;
+    }
+    this.twofaSwitchCompleted = true;
+    this.endpointSwitching = false;
+    this.clearSwitchTwofaState();
+    this.refreshEndpointInfo();
+    this.showEndpointToast(res.message);
+    this.onEndpointSwitched();
   }
 
   private immersiveSupportText(): string {
@@ -332,6 +448,64 @@ struct MePanel {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(Color.Transparent)
+  }
+
+  @Builder
+  private endpointTwofaSheetBuilder() {
+    Column({ space: 12 }) {
+      Text($r('app.string.twofa_step_hint'))
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      TextInput({ placeholder: $r('app.string.hint_otp'), text: this.twofaCode })
+        .type(InputType.Number)
+        .maxLength(6)
+        .enableAutoFill(false)
+        .enableKeyboardOnFocus(false)
+        .onChange((v: string) => {
+          this.twofaCode = v.replace(/[^\d]/g, '').substring(0, 6);
+        })
+        .width('100%')
+        .height(44)
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius($r('app.float.radius_medium'))
+        .padding({ left: 12, right: 12 })
+        .enabled(!this.twofaLoading)
+
+      Row() {
+        Text($r('app.string.trust_device'))
+          .fontSize(15)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.twofaTrustDevice })
+          .selectedColor($r('app.color.brand_primary'))
+          .enabled(!this.twofaLoading)
+          .onChange((on: boolean) => {
+            this.twofaTrustDevice = on;
+          })
+      }
+      .width('100%')
+
+      if (this.twofaError.length > 0) {
+        Text(this.twofaError)
+          .fontColor(Color.Red)
+          .fontSize(14)
+          .width('100%')
+      }
+
+      FnPrimaryButton({
+        text: this.twofaLoading ? $r('app.string.verifying_2fa') : $r('app.string.verify_2fa_switch'),
+        action: (): void => {
+          void this.onSwitchTwofaVerifyClick();
+        }
+      })
+        .width('100%')
+        .enabled(!this.twofaLoading)
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, bottom: 24, top: 8 })
     .backgroundColor(Color.Transparent)
   }
 
@@ -500,6 +674,12 @@ struct MePanel {
         this.probeSheetLoading = false;
       },
       '50%'
+    ))
+    .bindSheet(this.twofaSheetVisible, this.endpointTwofaSheetBuilder, fnHdsFitContentSheetOptions(
+      $r('app.string.twofa_switch_title'),
+      (): void => {
+        this.onSwitchTwofaSheetDisappear();
+      }
     ))
   }
 

@@ -128,15 +128,20 @@ function isFinalLoginSuccess(data: WsJson): boolean {
     && data.secret.length > 0;
 }
 
-/** 已绑定 TOTP，当前设备未信任，需 OTP */
+/** 已绑定 TOTP，当前设备未信任，需 OTP（中继与直连同一套挑战字段） */
 function isTwofaChallenge(data: WsJson): boolean {
   const at = data.accessToken !== undefined ? data.accessToken : '';
-  return data.result === 'succ'
-    && data.isBindTwofaSecret === true
-    && data.isTrustedDevice === false
-    && at.length > 0
-    && (data.token === undefined || data.token.length === 0)
-    && (data.secret === undefined || data.secret.length === 0);
+  if (data.result !== 'succ' || at.length === 0) {
+    return false;
+  }
+  if (data.token !== undefined && data.token.length > 0) {
+    return false;
+  }
+  if (data.secret !== undefined && data.secret.length > 0) {
+    return false;
+  }
+  // 未带 isTrustedDevice 时也视为未信任，避免中继漏掉 2FA 挑战
+  return data.isBindTwofaSecret === true && data.isTrustedDevice !== true;
 }
 
 /** 管理员强制 2FA 但用户尚未绑定 */
@@ -392,7 +397,7 @@ function isRetryableRelayWsFailure(r: FnWsLoginResult): boolean {
     return false;
   }
   const m = (r.message !== undefined ? r.message : '').toLowerCase();
-  if (m.indexOf('websocket 登录超时') >= 0) {
+  if (m.indexOf('websocket 登录超时') >= 0 || m.indexOf('双重验证超时') >= 0) {
     return true;
   }
   if (m.indexOf('无法连接') >= 0 || m.indexOf('连接失败') >= 0 || m.indexOf('打开失败') >= 0) {
@@ -718,6 +723,7 @@ async function fnWsLoginOnce(
 /**
  * 2FA 第二步：提交 TOTP / 紧急验证码（user.2fa.loginVerify）。
  * 须在 fnWsLogin 返回 requires2fa 后尽快调用；accessToken 有时效。
+ * 中继上会新开 WSS（带 Origin/Cookie）；连接失败时短重试，验证码错误不重试。
  */
 export async function fnWs2faVerify(
   httpBaseNoSlash: string,
@@ -738,7 +744,38 @@ export async function fnWs2faVerify(
     return { success: false, message: '缺少设备标识 did，请重新登录' };
   }
   const did = deviceId.trim();
+  const maxAttempts = isFnRelayBaseUrl(httpBaseNoSlash) ? RELAY_WS_CONNECT_ATTEMPTS : 1;
+  let last: FnWsLoginResult = { success: false, message: '无法连接 WebSocket' };
+  let timeoutRetries = 0;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    last = await fnWs2faVerifyOnce(
+      httpBaseNoSlash, accessToken, code, trustDevice, isTrustedHost, did
+    );
+    if (!isRetryableRelayWsFailure(last) || attempt + 1 >= maxAttempts) {
+      return last;
+    }
+    const msg = last.message !== undefined ? last.message : '';
+    if (msg === '双重验证超时') {
+      timeoutRetries++;
+      if (timeoutRetries > RELAY_WS_TIMEOUT_RETRY_MAX) {
+        return last;
+      }
+    }
+    hilog.info(DOMAIN, TAG, 'relay WSS 2FA retry %{public}d/%{public}d: %{public}s',
+      attempt + 1, maxAttempts - 1, msg);
+    await delayMs(RELAY_WS_RETRY_DELAY_MS);
+  }
+  return last;
+}
 
+async function fnWs2faVerifyOnce(
+  httpBaseNoSlash: string,
+  accessToken: string,
+  code: string,
+  trustDevice: boolean,
+  isTrustedHost: boolean,
+  did: string
+): Promise<FnWsLoginResult> {
   fnWsResetReqIdCounter();
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
   hilog.info(DOMAIN, TAG, 'WS 2FA verify %{public}s', wsUrl);

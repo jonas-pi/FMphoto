@@ -9,7 +9,7 @@ import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { CertPolicy } from './CertPolicy';
 import { FnHttpClient } from './FnHttpClient';
-import { fnWsLogin } from './FnWsLogin';
+import { fnWs2faVerify, fnWsLogin } from './FnWsLogin';
 import {
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_PUBLIC,
@@ -68,6 +68,11 @@ export interface EndpointSwitchResult {
   message: string;
   certificateError?: boolean;
   targetUrl?: string;
+  /** 切换目标开启了 2FA，需提交 OTP 后再 completeStoredEndpointSwitchWith2fa */
+  requires2fa?: boolean;
+  requires2faSetup?: boolean;
+  accessToken?: string;
+  deviceId?: string;
 }
 
 export function isFnRelayBaseUrl(baseUrl: string): boolean {
@@ -476,8 +481,29 @@ export async function switchStoredLoginEndpointToUrl(
   const trusted = CertPolicy.isTrusted(target);
   const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
   const wsRes = await fnWsLogin(target, user, pass, trusted, deviceId);
-  if (wsRes.requires2fa === true || wsRes.requires2faSetup === true) {
-    return { ok: false, message: '切换需要双重验证，请返回登录页操作' };
+  if (wsRes.requires2faSetup === true) {
+    return {
+      ok: false,
+      message: wsRes.message !== undefined && wsRes.message.length > 0
+        ? wsRes.message
+        : '该账号需在飞牛网页端先绑定双重验证',
+      requires2faSetup: true,
+      targetUrl: target
+    };
+  }
+  if (wsRes.requires2fa === true) {
+    const at = wsRes.accessToken !== undefined ? wsRes.accessToken : '';
+    if (at.length === 0) {
+      return { ok: false, message: '需要双重验证但未收到挑战令牌，请重试', targetUrl: target };
+    }
+    return {
+      ok: false,
+      message: '请输入身份验证器中的 6 位动态验证码',
+      requires2fa: true,
+      accessToken: at,
+      deviceId: deviceId,
+      targetUrl: target
+    };
   }
   if (wsRes.certificateError === true && !trusted) {
     return {
@@ -516,4 +542,43 @@ export async function switchStoredLoginEndpoint(
     return { ok: false, message: '目标地址无效' };
   }
   return switchStoredLoginEndpointToUrl(ctx, nextUrl, false);
+}
+
+/**
+ * 「我的」页切换连接时，在 2FA 挑战后提交 OTP 并写回会话。
+ */
+export async function completeStoredEndpointSwitchWith2fa(
+  ctx: common.UIAbilityContext,
+  targetUrl: string,
+  accessToken: string,
+  otpCode: string,
+  trustDevice: boolean,
+  deviceId: string,
+  deferLongTokenProbe: boolean = false
+): Promise<EndpointSwitchResult> {
+  const stored = AppSession.getStored();
+  if (stored === null) {
+    return { ok: false, message: '未登录' };
+  }
+  const target = targetUrl.trim();
+  if (target.length === 0) {
+    return { ok: false, message: '目标地址无效' };
+  }
+  const trusted = CertPolicy.isTrusted(target);
+  const wsRes = await fnWs2faVerify(target, accessToken, otpCode, trustDevice, trusted, deviceId);
+  if (wsRes.certificateError === true && !trusted) {
+    return {
+      ok: false,
+      message: '目标地址证书未信任',
+      certificateError: true,
+      targetUrl: target
+    };
+  }
+  if (wsRes.success !== true || wsRes.token === undefined || wsRes.token.length === 0) {
+    const msg = wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : '双重验证失败';
+    return { ok: false, message: msg, targetUrl: target };
+  }
+  const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
+  const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
+  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt, deferLongTokenProbe);
 }

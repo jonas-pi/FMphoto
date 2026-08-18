@@ -73,6 +73,14 @@
       "value": "验证并登录"
     },
     {
+      "name": "verify_2fa_switch",
+      "value": "验证并切换"
+    },
+    {
+      "name": "twofa_switch_title",
+      "value": "双重验证"
+    },
+    {
       "name": "verifying_2fa",
       "value": "验证中…"
     },

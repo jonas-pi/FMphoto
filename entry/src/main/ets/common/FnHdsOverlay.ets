@@ -84,7 +84,7 @@ export function fnHdsSheetOptions(
   return options;
 }
 
-export function fnHdsFitContentSheetOptions(title: string, onDisappear: () => void): SheetOptions {
+export function fnHdsFitContentSheetOptions(title: ResourceStr, onDisappear: () => void): SheetOptions {
   return fnHdsSheetOptions(title, onDisappear, SheetSize.FIT_CONTENT);
 }
 
