@@ -2,7 +2,6 @@
  * 图库顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
  * 搜索 / 更多 / 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
  */
-import { LengthMetrics } from '@kit.ArkUI';
 import {
   BlurStrategy,
   HdsNavigation,
@@ -22,6 +21,7 @@ import {
   fnHdsNavChromeBackgroundStyle,
   fnHdsNavChromeScrolledBackgroundStyle,
   fnHdsNavChromeScrollEffectOpts,
+  fnHdsNavTitleBarPadding,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 import {
@@ -386,7 +386,7 @@ export struct GalleryAlbumTopBar {
   /** 根态 / 子模式 / 多选：官方 titleBar.menu */
   private defaultTitleBarOptions(): HdsNavigationTitleBarOptions {
     return this.canUseHds() ? {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
@@ -428,7 +428,7 @@ export struct GalleryAlbumTopBar {
         }
       }
     } : {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
@@ -473,7 +473,7 @@ export struct GalleryAlbumTopBar {
   /** 搜索态：bottomBuilder 放输入框，menu 放更多/完成 */
   private searchTitleBarOptions(): HdsNavigationTitleBarOptions {
     return this.canUseHds() ? {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
@@ -521,7 +521,7 @@ export struct GalleryAlbumTopBar {
         }
       }
     } : {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {

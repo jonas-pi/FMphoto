@@ -210,6 +210,7 @@ import {
   galleryAlbumLoadOneBatch,
   galleryAlbumMarkTimelineRefreshCaughtUp,
   galleryAlbumOnTabVisibleAgain,
+  galleryAlbumAbortTimelinePullRefresh,
   galleryAlbumOnTimelinePullRefresh,
   galleryAlbumPumpLoad,
   galleryAlbumRefreshMediaCategoriesInPlace,
@@ -686,6 +687,8 @@ export struct GalleryAlbumTab {
   private lastBootstrapSatisfiedRefreshVersion: number = 0;
   /** 时间线 List 下拉刷新，绑定系统 Refresh 动效。 */
   @State private galleryTimelineRefreshing: boolean = false;
+  /** 与 Refresh 动效配对：捏合中止时自增，作废仍在 await 的旧刷新 finally。 */
+  private galleryTimelineRefreshEpoch: number = 0;
   /**
    * 时间线是否在列表顶端（Scroller 垂直偏移 <= 0）。
    * 这里不做成 @State，避免滚动时整页重绘；在 onDidScroll / 下拉回调前同步，
@@ -1351,6 +1354,8 @@ export struct GalleryAlbumTab {
       set gallerySelectionMode(value: boolean) { self.setGallerySelectionModeState(value); }
       get galleryTimelineRefreshing(): boolean { return self.galleryTimelineRefreshing; }
       set galleryTimelineRefreshing(value: boolean) { self.galleryTimelineRefreshing = value; }
+      get galleryTimelineRefreshEpoch(): number { return self.galleryTimelineRefreshEpoch; }
+      set galleryTimelineRefreshEpoch(value: number) { self.galleryTimelineRefreshEpoch = value; }
       get galleryPullRefreshThresholdHapticDone(): boolean { return self.galleryPullRefreshThresholdHapticDone; }
       set galleryPullRefreshThresholdHapticDone(value: boolean) { self.galleryPullRefreshThresholdHapticDone = value; }
       get loadGen(): number { return self.loadGen; }
@@ -3104,6 +3109,9 @@ export struct GalleryAlbumTab {
           onRefreshing: (): void => {
             void galleryAlbumOnTimelinePullRefresh(this.asLoadOrchestratorHost());
           },
+          onAbortTimelineRefreshing: (): void => {
+            galleryAlbumAbortTimelinePullRefresh(this.asLoadOrchestratorHost());
+          },
           onBatchDownload: (): void => {
             void galleryAlbumConfirmAndBatchDownload(this.asBatchActionHost());
           },
@@ -3175,6 +3183,8 @@ export struct GalleryAlbumTab {
           onGranularityPinchActiveChange: (active: boolean): void => {
             this.granularityPinchActive = active;
             if (active) {
+              // 双指捏合可能已把 Refresh 拉进 Refresh 态；先清 refreshing，避免切级重建后动画卡死
+              galleryAlbumAbortTimelinePullRefresh(this.asLoadOrchestratorHost());
               this.ignoreListFreezeUntilMs = Date.now() + 120000;
               return;
             }

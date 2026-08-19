@@ -1,4 +1,3 @@
-import { LengthMetrics } from '@kit.ArkUI';
 import {
   BlurStrategy,
   DividerMode,
@@ -22,6 +21,7 @@ import {
   fnHdsImmersiveSystemMaterialEffect,
   fnHdsImmersiveTabsFloatingStyle,
   fnHdsNavChromeBackgroundStyle,
+  fnHdsNavTitleBarPadding,
   fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
@@ -272,7 +272,7 @@ export struct GalleryPreviewChrome {
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(false)
     .titleBar(this.canUseHds() ? {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: false,
       enableComponentSafeArea: false,
       style: {
@@ -287,7 +287,7 @@ export struct GalleryPreviewChrome {
       },
       content: this.topTitleBarContent()
     } : {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: false,
       enableComponentSafeArea: false,
       style: {

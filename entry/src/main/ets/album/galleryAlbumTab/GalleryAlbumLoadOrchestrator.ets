@@ -76,6 +76,11 @@ export interface GalleryAlbumLoadOrchestratorHost {
   galleryTimelineAtTopForPull: boolean;
   gallerySelectionMode: boolean;
   galleryTimelineRefreshing: boolean;
+  /**
+   * 下拉刷新世代。捏合中止或新一轮刷新会自增，
+   * 避免过期 await 的 finally 把新一轮 refreshing 清掉，或卡死旧动画。
+   */
+  galleryTimelineRefreshEpoch: number;
   galleryPullRefreshThresholdHapticDone: boolean;
   loadGen: number;
   exhausted: boolean;
@@ -224,6 +229,17 @@ export function galleryAlbumSyncTimelineAtTopForPull(host: GalleryAlbumLoadOrche
 }
 
 /**
+ * 官方 ts-container-refresh：刷新结束后必须把 refreshing 设回 false，动画才会收起。
+ * 捏合切级会重建 List，若此时仍处于 Refresh 态，自定义 builder 销毁重建会中断收起动画。
+ */
+export function galleryAlbumAbortTimelinePullRefresh(host: GalleryAlbumLoadOrchestratorHost): void {
+  host.galleryTimelineRefreshEpoch++;
+  host.galleryTimelineRefreshing = false;
+  host.galleryPullRefreshThresholdHapticDone = false;
+  hilog.info(DOMAIN, TAG, 'timeline pull refresh abort epoch=%{public}d', host.galleryTimelineRefreshEpoch);
+}
+
+/**
  * 官方下拉刷新：保持列表结构，原地拉已加载日首屏并 notifyDataChange。
  * 禁止 bootstrap / reloadAll（那是整表重建，会卡 Refresh 动效）。
  */
@@ -233,10 +249,14 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
     host.galleryTimelineRefreshing = false;
     return;
   }
+  // 新一轮刷新作废上一轮 finally，避免捏合中止后旧任务把状态写乱
+  host.galleryTimelineRefreshEpoch++;
+  const epoch = host.galleryTimelineRefreshEpoch;
   host.galleryTimelineRefreshing = true;
   host.clearBootstrapDebounceTimer();
   // 下拉刷新是发现远端 NAS 增删/封面变化的入口，必须先丢掉旧缩略图缓存
   GalleryTimelineRefreshStore.bump();
+  hilog.info(DOMAIN, TAG, 'timeline pull refresh start epoch=%{public}d', epoch);
   try {
     if (host.sections.length === 0 || host.orderedDays.length === 0) {
       await galleryAlbumBootstrap(host, false);
@@ -318,8 +338,20 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
       host.onMainTimelineReady();
     }
   } finally {
-    host.galleryTimelineRefreshing = false;
-    host.galleryPullRefreshThresholdHapticDone = false;
+    if (epoch === host.galleryTimelineRefreshEpoch) {
+      host.galleryTimelineRefreshing = false;
+      host.galleryPullRefreshThresholdHapticDone = false;
+      hilog.info(DOMAIN, TAG, 'timeline pull refresh end epoch=%{public}d', epoch);
+    } else {
+      // 捏合已中止本轮：动画已由 abort 清掉，这里不再回写 refreshing
+      hilog.info(
+        DOMAIN,
+        TAG,
+        'timeline pull refresh stale epoch=%{public}d now=%{public}d',
+        epoch,
+        host.galleryTimelineRefreshEpoch
+      );
+    }
   }
 }
 

@@ -10,6 +10,7 @@ import {
   hdsEffect,
   HdsNavigationBackgroundStyle,
   HdsTabsFloatingStyle,
+  PaddingOptions,
   ScrollEffectOptions,
   ScrollEffectType
 } from '@kit.UIDesignKit';
@@ -85,16 +86,25 @@ export function fnHdsNavChromeScrolledBackgroundStyle(): HdsNavigationBackground
 }
 
 /**
+ * 官方 HdsNavigation titleBar.padding：用系统 float 资源，避免 LengthMetrics.vp
+ * 被 Native 先当 Resource 解析而打出 ParseTitleBarPadding FAILED。
+ */
+export function fnHdsNavTitleBarPadding(): PaddingOptions {
+  return {
+    start: LengthMetrics.resource($r('sys.float.ohos_id_elements_margin_horizontal_s')),
+    end: LengthMetrics.resource($r('sys.float.ohos_id_elements_margin_horizontal_s'))
+  };
+}
+
+/**
  * 官方：按内容区总偏移在 originalStyle → scrollEffectStyle 之间线性过渡。
- * 超过 blurEffectiveEndOffset 后固定为滚动后样式，不是「仅手指滚动时才模糊」。
+ * 起止偏移走 HDS 默认值，不传 LengthMetrics.vp，避免 ParseScrollEffect resource parsed FAILED。
  */
 export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
   return {
     enableScrollEffect: true,
     // @SuppressWarnings compatibility
-    scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR,
-    blurEffectiveStartOffset: LengthMetrics.vp(0),
-    blurEffectiveEndOffset: LengthMetrics.vp(20)
+    scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
   };
 }
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;

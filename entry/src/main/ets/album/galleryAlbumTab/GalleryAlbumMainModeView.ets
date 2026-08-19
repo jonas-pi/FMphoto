@@ -109,6 +109,18 @@ export struct GalleryAlbumMainModeView {
   @State private pinchCoverCenterX: number = 0;
   @State private pinchCoverCenterY: number = 0;
   @State private pinchCoverOpacity: number = 1;
+  /**
+   * 捏合/盖层期间锁住 Refresh。须为 @State：官方 refreshing=false 才能收起加载动画，
+   * 且 pinch 重建 List 时 builder 销毁会中断收起（ts-container-refresh）。
+   */
+  @State private pinchRefreshLocked: boolean = false;
+  /** 当前 Refresh 下拉偏移，供自定义 builder 判断是否该画出转圈。 */
+  @State private refreshPullOffsetVp: number = 0;
+  /**
+   * 捏合会把 Refresh 偏移卡在非 0。在偏移回到接近 0 前不画转圈，
+   * 避免 end 之后加载图标仍钉在顶部。
+   */
+  private refreshOffsetArmed: boolean = true;
   private pinchCoverDismissTimer: number = -1;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
@@ -136,6 +148,8 @@ export struct GalleryAlbumMainModeView {
     (_: VisibleListContentInfo, __: VisibleListContentInfo) => {};
   onRefreshOffsetChange: (offset: number) => void = (_: number) => {};
   onRefreshing: () => void = () => {};
+  /** 捏合打断下拉刷新：宿主递增 epoch 并把 refreshing 置 false。 */
+  onAbortTimelineRefreshing: () => void = () => {};
   onBatchDownload: () => void = () => {};
   onBatchDelete: () => void = () => {};
   onTimelineSeekToCurrentRatio: () => void = () => {};
@@ -208,8 +222,12 @@ export struct GalleryAlbumMainModeView {
       return;
     }
     this.twoFingerScrollLocked = true;
+    // 第二指落下时 Refresh 可能已处于 Drag/Refresh；立刻关动画并禁止再触发
+    this.pinchRefreshLocked = true;
+    this.refreshOffsetArmed = false;
     this.resetGalleryTouchTracking();
     this.onGranularityPinchActiveChange(true);
+    this.onAbortTimelineRefreshing();
   }
 
   private unlockTwoFingerScrollIfIdle(): void {
@@ -218,6 +236,59 @@ export struct GalleryAlbumMainModeView {
     }
     this.twoFingerScrollLocked = false;
     this.onGranularityPinchActiveChange(false);
+    // 截图盖层还在时继续锁 Refresh，等盖层淡出后再允许下拉
+    if (this.pinchCoverPix === undefined) {
+      this.pinchRefreshLocked = false;
+    }
+  }
+
+  /** 官方：refreshing 为 false 时刷新区应收起；捏合期间强制 false，避免 List 重建卡住转圈。 */
+  private isTimelineRefreshVisualActive(): boolean {
+    return this.galleryTimelineRefreshing && !this.pinchRefreshLocked && this.pinchCoverPix === undefined;
+  }
+
+  private canPullToRefreshNow(): boolean {
+    return !this.gallerySelectionMode && !this.pinchRefreshLocked && this.pinchCoverPix === undefined;
+  }
+
+  /**
+   * 转圈只在「正在刷新」或「用户正在下拉」时出现。
+   * 官方 ts-container-refresh：自定义 builder 若带固定高度，会一直显示在刷新区下方。
+   */
+  private shouldShowGalleryRefreshSpinner(): boolean {
+    if (this.pinchRefreshLocked || this.pinchCoverPix !== undefined) {
+      return false;
+    }
+    if (this.isTimelineRefreshVisualActive()) {
+      return true;
+    }
+    return this.refreshOffsetArmed && this.refreshPullOffsetVp > 8;
+  }
+
+  private onTimelineRefreshOffsetChange(offset: number): void {
+    this.refreshPullOffsetVp = offset;
+    if (offset < 2) {
+      this.refreshOffsetArmed = true;
+    }
+    this.onRefreshOffsetChange(offset);
+  }
+
+  private onTimelineRefreshing(): void {
+    if (!this.canPullToRefreshNow()) {
+      this.onAbortTimelineRefreshing();
+      return;
+    }
+    this.onRefreshing();
+  }
+
+  private onTimelineRefreshStateChange(state: RefreshStatus): void {
+    if (!this.pinchRefreshLocked && this.pinchCoverPix === undefined) {
+      return;
+    }
+    // 捏合已拦截 PAN，Refresh 可能仍停在 Refresh 态；再写一次 false 收起指示条
+    if (state === RefreshStatus.Refresh) {
+      this.onAbortTimelineRefreshing();
+    }
   }
 
   private touchFingerCount(event: TouchEvent): number {
@@ -304,6 +375,13 @@ export struct GalleryAlbumMainModeView {
     this.pinchScaleUpdater.resetScale();
     this.onGranularityPinchCommit(nextMode);
     this.unlockTwoFingerScrollIfIdle();
+    this.onAbortTimelineRefreshing();
+    if (pix === undefined) {
+      this.pinchRefreshLocked = false;
+      return;
+    }
+    // 盖层期间 List 不可滚，Refresh 无法回弹；保持锁直到淡出
+    this.pinchRefreshLocked = true;
     this.schedulePinchCoverDismiss();
   }
 
@@ -328,6 +406,9 @@ export struct GalleryAlbumMainModeView {
         this.releasePinchCoverPix();
         this.pinchCoverPix = undefined;
         this.pinchCoverOpacity = 1;
+        this.refreshOffsetArmed = false;
+        this.pinchRefreshLocked = false;
+        this.onAbortTimelineRefreshing();
       }, 220);
     }, 120);
   }
@@ -396,12 +477,14 @@ export struct GalleryAlbumMainModeView {
   aboutToDisappear(): void {
     this.granularityPinchActive = false;
     this.twoFingerScrollLocked = false;
+    this.pinchRefreshLocked = false;
     this.pinchCenterFrozen = false;
     this.clearPinchCoverTimer();
     this.releasePinchCoverPix();
     this.pinchCoverPix = undefined;
     this.pinchScaleUpdater.resetScale();
     this.onGranularityPinchActiveChange(false);
+    this.onAbortTimelineRefreshing();
     setThumbHighThroughputLevel(0);
   }
 
@@ -885,19 +968,22 @@ export struct GalleryAlbumMainModeView {
   }
 
   /**
-   * 自定义刷新区。官方 ts-container-refresh：未设高度时随下拉区域收至 0，避免静止时顶出空隙。
-   * 顶部 padding 对齐状态栏/挖孔高度，指示条从安全区下方出现。
+   * 自定义刷新区。官方 ts-container-refresh：
+   * 未设高度时随下拉区域收到 0；一旦子节点带固定高度（如 Blank.height），会一直露在刷新区下方。
+   * 挖孔避让（AVOID-01）：转圈用 margin 避开 TYPE_SYSTEM∪TYPE_CUTOUT，不把占位做成固定高度。
    */
   @Builder
   private galleryRefreshContent() {
     Column() {
-      LoadingProgress()
-        .width(32)
-        .height(32)
+      if (this.shouldShowGalleryRefreshSpinner()) {
+        LoadingProgress()
+          .width(32)
+          .height(32)
+          .margin({ top: this.topSafeInsetVp })
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
-    .padding({ top: this.topSafeInsetVp })
   }
 
   private galleryRefreshTriggerOffsetVp(): number {
@@ -933,7 +1019,7 @@ export struct GalleryAlbumMainModeView {
 
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
-            Refresh({ refreshing: this.galleryTimelineRefreshing, builder: this.galleryRefreshContent() }) {
+            Refresh({ refreshing: this.isTimelineRefreshVisualActive(), builder: this.galleryRefreshContent() }) {
               List({ scroller: this.scrollerRef }) {
                 if (this.contentInsetTopVp > 0) {
                   ListItem() {
@@ -1014,9 +1100,16 @@ export struct GalleryAlbumMainModeView {
             .clip(true)
             .refreshOffset(this.galleryRefreshTriggerOffsetVp())
             .pullDownRatio(GALLERY_TIMELINE_REFRESH_PULL_RATIO)
-            .onOffsetChange(this.onRefreshOffsetChange)
-            .pullToRefresh(!this.gallerySelectionMode)
-            .onRefreshing(this.onRefreshing)
+            .onOffsetChange((offset: number): void => {
+              this.onTimelineRefreshOffsetChange(offset);
+            })
+            .pullToRefresh(this.canPullToRefreshNow())
+            .onRefreshing((): void => {
+              this.onTimelineRefreshing();
+            })
+            .onStateChange((state: RefreshStatus): void => {
+              this.onTimelineRefreshStateChange(state);
+            })
             .onGestureRecognizerJudgeBegin((
               event: BaseGestureEvent,
               current: GestureRecognizer,

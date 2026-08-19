@@ -373,6 +373,8 @@ export class GalleryThumbDiskCache {
   private static async readFile(path: string): Promise<ArrayBuffer | undefined> {
     let fd = -1;
     try {
+      // 文件不存在时 access 抛错且不走 stat/open，避免 file_api CheckFsStat / open -2
+      await fileIo.access(path);
       const st = await fileIo.stat(path);
       const size = Math.floor(Number(st.size));
       if (size <= 0 || size > THUMB_DISK_MAX_FILE_BYTES) {

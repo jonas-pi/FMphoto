@@ -2,7 +2,7 @@
  * 设置：相册 parent_guid
  */
 import { common } from '@kit.AbilityKit';
-import { LengthMetrics, window } from '@kit.ArkUI';
+import { window } from '@kit.ArkUI';
 import {
   BlurStrategy,
   HdsNavigation,
@@ -31,6 +31,7 @@ import {
   fnHdsNavChromeBackgroundStyle,
   fnHdsNavChromeScrolledBackgroundStyle,
   fnHdsNavChromeScrollEffectOpts,
+  fnHdsNavTitleBarPadding,
   FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../common/FnUiCommon';
 import {
@@ -161,7 +162,7 @@ struct Settings {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(false)
         .titleBar(this.canUseHds() ? {
-          padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+          padding: fnHdsNavTitleBarPadding(),
           avoidLayoutSafeArea: false,
           enableComponentSafeArea: false,
           style: {
@@ -176,7 +177,7 @@ struct Settings {
           },
           content: this.titleBarContent()
         } : {
-          padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+          padding: fnHdsNavTitleBarPadding(),
           avoidLayoutSafeArea: false,
           enableComponentSafeArea: false,
           style: {

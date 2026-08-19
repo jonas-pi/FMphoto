@@ -2,7 +2,6 @@
  * 回收站顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
  * 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
  */
-import { LengthMetrics } from '@kit.ArkUI';
 import {
   BlurStrategy,
   HdsNavigation,
@@ -22,7 +21,8 @@ import {
   fnHdsChromeButtonForegroundColor,
   fnHdsNavChromeBackgroundStyle,
   fnHdsNavChromeScrolledBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts
+  fnHdsNavChromeScrollEffectOpts,
+  fnHdsNavTitleBarPadding
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
@@ -148,7 +148,7 @@ export struct RecycleBinChrome {
 
   private titleBarOptions(): HdsNavigationTitleBarOptions {
     return this.canUseHds() ? {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
@@ -163,7 +163,7 @@ export struct RecycleBinChrome {
       },
       content: this.titleBarContent()
     } : {
-      padding: { start: LengthMetrics.vp(8), end: LengthMetrics.vp(8) },
+      padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false,
       style: {
