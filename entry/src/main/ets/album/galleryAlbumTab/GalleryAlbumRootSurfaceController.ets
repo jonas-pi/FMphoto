@@ -2,6 +2,7 @@
 import { AppSession } from '../../auth/AppSession';
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../../common/FnMotion';
+import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { galleryAlbumTopBarChromeHeightVp } from './GalleryAlbumTopBar';
 import { loadMediaCategories as requestMediaCategories, loadPersons as requestPersons, loadSmartCategories as requestSmartCategories } from './GalleryAlbumModeLoaders';
 
@@ -43,6 +44,8 @@ export interface GalleryAlbumRootSurfaceHost {
   albumsHomePersonPrefetchGen: number;
   albumsHomeMediaPrefetchGen: number;
   lastHomeSurface: string;
+  /** 上次成功拉过相册补充数据时的 RefreshStore.version；落后则强制重拉封面 */
+  lastAlbumsHomeRefreshVersion: number;
   dismissMoreMenu(): void;
   refreshRootPhotosScrollTitle(): void;
   notifySelectionDockStateChange(): void;
@@ -77,9 +80,12 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
   if (host.inSmartCategoryMode || host.inPersonMode) {
     return;
   }
-  const needMediaPrefetch = host.categoryItems.length <= 0 && !host.categoryLoading;
-  const needSmartPrefetch = galleryAlbumAlbumsHomeSmartItems(host).length <= 0 && !host.smartCategoryLoading;
-  const needPersonPrefetch = host.personItems.length <= 0 && !host.personLoading;
+  // NAS 增删/封面更新后 version 会 bump；已有列表也要重拉，否则封面会一直用旧数据
+  const albumsStale = GalleryTimelineRefreshStore.version > host.lastAlbumsHomeRefreshVersion;
+  const needMediaPrefetch = albumsStale || (host.categoryItems.length <= 0 && !host.categoryLoading);
+  const needSmartPrefetch = albumsStale ||
+    (galleryAlbumAlbumsHomeSmartItems(host).length <= 0 && !host.smartCategoryLoading);
+  const needPersonPrefetch = albumsStale || (host.personItems.length <= 0 && !host.personLoading);
   if (!needMediaPrefetch && !needSmartPrefetch && !needPersonPrefetch) {
     return;
   }
@@ -87,6 +93,7 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
   if (client === null) {
     return;
   }
+  host.lastAlbumsHomeRefreshVersion = GalleryTimelineRefreshStore.version;
   if (needMediaPrefetch) {
     const mediaGen = ++host.albumsHomeMediaPrefetchGen;
     host.categoryLoading = true;

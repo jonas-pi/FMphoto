@@ -12,6 +12,11 @@ interface FnAvoidAreaChangeInfo {
 
 let boundWindow: window.Window | null = null;
 let boundCallback: ((info: FnAvoidAreaChangeInfo) => void) | null = null;
+/** TYPE_SYSTEM 顶部高度（px），与挖孔区取较大值后写入 AppStorage */
+let lastSystemTopPx: number = 0;
+let lastSystemBottomPx: number = 0;
+/** TYPE_CUTOUT 顶部高度（px）。官方：摄像头挖孔默认不在避让区，需主动合并。 */
+let lastCutoutTopPx: number = 0;
 
 function fnPxToVp(px: number, uiContext: UIContext | undefined): number {
   if (uiContext !== undefined) {
@@ -43,20 +48,41 @@ function fnWriteInsetVp(key: string, value: number): void {
   }
 }
 
-function fnApplySystemAvoidArea(area: window.AvoidArea, uiContext: UIContext | undefined): void {
-  fnWriteInsetVp(FN_SYSTEM_TOP_INSET_VP_KEY, fnPxToVp(area.topRect.height, uiContext));
+function fnPublishTopBottomInsets(uiContext: UIContext | undefined): void {
+  // 官方 immersive-window-feature：状态栏与挖孔顶边取较大值，避免前置摄像头挡住顶部内容
+  fnWriteInsetVp(
+    FN_SYSTEM_TOP_INSET_VP_KEY,
+    fnPxToVp(Math.max(lastSystemTopPx, lastCutoutTopPx), uiContext)
+  );
   // 底部避让在无导航条设备上可以为 0，需允许写回
   AppStorage.setOrCreate<number>(
     FN_SYSTEM_BOTTOM_INSET_VP_KEY,
-    Math.max(0, fnPxToVp(area.bottomRect.height, uiContext))
+    Math.max(0, fnPxToVp(lastSystemBottomPx, uiContext))
   );
+}
+
+function fnApplySystemAvoidArea(area: window.AvoidArea, uiContext: UIContext | undefined): void {
+  lastSystemTopPx = Math.max(0, area.topRect.height);
+  lastSystemBottomPx = Math.max(0, area.bottomRect.height);
+  fnPublishTopBottomInsets(uiContext);
+}
+
+function fnApplyCutoutAvoidArea(area: window.AvoidArea, uiContext: UIContext | undefined): void {
+  lastCutoutTopPx = Math.max(0, area.topRect.height);
+  fnPublishTopBottomInsets(uiContext);
 }
 
 /** 读取当前系统避让区并写入 AppStorage。 */
 export function fnPublishSystemAvoidArea(win: window.Window, uiContext: UIContext | undefined = undefined): void {
   try {
-    const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-    fnApplySystemAvoidArea(area, uiContext);
+    const systemArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+    fnApplySystemAvoidArea(systemArea, uiContext);
+  } catch (_e) {
+  }
+  try {
+    // 官方 ts-universal-attributes-expand-safe-area：未配 avoid_cutout 时页面默认不避让挖孔
+    const cutoutArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_CUTOUT);
+    fnApplyCutoutAvoidArea(cutoutArea, uiContext);
   } catch (_e) {
   }
 }
@@ -74,6 +100,10 @@ export function fnBindSystemAvoidArea(win: window.Window): void {
   boundCallback = (info: FnAvoidAreaChangeInfo): void => {
     if (info.type === window.AvoidAreaType.TYPE_SYSTEM) {
       fnApplySystemAvoidArea(info.area, undefined);
+      return;
+    }
+    if (info.type === window.AvoidAreaType.TYPE_CUTOUT) {
+      fnApplyCutoutAvoidArea(info.area, undefined);
     }
   };
   try {

@@ -235,6 +235,8 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
   }
   host.galleryTimelineRefreshing = true;
   host.clearBootstrapDebounceTimer();
+  // 下拉刷新是发现远端 NAS 增删/封面变化的入口，必须先丢掉旧缩略图缓存
+  GalleryTimelineRefreshStore.bump();
   try {
     if (host.sections.length === 0 || host.orderedDays.length === 0) {
       await galleryAlbumBootstrap(host, false);
@@ -312,6 +314,9 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
     }
     galleryAlbumMarkTimelineRefreshCaughtUp(host);
     host.loadVisibleItemsImmediate();
+    if (host.onMainTimelineReady !== undefined) {
+      host.onMainTimelineReady();
+    }
   } finally {
     host.galleryTimelineRefreshing = false;
     host.galleryPullRefreshThresholdHapticDone = false;

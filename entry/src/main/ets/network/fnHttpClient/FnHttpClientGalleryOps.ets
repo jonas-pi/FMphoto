@@ -78,6 +78,8 @@ export class FnHttpClientGalleryOps {
   private static readonly assetBufferCache: Map<string, AssetBufferCacheEntry> = new Map();
   private static readonly ASSET_CACHE_TTL_MS: number = 15000;
   private static readonly ASSET_CACHE_MAX: number = 120;
+  /** 与缩略图磁盘 generation 对齐：清缓存后禁止把旧 inflight 结果写回 */
+  private static assetCacheGen: number = 0;
   private readonly host: FnHttpClientGalleryHost;
 
   constructor(host: FnHttpClientGalleryHost) {
@@ -203,11 +205,12 @@ export class FnHttpClientGalleryOps {
     if (inflight !== undefined) {
       return await inflight;
     }
+    const cacheGen = FnHttpClientGalleryOps.assetCacheGen;
     const job = this.fetchGalleryImageBufferInternal(fullUrl, timeoutMs);
     FnHttpClientGalleryOps.inflightAssetReq.set(fullUrl, job);
     try {
       const out = await job;
-      if (out !== undefined && out.byteLength > 0) {
+      if (out !== undefined && out.byteLength > 0 && cacheGen === FnHttpClientGalleryOps.assetCacheGen) {
         FnHttpClientGalleryOps.putAssetBufferCache(fullUrl, out);
       }
       return out;
@@ -382,6 +385,12 @@ export class FnHttpClientGalleryOps {
     }
     const entry: AssetBufferCacheEntry = { timeMs: Date.now(), data: data };
     FnHttpClientGalleryOps.assetBufferCache.set(url, entry);
+  }
+
+  /** NAS 变更后丢掉短 TTL 的 HTTP 图 buffer，避免 15s 内仍返回旧封面/缩略图 */
+  static clearAssetBufferCache(): void {
+    FnHttpClientGalleryOps.assetCacheGen++;
+    FnHttpClientGalleryOps.assetBufferCache.clear();
   }
 
   /**

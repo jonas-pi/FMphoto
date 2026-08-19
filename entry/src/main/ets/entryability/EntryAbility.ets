@@ -2,6 +2,8 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
+import { GalleryThumbDiskCache } from '../album/GalleryThumbDiskCache';
+import { ensureGalleryThumbCacheEpochStorage } from '../album/GalleryThumbPersist';
 import {
   fnApplySplashWindowBackground,
   fnApplySplashWindowChrome,
@@ -32,6 +34,8 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, LOG_TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onCreate');
+    GalleryThumbDiskCache.init(this.context.cacheDir);
+    ensureGalleryThumbCacheEpochStorage();
     FnTransferQueueStore.ensureStorage();
     ensureStarted(this.context);
   }

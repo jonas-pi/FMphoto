@@ -6,6 +6,8 @@ import {
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { AppSession } from '../../auth/AppSession';
 import { GalleryNetworkThumb, loadThumbPix, nasUrl, pickThumb, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { scheduleGalleryAlbumCoverPersist } from '../GalleryThumbPersist';
+import { GALLERY_THUMB_CACHE_EPOCH_KEY, THUMB_DISK_ALBUM_COVER } from '../GalleryThumbDiskCache';
 import { loadFirstRecentAddedItem } from '../RecentAddedOpenHelper';
 import { loadFirstCollectGalleryItem } from './GalleryAlbumModeLoaders';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -35,7 +37,7 @@ export struct GalleryAlbumAlbumsHomeView {
   @Prop mediaLoading: boolean = false;
   @Prop mediaError: string = '';
   @Prop mediaOpening: boolean = false;
-  @Prop mediaItems: MediaCategoryItem[] = [];
+  @Prop @Watch('onMediaItemsChanged') mediaItems: MediaCategoryItem[] = [];
   @Prop personLoading: boolean = false;
   @Prop personError: string = '';
   @Prop @Watch('onPersonItemsChanged') personItems: AiPersonItem[] = [];
@@ -69,8 +71,11 @@ export struct GalleryAlbumAlbumsHomeView {
   @State private collectShortcutThumbUri: string = '';
   @State private shortcutPreviewPix: Array<PixelMap | undefined> = [];
   @State private shortcutPreviewLoaded: boolean = false;
+  @StorageProp(GALLERY_THUMB_CACHE_EPOCH_KEY) @Watch('onThumbCacheEpochChanged')
+  private thumbCacheEpoch: number = 0;
   private thumbResumeTimer: number = -1;
   private previewRefreshTimer: number = -1;
+  private coverPersistTimer: number = -1;
   private previewWarmupGen: number = 0;
   private shortcutPreviewGen: number = 0;
   private shortcutRetryTimer: number = -1;
@@ -78,6 +83,7 @@ export struct GalleryAlbumAlbumsHomeView {
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
+    this.scheduleAlbumCoverPersist();
     if (this.personPreviewPix.length <= 0 && this.smartPreviewPix.length <= 0) {
       this.queuePreviewRefresh();
     }
@@ -87,6 +93,7 @@ export struct GalleryAlbumAlbumsHomeView {
   aboutToDisappear(): void {
     this.clearThumbResumeTimer();
     this.clearPreviewRefreshTimer();
+    this.clearCoverPersistTimer();
     this.clearShortcutRetryTimer();
     this.shortcutPreviewGen++;
   }
@@ -116,6 +123,13 @@ export struct GalleryAlbumAlbumsHomeView {
     if (this.shortcutRetryTimer >= 0) {
       clearTimeout(this.shortcutRetryTimer);
       this.shortcutRetryTimer = -1;
+    }
+  }
+
+  private clearCoverPersistTimer(): void {
+    if (this.coverPersistTimer >= 0) {
+      clearTimeout(this.coverPersistTimer);
+      this.coverPersistTimer = -1;
     }
   }
 
@@ -212,9 +226,10 @@ export struct GalleryAlbumAlbumsHomeView {
     );
     this.recentShortcutThumbUri = recentUri;
     this.collectShortcutThumbUri = collectUri;
+    this.scheduleAlbumCoverPersist();
     const pixPair = await Promise.all([
-      recentUri.length > 0 ? loadThumbPix(recentUri, false) : Promise.resolve(undefined),
-      collectUri.length > 0 ? loadThumbPix(collectUri, false) : Promise.resolve(undefined)
+      recentUri.length > 0 ? loadThumbPix(recentUri, false, '', 0, THUMB_DISK_ALBUM_COVER) : Promise.resolve(undefined),
+      collectUri.length > 0 ? loadThumbPix(collectUri, false, '', 0, THUMB_DISK_ALBUM_COVER) : Promise.resolve(undefined)
     ]);
     if (!shouldContinue()) {
       return;
@@ -272,13 +287,13 @@ export struct GalleryAlbumAlbumsHomeView {
       if (uri.length <= 0) {
         return undefined;
       }
-      return await loadThumbPix(uri, false);
+      return await loadThumbPix(uri, false, '', 0, THUMB_DISK_ALBUM_COVER);
     }));
     const smartPix = await Promise.all(smartUris.map(async (uri: string): Promise<PixelMap | undefined> => {
       if (uri.length <= 0) {
         return undefined;
       }
-      return await loadThumbPix(uri, false);
+      return await loadThumbPix(uri, false, '', 0, THUMB_DISK_ALBUM_COVER);
     }));
     if (gen !== this.previewWarmupGen) {
       hilog.warn(DOMAIN, TAG, 'warmPreviewPix stale gen=%{public}d active=%{public}d', gen, this.previewWarmupGen);
@@ -311,6 +326,7 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   private onBaseUrlChanged(): void {
+    this.scheduleAlbumCoverPersist();
     this.queuePreviewRefresh();
     this.shortcutPreviewGen++;
     this.resetShortcutPreviewCache();
@@ -334,15 +350,65 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   private onPersonItemsChanged(): void {
+    this.scheduleAlbumCoverPersist();
     this.queuePreviewRefresh();
   }
 
   private onSmartSceneItemsChanged(): void {
+    this.scheduleAlbumCoverPersist();
     this.queuePreviewRefresh();
   }
 
   private onSmartInfoItemsChanged(): void {
+    this.scheduleAlbumCoverPersist();
     this.queuePreviewRefresh();
+  }
+
+  private onMediaItemsChanged(): void {
+    this.scheduleAlbumCoverPersist();
+  }
+
+  /** 封面/快捷入口走 loadThumbPix 的 PixelMap 不会随 GalleryNetworkThumb 自动刷新 */
+  private onThumbCacheEpochChanged(): void {
+    if (this.thumbCacheEpoch < 0) {
+      return;
+    }
+    this.queuePreviewRefresh();
+    this.shortcutPreviewGen++;
+    this.resetShortcutPreviewCache();
+    if (this.pageVisible) {
+      this.queueShortcutPreviewRefresh(true);
+    }
+    this.scheduleAlbumCoverPersist();
+  }
+
+  private collectAlbumCoverUris(): string[] {
+    const urls: string[] = [];
+    for (let i = 0; i < this.mediaItems.length; i++) {
+      const cover = this.getMediaCategoryCover(this.mediaItems[i]);
+      if (cover.length > 0) {
+        urls.push(nasUrl(this.baseUrl, cover));
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      urls.push(this.previewPersonFaceUri(this.previewPersonAt(i)));
+      urls.push(this.previewSmartCoverUri(this.previewSmartAt(i)));
+    }
+    if (this.recentShortcutThumbUri.length > 0) {
+      urls.push(this.recentShortcutThumbUri);
+    }
+    if (this.collectShortcutThumbUri.length > 0) {
+      urls.push(this.collectShortcutThumbUri);
+    }
+    return urls;
+  }
+
+  private scheduleAlbumCoverPersist(): void {
+    this.clearCoverPersistTimer();
+    this.coverPersistTimer = setTimeout((): void => {
+      this.coverPersistTimer = -1;
+      scheduleGalleryAlbumCoverPersist(this.collectAlbumCoverUris());
+    }, 80);
   }
 
   private onThumbScrollActivity(): void {
@@ -625,7 +691,8 @@ export struct GalleryAlbumAlbumsHomeView {
           uri: uri,
           isVideo: false,
           isGif: false,
-          paused: !this.pageVisible || this.thumbLoadingPaused
+          paused: !this.pageVisible || this.thumbLoadingPaused,
+          diskPersistKind: THUMB_DISK_ALBUM_COVER
         })
           .width('100%')
           .aspectRatio(1)
@@ -703,7 +770,8 @@ export struct GalleryAlbumAlbumsHomeView {
         isVideo: false,
         isGif: false,
         paused: false,
-        debugLabel: `home_person_${idx}`
+        debugLabel: `home_person_${idx}`,
+        diskPersistKind: THUMB_DISK_ALBUM_COVER
       })
         .id(this.previewPersonThumbId(item, idx))
         .layoutWeight(1)
@@ -762,7 +830,8 @@ export struct GalleryAlbumAlbumsHomeView {
         isVideo: false,
         isGif: false,
         paused: false,
-        debugLabel: `home_smart_${idx}`
+        debugLabel: `home_smart_${idx}`,
+        diskPersistKind: THUMB_DISK_ALBUM_COVER
       })
         .id(this.previewSmartThumbId(item, idx))
         .layoutWeight(1)
@@ -933,7 +1002,8 @@ export struct GalleryAlbumAlbumsHomeView {
           paused: false,
           fadeInEnabled: false,
           debugLabel: this.shortcutDebugLabel(kind),
-          cacheIdentity: `shortcut_${kind}`
+          cacheIdentity: `shortcut_${kind}`,
+          diskPersistKind: THUMB_DISK_ALBUM_COVER
         })
           .id(this.shortcutThumbId(kind))
           .width('100%')

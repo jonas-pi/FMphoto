@@ -6,7 +6,16 @@ export const PUMP_UI_GAP_MS = 16;
 export const DAY_MAX_ROUNDS = 300;
 export const EMPTY_PAGE_ADVANCE_THRESHOLD = 2;
 export const GALLERY_BOOTSTRAP_DEBOUNCE_MS = 900;
+/** 官方 Refresh.refreshOffset 默认值（未设 promptText 时为 64vp） */
 export const GALLERY_TIMELINE_REFRESH_OFFSET_VP = 64;
+/** 原 friction=78 对应官方 pullDownRatio（取值 0~1） */
+export const GALLERY_TIMELINE_REFRESH_PULL_RATIO = 0.78;
+
+/** 触发刷新的下拉距离：状态栏避让 + 官方默认 64vp，避免刷新区落在前置摄像头下 */
+export function galleryTimelineRefreshTriggerOffsetVp(topSafeInsetVp: number): number {
+  return Math.max(0, topSafeInsetVp) + GALLERY_TIMELINE_REFRESH_OFFSET_VP;
+}
+
 export const GALLERY_LIST_APPROX_MONTH_NODE_VP = 52;
 export const GALLERY_LIST_APPROX_DAY_NODE_VP = 36;
 export const GALLERY_LIST_APPROX_ROW_NODE_VP = 124;

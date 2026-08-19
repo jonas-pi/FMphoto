@@ -17,7 +17,10 @@ import {
 import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
 import { gallerySharedTransitionId } from '../GallerySharedTransition';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
-import { GALLERY_TIMELINE_REFRESH_OFFSET_VP } from './GalleryAlbumTabConstants';
+import {
+  GALLERY_TIMELINE_REFRESH_PULL_RATIO,
+  galleryTimelineRefreshTriggerOffsetVp
+} from './GalleryAlbumTabConstants';
 import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
@@ -32,7 +35,8 @@ const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_MONTH: number = 360;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_YEAR: number = 120;
 const GALLERY_THUMB_NETWORK_PRESSURE_QUEUE_WAIT_MS_MONTH: number = 160;
-const GALLERY_GRANULARITY_PINCH_DISTANCE_VP: number = 8;
+/** 官方 PinchGesture 默认识别距离 5vp，过大容易先被 List 内置滑动抢走。 */
+const GALLERY_GRANULARITY_PINCH_DISTANCE_VP: number = 5;
 const GALLERY_GRANULARITY_PINCH_LOCK_MS: number = 320;
 export const GALLERY_ALBUM_MAIN_LIST_DOM_ID: string = 'gallery_album_main_list';
 
@@ -45,6 +49,8 @@ export struct GalleryAlbumMainModeView {
   @Prop loadError: string = '';
   @Prop footText: string = '';
   @Prop contentInsetTopVp: number = 0;
+  /** 仅状态栏/挖孔顶边高度，刷新区避让用；与 contentInsetTopVp（含顶栏）区分 */
+  @Prop topSafeInsetVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
@@ -87,13 +93,23 @@ export struct GalleryAlbumMainModeView {
   private gallerySecondaryPanDriving: boolean = false;
   private thumbThroughputLevel: number = 0;
   private thumbLastAdaptiveDropAtMs: number = 0;
-  private lastViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   @State private granularityOpacity: number = 1;
   private pinchScaleUpdater: GalleryPinchScaleUpdater = new GalleryPinchScaleUpdater();
   private granularityPinchActive: boolean = false;
+  /** 第二指落下即锁滚动，不必等 Pinch 识别成功，避免和 List/Refresh 内置滑动打架。 */
+  private twoFingerScrollLocked: boolean = false;
   private pinchCenterX: number = 0;
   private pinchCenterY: number = 0;
+  private pinchCenterFrozen: boolean = false;
+  private pinchFollowScale: number = 1;
   private pinchLockUntilMs: number = 0;
+  /** 官方 ComponentSnapshot：松手切级时盖住宫格重建，避免新骨架闪一帧。 */
+  @State private pinchCoverPix: PixelMap | undefined = undefined;
+  @State private pinchCoverScale: number = 1;
+  @State private pinchCoverCenterX: number = 0;
+  @State private pinchCoverCenterY: number = 0;
+  @State private pinchCoverOpacity: number = 1;
+  private pinchCoverDismissTimer: number = -1;
 
   itemIdOf: (item: GalleryListItem) => string = (_: GalleryListItem) => '';
   galleryThumbDomId: (photoId: string) => string = (_: string) => '';
@@ -131,6 +147,8 @@ export struct GalleryAlbumMainModeView {
   onTimelinePanEnd: (event: GestureEvent) => void = (_: GestureEvent) => {};
   onTimelinePanCancel: (event: GestureEvent) => void = (_: GestureEvent) => {};
   onGranularityPinchCommit: (mode: GalleryViewGranularity) => void = (_: GalleryViewGranularity): void => {};
+  /** 捏合进行中通知宿主：禁止把 List 滚动写成 isDraggingOrFling，避免骨架门控和 @Prop 刷新掐断跟手。 */
+  onGranularityPinchActiveChange: (active: boolean) => void = (_: boolean): void => {};
 
   private showTimelineSidebar(): boolean {
     return this.sectionsLength > 0 || this.orderedDaysLength > 0;
@@ -181,14 +199,52 @@ export struct GalleryAlbumMainModeView {
     return Date.now() >= this.pinchLockUntilMs;
   }
 
+  private isGranularityPinchBlockingScroll(): boolean {
+    return this.twoFingerScrollLocked || this.granularityPinchActive;
+  }
+
+  private lockTwoFingerScroll(): void {
+    if (this.twoFingerScrollLocked) {
+      return;
+    }
+    this.twoFingerScrollLocked = true;
+    this.resetGalleryTouchTracking();
+    this.onGranularityPinchActiveChange(true);
+  }
+
+  private unlockTwoFingerScrollIfIdle(): void {
+    if (this.granularityPinchActive) {
+      return;
+    }
+    this.twoFingerScrollLocked = false;
+    this.onGranularityPinchActiveChange(false);
+  }
+
+  private touchFingerCount(event: TouchEvent): number {
+    if (event.touches === undefined) {
+      return 0;
+    }
+    return event.touches.length;
+  }
+
+  private gestureFingerCount(event: BaseGestureEvent): number {
+    if (event.fingerList === undefined) {
+      return 0;
+    }
+    return event.fingerList.length;
+  }
+
   private onGranularityPinchStart(event: GestureEvent): void {
     if (!this.canRecognizeGranularityPinch()) {
       return;
     }
+    this.lockTwoFingerScroll();
     this.resetGalleryTouchTracking();
     this.granularityPinchActive = true;
     this.pinchCenterX = event.pinchCenterX;
     this.pinchCenterY = event.pinchCenterY;
+    this.pinchCenterFrozen = true;
+    this.pinchFollowScale = 1;
     this.pinchScaleUpdater.applyScale(1, this.pinchCenterX, this.pinchCenterY);
   }
 
@@ -196,55 +252,164 @@ export struct GalleryAlbumMainModeView {
     if (!this.granularityPinchActive) {
       return;
     }
-    this.pinchCenterX = event.pinchCenterX;
-    this.pinchCenterY = event.pinchCenterY;
-    this.pinchScaleUpdater.applyScale(event.scale, this.pinchCenterX, this.pinchCenterY);
+    // 缩放中心只取识别成功那一帧，后续跟手只改 scale，避免 origin 每帧跳动。
+    if (!this.pinchCenterFrozen) {
+      this.pinchCenterX = event.pinchCenterX;
+      this.pinchCenterY = event.pinchCenterY;
+      this.pinchCenterFrozen = true;
+    }
+    this.pinchFollowScale = event.scale;
+    this.pinchScaleUpdater.applyScale(this.pinchFollowScale, this.pinchCenterX, this.pinchCenterY);
   }
 
   private onGranularityPinchEnd(event: GestureEvent): void {
     if (!this.granularityPinchActive) {
       this.pinchScaleUpdater.resetScale();
+      this.unlockTwoFingerScrollIfIdle();
       return;
     }
     this.granularityPinchActive = false;
+    this.pinchCenterFrozen = false;
     const nextMode = galleryViewGranularityAfterPinch(this.viewGranularity, event.scale);
-    this.pinchScaleUpdater.resetScale();
     if (nextMode === null) {
+      this.pinchScaleUpdater.resetScale();
+      this.unlockTwoFingerScrollIfIdle();
       return;
     }
     this.pinchLockUntilMs = Date.now() + GALLERY_GRANULARITY_PINCH_LOCK_MS;
+    this.beginPinchCoverThenCommit(nextMode);
+  }
+
+  /**
+   * 官方图库切级路径：手势期只缩放当前层；松手先截当前宫格，用 PixelMap 盖住，
+   * 再改列数。截图拿的是目标组件变换前的内容，所以盖层继续带上跟手 scale。
+   */
+  private beginPinchCoverThenCommit(nextMode: GalleryViewGranularity): void {
+    const coverScale: number = this.pinchFollowScale;
+    const coverX: number = this.pinchCenterX;
+    const coverY: number = this.pinchCenterY;
+    let pix: PixelMap | undefined = undefined;
+    try {
+      pix = this.getUIContext().getComponentSnapshot().getSync(this.mainListDomId);
+    } catch (_e) {
+      pix = undefined;
+    }
+    this.clearPinchCoverTimer();
+    this.releasePinchCoverPix();
+    this.pinchCoverScale = coverScale;
+    this.pinchCoverCenterX = coverX;
+    this.pinchCoverCenterY = coverY;
+    this.pinchCoverOpacity = 1;
+    this.pinchCoverPix = pix;
+    this.pinchScaleUpdater.resetScale();
     this.onGranularityPinchCommit(nextMode);
+    this.unlockTwoFingerScrollIfIdle();
+    this.schedulePinchCoverDismiss();
+  }
+
+  private schedulePinchCoverDismiss(): void {
+    this.clearPinchCoverTimer();
+    this.pinchCoverDismissTimer = setTimeout((): void => {
+      this.pinchCoverDismissTimer = -1;
+      try {
+        this.getUIContext().animateTo(
+          { duration: 200, curve: Curve.EaseOut },
+          (): void => {
+            this.pinchCoverOpacity = 0;
+            this.pinchCoverScale = 1;
+          }
+        );
+      } catch (_e) {
+        this.pinchCoverOpacity = 0;
+        this.pinchCoverScale = 1;
+      }
+      this.pinchCoverDismissTimer = setTimeout((): void => {
+        this.pinchCoverDismissTimer = -1;
+        this.releasePinchCoverPix();
+        this.pinchCoverPix = undefined;
+        this.pinchCoverOpacity = 1;
+      }, 220);
+    }, 120);
+  }
+
+  private clearPinchCoverTimer(): void {
+    if (this.pinchCoverDismissTimer >= 0) {
+      clearTimeout(this.pinchCoverDismissTimer);
+      this.pinchCoverDismissTimer = -1;
+    }
+  }
+
+  private releasePinchCoverPix(): void {
+    const pix = this.pinchCoverPix;
+    if (pix === undefined) {
+      return;
+    }
+    try {
+      pix.release();
+    } catch (_e) {
+    }
   }
 
   private onGranularityPinchCancel(): void {
     this.granularityPinchActive = false;
+    this.pinchCenterFrozen = false;
+    this.pinchFollowScale = 1;
     this.pinchScaleUpdater.resetScale();
+    this.unlockTwoFingerScrollIfIdle();
   }
 
-  private onGranularityPinchJudgeBegin(info: GestureInfo): GestureJudgeResult {
-    if (info.type !== GestureControl.GestureType.PINCH_GESTURE) {
+  /**
+   * 官方手势拦截增强：List/Refresh 内置 PAN 与 Pinch 竞争时，双指直接拒掉内置滑动。
+   * onGestureRecognizerJudgeBegin 可拿到即将成功的识别器，能拦组件内置手势。
+   */
+  private onGranularityGestureRecognizerJudgeBegin(
+    event: BaseGestureEvent,
+    current: GestureRecognizer
+  ): GestureJudgeResult {
+    const type = current.getType();
+    if (type === GestureControl.GestureType.PINCH_GESTURE) {
+      if (!this.canRecognizeGranularityPinch()) {
+        return GestureJudgeResult.REJECT;
+      }
       return GestureJudgeResult.CONTINUE;
     }
-    if (!this.canRecognizeGranularityPinch()) {
-      return GestureJudgeResult.REJECT;
+    if (current.isBuiltIn() && type === GestureControl.GestureType.PAN_GESTURE) {
+      if (this.isGranularityPinchBlockingScroll() || this.gestureFingerCount(event) >= 2) {
+        return GestureJudgeResult.REJECT;
+      }
     }
     return GestureJudgeResult.CONTINUE;
   }
 
+  private onMainListScrollFrameBegin(offset: number, _state: ScrollState): OnScrollFrameBeginHandlerResult {
+    if (this.isGranularityPinchBlockingScroll()) {
+      return { offsetRemain: 0 };
+    }
+    return { offsetRemain: offset };
+  }
+
   aboutToAppear(): void {
     this.syncThumbHighThroughputMode();
-    this.lastViewGranularity = this.viewGranularity;
     this.resetGranularityMotion();
   }
 
   aboutToDisappear(): void {
+    this.granularityPinchActive = false;
+    this.twoFingerScrollLocked = false;
+    this.pinchCenterFrozen = false;
+    this.clearPinchCoverTimer();
+    this.releasePinchCoverPix();
+    this.pinchCoverPix = undefined;
+    this.pinchScaleUpdater.resetScale();
+    this.onGranularityPinchActiveChange(false);
     setThumbHighThroughputLevel(0);
   }
 
   private onViewGranularityChanged(): void {
-    this.lastViewGranularity = this.viewGranularity;
     this.syncThumbHighThroughputMode();
-    this.pinchScaleUpdater.resetScale();
+    if (this.pinchCoverPix === undefined) {
+      this.pinchScaleUpdater.resetScale();
+    }
   }
 
   private currentThumbPressureLoadMs(): number {
@@ -292,7 +457,9 @@ export struct GalleryAlbumMainModeView {
   }
 
   private handleListDidScroll(offset: number, scrollState: ScrollState): void {
-    this.maybeDropThumbThroughputForPressure(scrollState);
+    if (!this.isGranularityPinchBlockingScroll() && this.pinchCoverPix === undefined) {
+      this.maybeDropThumbThroughputForPressure(scrollState);
+    }
     this.onListDidScroll(offset, scrollState);
   }
 
@@ -423,6 +590,15 @@ export struct GalleryAlbumMainModeView {
   }
 
   private onMainListTouchEvent(event: TouchEvent): void {
+    const fingerCount = this.touchFingerCount(event);
+    if (event.type === TouchType.Down && fingerCount >= 2 && this.canRecognizeGranularityPinch()) {
+      this.lockTwoFingerScroll();
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      if (fingerCount < 2) {
+        this.unlockTwoFingerScrollIfIdle();
+      }
+    }
     const pt = this.readTouchFingerWindow(event);
     if (event.type === TouchType.Down) {
       return;
@@ -463,8 +639,8 @@ export struct GalleryAlbumMainModeView {
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
         isLive: isLivePhotoItem(item),
-        paused: this.timelineSidebarDragging || this.isDraggingOrFling,
-        fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY,
+        paused: this.timelineSidebarDragging || (this.isDraggingOrFling && this.pinchCoverPix === undefined),
+        fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY && this.pinchCoverPix === undefined,
         cacheIdentity: thumbIdentityOfItem(item),
         cacheRank: thumbDensityCacheRank(this.currentThumbDensity()),
         sharedTransitionId: gallerySharedTransitionId(this.itemIdOf(item))
@@ -708,6 +884,26 @@ export struct GalleryAlbumMainModeView {
     }
   }
 
+  /**
+   * 自定义刷新区。官方 ts-container-refresh：未设高度时随下拉区域收至 0，避免静止时顶出空隙。
+   * 顶部 padding 对齐状态栏/挖孔高度，指示条从安全区下方出现。
+   */
+  @Builder
+  private galleryRefreshContent() {
+    Column() {
+      LoadingProgress()
+        .width(32)
+        .height(32)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: this.topSafeInsetVp })
+  }
+
+  private galleryRefreshTriggerOffsetVp(): number {
+    return galleryTimelineRefreshTriggerOffsetVp(this.topSafeInsetVp);
+  }
+
   build() {
     if (this.bootLoading) {
       Column({ space: 8 }) {
@@ -732,12 +928,12 @@ export struct GalleryAlbumMainModeView {
             .fontSize(14)
             .fontColor(Color.Red)
             .width('100%')
-            .padding({ left: 16, right: 16, top: 8 })
+            .padding({ left: 16, right: 16, top: this.contentInsetTopVp + 8 })
         }
 
         Column() {
           Stack({ alignContent: Alignment.TopEnd }) {
-            Refresh({ refreshing: this.galleryTimelineRefreshing, offset: GALLERY_TIMELINE_REFRESH_OFFSET_VP, friction: 78 }) {
+            Refresh({ refreshing: this.galleryTimelineRefreshing, builder: this.galleryRefreshContent() }) {
               List({ scroller: this.scrollerRef }) {
                 if (this.contentInsetTopVp > 0) {
                   ListItem() {
@@ -775,7 +971,7 @@ export struct GalleryAlbumMainModeView {
               .scrollBarColor(Color.Transparent)
               .scrollBarWidth(0)
               .divider({ strokeWidth: 0 })
-              .enableScrollInteraction(this.galleryMainListScrollEnabled)
+              .enableScrollInteraction(this.galleryMainListScrollEnabled && this.pinchCoverPix === undefined)
               .attributeModifier(this.pinchScaleUpdater)
               .onTouch((event: TouchEvent): void => {
                 this.onMainListTouchEvent(event);
@@ -784,11 +980,18 @@ export struct GalleryAlbumMainModeView {
               .onDidScroll((offset: number, scrollState: ScrollState): void => {
                 this.handleListDidScroll(offset, scrollState);
               })
+              .onScrollFrameBegin((offset: number, state: ScrollState): OnScrollFrameBeginHandlerResult => {
+                return this.onMainListScrollFrameBegin(offset, state);
+              })
               .onScrollVisibleContentChange((start: VisibleListContentInfo, end: VisibleListContentInfo): void => {
                 this.onListVisibleContentChange(start, end);
               })
-              .onGestureJudgeBegin((info: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
-                return this.onGranularityPinchJudgeBegin(info);
+              .onGestureRecognizerJudgeBegin((
+                event: BaseGestureEvent,
+                current: GestureRecognizer,
+                _others: Array<GestureRecognizer>
+              ): GestureJudgeResult => {
+                return this.onGranularityGestureRecognizerJudgeBegin(event, current);
               })
               .priorityGesture(
                 PinchGesture({ fingers: 2, distance: GALLERY_GRANULARITY_PINCH_DISTANCE_VP })
@@ -809,9 +1012,33 @@ export struct GalleryAlbumMainModeView {
             .width('100%')
             .height('100%')
             .clip(true)
+            .refreshOffset(this.galleryRefreshTriggerOffsetVp())
+            .pullDownRatio(GALLERY_TIMELINE_REFRESH_PULL_RATIO)
             .onOffsetChange(this.onRefreshOffsetChange)
             .pullToRefresh(!this.gallerySelectionMode)
             .onRefreshing(this.onRefreshing)
+            .onGestureRecognizerJudgeBegin((
+              event: BaseGestureEvent,
+              current: GestureRecognizer,
+              _others: Array<GestureRecognizer>
+            ): GestureJudgeResult => {
+              return this.onGranularityGestureRecognizerJudgeBegin(event, current);
+            })
+
+            if (this.pinchCoverPix !== undefined) {
+              Image(this.pinchCoverPix)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Fill)
+                .scale({
+                  x: this.pinchCoverScale,
+                  y: this.pinchCoverScale,
+                  centerX: this.pinchCoverCenterX,
+                  centerY: this.pinchCoverCenterY
+                })
+                .opacity(this.pinchCoverOpacity)
+                .hitTestBehavior(HitTestMode.None)
+            }
 
             if (this.showTimelineSidebar()) {
               GalleryAlbumTimelineSidebar({

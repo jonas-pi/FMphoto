@@ -9,6 +9,11 @@ import { GalleryListItem, GalleryThumbnailBlock } from '../model/FnApiTypes';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
 import { gallerySharedTransitionOptions } from './GallerySharedTransition';
+import {
+  GalleryThumbDiskCache,
+  GALLERY_THUMB_CACHE_EPOCH_KEY,
+  THUMB_DISK_NONE
+} from './GalleryThumbDiskCache';
 
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
@@ -235,7 +240,8 @@ let thumbLoadSampleCount = 0;
 const thumbPaintCommitQueue: Array<() => void> = [];
 let thumbPaintCommitTimer: number = -1;
 
-function thumbCacheKey(fullUrl: string, autoCropBlack: boolean): string {
+/** 内存 PixelMap 与磁盘 JPEG 共用：`裁黑标记|完整 URL` */
+export function thumbCacheKey(fullUrl: string, autoCropBlack: boolean): string {
   return `${autoCropBlack ? '1' : '0'}|${fullUrl}`;
 }
 
@@ -258,6 +264,19 @@ function evictThumbCacheEntry(cacheKey: string): void {
   if (old !== undefined) {
     releaseThumbPix(old);
   }
+}
+
+/** NAS 变更后丢掉全部内存 PixelMap，避免同 URL 脏读。 */
+export function clearThumbPixCache(): void {
+  const keys: string[] = [];
+  thumbPixCache.forEach((_pix: PixelMap, key: string): void => {
+    keys.push(key);
+  });
+  for (let i = 0; i < keys.length; i++) {
+    evictThumbCacheEntry(keys[i]);
+  }
+  thumbPixIdentityCache.clear();
+  thumbLoadFailAt.clear();
 }
 
 function rememberThumbIdentityCache(identity: string, cacheKey: string, rank: number): void {
@@ -880,22 +899,73 @@ async function autoCropBlackBorders(pix: PixelMap): Promise<void> {
   } catch (_e) {}
 }
 
+async function decodeThumbPixFromBuffer(buf: ArrayBuffer, autoCropBlack: boolean): Promise<PixelMap | undefined> {
+  const src = image.createImageSource(buf);
+  try {
+    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.SDR });
+    if (autoCropBlack) {
+      await autoCropBlackBorders(pix);
+    }
+    return pix;
+  } finally {
+    src.release();
+  }
+}
+
+function rememberDecodedThumbPix(key: string, pix: PixelMap, cacheIdentity: string, cacheRank: number): void {
+  if (thumbPixCache.size >= THUMB_CACHE_MAX && !thumbPixCache.has(key)) {
+    let firstKey: string | undefined = undefined;
+    for (const k of thumbPixCache.keys()) {
+      firstKey = k;
+      break;
+    }
+    if (firstKey !== undefined) {
+      evictThumbCacheEntry(firstKey);
+    }
+  }
+  thumbPixCache.set(key, pix);
+  rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
+  thumbLoadFailAt.delete(key);
+}
+
 export async function loadThumbPix(
   fullUrl: string,
   autoCropBlack: boolean = false,
   cacheIdentity: string = '',
-  cacheRank: number = 0
+  cacheRank: number = 0,
+  diskKind: number = THUMB_DISK_NONE
 ): Promise<PixelMap | undefined> {
   if (fullUrl.length === 0) { return undefined; }
   const key = thumbCacheKey(fullUrl, autoCropBlack);
+  const persistKind = GalleryThumbDiskCache.resolveKind(key, diskKind);
+  const genAtStart = GalleryThumbDiskCache.generation;
   const cached = thumbPixCache.get(key);
   if (cached !== undefined) {
     rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
+    if (persistKind !== THUMB_DISK_NONE) {
+      GalleryThumbDiskCache.ensurePersisted(key, persistKind);
+    }
     return cached;
   }
   const failAt = thumbLoadFailAt.get(key);
   if (failAt !== undefined && Date.now() - failAt < THUMB_FAIL_RETRY_COOLDOWN_MS) {
     return undefined;
+  }
+
+  const diskBuf = await GalleryThumbDiskCache.tryRead(key);
+  if (diskBuf !== undefined && diskBuf.byteLength > 0) {
+    try {
+      const diskPix = await decodeThumbPixFromBuffer(diskBuf, autoCropBlack);
+      if (diskPix !== undefined) {
+        if (genAtStart !== GalleryThumbDiskCache.generation) {
+          releaseThumbPix(diskPix);
+          return undefined;
+        }
+        rememberDecodedThumbPix(key, diskPix, cacheIdentity, cacheRank);
+        return diskPix;
+      }
+    } catch (_e) {
+    }
   }
 
   // 等待并发槽位，避免大量同时下载解码导致卡顿
@@ -909,6 +979,9 @@ export async function loadThumbPix(
       rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
       return cached2;
     }
+    if (genAtStart !== GalleryThumbDiskCache.generation) {
+      return undefined;
+    }
 
     const client = AppSession.getClient();
     if (client === null) { return undefined; }
@@ -917,27 +990,23 @@ export async function loadThumbPix(
       thumbLoadFailAt.set(key, Date.now());
       return undefined;
     }
-    const src = image.createImageSource(buf);
+    if (genAtStart !== GalleryThumbDiskCache.generation) {
+      return undefined;
+    }
+    if (persistKind !== THUMB_DISK_NONE) {
+      GalleryThumbDiskCache.put(key, buf, persistKind);
+    }
     // 网格缩略图用 SDR 解码，显著低于 HDR/F16 的内存占用，降低大图库滑动崩溃风险；预览大图仍走 loadFullPix(HDR)
-    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.SDR });
-    src.release();
-    // 裁掉服务端已预烘焙的 letterbox/pillarbox 黑边
-    if (autoCropBlack) {
-      await autoCropBlackBorders(pix);
+    const pix = await decodeThumbPixFromBuffer(buf, autoCropBlack);
+    if (pix === undefined) {
+      thumbLoadFailAt.set(key, Date.now());
+      return undefined;
     }
-    if (thumbPixCache.size >= THUMB_CACHE_MAX) {
-      let firstKey: string | undefined = undefined;
-      for (const k of thumbPixCache.keys()) {
-        firstKey = k;
-        break;
-      }
-      if (firstKey !== undefined) {
-        evictThumbCacheEntry(firstKey);
-      }
+    if (genAtStart !== GalleryThumbDiskCache.generation) {
+      releaseThumbPix(pix);
+      return undefined;
     }
-    thumbPixCache.set(key, pix);
-    rememberThumbIdentityCache(cacheIdentity, key, cacheRank);
-    thumbLoadFailAt.delete(key);
+    rememberDecodedThumbPix(key, pix, cacheIdentity, cacheRank);
     return pix;
   } catch (_e) {
     thumbLoadFailAt.set(key, Date.now());
@@ -1085,7 +1154,12 @@ export struct GalleryNetworkThumb {
   @Prop debugLabel: string = '';
   @Prop cacheIdentity: string = '';
   @Prop cacheRank: number = 0;
+  /** 磁盘落盘类型：0 不定、1 首屏、2 相册封面；见 GalleryThumbDiskCache */
+  @Prop diskPersistKind: number = 0;
   @StorageProp('colorMode') private colorMode: number = 0;
+  /** NAS 缓存失效后递增，强制已挂载缩略图丢掉旧 PixelMap 并重拉 */
+  @StorageProp(GALLERY_THUMB_CACHE_EPOCH_KEY) @Watch('onThumbCacheEpochChanged')
+  private thumbCacheEpoch: number = 0;
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
   @State private pixAlpha: number = 0;
@@ -1104,6 +1178,15 @@ export struct GalleryNetworkThumb {
 
   onUriChange(): void {
     this.logDebug('onUriChange');
+    this.reloadFromScratch();
+  }
+
+  onThumbCacheEpochChanged(): void {
+    this.logDebug(`onThumbCacheEpochChanged epoch=${this.thumbCacheEpoch}`);
+    this.reloadFromScratch();
+  }
+
+  private reloadFromScratch(): void {
     this.loadVersion++;
     this.pix = undefined;
     this.pixAlpha = 0;
@@ -1183,7 +1266,13 @@ export struct GalleryNetworkThumb {
     this.logDebug('load-start');
     const versionAtStart = this.loadVersion;
     this.loading = true;
-    const pix = await loadThumbPix(this.uri, this.isVideo, this.cacheIdentity, this.cacheRank);
+    const pix = await loadThumbPix(
+      this.uri,
+      this.isVideo,
+      this.cacheIdentity,
+      this.cacheRank,
+      this.diskPersistKind
+    );
     if (versionAtStart !== this.loadVersion) {
       this.loading = false;
       this.logDebug('load-stale');
@@ -1283,6 +1372,8 @@ export struct GalleryNetworkBackdropImage {
   @Prop @Watch('onUriChange') uri: string = '';
   @Prop @Watch('onPausedChange') paused: boolean = false;
   @StorageProp('colorMode') private colorMode: number = 0;
+  @StorageProp(GALLERY_THUMB_CACHE_EPOCH_KEY) @Watch('onThumbCacheEpochChanged')
+  private thumbCacheEpoch: number = 0;
   @State private pix: PixelMap | undefined = undefined;
   @State private loading: boolean = false;
   @State private pixAlpha: number = 0;
@@ -1296,6 +1387,13 @@ export struct GalleryNetworkBackdropImage {
     this.loading = false;
     this.retryCount = 0;
     void this.loadPix();
+  }
+
+  onThumbCacheEpochChanged(): void {
+    if (this.thumbCacheEpoch < 0) {
+      return;
+    }
+    this.onUriChange();
   }
 
   onPausedChange(): void {

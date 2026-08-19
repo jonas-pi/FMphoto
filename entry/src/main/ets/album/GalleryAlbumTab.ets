@@ -58,6 +58,7 @@ import {
   GalleryHomeTimelineCache,
   GalleryHomeTimelineSnapshot
 } from './GalleryHomeTimelineCache';
+import { scheduleGalleryFirstScreenThumbPersist } from './GalleryThumbPersist';
 import { gallerySetAlbumBackHandler } from './GalleryAlbumHardwareBack';
 import {
   playGalleryEnterSelectionHaptic,
@@ -388,7 +389,7 @@ import {
   GALLERY_TIMELINE_RAIL_DRAG_VP,
   GALLERY_TIMELINE_RAIL_EXPANDED_VP,
   GALLERY_TIMELINE_RAIL_MIN_VP,
-  GALLERY_TIMELINE_REFRESH_OFFSET_VP,
+  galleryTimelineRefreshTriggerOffsetVp,
   GALLERY_TIMELINE_SEEK_HANDOFF_MAX_DRIFT_NODES,
   GALLERY_TIMELINE_SEEK_HANDOFF_MAX_SPAN_NODES,
   GALLERY_TIMELINE_SEEK_HANDOFF_STABLE_HITS,
@@ -422,7 +423,6 @@ import {
 } from './galleryAlbumTab/GalleryAlbumTabTypes';
 
 const GALLERY_GRANULARITY_HOST_SWITCH_DURATION_MS: number = 300;
-const GALLERY_GRANULARITY_HOST_SWITCH_EXIT_MS: number = 110;
 const GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP: number = 18;
 const GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY: number = 0.7;
 
@@ -457,6 +457,8 @@ export struct GalleryAlbumTab {
   private albumsHomePersonPrefetchGen: number = 0;
   private albumsHomeMediaPrefetchGen: number = 0;
   private lastHomeSurface: string = 'photos';
+  /** 与 GalleryTimelineRefreshStore.version 对齐，落后则重拉相册封面数据 */
+  private lastAlbumsHomeRefreshVersion: number = 0;
   @State private rootModeContentWidthVp: number = 360;
   @State private rootPhotosSurfaceTranslateX: number = 0;
   @State private rootAlbumsSurfaceTranslateX: number = 0;
@@ -615,7 +617,9 @@ export struct GalleryAlbumTab {
   @State private modeSwitchOffsetY: number = 0;
   @State private renderedViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   private lastGranularityMotionMode: GalleryViewGranularity = GalleryViewGranularity.DAY;
-  private granularitySwitchTimer: number = -1;
+  /** 捏合切级用截图盖层，不再走位移淡入，避免和重建抢同一段动画。 */
+  private skipNextGranularityHostMotion: boolean = false;
+  private granularityPinchActive: boolean = false;
   /** WaterFlow + LazyForEach 数据源，与 sections 保持同步。 */
   private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
 
@@ -1403,6 +1407,12 @@ export struct GalleryAlbumTab {
           self.asModeOrchestratorHost(),
           galleryAlbumCollectListedTimelineItems(self.sections)
         );
+        const persistBaseUrl = self.baseUrl;
+        const persistItems = galleryAlbumCollectListedTimelineItems(self.sections);
+        const persistMode = self.renderedViewGranularity;
+        setTimeout((): void => {
+          scheduleGalleryFirstScreenThumbPersist(persistBaseUrl, persistItems, persistMode);
+        }, 480);
       }
     }
     return new LoadOrchestratorHostBridge();
@@ -1583,6 +1593,8 @@ export struct GalleryAlbumTab {
       set albumsHomeMediaPrefetchGen(value: number) { self.albumsHomeMediaPrefetchGen = value; }
       get lastHomeSurface(): string { return self.lastHomeSurface; }
       set lastHomeSurface(value: string) { self.lastHomeSurface = value; }
+      get lastAlbumsHomeRefreshVersion(): number { return self.lastAlbumsHomeRefreshVersion; }
+      set lastAlbumsHomeRefreshVersion(value: number) { self.lastAlbumsHomeRefreshVersion = value; }
       dismissMoreMenu(): void { self.dismissMoreMenu(); }
       refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
       notifySelectionDockStateChange(): void { self.notifySelectionDockStateChange(); }
@@ -2378,33 +2390,6 @@ export struct GalleryAlbumTab {
     return nextMode > this.lastGranularityMotionMode ? 1 : -1;
   }
 
-  private clearGranularitySwitchTimer(): void {
-    if (this.granularitySwitchTimer >= 0) {
-      clearTimeout(this.granularitySwitchTimer);
-      this.granularitySwitchTimer = -1;
-    }
-  }
-
-  private playGranularityHostExitMotion(direction: number): void {
-    if (direction === 0) {
-      this.modeSwitchOpacity = 1;
-      this.modeSwitchOffsetY = 0;
-      return;
-    }
-    try {
-      this.getUIContext().animateTo(
-        { duration: GALLERY_GRANULARITY_HOST_SWITCH_EXIT_MS, curve: Curve.EaseIn },
-        (): void => {
-          this.modeSwitchOpacity = GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY;
-          this.modeSwitchOffsetY = direction > 0 ? GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP : -GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP;
-        }
-      );
-    } catch (_e) {
-      this.modeSwitchOpacity = GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY;
-      this.modeSwitchOffsetY = direction > 0 ? GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP : -GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP;
-    }
-  }
-
   private restoreGranularityAnchorScroll(anchor: TimelineDayModel | null): void {
     if (anchor === null) {
       return;
@@ -2427,10 +2412,11 @@ export struct GalleryAlbumTab {
   }
 
   private commitGranularitySwitch(direction: number): void {
-    this.granularitySwitchTimer = -1;
     const anchor = readFlowAnchorDate(this.flowDataSource, this.listVisibleFirstNodeIdx);
     this.renderedViewGranularity = this.viewGranularity;
     this.lastGranularityMotionMode = this.renderedViewGranularity;
+    // 捏合切等级时列表可能仍处在拖动/惯性标记中，强制清掉以免 rebuild 被推迟、画面卡住。
+    this.isDraggingOrFling = false;
     galleryAlbumRebuildFlow(this.asVisibleLoadHost());
     this.restoreGranularityAnchorScroll(anchor);
     this.refreshRootPhotosScrollTitle();
@@ -2466,8 +2452,10 @@ export struct GalleryAlbumTab {
   }
 
   private onViewGranularityChanged(): void {
-    this.clearGranularitySwitchTimer();
-    this.commitGranularitySwitch(0);
+    const fromPinch = this.skipNextGranularityHostMotion;
+    this.skipNextGranularityHostMotion = false;
+    const direction = fromPinch ? 0 : this.granularitySwitchDirection(this.viewGranularity);
+    this.commitGranularitySwitch(direction);
   }
 
   private canPinchSwitchGranularity(): boolean {
@@ -2603,7 +2591,6 @@ export struct GalleryAlbumTab {
   aboutToAppear(): void {
     galleryAlbumEnsureSelectionVisualStorage();
     galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
-    this.clearGranularitySwitchTimer();
     this.renderedViewGranularity = this.viewGranularity;
     this.lastGranularityMotionMode = this.viewGranularity;
     this.modeSwitchOpacity = 1;
@@ -2612,7 +2599,6 @@ export struct GalleryAlbumTab {
   }
 
   aboutToDisappear(): void {
-    this.clearGranularitySwitchTimer();
     galleryAlbumAboutToDisappear(this.asLifecycleHost());
   }
 
@@ -2869,6 +2855,7 @@ export struct GalleryAlbumTab {
           viewGranularity: this.renderedViewGranularity,
           gridColumns: this.currentGalleryGridColumns(),
           contentInsetTopVp: this.mainGalleryContentInsetTopVp(),
+          topSafeInsetVp: this.topSafeInsetVp,
           contentInsetBottomVp: this.currentBottomDockInsetVp(),
           modeSwitchOpacity: this.modeSwitchOpacity,
           modeSwitchOffsetY: this.modeSwitchOffsetY,
@@ -2963,7 +2950,8 @@ export struct GalleryAlbumTab {
             this.updateVisibleLoadPriorityFromScrollOffset(_offset);
             const draggingOrFling = _scrollState === ScrollState.Scroll || _scrollState === ScrollState.Fling;
             const shouldFreezeByListScroll =
-              draggingOrFling && !this.timelineSeekInProgress && Date.now() >= this.ignoreListFreezeUntilMs;
+              draggingOrFling && !this.timelineSeekInProgress && !this.granularityPinchActive &&
+              Date.now() >= this.ignoreListFreezeUntilMs;
             const wasDraggingOrFling = this.isDraggingOrFling;
             let refreshedVisibleRangeWhileInteracting = false;
             let stateChanged = false;
@@ -3103,7 +3091,7 @@ export struct GalleryAlbumTab {
             if (this.gallerySelectionMode) {
               return;
             }
-            const th = GALLERY_TIMELINE_REFRESH_OFFSET_VP;
+            const th = galleryTimelineRefreshTriggerOffsetVp(this.topSafeInsetVp);
             if (offset >= th) {
               if (!this.galleryPullRefreshThresholdHapticDone) {
                 this.galleryPullRefreshThresholdHapticDone = true;
@@ -3181,7 +3169,16 @@ export struct GalleryAlbumTab {
             this.endTimelineDrag();
           },
           onGranularityPinchCommit: (mode: GalleryViewGranularity): void => {
+            this.skipNextGranularityHostMotion = true;
             this.onViewGranularityChange(mode);
+          },
+          onGranularityPinchActiveChange: (active: boolean): void => {
+            this.granularityPinchActive = active;
+            if (active) {
+              this.ignoreListFreezeUntilMs = Date.now() + 120000;
+              return;
+            }
+            this.ignoreListFreezeUntilMs = Date.now() + 480;
           }
         })
           .visibility(this.isRootPhotosSurfaceLayerVisible() ? Visibility.Visible : Visibility.None)
