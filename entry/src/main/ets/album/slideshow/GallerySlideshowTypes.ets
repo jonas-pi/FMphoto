@@ -26,23 +26,30 @@ export interface GallerySlideshowScope {
   scopeLabel?: string;
 }
 
+export enum GallerySlideshowPlayMode {
+  RANDOM = 'random',
+  SEQUENTIAL = 'sequential'
+}
+
 export interface GallerySlideshowConfig {
   /** 每张停留秒数 */
   intervalSec: number;
   includeVideo: boolean;
   includeGif: boolean;
+  /** 随机抽片或按时间轴/列表顺序播放 */
+  playMode: GallerySlideshowPlayMode;
 }
 
 export const GALLERY_SLIDESHOW_DEFAULT_INTERVAL_SEC: number = 5;
-
-/** 可选切换间隔（秒） */
-export const GALLERY_SLIDESHOW_INTERVAL_SEC_OPTIONS: number[] = [3, 5, 8, 10, 15, 30];
+export const GALLERY_SLIDESHOW_INTERVAL_SEC_MIN: number = 2;
+export const GALLERY_SLIDESHOW_INTERVAL_SEC_MAX: number = 30;
 
 export function gallerySlideshowDefaultConfig(): GallerySlideshowConfig {
   return {
     intervalSec: GALLERY_SLIDESHOW_DEFAULT_INTERVAL_SEC,
     includeVideo: true,
-    includeGif: true
+    includeGif: true,
+    playMode: GallerySlideshowPlayMode.RANDOM
   };
 }
 

@@ -13,6 +13,7 @@ import { filterGallerySlideshowItems, gallerySlideshowStableItemKey, shuffleGall
 import { loadSmartCategoryGalleryItems } from '../SmartCategoryMagicSearch';
 import {
   GallerySlideshowConfig,
+  GallerySlideshowPlayMode,
   GallerySlideshowPlaylistEntry,
   GallerySlideshowScope,
   GallerySlideshowScopeKind
@@ -60,7 +61,7 @@ function usedKeyOf(globalIdx: number): string {
   return `${globalIdx}`;
 }
 
-/** nextUnusedGlobalIndex 的返回值：viaCode 1=random 2=stride 0=none */
+/** nextUnusedGlobalIndex 的返回值：viaCode 1=random 2=stride 3=seq 0=none */
 class SlideshowUnusedPick {
   globalIdx: number = -1;
   viaCode: number = 0;
@@ -81,6 +82,8 @@ export class GallerySlideshowStreamStore {
   private static dayPageCache: Map<string, GalleryListItem[]> = new Map();
   /** 同一页并发解析共用一个请求 */
   private static dayPageInflight: Map<string, Promise<GalleryListItem[]>> = new Map();
+  /** 顺序模式从 0 往后取未用下标；随机模式仍禁止从 0 线性扫描 */
+  private static sequentialCursor: number = 0;
 
   static isActive(): boolean {
     return GallerySlideshowStreamStore.active;
@@ -105,6 +108,7 @@ export class GallerySlideshowStreamStore {
     GallerySlideshowStreamStore.flatResolveItems = [];
     GallerySlideshowStreamStore.dayPageCache.clear();
     GallerySlideshowStreamStore.dayPageInflight.clear();
+    GallerySlideshowStreamStore.sequentialCursor = 0;
   }
 
   static rememberEntries(entries: GallerySlideshowPlaylistEntry[]): void {
@@ -155,6 +159,7 @@ export class GallerySlideshowStreamStore {
     GallerySlideshowStreamStore.prefetching = false;
     GallerySlideshowStreamStore.dayPageCache.clear();
     GallerySlideshowStreamStore.dayPageInflight.clear();
+    GallerySlideshowStreamStore.sequentialCursor = 0;
     hilog.info(DOMAIN, TAG, 'begin total=%{public}d', index.totalCount);
   }
 
@@ -317,8 +322,13 @@ export class GallerySlideshowStreamStore {
     return true;
   }
 
+  private static isSequentialMode(): boolean {
+    const config = GallerySlideshowStreamStore.config;
+    return config !== null && config.playMode === GallerySlideshowPlayMode.SEQUENTIAL;
+  }
+
   /**
-   * 取一个未用全局下标。先随机；连续未命中再用质数步长探测，
+   * 取一个未用全局下标。顺序：从前往后；随机：先随机，未命中再用质数步长，
    * 禁止从 0 线性扫描（那会让标题变成 1、2、3… 顺延）。
    */
   private static nextUnusedGlobalIndex(): SlideshowUnusedPick {
@@ -331,6 +341,19 @@ export class GallerySlideshowStreamStore {
     if (GallerySlideshowStreamStore.usedGlobals.size >= total) {
       return out;
     }
+    if (GallerySlideshowStreamStore.isSequentialMode()) {
+      let g = GallerySlideshowStreamStore.sequentialCursor;
+      while (g < total) {
+        if (!GallerySlideshowStreamStore.usedHas(g)) {
+          GallerySlideshowStreamStore.sequentialCursor = g + 1;
+          out.globalIdx = g;
+          out.viaCode = 3;
+          return out;
+        }
+        g++;
+      }
+      return out;
+    }
     for (let i = 0; i < 48; i++) {
       const n = Math.floor(Math.random() * total);
       if (!GallerySlideshowStreamStore.usedHas(n)) {
@@ -340,7 +363,6 @@ export class GallerySlideshowStreamStore {
       }
     }
     slideshowLogRandomMiss(GallerySlideshowStreamStore.usedGlobals.size, total);
-    // 从随机起点扫一遍，避免固定从 0 开始导致标题 1、2、3 顺延
     const start = Math.floor(Math.random() * total);
     for (let i = 0; i < total; i++) {
       let g = start + i;
@@ -379,7 +401,7 @@ export class GallerySlideshowStreamStore {
         }
         GallerySlideshowStreamStore.usedAdd(g);
         chunk.push(g);
-        const via = viaCode === 1 ? 'random' : (viaCode === 2 ? 'stride' : 'none');
+        const via = viaCode === 1 ? 'random' : (viaCode === 2 ? 'stride' : (viaCode === 3 ? 'seq' : 'none'));
         slideshowLogPick(via, g, GallerySlideshowStreamStore.usedGlobals.size, index.totalCount);
       }
       if (chunk.length === 0) {
@@ -469,6 +491,9 @@ export class GallerySlideshowStreamStore {
 
   static async buildStartPlaylist(): Promise<GallerySlideshowPlaylistEntry[]> {
     const batch = await GallerySlideshowStreamStore.pickRandomBatch(GALLERY_SLIDESHOW_START_BATCH);
+    if (GallerySlideshowStreamStore.isSequentialMode()) {
+      return batch;
+    }
     return shuffleGallerySlideshowEntries(batch);
   }
 
@@ -488,7 +513,10 @@ export class GallerySlideshowStreamStore {
     try {
       const batch = await GallerySlideshowStreamStore.pickRandomBatch(GALLERY_SLIDESHOW_PREFETCH_BATCH);
       if (batch.length > 0) {
-        append(shuffleGallerySlideshowEntries(batch));
+        const ordered = GallerySlideshowStreamStore.isSequentialMode()
+          ? batch
+          : shuffleGallerySlideshowEntries(batch);
+        append(ordered);
         hilog.info(DOMAIN, TAG, 'prefetch append=%{public}d', batch.length);
       } else {
         hilog.warn(DOMAIN, TAG, 'prefetch empty used=%{public}d total=%{public}d',

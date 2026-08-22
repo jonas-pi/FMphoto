@@ -155,6 +155,8 @@ struct GalleryPreview {
   private slideshowLibraryTotal: number = 0;
   private slideshowGlobalIndices: number[] = [];
   private slideshowTimerId: number = -1;
+  /** 详情打开期间视频已播完：关详情后再切页，避免半模态还在就自动划走 */
+  private slideshowAdvancePending: boolean = false;
   /** 官方：Swiper+LazyForEach 禁止在 onChange 里刷新子页，补货须推迟 */
   private slideshowPrefetchTimer: number = -1;
   /** 切页日志：上一张全局下标 / 稳定键，用于识别顺延与重复 */
@@ -435,6 +437,10 @@ struct GalleryPreview {
     if (this.totalCount <= 1 && !GallerySlideshowStreamStore.isActive()) {
       return;
     }
+    // 详情打开时真正停表，关详情后再重新计时
+    if (this.detailsVisible) {
+      return;
+    }
     // 视频播着时不按间隔切页，等播完或手动划走
     if (this.currentItemIsVideo()) {
       return;
@@ -453,8 +459,29 @@ struct GalleryPreview {
     }, this.slideshowIntervalMs);
   }
 
+  /** 打开详情：清掉当前间隔，避免后台空转到期后又切页 */
+  private pauseSlideshowForDetails(): void {
+    this.clearSlideshowTimer();
+  }
+
+  /** 关闭详情：若视频已在详情里播完则立刻切页，否则重新开始当前间隔 */
+  private resumeSlideshowAfterDetails(): void {
+    if (!this.slideshowEnabled) {
+      return;
+    }
+    if (this.slideshowAdvancePending) {
+      this.slideshowAdvancePending = false;
+      this.advanceSlideshow();
+    }
+    this.armSlideshowTimer();
+  }
+
   private onSlideshowVideoEnded(): void {
     if (!this.slideshowEnabled) {
+      return;
+    }
+    if (this.shouldPauseSlideshow()) {
+      this.slideshowAdvancePending = true;
       return;
     }
     this.advanceSlideshow();
@@ -465,6 +492,7 @@ struct GalleryPreview {
     this.clearSlideshowTimer();
     this.clearSlideshowPrefetchTimer();
     this.clearChromeRevealTimer();
+    this.slideshowAdvancePending = false;
     this.detailsVisible = false;
     this.previewSheetVisible = false;
     this.detailsAvoidAnimating = false;
@@ -903,8 +931,17 @@ struct GalleryPreview {
 
       get detailsVisible(): boolean { return self.detailsVisible; }
       set detailsVisible(v: boolean) {
+        const wasVisible = self.detailsVisible;
         self.detailsVisible = v;
         self.syncPreviewSheetVisible();
+        if (!self.slideshowEnabled || wasVisible === v) {
+          return;
+        }
+        if (v) {
+          self.pauseSlideshowForDetails();
+        } else {
+          self.resumeSlideshowAfterDetails();
+        }
       }
 
       get detailsLoading(): boolean { return self.detailsLoading; }
@@ -1026,7 +1063,7 @@ struct GalleryPreview {
               autoStartVideo: this.slideshowEnabled,
               videoBottomPadding: this.videoControlsBottomPadding(),
               detailsShowing: this.detailsVisible,
-              allowVerticalGesture: !this.slideshowEnabled,
+              allowVerticalGesture: true,
               onZoomLockChange: (locked: boolean): void => {
                 this.runScopedTask((): void => {
                   this.previewZoomLocked = locked;

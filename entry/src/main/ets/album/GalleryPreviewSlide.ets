@@ -983,6 +983,9 @@ export struct GalleryPreviewSlide {
   }
 
   private beginVerticalPan(): void {
+    if (!this.allowVerticalGesture) {
+      return;
+    }
     this.cancelTransformAnimator();
     this.haltLivePlayback();
     this.verticalPanActive = true;
@@ -998,6 +1001,9 @@ export struct GalleryPreviewSlide {
   }
 
   private applyVerticalOffset(offsetY: number): void {
+    if (!this.allowVerticalGesture) {
+      return;
+    }
     this.verticalOffsetY = offsetY;
     this.noteVerticalVelocity(offsetY);
     if (this.detailsShowing) {
@@ -1069,6 +1075,10 @@ export struct GalleryPreviewSlide {
   }
 
   private finishVerticalPan(cancelled: boolean): void {
+    if (!this.allowVerticalGesture) {
+      this.verticalPanActive = false;
+      return;
+    }
     this.verticalPanActive = false;
     if (cancelled) {
       this.lockParentForVertical(false);

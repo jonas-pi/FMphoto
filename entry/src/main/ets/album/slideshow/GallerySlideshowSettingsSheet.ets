@@ -2,8 +2,10 @@ import { common } from '@kit.AbilityKit';
 import { FnHdsPillButton } from '../../common/FnUiCommon';
 import { gallerySlideshowLoadConfig } from './GallerySlideshowPreferences';
 import {
-  GALLERY_SLIDESHOW_INTERVAL_SEC_OPTIONS,
-  GallerySlideshowConfig
+  GALLERY_SLIDESHOW_INTERVAL_SEC_MAX,
+  GALLERY_SLIDESHOW_INTERVAL_SEC_MIN,
+  GallerySlideshowConfig,
+  GallerySlideshowPlayMode
 } from './GallerySlideshowTypes';
 
 /**
@@ -20,6 +22,7 @@ export struct GallerySlideshowSettingsSheet {
   @State private intervalSec: number = 5;
   @State private includeVideo: boolean = true;
   @State private includeGif: boolean = true;
+  @State private playMode: GallerySlideshowPlayMode = GallerySlideshowPlayMode.RANDOM;
   @State private prefsLoaded: boolean = false;
 
   aboutToAppear(): void {
@@ -33,6 +36,7 @@ export struct GallerySlideshowSettingsSheet {
       this.intervalSec = config.intervalSec;
       this.includeVideo = config.includeVideo;
       this.includeGif = config.includeGif;
+      this.playMode = config.playMode;
       this.prefsLoaded = true;
     } catch (_e) {
       this.prefsLoaded = true;
@@ -43,24 +47,25 @@ export struct GallerySlideshowSettingsSheet {
     return {
       intervalSec: this.intervalSec,
       includeVideo: this.includeVideo,
-      includeGif: this.includeGif
+      includeGif: this.includeGif,
+      playMode: this.playMode
     };
   }
 
   @Builder
-  private intervalChip(sec: number) {
+  private playModeChip(label: string, mode: GallerySlideshowPlayMode) {
     FnHdsPillButton({
-      text: `${sec} 秒`,
-      widthValue: 76,
+      text: label,
+      widthValue: 88,
       heightValue: 36,
       fontSizeValue: 13,
       fontColorValue: $r('app.color.text_primary'),
-      active: this.intervalSec === sec,
+      active: this.playMode === mode,
       action: (): void => {
-        this.intervalSec = sec;
+        this.playMode = mode;
       }
     })
-      .margin({ right: 8, bottom: 8 })
+      .margin({ right: 8 })
   }
 
   @Builder
@@ -83,23 +88,51 @@ export struct GallerySlideshowSettingsSheet {
 
   build() {
     Column({ space: 12 }) {
-      Column({ space: 8 }) {
-        Text('切换间隔')
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
-
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-          ForEach(GALLERY_SLIDESHOW_INTERVAL_SEC_OPTIONS, (sec: number) => {
-            this.intervalChip(sec)
-          }, (sec: number) => `slideshow_interval_${sec}`)
-        }
-        .width('100%')
-      }
-
       if (this.prefsLoaded) {
-        // Toggle.isOn 只在创建时生效，必须等偏好读回后再建开关，避免一直显示默认开
+        Column({ space: 8 }) {
+          Text('播放顺序')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+          Row() {
+            this.playModeChip('随机', GallerySlideshowPlayMode.RANDOM)
+            this.playModeChip('顺序', GallerySlideshowPlayMode.SEQUENTIAL)
+          }
+          .width('100%')
+        }
+
+        Column({ space: 8 }) {
+          Row() {
+            Text('切换间隔')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Text(`${this.intervalSec} 秒`)
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Slider({
+            value: this.intervalSec,
+            min: GALLERY_SLIDESHOW_INTERVAL_SEC_MIN,
+            max: GALLERY_SLIDESHOW_INTERVAL_SEC_MAX,
+            step: 1,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .selectedColor($r('app.color.brand_primary'))
+            .trackThickness(4)
+            .blockColor($r('app.color.brand_primary'))
+            .onChange((value: number, _mode: SliderChangeMode): void => {
+              this.intervalSec = Math.round(value);
+            })
+        }
+
         Column({ space: 4 }) {
           this.toggleRow('包含视频', this.includeVideo, (value: boolean): void => {
             this.includeVideo = value;
