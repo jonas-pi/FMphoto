@@ -39,6 +39,8 @@ import {
   GallerySlideshowStreamStore
 } from '../album/slideshow/GallerySlideshowStreamStore';
 import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
+import { gallerySlideshowStableItemKey } from '../album/slideshow/GallerySlideshowMedia';
+import { slideshowLogAppend, slideshowLogPage, slideshowLogPrefetch } from '../album/slideshow/GallerySlideshowTrace';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
@@ -153,6 +155,11 @@ struct GalleryPreview {
   private slideshowLibraryTotal: number = 0;
   private slideshowGlobalIndices: number[] = [];
   private slideshowTimerId: number = -1;
+  /** 官方：Swiper+LazyForEach 禁止在 onChange 里刷新子页，补货须推迟 */
+  private slideshowPrefetchTimer: number = -1;
+  /** 切页日志：上一张全局下标 / 稳定键，用于识别顺延与重复 */
+  private lastLoggedSlideshowGlobal: number = -1;
+  private lastLoggedSlideshowKey: string = '';
   private chromeRevealTimer: number = -1;
   private heroScrimEntered: boolean = false;
   private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
@@ -249,6 +256,7 @@ struct GalleryPreview {
     }
     setGalleryPreviewOpening(false);
     if (this.slideshowEnabled) {
+      this.logSlideshowPage();
       this.maybePrefetchSlideshowItems();
     }
   }
@@ -258,6 +266,21 @@ struct GalleryPreview {
       clearTimeout(this.slideshowTimerId);
       this.slideshowTimerId = -1;
     }
+  }
+
+  private clearSlideshowPrefetchTimer(): void {
+    if (this.slideshowPrefetchTimer >= 0) {
+      clearTimeout(this.slideshowPrefetchTimer);
+      this.slideshowPrefetchTimer = -1;
+    }
+  }
+
+  private scheduleSlideshowPrefetch(): void {
+    this.clearSlideshowPrefetchTimer();
+    this.slideshowPrefetchTimer = setTimeout((): void => {
+      this.slideshowPrefetchTimer = -1;
+      this.maybePrefetchSlideshowItems();
+    }, 0);
   }
 
   private shouldPauseSlideshow(): boolean {
@@ -279,6 +302,7 @@ struct GalleryPreview {
     if (GallerySlideshowStreamStore.isActive()) {
       void GallerySlideshowStreamStore.prefetchAppend((entries: GallerySlideshowPlaylistEntry[]): void => {
         if (entries.length === 0) {
+          this.clearSlideshowTimer();
           return;
         }
         this.appendSlideshowEntries(entries);
@@ -287,15 +311,14 @@ struct GalleryPreview {
           this.swiperIndex = next;
           this.swiperCtrl.changeIndex(next, true);
           this.maybePrefetchSlideshowItems();
+        } else {
+          this.clearSlideshowTimer();
         }
       });
       return;
     }
-    if (this.totalCount <= 1) {
-      return;
-    }
-    this.swiperIndex = 0;
-    this.swiperCtrl.changeIndex(0, true);
+    // 没有更多不重复的片子：停在最后一张，不要绕回第一张
+    this.clearSlideshowTimer();
   }
 
   private maybePrefetchSlideshowItems(): void {
@@ -306,6 +329,7 @@ struct GalleryPreview {
     if (!GallerySlideshowStreamStore.shouldPrefetch(remaining)) {
       return;
     }
+    slideshowLogPrefetch(remaining, this.swiperIndex, this.totalCount, 0);
     void GallerySlideshowStreamStore.prefetchAppend((entries: GallerySlideshowPlaylistEntry[]): void => {
       this.appendSlideshowEntries(entries);
     });
@@ -315,17 +339,85 @@ struct GalleryPreview {
     if (entries.length === 0) {
       return;
     }
-    const items: GalleryListItem[] = [];
+    const seenKeys: Set<string> = new Set();
+    const seenGlobals: Set<number> = new Set();
+    for (let i = 0; i < this.previewItems.length; i++) {
+      const key = gallerySlideshowStableItemKey(this.previewItems[i]);
+      if (key.length > 0) {
+        seenKeys.add(key);
+      }
+    }
+    for (let i = 0; i < this.slideshowGlobalIndices.length; i++) {
+      seenGlobals.add(this.slideshowGlobalIndices[i]);
+    }
+    const unique: GallerySlideshowPlaylistEntry[] = [];
+    let dropGlobal = 0;
+    let dropKey = 0;
     for (let i = 0; i < entries.length; i++) {
-      items.push(entries[i].item);
-      this.slideshowGlobalIndices.push(entries[i].globalIndex);
+      const entry = entries[i];
+      if (seenGlobals.has(entry.globalIndex)) {
+        dropGlobal++;
+        continue;
+      }
+      const key = gallerySlideshowStableItemKey(entry.item);
+      if (key.length > 0 && seenKeys.has(key)) {
+        dropKey++;
+        continue;
+      }
+      unique.push(entry);
+      seenGlobals.add(entry.globalIndex);
+      if (key.length > 0) {
+        seenKeys.add(key);
+      }
     }
-    for (let i = 0; i < items.length; i++) {
-      this.previewItems.push(items[i]);
+    if (unique.length === 0) {
+      slideshowLogAppend(entries.length, 0, dropGlobal, dropKey, this.previewItems.length,
+        this.slideshowGlobalIndices.length);
+      return;
     }
+    const items: GalleryListItem[] = [];
+    for (let i = 0; i < unique.length; i++) {
+      items.push(unique[i].item);
+      this.slideshowGlobalIndices.push(unique[i].globalIndex);
+    }
+    // itemSource.items 与 previewItems 是同一引用，appendItems 已经 push，这里不能再 push
+    const before = this.previewItems.length;
     this.itemSource.appendItems(items);
+    if (this.previewItems.length === before) {
+      for (let i = 0; i < items.length; i++) {
+        this.previewItems.push(items[i]);
+      }
+    }
     this.totalCount = this.previewItems.length;
-    GallerySlideshowStreamStore.rememberEntries(entries);
+    GallerySlideshowStreamStore.rememberEntries(unique);
+    slideshowLogAppend(entries.length, unique.length, dropGlobal, dropKey, this.previewItems.length,
+      this.slideshowGlobalIndices.length);
+  }
+
+  /** 记录当前页：标题回退、全局下标顺延、稳定键重复 */
+  private logSlideshowPage(): void {
+    if (!this.slideshowEnabled) {
+      return;
+    }
+    const item = this.currentItem();
+    const key = item !== null ? gallerySlideshowStableItemKey(item) : '';
+    const globalIdx = this.slideshowGlobalIndexAt(this.swiperIndex);
+    const fallback = globalIdx < 0;
+    const sequential = globalIdx >= 0 && this.lastLoggedSlideshowGlobal >= 0 &&
+      globalIdx === this.lastLoggedSlideshowGlobal + 1;
+    const duplicateKey = key.length > 0 && key === this.lastLoggedSlideshowKey;
+    slideshowLogPage(
+      this.swiperIndex,
+      globalIdx,
+      key,
+      this.previewItems.length,
+      this.slideshowGlobalIndices.length,
+      fallback,
+      sequential,
+      duplicateKey
+    );
+    this.lastLoggedSlideshowGlobal = globalIdx;
+    this.lastLoggedSlideshowKey = key;
   }
 
   private slideshowGlobalIndexAt(playlistIdx: number): number {
@@ -356,6 +448,7 @@ struct GalleryPreview {
 
   aboutToDisappear(): void {
     this.clearSlideshowTimer();
+    this.clearSlideshowPrefetchTimer();
     this.clearChromeRevealTimer();
     this.detailsVisible = false;
     this.previewSheetVisible = false;
@@ -510,11 +603,10 @@ struct GalleryPreview {
       if (globalIdx >= 0) {
         return galleryPreviewTitleCounter(globalIdx, this.slideshowLibraryTotal);
       }
+      // 全局下标缺失时不要用播放队列序号冒充时间轴位置（会显示成 45/总数 顺延）
+      return `- / ${this.slideshowLibraryTotal}`;
     }
-    const displayTotal = this.slideshowEnabled && this.slideshowLibraryTotal > 0
-      ? this.slideshowLibraryTotal
-      : this.totalCount;
-    return galleryPreviewTitleCounter(this.swiperIndex, displayTotal);
+    return galleryPreviewTitleCounter(this.swiperIndex, this.totalCount);
   }
 
   private starFilled(): boolean {
@@ -962,7 +1054,10 @@ struct GalleryPreview {
                 }
               }
             })
-          }, (item: GalleryListItem, i: number) => `gp_${item.id}_${i}`)
+          }, (item: GalleryListItem, i: number) => {
+            const key = gallerySlideshowStableItemKey(item);
+            return key.length > 0 ? `gp_${key}_${i}` : `gp_${i}`;
+          })
         }
         .width('100%')
         .height('100%')
@@ -1037,8 +1132,9 @@ struct GalleryPreview {
             this.openDetailsPanel();
           }
           if (this.slideshowEnabled) {
+            this.logSlideshowPage();
             this.armSlideshowTimer();
-            this.maybePrefetchSlideshowItems();
+            this.scheduleSlideshowPrefetch();
           }
         })
         .onAreaChange((_old, area): void => {

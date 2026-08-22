@@ -48,7 +48,8 @@ function collectTimelineDays(timeline: GalleryTimelineData): TimelineDayModel[] 
   return sortDaysDesc(parseTimelineDayCells(rows)).filter((day: TimelineDayModel): boolean => day.itemCount > 0);
 }
 
-function dedupKeyForItem(item: GalleryListItem, fallbackPrefix: string, fallbackIndex: number): string {
+/** 幻灯片去重键：uuid / id / guid / path。无法识别时返回空串。 */
+export function gallerySlideshowStableItemKey(item: GalleryListItem): string {
   const norm = (value: string | number | undefined | null): string => {
     if (value === undefined || value === null) {
       return '';
@@ -70,6 +71,14 @@ function dedupKeyForItem(item: GalleryListItem, fallbackPrefix: string, fallback
   const path = norm(item.path);
   if (path.length > 0) {
     return `path:${path}`;
+  }
+  return '';
+}
+
+function dedupKeyForItem(item: GalleryListItem, fallbackPrefix: string, fallbackIndex: number): string {
+  const stable = gallerySlideshowStableItemKey(item);
+  if (stable.length > 0) {
+    return stable;
   }
   return `${fallbackPrefix}_${fallbackIndex}`;
 }
