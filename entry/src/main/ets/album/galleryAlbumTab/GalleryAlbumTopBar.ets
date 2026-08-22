@@ -56,6 +56,140 @@ export function galleryAlbumTopBarChromeHeightVp(inSearchMode: boolean): number 
 function galleryAlbumTopBarEmptyPageContent() {
 }
 
+/**
+ * 搜索输入独立成子组件：文本只存在本组件 @State，并用官方 $$ 双向绑定。
+ * 文档：TextInput.text「建议通过 onChange 将状态与文本绑定 / API10+ 支持 $$」，
+ * 避免父页每敲一字刷新时重建 TextInput，导致输入法收起再弹出。
+ */
+@Component
+struct GalleryAlbumSearchField {
+  @Prop seedQuery: string = '';
+  inputCtrl: TextInputController = new TextInputController();
+  onTextChange: (value: string) => void = (_: string) => {};
+  onSubmit: () => void = () => {};
+  @State private inputText: string = '';
+
+  aboutToAppear(): void {
+    this.inputText = this.seedQuery;
+  }
+
+  build() {
+    Column() {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
+          .fontColor([$r('app.color.gallery_material_search_placeholder')])
+          .flexShrink(0)
+
+        TextInput({
+          placeholder: 'AI 搜索图库...',
+          text: $$this.inputText,
+          controller: this.inputCtrl
+        })
+          .layoutWeight(1)
+          .constraintSize({ minWidth: 0 })
+          .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
+          .height('100%')
+          .defaultFocus(false)
+          .enableKeyboardOnFocus(true)
+          .backgroundColor(Color.Transparent)
+          .fontSize(13)
+          .fontColor($r('app.color.text_primary'))
+          .caretColor($r('app.color.brand_primary'))
+          .placeholderColor($r('app.color.gallery_material_search_placeholder'))
+          .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
+          .enterKeyType(EnterKeyType.Search)
+          .onChange((value: string): void => {
+            this.onTextChange(value);
+          })
+          .onSubmit((): void => {
+            this.onSubmit();
+          })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding({ left: GALLERY_TOP_BAR_SEARCH_INSET_VP, right: GALLERY_TOP_BAR_SEARCH_INSET_VP })
+      .backgroundColor($r('app.color.gallery_material_surface_bg'))
+      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+      .linearGradient(fnLiquidGlassGradient())
+      .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
+      .borderWidth(1)
+      .borderColor($r('app.color.immersive_panel_border'))
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .height(GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP)
+    .padding({
+      left: GALLERY_TOP_BAR_SEARCH_INSET_VP,
+      right: GALLERY_TOP_BAR_SEARCH_INSET_VP,
+      bottom: GALLERY_TOP_BAR_SEARCH_GAP_BOTTOM_VP
+    })
+  }
+}
+
+/** 「更多」菜单锚点：独立组件，展开时不要刷新搜索顶栏，避免输入框重建把键盘再次拉起。 */
+@Component
+export struct GalleryAlbumMoreMenuLayer {
+  @Prop expanded: boolean = false;
+  @Prop topSafeInsetVp: number = 0;
+  @Prop showMoreMultiselect: boolean = false;
+  @Prop showMoreAutoSync: boolean = false;
+  @Prop moreAutoSyncBadgeCount: number = 0;
+  onDismiss: () => void = () => {};
+  onEnterMultiselect: () => void = () => {};
+  onOpenSlideshow: () => void = () => {};
+  onStartAutoSync: () => void = () => {};
+
+  private autoSyncMenuLabel(): string {
+    if (this.moreAutoSyncBadgeCount > 0) {
+      return `同步本地照片 (${this.moreAutoSyncBadgeCount})`;
+    }
+    return '同步本地照片';
+  }
+
+  @Builder
+  private moreMenuBuilder() {
+    Menu() {
+      if (this.showMoreMultiselect) {
+        MenuItem({ content: '多选' })
+          .onClick((): void => {
+            this.onEnterMultiselect();
+          })
+      }
+      if (this.showMoreAutoSync) {
+        MenuItem({ content: this.autoSyncMenuLabel() })
+          .onClick((): void => {
+            this.onStartAutoSync();
+          })
+      }
+      MenuItem({ content: '幻灯片' })
+        .onClick((): void => {
+          this.onOpenSlideshow();
+        })
+    }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Row()
+        .width(40)
+        .height(40)
+        .margin({ top: this.topSafeInsetVp + 8, right: 8 })
+        .hitTestBehavior(HitTestMode.None)
+        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
+        .bindMenu(this.expanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
+          Placement.BottomLeft,
+          (): void => {
+            this.onDismiss();
+          }
+        ))
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+  }
+}
+
 @Component
 export struct GalleryAlbumTopBar {
   @Prop homeSurface: string = 'photos';
@@ -66,11 +200,8 @@ export struct GalleryAlbumTopBar {
   @Prop inPersonMode: boolean = false;
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
-  @Prop @Watch('onMoreMenuExpandedChanged') moreMenuExpanded: boolean = false;
-  @Prop showMoreMultiselect: boolean = false;
-  @Prop showMoreAutoSync: boolean = false;
-  @Prop moreAutoSyncBadgeCount: number = 0;
-  @Prop searchQuery: string = '';
+  /** 外部写入的搜索词（智能分类点选等）；输入过程不要回写成会刷新本组件的 @Prop。 */
+  @Prop seedQuery: string = '';
   /** 系统状态栏高度：内容区顶部留白仍用此值；按钮避让靠 titleBar.avoidLayoutSafeArea。 */
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
@@ -89,13 +220,11 @@ export struct GalleryAlbumTopBar {
   onEnterSelection: () => void = () => {};
   onBackToGallery: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
-  onDismissMoreMenu: () => void = () => {};
-  onEnterMultiselectFromMore: () => void = () => {};
-  onOpenSlideshowFromMore: () => void = () => {};
-  onStartAutoSyncFromMore: () => void = () => {};
 
-  @State private suppressSearchAutoFocus: boolean = true;
-  @State private searchSubmitted: boolean = false;
+  /** 不进 @State：只挡自动抢焦，避免为了收键盘刷新输入框。 */
+  private suppressSearchAutoFocus: boolean = true;
+  private searchSubmitted: boolean = false;
+  private searchDraft: string = '';
   private searchInputCtrl: TextInputController = new TextInputController();
   private suppressSearchFocusTimer: number = -1;
   private searchFocusKickTimer: number = -1;
@@ -180,35 +309,20 @@ export struct GalleryAlbumTopBar {
   }
 
   private shouldAutoFocusSearchInput(): boolean {
-    // 更多菜单展开时不要把焦点抢回输入框，否则软键盘会再次拉起并和菜单抢布局
-    return this.inSearchMode && !this.suppressSearchAutoFocus && !this.searchSubmitted &&
-      !this.moreMenuExpanded;
+    return this.inSearchMode && !this.suppressSearchAutoFocus && !this.searchSubmitted;
   }
 
   /**
    * 官方：弹出菜单前用 stopEditing + clearFocus 收起软键盘，避免「弹窗被键盘顶起」。
-   * 文档：arkts-manage-keyboard、bpta-keyboard-layout-adapt
+   * 文档：arkts-manage-keyboard。只收键盘，不改装饰器状态，避免 TextInput 被重建后又自动获焦。
    */
   private releaseSearchImeForOverlay(): void {
     this.clearSearchFocusKickTimer();
-    this.suppressSearchAutoFocus = true;
+    this.searchSubmitted = true;
     this.blurSearchInput();
     try {
       this.getUIContext().getFocusController().clearFocus();
     } catch (_e) {
-    }
-  }
-
-  private onMoreMenuExpandedChanged(): void {
-    if (this.moreMenuExpanded && this.inSearchMode) {
-      this.releaseSearchImeForOverlay();
-      return;
-    }
-    if (!this.moreMenuExpanded && this.inSearchMode) {
-      // 菜单收起后恢复可点输入框，但不 defaultFocus，避免软键盘立刻再弹
-      this.clearSearchFocusKickTimer();
-      this.suppressSearchAutoFocus = false;
-      this.searchSubmitted = true;
     }
   }
 
@@ -220,7 +334,7 @@ export struct GalleryAlbumTopBar {
   }
 
   private onSearchTextChange(value: string): void {
-    this.searchSubmitted = false;
+    this.searchDraft = value;
     this.onSearchQueryChange(value);
   }
 
@@ -258,7 +372,7 @@ export struct GalleryAlbumTopBar {
     } catch (_e) {
     }
     try {
-      this.searchInputCtrl.caretPosition(this.searchQuery.length);
+      this.searchInputCtrl.caretPosition(this.searchDraft.length);
     } catch (_e) {
     }
   }
@@ -283,6 +397,7 @@ export struct GalleryAlbumTopBar {
 
   private onSearchModeChanged(): void {
     if (this.inSearchMode) {
+      this.searchDraft = this.seedQuery;
       this.activateSearchAutoFocus(80);
       return;
     }
@@ -310,6 +425,7 @@ export struct GalleryAlbumTopBar {
   }
 
   aboutToAppear(): void {
+    this.searchDraft = this.seedQuery;
     if (this.inSearchMode) {
       this.activateSearchAutoFocus(80);
       return;
@@ -324,62 +440,15 @@ export struct GalleryAlbumTopBar {
 
   @Builder
   private searchBottomBuilder() {
-    // 侧边距用 padding 包一层：width 100% 再叠加左右 margin 会把输入框撑出屏幕
-    Column() {
-      Row({ space: 8 }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(GALLERY_TOP_BAR_SEARCH_ICON_SIZE_VP)
-          .fontColor([$r('app.color.gallery_material_search_placeholder')])
-          .flexShrink(0)
-
-        TextInput({
-          placeholder: 'AI 搜索图库...',
-          text: this.searchQuery,
-          controller: this.searchInputCtrl
-        })
-          .layoutWeight(1)
-          .constraintSize({ minWidth: 0 })
-          .id(GALLERY_TOP_BAR_SEARCH_INPUT_FOCUS_KEY)
-          .height('100%')
-          .defaultFocus(this.shouldAutoFocusSearchInput())
-          .enableKeyboardOnFocus(this.inSearchMode && !this.moreMenuExpanded)
-          .enabled(!this.moreMenuExpanded && !this.suppressSearchAutoFocus)
-          .backgroundColor(Color.Transparent)
-          .fontSize(13)
-          .fontColor($r('app.color.text_primary'))
-          .caretColor($r('app.color.brand_primary'))
-          .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-          .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
-          .enterKeyType(EnterKeyType.Search)
-          .onChange((value: string): void => {
-            this.onSearchTextChange(value);
-          })
-          .onSubmit((): void => {
-            this.submitSearchAndReleaseFocus();
-          })
-          .onAppear((): void => {
-            if (this.shouldAutoFocusSearchInput()) {
-              this.focusSearchInputSoon(48);
-            }
-          })
+    GalleryAlbumSearchField({
+      seedQuery: this.seedQuery,
+      inputCtrl: this.searchInputCtrl,
+      onTextChange: (value: string): void => {
+        this.onSearchTextChange(value);
+      },
+      onSubmit: (): void => {
+        this.submitSearchAndReleaseFocus();
       }
-      .width('100%')
-      .layoutWeight(1)
-      .padding({ left: GALLERY_TOP_BAR_SEARCH_INSET_VP, right: GALLERY_TOP_BAR_SEARCH_INSET_VP })
-      .backgroundColor($r('app.color.gallery_material_surface_bg'))
-      .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-      .linearGradient(fnLiquidGlassGradient())
-      .borderRadius(GALLERY_TOP_BAR_CONTROL_RADIUS_VP)
-      .borderWidth(1)
-      .borderColor($r('app.color.immersive_panel_border'))
-      .alignItems(VerticalAlign.Center)
-    }
-    .width('100%')
-    .height(GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP)
-    .padding({
-      left: GALLERY_TOP_BAR_SEARCH_INSET_VP,
-      right: GALLERY_TOP_BAR_SEARCH_INSET_VP,
-      bottom: GALLERY_TOP_BAR_SEARCH_GAP_BOTTOM_VP
     })
   }
 
@@ -660,65 +729,18 @@ export struct GalleryAlbumTopBar {
     return items;
   }
 
-  private autoSyncMenuLabel(): string {
-    if (this.moreAutoSyncBadgeCount > 0) {
-      return `同步本地照片 (${this.moreAutoSyncBadgeCount})`;
-    }
-    return '同步本地照片';
-  }
-
-  @Builder
-  private moreMenuBuilder() {
-    Menu() {
-      if (this.showMoreMultiselect) {
-        MenuItem({ content: '多选' })
-          .onClick((): void => {
-            this.onEnterMultiselectFromMore();
-          })
-      }
-      if (this.showMoreAutoSync) {
-        MenuItem({ content: this.autoSyncMenuLabel() })
-          .onClick((): void => {
-            this.onStartAutoSyncFromMore();
-          })
-      }
-      MenuItem({ content: '幻灯片' })
-        .onClick((): void => {
-          this.onOpenSlideshowFromMore();
-        })
-    }
-  }
-
   build() {
-    Stack({ alignContent: Alignment.TopEnd }) {
-      HdsNavigation() {
-        this.pageContent()
-      }
-      .width('100%')
-      .height('100%')
-      // 用作整页壳时必须 Stack：默认 Auto 在宽屏(≥600vp)会 Split，内容只占左栏
-      .mode(NavigationMode.Stack)
-      .titleMode(HdsNavigationTitleMode.MINI)
-      .hideBackButton(!this.shouldShowBack())
-      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-      .bindToScrollable(this.scrollerList)
-      .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
-
-      Row()
-        .width(40)
-        .height(40)
-        .margin({ top: this.topSafeInsetVp + 8, right: 8 })
-        .hitTestBehavior(HitTestMode.None)
-        // 官方：标题/菜单锚点设置 KEYBOARD 安全区，避免软键盘 OFFSET 把菜单锚点顶上去
-        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
-        .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
-          Placement.BottomLeft,
-          (): void => {
-            this.onDismissMoreMenu();
-          }
-        ))
+    HdsNavigation() {
+      this.pageContent()
     }
     .width('100%')
     .height('100%')
+    // 用作整页壳时必须 Stack：默认 Auto 在宽屏(≥600vp)会 Split，内容只占左栏
+    .mode(NavigationMode.Stack)
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(!this.shouldShowBack())
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .bindToScrollable(this.scrollerList)
+    .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
   }
 }

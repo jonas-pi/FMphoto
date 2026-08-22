@@ -73,6 +73,7 @@ import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../co
 import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../common/GalleryTopBarLayout';
 import {
   galleryAlbumTopBarChromeHeightVp,
+  GalleryAlbumMoreMenuLayer,
   GalleryAlbumTopBar
 } from './galleryAlbumTab/GalleryAlbumTopBar';
 import {
@@ -473,7 +474,10 @@ export struct GalleryAlbumTab {
   private rootSurfaceSwitchTo: string = 'photos';
 
   // ── 搜索状态 ──────────────────────────────────────────────────────────────
-  @State private searchQuery: string = '';
+  // 不用 @State：每敲一字刷新整页会重建顶栏 TextInput，输入法会收起再弹出。
+  private searchQuery: string = '';
+  /** 仅外部写入（智能分类点选 / 清空）才刷新顶栏种子，输入过程不改。 */
+  @State private searchSeed: string = '';
   @State @Watch('onBottomDockVisibilityChanged') private inSearchMode: boolean = false;
   @State private searchResults: GalleryListItem[] = [];
   @State private searchLoading: boolean = false;
@@ -645,6 +649,8 @@ export struct GalleryAlbumTab {
   private albumsScroller: Scroller = new Scroller();
   /** 搜索结果 List 的 Scroller，供顶栏 bindToScrollable 联动沉浸滚动效果。 */
   private searchScroller: Scroller = new Scroller();
+  /** 顶栏 bindToScrollable 复用同一数组引用，避免父页刷新时 @Prop 被当成新列表。 */
+  private titleBarScrollerBindList: Scroller[] = [];
   /** 上次已处理的删除同步版本号。 */
   private handledDeleteSyncVersion: number = 0;
   /** 长按后在此时间戳之前忽略单击，避免误进预览。 */
@@ -1252,7 +1258,12 @@ export struct GalleryAlbumTab {
       get inPersonMode(): boolean { return self.inPersonMode; }
       set inPersonMode(value: boolean) { self.inPersonMode = value; }
       get searchQuery(): string { return self.searchQuery; }
-      set searchQuery(value: string) { self.searchQuery = value; }
+      set searchQuery(value: string) {
+        self.searchQuery = value;
+        if (value.length === 0) {
+          self.searchSeed = '';
+        }
+      }
       get searchLoading(): boolean { return self.searchLoading; }
       set searchLoading(value: boolean) { self.searchLoading = value; }
       get searchError(): string { return self.searchError; }
@@ -2246,13 +2257,17 @@ export struct GalleryAlbumTab {
 
   /** 只把当前可见列表绑到顶栏；闲置 Scroller 停在 0 会把模糊打回初始态。 */
   private currentTitleBarScrollers(): Scroller[] {
+    let next: Scroller = this.scrollerRef;
     if (this.inSearchMode) {
-      return [this.searchScroller];
+      next = this.searchScroller;
+    } else if (this.isAlbumsHomeSurface()) {
+      next = this.albumsScroller;
     }
-    if (this.isAlbumsHomeSurface()) {
-      return [this.albumsScroller];
+    if (this.titleBarScrollerBindList.length === 1 && this.titleBarScrollerBindList[0] === next) {
+      return this.titleBarScrollerBindList;
     }
-    return [this.scrollerRef];
+    this.titleBarScrollerBindList = [next];
+    return this.titleBarScrollerBindList;
   }
 
   private setRootPhotosScrollTitle(title: string): void {
@@ -2670,8 +2685,7 @@ export struct GalleryAlbumTab {
           rootSurfaceTitle: this.currentHomeSurfaceTitle(),
           gallerySelectionMode: this.gallerySelectionMode,
           gallerySelectedCount: this.gallerySelectedCount,
-          moreMenuExpanded: this.moreMenuExpanded,
-          searchQuery: this.searchQuery,
+          seedQuery: this.searchSeed,
           topSafeInsetVp: this.topSafeInsetVp,
           pageShowSignal: this.pageShowSignal,
           scrollerList: this.currentTitleBarScrollers(),
@@ -2698,21 +2712,6 @@ export struct GalleryAlbumTab {
           },
           onShowMoreMenu: (): void => {
             this.showMoreMenu();
-          },
-          onDismissMoreMenu: (): void => {
-            this.dismissMoreMenu();
-          },
-          showMoreMultiselect: this.inSearchMode,
-          showMoreAutoSync: this.shouldShowAutoSyncInMoreMenu(),
-          moreAutoSyncBadgeCount: this.autoSyncBadgeCount,
-          onEnterMultiselectFromMore: (): void => {
-            this.enterSearchMultiselectFromMoreMenu();
-          },
-          onOpenSlideshowFromMore: (): void => {
-            this.openSlideshowSettings();
-          },
-          onStartAutoSyncFromMore: (): void => {
-            this.startAutoSyncFromMoreMenu();
           }
         }) {
         Stack({ alignContent: Alignment.TopStart }) {
@@ -2859,6 +2858,7 @@ export struct GalleryAlbumTab {
           getCategoryCount: (item: SmartCategoryItem): number => smartCategoryCount(item),
           onRunSearch: (keyword: string): void => {
             this.searchQuery = keyword;
+            this.searchSeed = keyword;
             void galleryAlbumRunSearch(this.asModeOrchestratorHost(), keyword);
           }
         })
@@ -3240,6 +3240,25 @@ export struct GalleryAlbumTab {
           }
         })
         }
+        GalleryAlbumMoreMenuLayer({
+          expanded: this.moreMenuExpanded,
+          topSafeInsetVp: this.topSafeInsetVp,
+          showMoreMultiselect: this.inSearchMode,
+          showMoreAutoSync: this.shouldShowAutoSyncInMoreMenu(),
+          moreAutoSyncBadgeCount: this.autoSyncBadgeCount,
+          onDismiss: (): void => {
+            this.dismissMoreMenu();
+          },
+          onEnterMultiselect: (): void => {
+            this.enterSearchMultiselectFromMoreMenu();
+          },
+          onOpenSlideshow: (): void => {
+            this.openSlideshowSettings();
+          },
+          onStartAutoSync: (): void => {
+            this.startAutoSyncFromMoreMenu();
+          }
+        })
       }
       .width('100%')
       .height('100%')
