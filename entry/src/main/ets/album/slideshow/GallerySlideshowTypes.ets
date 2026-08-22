@@ -10,7 +10,9 @@ export enum GallerySlideshowScopeKind {
   /** 单人物相册 */
   PERSON_ALBUM = 'person_album',
   /** 智能分类（AI 语义搜索扁平结果） */
-  SMART_CATEGORY = 'smart_category'
+  SMART_CATEGORY = 'smart_category',
+  /** 仅使用调用方传入的当前页列表，不再向全库/其它接口扩范围 */
+  FLAT_ITEMS = 'flat_items'
 }
 
 export interface GallerySlideshowScope {
@@ -20,6 +22,8 @@ export interface GallerySlideshowScope {
   personName?: string;
   /** SMART_CATEGORY 时必填 */
   smartCategoryKeyword?: string;
+  /** FLAT_ITEMS 时用于设置页标题，例如人物名 / 分类名 / 搜索词 */
+  scopeLabel?: string;
 }
 
 export interface GallerySlideshowConfig {
@@ -50,6 +54,10 @@ export function gallerySlideshowScopeLabel(scope: GallerySlideshowScope): string
   if (scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY) {
     const kw = scope.smartCategoryKeyword !== undefined ? scope.smartCategoryKeyword.trim() : '';
     return kw.length > 0 ? `${kw} 的幻灯片` : '智能分类幻灯片';
+  }
+  if (scope.kind === GallerySlideshowScopeKind.FLAT_ITEMS) {
+    const label = scope.scopeLabel !== undefined ? scope.scopeLabel.trim() : '';
+    return label.length > 0 ? `${label} 的幻灯片` : '幻灯片';
   }
   return '幻灯片';
 }

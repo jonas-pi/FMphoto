@@ -86,6 +86,23 @@ export async function gallerySlideshowLaunchForPerson(
   await gallerySlideshowLaunch(uiCtx, baseUrl, scope, config, toast, shouldContinue);
 }
 
+/** 仅在当前页已有条目里随机播放，不扩到全库 */
+export async function gallerySlideshowLaunchForItems(
+  uiCtx: UIContext,
+  baseUrl: string,
+  items: GalleryListItem[],
+  config: GallerySlideshowConfig,
+  toast: (msg: string) => void,
+  shouldContinue?: () => boolean,
+  scopeLabel?: string
+): Promise<void> {
+  const scope: GallerySlideshowScope = {
+    kind: GallerySlideshowScopeKind.FLAT_ITEMS,
+    scopeLabel: scopeLabel
+  };
+  await gallerySlideshowLaunch(uiCtx, baseUrl, scope, config, toast, shouldContinue, items);
+}
+
 /** 智能分类随机幻灯片（基于 AI 语义搜索扁平结果） */
 export async function gallerySlideshowLaunchForSmartCategory(
   uiCtx: UIContext,

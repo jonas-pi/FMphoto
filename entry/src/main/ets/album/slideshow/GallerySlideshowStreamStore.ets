@@ -166,9 +166,14 @@ export class GallerySlideshowStreamStore {
     return scope.personId !== undefined ? scope.personId.trim() : '';
   }
 
-  private static isSmartCategoryScope(): boolean {
+  /** 当前页扁平列表：只在已传入的条目里抽，不再打全库时间轴 */
+  private static isFlatResolveScope(): boolean {
     const scope = GallerySlideshowStreamStore.scope;
-    return scope !== null && scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY;
+    if (scope === null) {
+      return false;
+    }
+    return scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY ||
+      scope.kind === GallerySlideshowScopeKind.FLAT_ITEMS;
   }
 
   private static buildFlatTimelineIndex(totalCount: number): GallerySlideshowTimelineIndex {
@@ -239,7 +244,7 @@ export class GallerySlideshowStreamStore {
     client: FnHttpClient,
     globalIdx: number
   ): Promise<GalleryListItem | null> {
-    if (GallerySlideshowStreamStore.isSmartCategoryScope()) {
+    if (GallerySlideshowStreamStore.isFlatResolveScope()) {
       const flat = GallerySlideshowStreamStore.flatResolveItems;
       if (globalIdx < 0 || globalIdx >= flat.length) {
         slideshowLogResolveFail(globalIdx, 'flat_oob');
@@ -417,6 +422,14 @@ export class GallerySlideshowStreamStore {
     const client = AppSession.getClient();
     if (client === null) {
       return null;
+    }
+    if (scope.kind === GallerySlideshowScopeKind.FLAT_ITEMS) {
+      if (preloadedItems === undefined || preloadedItems.length === 0) {
+        return null;
+      }
+      const items = preloadedItems.slice();
+      GallerySlideshowStreamStore.flatResolveItems = items;
+      return GallerySlideshowStreamStore.buildFlatTimelineIndex(items.length);
     }
     if (scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY) {
       const keyword = scope.smartCategoryKeyword !== undefined ? scope.smartCategoryKeyword.trim() : '';

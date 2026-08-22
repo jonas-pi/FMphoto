@@ -75,7 +75,10 @@ import {
   galleryAlbumTopBarChromeHeightVp,
   GalleryAlbumTopBar
 } from './galleryAlbumTab/GalleryAlbumTopBar';
-import { gallerySlideshowLaunch } from './slideshow/GallerySlideshowLauncher';
+import {
+  gallerySlideshowLaunch,
+  gallerySlideshowLaunchForSmartCategory
+} from './slideshow/GallerySlideshowLauncher';
 import {
   GallerySlideshowConfig,
   GallerySlideshowScope,
@@ -2484,9 +2487,15 @@ export struct GalleryAlbumTab {
 
   private openSlideshowSettings(): void {
     this.dismissMoreMenu();
-    if (this.inSearchMode && this.searchQuery.trim().length === 0) {
-      this.toast('请先输入搜索关键词');
-      return;
+    if (this.inSearchMode) {
+      if (this.searchQuery.trim().length === 0) {
+        this.toast('请先输入搜索关键词');
+        return;
+      }
+      if (!this.searchLoading && this.searchResults.length === 0) {
+        this.toast('暂无可播放媒体');
+        return;
+      }
     }
     this.slideshowSettingsVisible = true;
   }
@@ -2529,21 +2538,44 @@ export struct GalleryAlbumTab {
     }
     this.slideshowPreparing = true;
     const isActive = this.createNavigationGuard();
-    const preloadedItems = this.inSearchMode && this.searchResults.length > 0
-      ? this.searchResults
-      : undefined;
     try {
-      await gallerySlideshowLaunch(
-        this.getUIContext(),
-        this.baseUrl,
-        this.gallerySlideshowScope(),
-        config,
-        (msg: string): void => {
-          this.toast(msg);
-        },
-        isActive,
-        preloadedItems
-      );
+      if (this.inSearchMode) {
+        const keyword = this.searchQuery.trim();
+        let spins = 0;
+        while (this.searchLoading && isActive() && spins < 600) {
+          await new Promise<void>((resolve: () => void) => {
+            setTimeout((): void => {
+              resolve();
+            }, 80);
+          });
+          spins++;
+        }
+        if (!isActive()) {
+          return;
+        }
+        // 不传当前页已渲染子集，按关键词重拉搜索全集
+        await gallerySlideshowLaunchForSmartCategory(
+          this.getUIContext(),
+          this.baseUrl,
+          keyword,
+          config,
+          (msg: string): void => {
+            this.toast(msg);
+          },
+          isActive
+        );
+      } else {
+        await gallerySlideshowLaunch(
+          this.getUIContext(),
+          this.baseUrl,
+          this.gallerySlideshowScope(),
+          config,
+          (msg: string): void => {
+            this.toast(msg);
+          },
+          isActive
+        );
+      }
       if (isActive()) {
         this.slideshowSettingsVisible = false;
       }

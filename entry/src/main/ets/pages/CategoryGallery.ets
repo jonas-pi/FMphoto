@@ -60,7 +60,11 @@ import {
   CategoryGalleryBatchActionsHost
 } from './categoryGallery/CategoryGalleryBatchActions';
 import { CategoryGalleryChrome } from './categoryGallery/CategoryGalleryChrome';
-import { gallerySlideshowLaunch } from '../album/slideshow/GallerySlideshowLauncher';
+import {
+  gallerySlideshowLaunchForItems,
+  gallerySlideshowLaunchForPerson,
+  gallerySlideshowLaunchForSmartCategory
+} from '../album/slideshow/GallerySlideshowLauncher';
 import {
   GallerySlideshowConfig,
   GallerySlideshowScope,
@@ -177,8 +181,6 @@ struct CategoryGallery {
   private pageSessionToken: number = -1;
   private pageSourceKind: string = '';
   private pageCategoryKey: string = '';
-  private pagePersonId: string = '';
-  private pageSmartCategoryKeyword: string = '';
   private pageUseCreatedAtGrouping: boolean = false;
   private slideshowRequestSeq: number = 0;
 
@@ -221,16 +223,9 @@ struct CategoryGallery {
     this.getUIContext().getRouter().back();
   }
 
-  private isPersonAlbumMode(): boolean {
-    return this.pageSourceKind === 'person' && this.pagePersonId.length > 0;
-  }
-
-  private isSmartCategoryMode(): boolean {
-    return this.pageSourceKind === 'smart-category' && this.pageSmartCategoryKeyword.length > 0;
-  }
-
   private usesMoreMenuMode(): boolean {
-    return this.isPersonAlbumMode() || this.isSmartCategoryMode();
+    // 分类子页统一走「更多」：多选 + 幻灯片，幻灯片只播本页列表
+    return true;
   }
 
   private dismissMoreMenu(): void {
@@ -253,6 +248,10 @@ struct CategoryGallery {
 
   private openSlideshowSettings(): void {
     this.dismissMoreMenu();
+    if (!this.canStartCategorySlideshow()) {
+      this.toast('暂无可播放媒体');
+      return;
+    }
     this.slideshowSettingsVisible = true;
   }
 
@@ -260,25 +259,79 @@ struct CategoryGallery {
     this.slideshowSettingsVisible = false;
   }
 
+  /** 已画到屏幕上的列表；媒体分类等续拉场景只作兜底，不能当人物/搜索的全集 */
+  private categorySlideshowItems(): GalleryListItem[] {
+    if (this.pageSessionToken === CategoryGalleryNavStore.currentToken()) {
+      const storeItems = CategoryGalleryNavStore.items;
+      if (storeItems.length > this.flatItems.length) {
+        return storeItems;
+      }
+    }
+    return this.flatItems;
+  }
+
   private categorySlideshowScope(): GallerySlideshowScope {
-    if (this.isPersonAlbumMode()) {
-      return {
-        kind: GallerySlideshowScopeKind.PERSON_ALBUM,
-        personId: this.pagePersonId,
-        personName: this.title
-      };
+    if (this.pageSessionToken === CategoryGalleryNavStore.currentToken()) {
+      if (CategoryGalleryNavStore.sourceKind === 'person') {
+        const personId = CategoryGalleryNavStore.personId.trim();
+        if (personId.length > 0) {
+          return {
+            kind: GallerySlideshowScopeKind.PERSON_ALBUM,
+            personId: personId,
+            personName: this.title
+          };
+        }
+      }
+      if (CategoryGalleryNavStore.sourceKind === 'smart-category') {
+        const storedKw = CategoryGalleryNavStore.smartCategoryKeyword.trim();
+        const keyword = storedKw.length > 0 ? storedKw : this.title.trim();
+        if (keyword.length > 0) {
+          return {
+            kind: GallerySlideshowScopeKind.SMART_CATEGORY,
+            smartCategoryKeyword: keyword
+          };
+        }
+      }
     }
-    if (this.isSmartCategoryMode()) {
-      return {
-        kind: GallerySlideshowScopeKind.SMART_CATEGORY,
-        smartCategoryKeyword: this.pageSmartCategoryKeyword
-      };
-    }
-    return { kind: GallerySlideshowScopeKind.ALL_GALLERY };
+    return {
+      kind: GallerySlideshowScopeKind.FLAT_ITEMS,
+      scopeLabel: this.title
+    };
   }
 
   private canStartCategorySlideshow(): boolean {
-    return this.isPersonAlbumMode() || this.isSmartCategoryMode();
+    const scope = this.categorySlideshowScope();
+    if (scope.kind === GallerySlideshowScopeKind.PERSON_ALBUM) {
+      return true;
+    }
+    if (scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY) {
+      return true;
+    }
+    return this.categorySlideshowItems().length > 0 || this.pageCategoryKey.length > 0;
+  }
+
+  private sleepMs(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout((): void => {
+        resolve();
+      }, ms);
+    });
+  }
+
+  /** 媒体分类 / 最近添加等：等本页后台续拉结束，再拿场景内完整列表 */
+  private async waitForCategorySceneItems(isActive: () => boolean): Promise<void> {
+    this.ensureCategoryBackgroundLoad();
+    let spins = 0;
+    while (isActive() && spins < 6000) {
+      if (this.pageSessionToken !== CategoryGalleryNavStore.currentToken()) {
+        return;
+      }
+      if (!CategoryGalleryNavStore.backgroundLoading && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
+        return;
+      }
+      await this.sleepMs(80);
+      spins++;
+    }
   }
 
   private async startCategorySlideshow(config: GallerySlideshowConfig): Promise<void> {
@@ -289,19 +342,48 @@ struct CategoryGallery {
     const seq = ++this.slideshowRequestSeq;
     const isActive = (): boolean => seq === this.slideshowRequestSeq;
     const scope = this.categorySlideshowScope();
-    const preloadedItems = this.isSmartCategoryMode() ? this.flatItems : undefined;
+    const toast = (msg: string): void => {
+      this.toast(msg);
+    };
     try {
-      await gallerySlideshowLaunch(
-        this.getUIContext(),
-        this.baseUrl,
-        scope,
-        config,
-        (msg: string): void => {
-          this.toast(msg);
-        },
-        isActive,
-        preloadedItems
-      );
+      if (scope.kind === GallerySlideshowScopeKind.PERSON_ALBUM) {
+        const personId = scope.personId !== undefined ? scope.personId : '';
+        const personName = scope.personName !== undefined ? scope.personName : this.title;
+        await gallerySlideshowLaunchForPerson(
+          this.getUIContext(),
+          this.baseUrl,
+          personId,
+          personName,
+          config,
+          toast,
+          isActive
+        );
+      } else if (scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY) {
+        const keyword = scope.smartCategoryKeyword !== undefined ? scope.smartCategoryKeyword : this.title;
+        // 不传当前页截断列表，按关键词重拉该分类全集
+        await gallerySlideshowLaunchForSmartCategory(
+          this.getUIContext(),
+          this.baseUrl,
+          keyword,
+          config,
+          toast,
+          isActive
+        );
+      } else {
+        await this.waitForCategorySceneItems(isActive);
+        if (!isActive()) {
+          return;
+        }
+        await gallerySlideshowLaunchForItems(
+          this.getUIContext(),
+          this.baseUrl,
+          this.categorySlideshowItems(),
+          config,
+          toast,
+          isActive,
+          this.title
+        );
+      }
       if (isActive()) {
         this.slideshowSettingsVisible = false;
       }
@@ -615,10 +697,6 @@ struct CategoryGallery {
     this.pageSessionToken = CategoryGalleryNavStore.sessionToken;
     this.pageSourceKind = CategoryGalleryNavStore.sourceKind;
     this.pageCategoryKey = CategoryGalleryNavStore.categoryKey;
-    this.pagePersonId = CategoryGalleryNavStore.personId;
-    this.pageSmartCategoryKeyword = CategoryGalleryNavStore.smartCategoryKeyword.length > 0
-      ? CategoryGalleryNavStore.smartCategoryKeyword
-      : (CategoryGalleryNavStore.sourceKind === 'smart-category' ? CategoryGalleryNavStore.title : '');
     this.pageUseCreatedAtGrouping = CategoryGalleryNavStore.useCreatedAtGrouping;
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
