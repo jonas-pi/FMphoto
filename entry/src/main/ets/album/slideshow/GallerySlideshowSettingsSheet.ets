@@ -98,13 +98,16 @@ export struct GallerySlideshowSettingsSheet {
         .width('100%')
       }
 
-      Column({ space: 4 }) {
-        this.toggleRow('包含视频', this.includeVideo, (value: boolean): void => {
-          this.includeVideo = value;
-        })
-        this.toggleRow('包含动图', this.includeGif, (value: boolean): void => {
-          this.includeGif = value;
-        })
+      if (this.prefsLoaded) {
+        // Toggle.isOn 只在创建时生效，必须等偏好读回后再建开关，避免一直显示默认开
+        Column({ space: 4 }) {
+          this.toggleRow('包含视频', this.includeVideo, (value: boolean): void => {
+            this.includeVideo = value;
+          })
+          this.toggleRow('包含动图', this.includeGif, (value: boolean): void => {
+            this.includeGif = value;
+          })
+        }
       }
 
       FnHdsPillButton({

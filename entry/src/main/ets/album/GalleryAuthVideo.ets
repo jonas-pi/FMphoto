@@ -31,6 +31,7 @@ import {
   setGalleryPreviewVideoMuted,
   setGalleryPreviewVideoPlaying
 } from '../pages/galleryPreview/GalleryPreviewVideoStore';
+import { FN_SYSTEM_BOTTOM_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { GalleryVideoGestureHud } from './GalleryVideoGestureHud';
 import { GalleryVideoOverlayChrome } from './GalleryVideoOverlayChrome';
 
@@ -79,6 +80,7 @@ export struct GalleryAuthVideo {
   @Prop bottomPadding: number = 0;
   /** 预览顶底栏显隐：本地订阅，避免父页因 padding 变化重绘全部 slide */
   @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) private previewToolbarVisible: boolean = true;
+  @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   /** 当前视频允许的最大清晰度（p），由上游按原始分辨率估算传入 */
   @Prop maxResolutionP: number = 1080;
   /** 幻灯片等场景需要进页即起播；普通预览保持封面等待点击 */
@@ -86,6 +88,10 @@ export struct GalleryAuthVideo {
   /** 详情半模态展开时，单击剩余区优先收起详情，不切工具栏 */
   @Prop detailsShowing: boolean = false;
   onDetailsTapDismiss: () => void = () => {};
+  /** 自动起播且自然播到片尾（或失败无法继续）时回调，幻灯片用来切下一张 */
+  onAutoplayEnded: () => void = () => {};
+  /** 同一支播放只通知一次，避免 completed/error 连跳两张 */
+  private autoplayEndedNotified: boolean = false;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   /** 仅在用户点击播放（或幻灯片自动起播）后转圈 */
   @State private videoLoading: boolean = false;
@@ -187,6 +193,14 @@ export struct GalleryAuthVideo {
     this.videoLoading = true;
   }
 
+  private notifyAutoplayEndedIfNeeded(): void {
+    if (this.autoplayEndedNotified || !this.active || !this.autoStart) {
+      return;
+    }
+    this.autoplayEndedNotified = true;
+    this.onAutoplayEnded();
+  }
+
   /** 尚无播放器时，点击播放才创建并拉流 */
   private beginPlaybackFromUser(): void {
     this.userStartedOnce = true;
@@ -211,7 +225,10 @@ export struct GalleryAuthVideo {
   }
 
   private effectiveBottomPadding(): number {
-    return this.previewToolbarVisible ? this.bottomPadding : 0;
+    if (this.previewToolbarVisible) {
+      return this.bottomPadding;
+    }
+    return Math.max(0, this.systemBottomInsetVp);
   }
 
   private hintTextColor(): ResourceColor {
@@ -261,6 +278,7 @@ export struct GalleryAuthVideo {
     this.playGen++;
     this.isPlaying = false;
     this.userStartedOnce = false;
+    this.autoplayEndedNotified = false;
     this.playbackEnded = false;
     this.currentMs = 0;
     this.durationMs = 0;
@@ -305,6 +323,7 @@ export struct GalleryAuthVideo {
     this.lastToggleMuteSeq = this.toggleMuteSeq;
     this.videoLoading = false;
     this.videoSurfaceVisible = false;
+    this.autoplayEndedNotified = false;
     this.applyAutoStartIfNeeded();
     this.onPlaybackChromeChanged();
     void this.initWindowBrightness();
@@ -348,6 +367,7 @@ export struct GalleryAuthVideo {
       this.videoLoading = false;
       this.isPlaying = false;
       this.adjustHudVisible = false;
+      this.autoplayEndedNotified = false;
       setGalleryPreviewVideoActive(false);
       setGalleryPreviewVideoPlaying(false);
       setGalleryPreviewVideoDockExpanded(false);
@@ -362,6 +382,8 @@ export struct GalleryAuthVideo {
       }
       return;
     }
+    // 滑到本页时再按 autoStart 起播，避免相邻页预创建时把 userStartedOnce 提前置位
+    this.applyAutoStartIfNeeded();
     this.onPlaybackChromeChanged();
     // 恢复到可见页：优先续播已有实例；没有实例则按正常链路重建
     if (this.videoUrl.length === 0) {
@@ -894,6 +916,8 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = true;
     this.videoLoading = false;
     this.isPlaying = false;
+    // 幻灯片不能卡在失败页上一直等；失败视为本段结束
+    this.notifyAutoplayEndedIfNeeded();
   }
 
   /** 用户点击重试：清空失败态，允许再次走自动自愈计数，并重建播放。 */
@@ -901,6 +925,7 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = false;
     this.hint = '';
     this.autoRecoverCount = 0;
+    this.autoplayEndedNotified = false;
     if (!this.active || !this.surfaceReady || this.videoUrl.length === 0) {
       return;
     }
@@ -1306,6 +1331,7 @@ export struct GalleryAuthVideo {
         this.onPlaybackChromeChanged();
         this.revealPlaybackChrome();
         this.syncUiProgressToNaturalEnd(player);
+        this.notifyAutoplayEndedIfNeeded();
       } else if (state === 'paused' || state === 'stopped') {
         this.isPlaying = false;
       } else if (state === 'error') {

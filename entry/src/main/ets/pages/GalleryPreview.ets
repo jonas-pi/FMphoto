@@ -435,15 +435,30 @@ struct GalleryPreview {
     if (this.totalCount <= 1 && !GallerySlideshowStreamStore.isActive()) {
       return;
     }
+    // 视频播着时不按间隔切页，等播完或手动划走
+    if (this.currentItemIsVideo()) {
+      return;
+    }
     this.slideshowTimerId = setTimeout((): void => {
       this.slideshowTimerId = -1;
       if (this.shouldPauseSlideshow()) {
         this.armSlideshowTimer();
         return;
       }
+      if (this.currentItemIsVideo()) {
+        return;
+      }
       this.advanceSlideshow();
       this.armSlideshowTimer();
     }, this.slideshowIntervalMs);
+  }
+
+  private onSlideshowVideoEnded(): void {
+    if (!this.slideshowEnabled) {
+      return;
+    }
+    this.advanceSlideshow();
+    this.armSlideshowTimer();
   }
 
   aboutToDisappear(): void {
@@ -1052,6 +1067,9 @@ struct GalleryPreview {
                   this.originalShowing = false;
                   this.toast(msg);
                 }
+              },
+              onSlideshowVideoEnded: (): void => {
+                this.onSlideshowVideoEnded();
               }
             })
           }, (item: GalleryListItem, i: number) => {
@@ -1111,7 +1129,7 @@ struct GalleryPreview {
           setGalleryPreviewDismissProgress(0);
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
-          setGalleryPreviewToolbarVisible(true);
+          setGalleryPreviewToolbarVisible(!this.slideshowEnabled);
           if (!this.currentItemIsVideo()) {
             resetGalleryPreviewVideoChrome();
             void restoreGalleryPreviewPortrait(this.getUIContext());

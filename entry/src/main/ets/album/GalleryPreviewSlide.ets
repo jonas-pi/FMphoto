@@ -135,6 +135,8 @@ export struct GalleryPreviewSlide {
   onOriginalLoaded: () => void = () => {};
   /** 原图加载失败后通知父页面，父页面可提示用户并保持可重试 */
   onOriginalLoadFailed: (msg: string) => void = (_: string) => {};
+  /** 幻灯片：当前视频自然播完，由预览页决定是否切下一张 */
+  onSlideshowVideoEnded: () => void = () => {};
 
   @State private thumbPix: PixelMap | undefined = undefined;
   @State private fullPix: PixelMap | undefined = undefined;
@@ -1325,21 +1327,7 @@ export struct GalleryPreviewSlide {
             .hitTestBehavior(HitTestMode.None)
             .draggable(false)
         }
-        if (this.videoOverlayRevealed) {
-          GalleryAuthVideo({
-            videoUrl: this.videoSrc,
-            active: this.active,
-            bottomPadding: this.videoBottomPadding,
-            maxResolutionP: this.videoMaxResolutionP(),
-            autoStart: this.autoStartVideo,
-            detailsShowing: this.detailsShowing,
-            onDetailsTapDismiss: (): void => {
-              this.onVerticalDismiss();
-            }
-          })
-            .width('100%')
-            .height('100%')
-        }
+        // 播控挂在整页 Stack 上，不能放进 contain 画框，否则矮视频会把进度条抬到屏幕中间
       } else if (this.isLive()) {
         if (this.liveReady && this.movingPhoto !== undefined) {
           MovingPhotoView({
@@ -1422,6 +1410,24 @@ export struct GalleryPreviewSlide {
       if (this.isVideo()) {
         Stack({ alignContent: Alignment.Center }) {
           this.heroSharedLayer()
+          if (this.videoOverlayRevealed) {
+            GalleryAuthVideo({
+              videoUrl: this.videoSrc,
+              active: this.active,
+              bottomPadding: this.videoBottomPadding,
+              maxResolutionP: this.videoMaxResolutionP(),
+              autoStart: this.autoStartVideo,
+              detailsShowing: this.detailsShowing,
+              onDetailsTapDismiss: (): void => {
+                this.onVerticalDismiss();
+              },
+              onAutoplayEnded: (): void => {
+                this.onSlideshowVideoEnded();
+              }
+            })
+              .width('100%')
+              .height('100%')
+          }
         }
         .width('100%')
         .height('100%')
