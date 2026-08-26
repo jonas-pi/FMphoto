@@ -56,3 +56,6 @@ entry/build/**/*-signed.hap
 # 本地中继探测会话（含 token，勿提交）
 /scripts/.fnos_relay_session.json
 **/.fnos_relay_session.json
+
+# 真机 hilog 本地抓取（勿提交）
+/logs/

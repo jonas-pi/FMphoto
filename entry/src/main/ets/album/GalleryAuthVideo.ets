@@ -9,8 +9,11 @@
  *      不匹配则说明已被更新的调用取代，直接退出。
  *   3. 进页只展示网格封面，不自动 prepare/play；点击播放后再拉流。
  *      全屏海报会盖住 sharedTransition，封面由预览页 clip 容器承担。
+ *   4. 网络缓冲策略必须在 setMediaSource 时一并传入（官方：该接口开始预下载）。
+ *      长视频/高码率取 preferredBufferDuration=20；不要把起播水线锁死成 0.3s。
  */
 import { media } from '@kit.MediaKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { audio, AVVolumePanel } from '@kit.AudioKit';
 import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -44,6 +47,27 @@ const GALLERY_VIDEO_CHROME_AUTOHIDE_MS = 2500;
 const GALLERY_VIDEO_VOLUME_MAX_FALLBACK = 15;
 /** 滑过屏高约 1/3 即走完全量程，避免按整屏换算发闷 */
 const GALLERY_VIDEO_ADJUST_TRAVEL_RATIO: number = 0.32;
+/**
+ * 官方 PlaybackStrategy.preferredBufferDuration：单位秒，缓冲区大小 ≈ 该值 MB，范围 [1, 20]。
+ * 片源超过 20MB（长视频/高清原片几乎都超过）时应取最大值，否则卡顿率显著升高。
+ */
+const GALLERY_VIDEO_PREFERRED_BUFFER_DURATION_SEC = 20;
+/**
+ * 起播水线必须能被 20MB 缓冲区装下，否则 prepare 会一直等（4K 原片 3s 约 30MB+，永远达不到）。
+ * 高码率直链取短水线快起播；转码 HLS 略长一点等分片。
+ */
+const GALLERY_VIDEO_START_BUFFER_DIRECT_SEC = 0.6;
+const GALLERY_VIDEO_START_BUFFER_TRANSCODE_SEC = 0.8;
+/** 短边超过该值视为超高清，默认走 1080p 转码而不是原始直链 */
+const GALLERY_VIDEO_UHD_MIN_P = 1440;
+/** prepared 之后若迟迟进不了 playing，视为拉流卡住 */
+const GALLERY_VIDEO_LOAD_WATCHDOG_MS = 12000;
+/** 清晰度切换后先起播，进度超过该值再 seek，避免在未缓存位置卡死 */
+const GALLERY_VIDEO_DEFER_SEEK_MIN_MS = 800;
+/** getPlaybackInfo 最短统计周期 500ms；诊断日志用 2s，避免刷屏 */
+const GALLERY_VIDEO_PLAYBACK_INFO_INTERVAL_MS = 2000;
+/** CACHED_DURATION 低于该值时打告警（毫秒） */
+const GALLERY_VIDEO_CACHED_DURATION_WARN_MS = 2000;
 
 interface QualityOption {
   label: string;
@@ -54,12 +78,11 @@ interface QualityOption {
 }
 
 const QUALITY_OPTIONS: QualityOption[] = [
-  // 默认使用原始直链，性能和带宽通常最好；用户可手动切到转码档位。
-  { label: '原始', resolution: '1080', bitrate: 30000000, directStream: true },
-  // 转码档位参数按你提供的抓包结构构造。
-  { label: '高清 1080p', resolution: '1080', bitrate: 30000000, directStream: false },
-  { label: '均衡 720p', resolution: '720', bitrate: 12000000, directStream: false },
-  { label: '流畅 480p', resolution: '480', bitrate: 6000000, directStream: false }
+  { label: '原始', resolution: '1080', bitrate: 8000000, directStream: true },
+  // 转码码率按可流畅起播来取；30Mbps 的 1080p 转码和 4K 原片一样重，NAS 出片极慢。
+  { label: '高清 1080p', resolution: '1080', bitrate: 8000000, directStream: false },
+  { label: '均衡 720p', resolution: '720', bitrate: 4000000, directStream: false },
+  { label: '流畅 480p', resolution: '480', bitrate: 2000000, directStream: false }
 ];
 /**
  * 全局记忆的视频倍速：
@@ -95,6 +118,8 @@ export struct GalleryAuthVideo {
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   /** 仅在用户点击播放（或幻灯片自动起播）后转圈 */
   @State private videoLoading: boolean = false;
+  /** 播放中缓冲耗尽（BUFFERING_START）：转圈但不藏控件，避免被当成“播不下去” */
+  @State private videoRebuffering: boolean = false;
   /** 已进入 playing：才揭开 Surface，避免封面与首帧跳变 */
   @State private videoSurfaceVisible: boolean = false;
   @State private hint: string = '';
@@ -166,6 +191,13 @@ export struct GalleryAuthVideo {
   private windowBrightnessDirty: boolean = false;
   private adjustHudHideTimer: number = 0;
   private chromeHideTimer: number = 0;
+  /** 周期性拉取下载速率，用来对照“只播前几秒”是否因拉流停滞 */
+  private playbackInfoTimerId: number = 0;
+  /** prepare/play 卡住时给出重试，避免无限转圈 */
+  private loadWatchdogId: number = 0;
+  /** 最近一次 CACHED_DURATION（毫秒），供停滞诊断 */
+  private lastCachedDurationMs: number = 0;
+  private lastCachedDurationWarnMs: number = 0;
 
   /** 视频 Surface 跟随深浅色，避免浅色模式铺白、深色模式铺黑不一致 */
   private surfaceBackgroundColor(): ResourceColor {
@@ -182,6 +214,130 @@ export struct GalleryAuthVideo {
       return;
     }
     this.videoLoading = false;
+  }
+
+  private static formatMediaErr(e: Error): string {
+    const be = e as BusinessError;
+    if (be.code !== undefined) {
+      return `code=${be.code} msg=${be.message}`;
+    }
+    return String(e);
+  }
+
+  private static sanitizeUrlForLog(url: string): string {
+    const s = url.trim();
+    if (s.length === 0) {
+      return '';
+    }
+    const q = s.indexOf('?');
+    const noQuery = q >= 0 ? s.substring(0, q) : s;
+    if (noQuery.length <= 160) {
+      return noQuery;
+    }
+    return `${noQuery.substring(0, 80)}...${noQuery.substring(noQuery.length - 48)}`;
+  }
+
+  private static isHlsUrl(url: string): boolean {
+    const lower = url.toLowerCase();
+    return lower.indexOf('.m3u8') >= 0;
+  }
+
+  private buildPlaybackStrategy(directStream: boolean): media.PlaybackStrategy {
+    const startSec = directStream
+      ? GALLERY_VIDEO_START_BUFFER_DIRECT_SEC
+      : GALLERY_VIDEO_START_BUFFER_TRANSCODE_SEC;
+    const strategy: media.PlaybackStrategy = {
+      showFirstFrameOnPrepare: true,
+      preferredBufferDuration: GALLERY_VIDEO_PREFERRED_BUFFER_DURATION_SEC,
+      preferredBufferDurationForPlaying: startSec
+    };
+    return strategy;
+  }
+
+  private stopPlaybackInfoWatch(): void {
+    if (this.playbackInfoTimerId === 0) {
+      return;
+    }
+    try {
+      clearInterval(this.playbackInfoTimerId);
+    } catch (_e) {
+    }
+    this.playbackInfoTimerId = 0;
+  }
+
+  private clearLoadWatchdog(): void {
+    if (this.loadWatchdogId === 0) {
+      return;
+    }
+    try {
+      clearTimeout(this.loadWatchdogId);
+    } catch (_e) {
+    }
+    this.loadWatchdogId = 0;
+  }
+
+  private armLoadWatchdog(gen: number): void {
+    this.clearLoadWatchdog();
+    this.loadWatchdogId = setTimeout((): void => {
+      this.loadWatchdogId = 0;
+      if (gen !== this.playGen || this.isPlaying) {
+        return;
+      }
+      hilog.error(DOMAIN, TAG,
+        'load watchdog timeout quality=%{public}s pos=%{public}s cachedMs=%{public}s',
+        this.currentQualityLabel(), `${this.currentMs}`, `${this.lastCachedDurationMs}`);
+      this.setPlaybackFailureHint('加载超时，请改用较低清晰度后重试');
+    }, GALLERY_VIDEO_LOAD_WATCHDOG_MS);
+  }
+
+  /**
+   * 4K/2.7K 原片 20MB 缓冲只够几秒，默认改走 1080p 转码。
+   * 不写 LAST_VIDEO_QUALITY_INDEX：用户在菜单里选「原始」仍然生效。
+   */
+  private preferTranscodeForUhd(): void {
+    if (this.maxResolutionP < GALLERY_VIDEO_UHD_MIN_P) {
+      return;
+    }
+    if (this.qualityIndex !== 0) {
+      return;
+    }
+    if (this.isQualityAllowed(1)) {
+      hilog.info(DOMAIN, TAG, 'UHD %{public}sp 默认改用 1080p 转码', `${this.maxResolutionP}`);
+      this.qualityIndex = 1;
+    }
+  }
+
+  private startPlaybackInfoWatch(player: media.AVPlayer, gen: number): void {
+    this.stopPlaybackInfoWatch();
+    this.playbackInfoTimerId = setInterval((): void => {
+      if (gen !== this.playGen || this.avPlayer !== player) {
+        this.stopPlaybackInfoWatch();
+        return;
+      }
+      player.getPlaybackInfo().then((info: media.PlaybackInfo): void => {
+        if (gen !== this.playGen || this.avPlayer !== player) {
+          return;
+        }
+        const rate = Number(info[media.PlaybackInfoKey.DOWNLOAD_RATE]);
+        const avg = Number(info[media.PlaybackInfoKey.AVG_DOWNLOAD_RATE]);
+        hilog.info(DOMAIN, TAG,
+          'playbackInfo pos=%{public}s dur=%{public}s cachedMs=%{public}s down=%{public}s avgDown=%{public}s playing=%{public}s rebuffer=%{public}s',
+          `${this.currentMs}`, `${this.durationMs}`, `${this.lastCachedDurationMs}`,
+          `${rate}`, `${avg}`, `${this.isPlaying}`, `${this.videoRebuffering}`);
+        if (this.isPlaying && this.lastCachedDurationMs >= 0 &&
+          this.lastCachedDurationMs < GALLERY_VIDEO_CACHED_DURATION_WARN_MS &&
+          Number.isFinite(rate) && rate <= 0) {
+          hilog.warn(DOMAIN, TAG,
+            '疑似拉流停滞：播放中 cachedMs=%{public}s downloadRate=%{public}s pos=%{public}s',
+            `${this.lastCachedDurationMs}`, `${rate}`, `${this.currentMs}`);
+        }
+      }).catch((e: BusinessError): void => {
+        if (gen !== this.playGen) {
+          return;
+        }
+        hilog.warn(DOMAIN, TAG, 'getPlaybackInfo err: %{public}s', GalleryAuthVideo.formatMediaErr(e));
+      });
+    }, GALLERY_VIDEO_PLAYBACK_INFO_INTERVAL_MS);
   }
 
   /** 幻灯片：进页即视为用户已点播放 */
@@ -291,6 +447,7 @@ export struct GalleryAuthVideo {
     // 切换到下一个视频时保留上次选择的清晰度档位。
     this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
     this.normalizeQualityIndex();
+    this.preferTranscodeForUhd();
     this.longPressSpeeding = false;
     this.hint = '';
     this.showPlaybackRetry = false;
@@ -300,6 +457,9 @@ export struct GalleryAuthVideo {
     this.playbackFalsePositiveGuardUntilMs = 0;
     this.videoSurfaceVisible = false;
     this.videoLoading = false;
+    this.videoRebuffering = false;
+    this.stopPlaybackInfoWatch();
+    this.clearLoadWatchdog();
     this.clearChromeAutoHideTimer();
     this.applyAutoStartIfNeeded();
     if (this.userStartedOnce) {
@@ -317,11 +477,13 @@ export struct GalleryAuthVideo {
     this.speedRate = LAST_VIDEO_SPEED_RATE;
     this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
     this.normalizeQualityIndex();
+    this.preferTranscodeForUhd();
     this.autoRecoverCount = 0;
     this.showPlaybackRetry = false;
     this.lastTogglePlaySeq = this.togglePlaySeq;
     this.lastToggleMuteSeq = this.toggleMuteSeq;
     this.videoLoading = false;
+    this.videoRebuffering = false;
     this.videoSurfaceVisible = false;
     this.autoplayEndedNotified = false;
     this.applyAutoStartIfNeeded();
@@ -365,6 +527,7 @@ export struct GalleryAuthVideo {
     const p = this.avPlayer;
     if (!this.active) {
       this.videoLoading = false;
+      this.videoRebuffering = false;
       this.isPlaying = false;
       this.adjustHudVisible = false;
       this.autoplayEndedNotified = false;
@@ -403,6 +566,8 @@ export struct GalleryAuthVideo {
 
   aboutToDisappear(): void {
     this.playGen++;
+    this.stopPlaybackInfoWatch();
+    this.clearLoadWatchdog();
     this.clearAdjustHudHideTimer();
     this.clearChromeAutoHideTimer();
     void this.restoreWindowBrightness();
@@ -473,6 +638,10 @@ export struct GalleryAuthVideo {
     }
     try {
       p.off('stateChange');
+    } catch (_e) {
+    }
+    try {
+      p.off('bufferingUpdate');
     } catch (_e) {
     }
   }
@@ -639,6 +808,7 @@ export struct GalleryAuthVideo {
     try {
       if (this.isPlaying) {
         this.isPlaying = false;
+        this.videoRebuffering = false;
         this.clearChromeAutoHideTimer();
         setGalleryPreviewToolbarVisible(true);
         await p.pause();
@@ -915,6 +1085,8 @@ export struct GalleryAuthVideo {
     this.hint = msg;
     this.showPlaybackRetry = true;
     this.videoLoading = false;
+    this.videoRebuffering = false;
+    this.clearLoadWatchdog();
     this.isPlaying = false;
     // 幻灯片不能卡在失败页上一直等；失败视为本段结束
     this.notifyAutoplayEndedIfNeeded();
@@ -1050,19 +1222,23 @@ export struct GalleryAuthVideo {
       return;
     }
     this.pendingQualitySwitch = true;
+    this.isPlaying = false;
     /**
-     * 记忆当前进度用于清晰度切换后的无缝续播：
-     * - 仅记录有效区间 [0, duration)；
-     * - 若当前尚未拿到 duration，则按 0 处理（从头播）。
+     * 记忆当前进度用于清晰度切换后的无缝续播。
+     * 真正 seek 推迟到新流 playing 之后，避免在 prepared 对未缓存位置 seek 导致整段卡死。
      */
     if (this.currentMs > 0 && this.durationMs > 0) {
       this.pendingRestoreMs = Math.min(this.currentMs, Math.max(0, this.durationMs - 800));
     } else {
       this.pendingRestoreMs = 0;
     }
-    this.videoLoading = this.active && this.videoUrl.length > 0;
-    this.hint = '';
+    // 切清晰度时保留控件，只转圈；全屏 loading 会挡住菜单，看起来像“没重新拉流”。
+    this.videoLoading = false;
+    this.videoRebuffering = this.active && this.videoUrl.length > 0;
+    this.hint = '正在切换清晰度…';
     this.showPlaybackRetry = false;
+    hilog.info(DOMAIN, TAG, 'applyQuality idx=%{public}s label=%{public}s restoreMs=%{public}s',
+      `${idx}`, QUALITY_OPTIONS[idx].label, `${this.pendingRestoreMs}`);
     this.scheduleStartPlay();
   }
 
@@ -1079,9 +1255,18 @@ export struct GalleryAuthVideo {
     // 新一次拉流，避免沿用上一条视频的容错截止时间误伤本轮判断
     this.playbackFalsePositiveGuardUntilMs = 0;
     this.lastAvTimeUpdateWallMs = 0;
+    this.lastCachedDurationMs = 0;
+    this.lastCachedDurationWarnMs = 0;
+    this.videoRebuffering = this.pendingQualitySwitch;
+    this.stopPlaybackInfoWatch();
+    this.clearLoadWatchdog();
     this.normalizeQualityIndex();
 
     if (!this.active || !this.surfaceReady || this.videoUrl.length === 0) {
+      hilog.warn(DOMAIN, TAG, 'startPlay skip active=%{public}s surface=%{public}s urlLen=%{public}s',
+        `${this.active}`, `${this.surfaceReady}`, `${this.videoUrl.length}`);
+      this.finishVideoLoading();
+      this.videoRebuffering = false;
       return;
     }
     const qForDefer = QUALITY_OPTIONS[
@@ -1093,6 +1278,7 @@ export struct GalleryAuthVideo {
     const surfaceId: string = this.xController.getXComponentSurfaceId();
     if (surfaceId.length === 0) {
       hilog.warn(DOMAIN, TAG, 'surfaceId empty');
+      this.setPlaybackFailureHint('画面未就绪，请重试');
       return;
     }
 
@@ -1100,7 +1286,7 @@ export struct GalleryAuthVideo {
     if (this.decodeSessionPhotoId.length > 0 && clientPre !== null) {
       const toQuit = this.decodeSessionPhotoId;
       this.decodeSessionPhotoId = '';
-      await clientPre.requestVideoDecodeQuit(toQuit, 8000);
+      await clientPre.requestVideoDecodeQuit(toQuit, 2500);
       if (gen !== this.playGen) { return; }
     }
 
@@ -1154,13 +1340,21 @@ export struct GalleryAuthVideo {
       this.decodeSessionPhotoId = '';
     }
 
+    const playbackStrategy = this.buildPlaybackStrategy(q.directStream);
+    hilog.info(DOMAIN, TAG,
+      'startPlay quality=%{public}s direct=%{public}s hls=%{public}s buf=%{public}ss startWatermark=%{public}ss url=%{public}s',
+      q.label, `${q.directStream}`, `${GalleryAuthVideo.isHlsUrl(playableUrl)}`,
+      `${playbackStrategy.preferredBufferDuration}`,
+      `${playbackStrategy.preferredBufferDurationForPlaying}`,
+      GalleryAuthVideo.sanitizeUrlForLog(playableUrl));
+
     // 获取鉴权头
     let headers: Record<string, string>;
     try {
       headers = await client.getGalleryStreamHeaders(playableUrl);
     } catch (e) {
       if (gen !== this.playGen) { return; }
-      hilog.error(DOMAIN, TAG, 'getHeaders err: %{public}s', String(e));
+      hilog.error(DOMAIN, TAG, 'getHeaders err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
       this.setPlaybackFailureHint('获取鉴权头失败');
       return;
     }
@@ -1172,7 +1366,7 @@ export struct GalleryAuthVideo {
       player = await media.createAVPlayer();
     } catch (e) {
       if (gen !== this.playGen) { return; }
-      hilog.error(DOMAIN, TAG, 'createAVPlayer err: %{public}s', String(e));
+      hilog.error(DOMAIN, TAG, 'createAVPlayer err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
       this.setPlaybackFailureHint('播放器创建失败');
       return;
     }
@@ -1181,10 +1375,12 @@ export struct GalleryAuthVideo {
       return;
     }
     this.avPlayer = player;
+    this.armLoadWatchdog(gen);
 
     // 错误回调
     player.on('error', (err: Error): void => {
-      hilog.error(DOMAIN, TAG, 'avplayer error: %{public}s', String(err));
+      hilog.error(DOMAIN, TAG, 'avplayer error: %{public}s pos=%{public}s cachedMs=%{public}s',
+        GalleryAuthVideo.formatMediaErr(err), `${this.currentMs}`, `${this.lastCachedDurationMs}`);
       if (gen !== this.playGen || this.avPlayer !== player) {
         return;
       }
@@ -1215,7 +1411,42 @@ export struct GalleryAuthVideo {
     });
     player.on('durationUpdate', (d: number): void => {
       if (gen !== this.playGen) { return; }
-      this.durationMs = d > 0 ? d : this.durationMs;
+      if (d > 0 && d !== this.durationMs) {
+        this.durationMs = d;
+        hilog.info(DOMAIN, TAG, 'durationUpdate %{public}s', `${this.durationMs}`);
+        return;
+      }
+      if (d > 0) {
+        this.durationMs = d;
+      }
+    });
+    player.on('bufferingUpdate', (infoType: media.BufferingInfoType, value: number): void => {
+      if (gen !== this.playGen || this.avPlayer !== player) {
+        return;
+      }
+      if (infoType === media.BufferingInfoType.BUFFERING_START) {
+        this.videoRebuffering = true;
+        hilog.warn(DOMAIN, TAG,
+          'BUFFERING_START pos=%{public}s dur=%{public}s cachedMs=%{public}s value=%{public}s',
+          `${this.currentMs}`, `${this.durationMs}`, `${this.lastCachedDurationMs}`, `${value}`);
+        return;
+      }
+      if (infoType === media.BufferingInfoType.BUFFERING_END) {
+        this.videoRebuffering = false;
+        hilog.info(DOMAIN, TAG, 'BUFFERING_END pos=%{public}s cachedMs=%{public}s',
+          `${this.currentMs}`, `${this.lastCachedDurationMs}`);
+        return;
+      }
+      if (infoType === media.BufferingInfoType.CACHED_DURATION) {
+        this.lastCachedDurationMs = value;
+        const now = Date.now();
+        if (value < GALLERY_VIDEO_CACHED_DURATION_WARN_MS &&
+          now - this.lastCachedDurationWarnMs >= 1000) {
+          this.lastCachedDurationWarnMs = now;
+          hilog.warn(DOMAIN, TAG, 'CACHED_DURATION 偏低 %{public}s pos=%{public}s dur=%{public}s',
+            `${value}`, `${this.currentMs}`, `${this.durationMs}`);
+        }
+      }
     });
     player.on('seekDone', (time: number): void => {
       if (gen !== this.playGen) { return; }
@@ -1226,7 +1457,8 @@ export struct GalleryAuthVideo {
           if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
             return;
           }
-          hilog.warn(DOMAIN, TAG, 'seek 后 play Promise 拒绝: %{public}s', String(e));
+          hilog.warn(DOMAIN, TAG, 'seek 后 play Promise 拒绝: %{public}s',
+            GalleryAuthVideo.formatMediaErr(e));
           this.setPlaybackFailureHint('视频播放失败');
         });
       }
@@ -1244,22 +1476,19 @@ export struct GalleryAuthVideo {
             if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
               return;
             }
-            hilog.error(DOMAIN, TAG, 'prepare err: %{public}s', String(e));
+            hilog.error(DOMAIN, TAG, 'prepare err: %{public}s', GalleryAuthVideo.formatMediaErr(e));
             this.setPlaybackFailureHint('视频准备失败');
           });
         };
         try {
-          const strategy: media.PlaybackStrategy = {
-            showFirstFrameOnPrepare: true,
-            // 起播水线：够播即可，不要攒到接近整段缓冲。取值范围 [0, 20]s。
-            preferredBufferDurationForPlaying: 0.3
-          };
-          player.setPlaybackStrategy(strategy).then((): void => {
+          player.setPlaybackStrategy(playbackStrategy).then((): void => {
             if (gen !== this.playGen) {
               return;
             }
             runPrepare();
-          }).catch((): void => {
+          }).catch((e: BusinessError): void => {
+            hilog.warn(DOMAIN, TAG, 'setPlaybackStrategy err: %{public}s',
+              GalleryAuthVideo.formatMediaErr(e));
             runPrepare();
           });
         } catch (_e) {
@@ -1267,6 +1496,9 @@ export struct GalleryAuthVideo {
         }
       } else if (state === 'prepared') {
         this.durationMs = player.duration > 0 ? player.duration : this.durationMs;
+        hilog.info(DOMAIN, TAG, 'prepared durationMs=%{public}s w=%{public}s h=%{public}s',
+          `${this.durationMs}`, `${player.width}`, `${player.height}`);
+        this.startPlaybackInfoWatch(player, gen);
         this.applyContainMode(player);
         this.applyPlayerMute(player);
         if (this.deferPlaybackRateUntilPlaying) {
@@ -1275,34 +1507,16 @@ export struct GalleryAuthVideo {
           this.applySpeed(player, this.speedRate);
         }
         /**
-         * 清晰度切换后先 seek，再在 seekDone 里恢复播放：
-         * - 避免「seek 与 play 同时发生」带来的偶发声画不同步与卡顿。
+         * 官方：对尚未缓存的位置 seek 会停在止播水线，直到重新凑够起播水线。
+         * 切清晰度时新流还是空的，prepared 里先 seek 会让人以为“没有重新拉流”。
+         * 这里一律先 play，等 playing 后再按 pendingRestoreMs 跳进度。
          */
-        if (this.pendingRestoreMs >= 0 && this.durationMs > 0) {
-          const toMs = Math.min(this.pendingRestoreMs, Math.max(0, this.durationMs - 500));
-          this.pendingRestoreMs = -1;
-          this.seekResumePending = this.shouldResumePlayback();
-          try {
-            player.seek(toMs, media.SeekMode.SEEK_CLOSEST);
-            this.currentMs = toMs;
-          } catch (_e) {
-            this.seekResumePending = false;
-            if (this.shouldResumePlayback()) {
-              player.play().catch((e: Error): void => {
-                if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
-                  return;
-                }
-                hilog.error(DOMAIN, TAG, 'play after seek-fail err: %{public}s', String(e));
-                this.setPlaybackFailureHint('视频播放失败');
-              });
-            }
-          }
-        } else if (this.shouldResumePlayback()) {
+        if (this.shouldResumePlayback()) {
           player.play().catch((e: Error): void => {
             if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
               return;
             }
-            hilog.error(DOMAIN, TAG, 'play err: %{public}s', String(e));
+            hilog.error(DOMAIN, TAG, 'play err: %{public}s', GalleryAuthVideo.formatMediaErr(e));
             this.setPlaybackFailureHint('视频播放失败');
           });
         }
@@ -1310,6 +1524,8 @@ export struct GalleryAuthVideo {
       } else if (state === 'playing') {
         this.videoSurfaceVisible = true;
         this.finishVideoLoading();
+        this.clearLoadWatchdog();
+        this.videoRebuffering = false;
         this.hint = '';
         this.showPlaybackRetry = false;
         this.isPlaying = true;
@@ -1319,6 +1535,18 @@ export struct GalleryAuthVideo {
         this.scheduleChromeAutoHide();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
+        if (this.pendingRestoreMs > GALLERY_VIDEO_DEFER_SEEK_MIN_MS && this.durationMs > 0) {
+          const toMs = Math.min(this.pendingRestoreMs, Math.max(0, this.durationMs - 500));
+          this.pendingRestoreMs = -1;
+          hilog.info(DOMAIN, TAG, 'quality switch seek after playing toMs=%{public}s', `${toMs}`);
+          try {
+            player.seek(toMs, media.SeekMode.SEEK_CLOSEST);
+            this.currentMs = toMs;
+          } catch (_e) {
+          }
+        } else {
+          this.pendingRestoreMs = -1;
+        }
         if (this.deferPlaybackRateUntilPlaying) {
           this.deferPlaybackRateUntilPlaying = false;
           this.applySpeed(player, this.speedRate);
@@ -1327,6 +1555,8 @@ export struct GalleryAuthVideo {
         }
       } else if (state === 'completed') {
         this.isPlaying = false;
+        this.videoRebuffering = false;
+        this.stopPlaybackInfoWatch();
         this.playbackEnded = true;
         this.onPlaybackChromeChanged();
         this.revealPlaybackChrome();
@@ -1343,7 +1573,10 @@ export struct GalleryAuthVideo {
           hilog.warn(DOMAIN, TAG, '忽略 state=error（转码高倍速下多为抖动）');
           return;
         }
-        hilog.error(DOMAIN, TAG, 'state error');
+        this.videoRebuffering = false;
+        this.stopPlaybackInfoWatch();
+        hilog.error(DOMAIN, TAG, 'state error pos=%{public}s cachedMs=%{public}s',
+          `${this.currentMs}`, `${this.lastCachedDurationMs}`);
         if (this.tryAutoRecoverFromPlayError(gen)) {
           return;
         }
@@ -1354,12 +1587,21 @@ export struct GalleryAuthVideo {
     // 设置媒体源（触发 idle → initialized 异步过渡，通过 stateChange 回调继续）
     try {
       const source = media.createMediaSourceWithUrl(playableUrl, headers);
-      await player.setMediaSource(source);
+      if (GalleryAuthVideo.isHlsUrl(playableUrl)) {
+        try {
+          source.setMimeType(media.AVMimeTypes.APPLICATION_M3U8);
+        } catch (mimeErr) {
+          hilog.warn(DOMAIN, TAG, 'setMimeType m3u8 err: %{public}s',
+            GalleryAuthVideo.formatMediaErr(mimeErr as Error));
+        }
+      }
+      // 官方：setMediaSource 开始预下载，缓冲策略必须在这里传入，不能拖到 initialized 之后。
+      await player.setMediaSource(source, playbackStrategy);
       if (gen !== this.playGen) { return; }
       // 此处 state 可能仍是 idle，等待 stateChange 回调触发后续 prepare/play
     } catch (e) {
       if (gen !== this.playGen) { return; }
-      hilog.error(DOMAIN, TAG, 'setMediaSource err: %{public}s', String(e));
+      hilog.error(DOMAIN, TAG, 'setMediaSource err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
       this.setPlaybackFailureHint('无法加载视频');
     }
   }
@@ -1411,6 +1653,14 @@ export struct GalleryAuthVideo {
         .alignItems(HorizontalAlign.Center)
         .backgroundColor(Color.Transparent)
         .hitTestBehavior(HitTestMode.None)
+      }
+
+      if (this.videoRebuffering && !this.videoLoading) {
+        LoadingProgress()
+          .width(40)
+          .height(40)
+          .color(this.loadingSpinnerColor())
+          .hitTestBehavior(HitTestMode.None)
       }
 
       if (!this.videoLoading) {
