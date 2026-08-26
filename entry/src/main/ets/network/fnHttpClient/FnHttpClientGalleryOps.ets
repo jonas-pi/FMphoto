@@ -73,6 +73,19 @@ import {
   SmartCategoryItem
 } from '../../model/FnApiTypes';
 
+/** HLS 鉴权探针结果：分别记录 m3u8 与首个 TS 分片在“按路径 authx / 仅 Cookie”两种请求头下的响应码 */
+export interface GalleryHlsAuthProbe {
+  m3u8Code: number;
+  segName: string;
+  segAuthxCode: number;
+  segCookieCode: number;
+}
+
+interface GalleryProbeResp {
+  code: number;
+  text: string;
+}
+
 export class FnHttpClientGalleryOps {
   private static readonly inflightAssetReq: Map<string, Promise<ArrayBuffer | undefined>> = new Map();
   private static readonly assetBufferCache: Map<string, AssetBufferCacheEntry> = new Map();
@@ -409,6 +422,132 @@ export class FnHttpClientGalleryOps {
     const h = this.buildGalleryFetchHeaders(authx, cookie);
     h['Accept'] = '*/*';
     return h;
+  }
+
+  /**
+   * 仅 Cookie 鉴权的流媒体请求头（贴近浏览器 <video> 行为）。
+   * authx 是按“路径+时间戳”签名的，AVPlayer 会把首个 URL 的请求头原样复用给 m3u8 刷新与全部 TS 分片，
+   * 携带签名不匹配的 authx 反而可能被 NAS 拒绝；HLS 播放应优先使用本方法返回的头。
+   */
+  async getGalleryStreamMediaHeaders(): Promise<Record<string, string>> {
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    return this.buildGalleryMediaCookieHeaders(cookie);
+  }
+
+  private buildGalleryMediaCookieHeaders(cookie: string): Record<string, string> {
+    const full = this.buildGalleryFetchHeaders('', cookie);
+    const h: Record<string, string> = {
+      'Cookie': cookie,
+      'User-Agent': full['User-Agent'],
+      'Referer': full['Referer'],
+      'Accept': '*/*'
+    };
+    return h;
+  }
+
+  /**
+   * HLS 鉴权探针：用 App 的 HTTP 栈（可跳过自签证书校验）实测转码流的鉴权要求。
+   * 1) 带按路径签名的 authx 拉 m3u8（基线，应为 2xx）；
+   * 2) 取第一个 TS 分片，分别以“按路径 authx”与“仅 Cookie”两种头请求（Range 前 2KB），记录响应码。
+   * 结论用于决定交给 AVPlayer 的请求头，也为后续是否需要本地代理提供证据。
+   */
+  async probeGalleryHlsAuth(m3u8Url: string, timeoutMs: number = 6000): Promise<GalleryHlsAuthProbe> {
+    const probe: GalleryHlsAuthProbe = { m3u8Code: -1, segName: '', segAuthxCode: -1, segCookieCode: -1 };
+    const m3u8 = await this.requestGalleryProbe(m3u8Url, true, true, timeoutMs);
+    probe.m3u8Code = m3u8.code;
+    if (m3u8.code < 200 || m3u8.code >= 300 || m3u8.text.length === 0) {
+      return probe;
+    }
+    const lines = m3u8.text.split('\n');
+    let seg = '';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.length > 0 && !line.startsWith('#')) {
+        seg = line;
+        break;
+      }
+    }
+    if (seg.length === 0) {
+      return probe;
+    }
+    probe.segName = seg;
+    let segUrl = '';
+    if (seg.startsWith('http://') || seg.startsWith('https://')) {
+      segUrl = seg;
+    } else if (seg.startsWith('/')) {
+      const schemeEnd = m3u8Url.indexOf('://') + 3;
+      const slash = m3u8Url.indexOf('/', schemeEnd);
+      segUrl = (slash > 0 ? m3u8Url.slice(0, slash) : m3u8Url) + seg;
+    } else {
+      segUrl = m3u8Url.slice(0, m3u8Url.lastIndexOf('/') + 1) + seg;
+    }
+    const withAuthx = await this.requestGalleryProbe(segUrl, true, false, timeoutMs);
+    probe.segAuthxCode = withAuthx.code;
+    const cookieOnly = await this.requestGalleryProbe(segUrl, false, false, timeoutMs);
+    probe.segCookieCode = cookieOnly.code;
+    return probe;
+  }
+
+  /** 探针单次请求：wantBody=true 时按文本返回 m3u8 内容；否则仅取前 2KB（Range）拿响应码 */
+  private async requestGalleryProbe(
+    fullUrl: string,
+    withAuthx: boolean,
+    wantBody: boolean,
+    timeoutMs: number
+  ): Promise<GalleryProbeResp> {
+    const resp: GalleryProbeResp = { code: -1, text: '' };
+    const req = http.createHttp();
+    this.registerPendingRequest(req);
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      let headers: Record<string, string>;
+      if (withAuthx) {
+        const parsed = FnHttpClientGalleryOps.parseGalleryAssetUrl(fullUrl);
+        const authx = await genFnGalleryAuthxGet(parsed.signPath, parsed.queryParams);
+        headers = this.buildGalleryFetchHeaders(authx, cookie);
+        headers['Accept'] = '*/*';
+      } else {
+        headers = this.buildGalleryMediaCookieHeaders(cookie);
+      }
+      const opt: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        header: headers,
+        connectTimeout: timeoutMs,
+        readTimeout: timeoutMs
+      };
+      if (CertPolicy.isTrusted(activeBase)) {
+        opt.remoteValidation = 'skip';
+      }
+      if (wantBody) {
+        opt.expectDataType = http.HttpDataType.STRING;
+        opt.maxLimit = 1024 * 1024;
+        const r = await req.request(fullUrl, opt);
+        resp.code = r.responseCode;
+        if (typeof r.result === 'string') {
+          resp.text = r.result;
+        }
+      } else {
+        // 分片可能有十几 MB：requestInStream 收到响应头即返回状态码，finally 中 destroy 会中止剩余下载
+        headers['Range'] = 'bytes=0-2047';
+        resp.code = await req.requestInStream(fullUrl, opt);
+      }
+    } catch (_e) {
+    } finally {
+      this.unregisterPendingRequest(req);
+      try {
+        req.destroy();
+      } catch (_e) {
+      }
+    }
+    return resp;
   }
 
   /**

@@ -15,7 +15,7 @@ import { fnPhotoLongTokenProbePaths } from './FnPhotoRoutes';
 import { fnWebDefaultUserAgent, injectFnWebCookies, mergeGalleryWebCookieIntoNativeHeader } from './FnWebCookies';
 import { fnWebViewBaseUrl } from './ServerUrl';
 import { buildFnApiCookieHeader } from './fnHttpClient/FnHttpClientCookie';
-import { FnHttpClientGalleryOps } from './fnHttpClient/FnHttpClientGalleryOps';
+import { FnHttpClientGalleryOps, GalleryHlsAuthProbe } from './fnHttpClient/FnHttpClientGalleryOps';
 import { FnHttpClientUploadOps } from './fnHttpClient/FnHttpClientUploadOps';
 import {
   CERT_CODES,
@@ -984,6 +984,16 @@ export class FnHttpClient {
 
   async getGalleryStreamHeaders(fullUrl: string): Promise<Record<string, string>> {
     return this.galleryOps.getGalleryStreamHeaders(fullUrl);
+  }
+
+  /** 仅 Cookie 鉴权的流媒体请求头：HLS 播放时可被 AVPlayer 的 m3u8 刷新与 TS 子请求安全复用 */
+  async getGalleryStreamMediaHeaders(): Promise<Record<string, string>> {
+    return this.galleryOps.getGalleryStreamMediaHeaders();
+  }
+
+  /** HLS 鉴权探针：实测转码流分片对“按路径 authx / 仅 Cookie”两种请求头的响应码 */
+  async probeGalleryHlsAuth(m3u8Url: string, timeoutMs: number = 6000): Promise<GalleryHlsAuthProbe> {
+    return this.galleryOps.probeGalleryHlsAuth(m3u8Url, timeoutMs);
   }
 
   async requestVideoDecodePlayUrl(req: VideoDecodePlayRequest, timeoutMs: number = 20000): Promise<FnClientResult<VideoDecodePlayInfo>> {

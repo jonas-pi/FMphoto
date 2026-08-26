@@ -39,7 +39,7 @@ import { GalleryVideoGestureHud } from './GalleryVideoGestureHud';
 import { GalleryVideoOverlayChrome } from './GalleryVideoOverlayChrome';
 
 const DOMAIN = 0xFF00;
-const TAG = 'GalleryAuthVideo';
+const TAG = 'FMHLS';
 const LONG_PRESS_RATE = 2.0;
 const GALLERY_VIDEO_ADJUST_HUD_HIDE_MS = 3000;
 /** 播放中无操作时收起顶底栏与浮层控件 */
@@ -78,11 +78,11 @@ interface QualityOption {
 }
 
 const QUALITY_OPTIONS: QualityOption[] = [
-  { label: '原始', resolution: '1080', bitrate: 8000000, directStream: true },
-  // 转码码率按可流畅起播来取；30Mbps 的 1080p 转码和 4K 原片一样重，NAS 出片极慢。
-  { label: '高清 1080p', resolution: '1080', bitrate: 8000000, directStream: false },
-  { label: '均衡 720p', resolution: '720', bitrate: 4000000, directStream: false },
-  { label: '流畅 480p', resolution: '480', bitrate: 2000000, directStream: false }
+  { label: '原始', resolution: '1080', bitrate: 30000000, directStream: true },
+  // 转码参数对齐网页抓包：1080p 为 30Mbps / h264 / audioIndex=1 / channels=2
+  { label: '高清 1080p', resolution: '1080', bitrate: 30000000, directStream: false },
+  { label: '均衡 720p', resolution: '720', bitrate: 12000000, directStream: false },
+  { label: '流畅 480p', resolution: '480', bitrate: 6000000, directStream: false }
 ];
 /**
  * 全局记忆的视频倍速：
@@ -1310,6 +1310,9 @@ export struct GalleryAuthVideo {
     let playableUrl = this.videoUrl;
     const q = qForDefer;
     if (!q.directStream && sourceVideoId.length > 0) {
+      hilog.info(DOMAIN, TAG,
+        'decode/play req id=%{public}s resolution=%{public}s bitrate=%{public}s audioIndex=1 encoder=h264 channels=2',
+        sourceVideoId, q.resolution, `${q.bitrate}`);
       const decodeRes = await client.requestVideoDecodePlayUrl({
         id: sourceVideoId,
         resolution: q.resolution,
@@ -1322,6 +1325,8 @@ export struct GalleryAuthVideo {
       if (decodeRes.success && decodeRes.data !== undefined && decodeRes.data.playUrl.trim().length > 0) {
         playableUrl = decodeRes.data.playUrl.trim();
         this.decodeSessionPhotoId = sourceVideoId;
+        hilog.info(DOMAIN, TAG, 'decode/play ok hlsTime=%{public}s playUrl=%{public}s',
+          `${decodeRes.data.hlsTimeSec}`, GalleryAuthVideo.sanitizeUrlForLog(playableUrl));
       } else {
         /**
          * 转码失败时不再自动回退到原始：
@@ -1332,6 +1337,7 @@ export struct GalleryAuthVideo {
         const decodeMsg = decodeRes.message !== undefined && decodeRes.message.length > 0
           ? `${decodeRes.message}，请稍后重试`
           : '清晰度切换失败，请稍后重试';
+        hilog.error(DOMAIN, TAG, 'decode/play fail %{public}s', decodeMsg);
         this.setPlaybackFailureHint(decodeMsg);
         this.pendingQualitySwitch = false;
         return;
@@ -1351,7 +1357,29 @@ export struct GalleryAuthVideo {
     // 获取鉴权头
     let headers: Record<string, string>;
     try {
-      headers = await client.getGalleryStreamHeaders(playableUrl);
+      if (GalleryAuthVideo.isHlsUrl(playableUrl)) {
+        /**
+         * authx 按“路径+时间戳”签名，而 AVPlayer 会把首个 URL 的请求头原样复用给 m3u8 刷新与全部 TS 分片，
+         * 签名对不上会被 NAS 拒绝（表现为 prepare 静默卡死或 5400106 容器错误）。
+         * 起播前先用 App 的 HTTP 栈探测分片对两种请求头的实际响应，优先选可安全复用的“仅 Cookie”头。
+         */
+        const probe = await client.probeGalleryHlsAuth(playableUrl);
+        if (gen !== this.playGen) { return; }
+        hilog.info(DOMAIN, TAG,
+          'hlsProbe m3u8=%{public}s seg=%{public}s segAuthx=%{public}s segCookieOnly=%{public}s',
+          `${probe.m3u8Code}`, probe.segName, `${probe.segAuthxCode}`, `${probe.segCookieCode}`);
+        const cookieOk = probe.segCookieCode >= 200 && probe.segCookieCode < 300;
+        if (cookieOk) {
+          headers = await client.getGalleryStreamMediaHeaders();
+          hilog.info(DOMAIN, TAG, 'player headers=cookieOnly');
+        } else {
+          headers = await client.getGalleryStreamHeaders(playableUrl);
+          hilog.warn(DOMAIN, TAG,
+            'player headers=full(authx) 分片仅认按路径签名，播放器子请求可能被拒，需本地代理方案');
+        }
+      } else {
+        headers = await client.getGalleryStreamHeaders(playableUrl);
+      }
     } catch (e) {
       if (gen !== this.playGen) { return; }
       hilog.error(DOMAIN, TAG, 'getHeaders err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
@@ -1586,15 +1614,8 @@ export struct GalleryAuthVideo {
 
     // 设置媒体源（触发 idle → initialized 异步过渡，通过 stateChange 回调继续）
     try {
+      // 网络 HLS 无需 setMimeType（官方文档仅本地 fd:// m3u8 需要），URL 以 .m3u8 结尾即可自动识别
       const source = media.createMediaSourceWithUrl(playableUrl, headers);
-      if (GalleryAuthVideo.isHlsUrl(playableUrl)) {
-        try {
-          source.setMimeType(media.AVMimeTypes.APPLICATION_M3U8);
-        } catch (mimeErr) {
-          hilog.warn(DOMAIN, TAG, 'setMimeType m3u8 err: %{public}s',
-            GalleryAuthVideo.formatMediaErr(mimeErr as Error));
-        }
-      }
       // 官方：setMediaSource 开始预下载，缓冲策略必须在这里传入，不能拖到 initialized 之后。
       await player.setMediaSource(source, playbackStrategy);
       if (gen !== this.playGen) { return; }
