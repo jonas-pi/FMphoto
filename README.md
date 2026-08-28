@@ -29,6 +29,7 @@ Release 只提供**未签名 HAP**（`entry-default-unsigned.hap`），不能直
 
 [![正式版](https://img.shields.io/github/v/release/jonas-pi/FMphoto?label=stable)](https://github.com/jonas-pi/FMphoto/releases/latest)
 [![Beta](https://img.shields.io/github/v/release/jonas-pi/FMphoto?include_prereleases&filter=*beta*&label=beta)](https://github.com/jonas-pi/FMphoto/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 | 渠道 | 说明 | 入口 |
 | --- | --- | --- |
@@ -52,3 +53,7 @@ Release 只提供**未签名 HAP**（`entry-default-unsigned.hap`），不能直
 安装后填写 NAS 地址与账号即可使用。部分入口无数据时，请先在 NAS 确认相册服务、AI 能力与账户权限已开启。
 
 **注意**：请只从本仓库 GitHub Release 下载；签名材料（`.p12` / `.p7b` / `.cer`）不要发给他人。侧载应用一般需保持开发者模式开启。
+
+## 许可证
+
+本项目采用 [MIT License](./LICENSE)。

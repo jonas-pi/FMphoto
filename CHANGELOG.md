@@ -6,6 +6,31 @@
 
 ---
 
+## [1.3.3] - 2026-08-28
+
+在 [1.3.2] 上修复转码 HLS 播放，并采用 MIT 许可证。
+
+### 修复
+
+- **转码清晰度可播**：HLS 播放改用可复用的 Cookie 鉴权头，不再把按路径签名的 `authx` 带到 TS 分片请求上；切换 1080p / 720p / 480p 后能正常出画。
+- **decode/play 地址**：识别 NAS 返回的相对 `playLink`（如 `/media/.../preset.m3u8`），拼成完整转码流地址。
+- **UHD 默认档位**：2160p 及以上片源默认走 1080p 转码，避免一进页就拉 4K 原画。
+
+### 改进
+
+- **转码参数**：清晰度档位码率对齐网页抓包（1080p 30Mbps / 720p 12Mbps / 480p 6Mbps）。
+- **开源许可**：仓库采用 MIT License。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> 本版本仅上传未签名包；`.p12` / `.p7b` / `build-profile.json5` 等密钥材料严禁入库或随 Release 分发。已安装 `1.3.2` 的设备可直接覆盖升级（`versionCode` 1003009）。
+
+---
+
 ## [1.3.2] - 2026-08-22
 
 在 [1.3.2-beta.4] 上发布的正式版，纳入 1.3.1 之后的预览一镜到底、幻灯片、搜索输入与连接探测改进。
@@ -371,6 +396,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.4...v1.3.2
 [1.3.2-beta.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.3...v1.3.2-beta.4
 [1.3.2-beta.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.2...v1.3.2-beta.3
