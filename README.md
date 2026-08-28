@@ -29,7 +29,7 @@ Release 只提供**未签名 HAP**（`entry-default-unsigned.hap`），不能直
 
 [![正式版](https://img.shields.io/github/v/release/jonas-pi/FMphoto?label=stable)](https://github.com/jonas-pi/FMphoto/releases/latest)
 [![Beta](https://img.shields.io/github/v/release/jonas-pi/FMphoto?include_prereleases&filter=*beta*&label=beta)](https://github.com/jonas-pi/FMphoto/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: Noncommercial](https://img.shields.io/badge/License-PolyForm--Noncommercial-blue.svg)](./LICENSE)
 
 | 渠道 | 说明 | 入口 |
 | --- | --- | --- |
@@ -56,4 +56,8 @@ Release 只提供**未签名 HAP**（`entry-default-unsigned.hap`），不能直
 
 ## 许可证
 
-本项目采用 [MIT License](./LICENSE)。
+本项目由 **jonaspi** 原创并持有著作权，采用 [PolyForm Noncommercial License 1.0.0](./LICENSE)（[NOTICE](./NOTICE)）。
+
+- **允许**：个人学习、自用、非商业再分发与修改。
+- **禁止**：任何商用，包括售卖、收费分发，以及作为商业产品或服务的一部分。
+- **署名**：复制、修改或再分发时必须保留原作者 **jonaspi** 及许可证中的 `Required Notice`。
