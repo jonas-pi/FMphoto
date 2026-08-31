@@ -86,13 +86,14 @@ export function fnHdsNavChromeScrolledBackgroundStyle(): HdsNavigationBackground
 }
 
 /**
- * 官方 HdsNavigation titleBar.padding：用系统 float 资源，避免 LengthMetrics.vp
+ * 官方 HdsNavigation titleBar.padding：用 float 资源，避免 LengthMetrics.vp
  * 被 Native 先当 Resource 解析而打出 ParseTitleBarPadding FAILED。
+ * 右侧多选 / 搜索 / 更多统一离屏边再留一点，避免贴边。
  */
 export function fnHdsNavTitleBarPadding(): PaddingOptions {
   return {
     start: LengthMetrics.resource($r('sys.float.ohos_id_elements_margin_horizontal_s')),
-    end: LengthMetrics.resource($r('sys.float.ohos_id_elements_margin_horizontal_s'))
+    end: LengthMetrics.resource($r('app.float.hds_title_bar_padding_end'))
   };
 }
 

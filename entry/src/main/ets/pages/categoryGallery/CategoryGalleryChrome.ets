@@ -244,7 +244,7 @@ export struct CategoryGalleryChrome {
       Row()
         .width(40)
         .height(40)
-        .margin({ top: this.topSafeInsetVp + 8, right: 8 })
+        .margin({ top: this.topSafeInsetVp + 8, right: $r('app.float.hds_title_bar_padding_end') })
         .hitTestBehavior(HitTestMode.None)
         .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
           Placement.BottomLeft,

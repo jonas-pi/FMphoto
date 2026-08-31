@@ -67,6 +67,8 @@ export struct GalleryVideoOverlayChrome {
   @StorageProp(FN_SYSTEM_LEFT_INSET_VP_KEY) private systemLeftInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_RIGHT_INSET_VP_KEY) private systemRightInsetVp: number = 0;
   private dragStartRatio: number = 0;
+  private skipSpeedClick: boolean = false;
+  private lastQualityMenuAt: number = 0;
 
   private isBrightnessVolumeZone(localX: number, localY: number): boolean {
     return galleryIsVideoBrightnessVolumeZone(localX, localY, this.overlayW, this.overlayH);
@@ -89,6 +91,18 @@ export struct GalleryVideoOverlayChrome {
       return OVERLAY_SIDE_PAD_VP;
     }
     return Math.max(OVERLAY_SIDE_PAD_VP + OVERLAY_LANDSCAPE_SIDE_EXTRA_VP, insetVp + 16);
+  }
+
+  private openQualityMenu(): void {
+    const now = Date.now();
+    if (now - this.lastQualityMenuAt < 400) {
+      return;
+    }
+    this.lastQualityMenuAt = now;
+    this.skipSpeedClick = true;
+    this.onInteract();
+    playGalleryLongPressMenuHaptic();
+    this.qualityMenuVisible = true;
   }
 
   @Builder
@@ -261,13 +275,15 @@ export struct GalleryVideoOverlayChrome {
                 fontSizeValue: 13,
                 enableLongPress: true,
                 onBarClick: (): void => {
+                  if (this.skipSpeedClick) {
+                    this.skipSpeedClick = false;
+                    return;
+                  }
                   this.onInteract();
                   this.speedMenuVisible = true;
                 },
                 onBarLongPress: (): void => {
-                  this.onInteract();
-                  playGalleryLongPressMenuHaptic();
-                  this.qualityMenuVisible = true;
+                  this.openQualityMenu();
                 }
               })
             }
@@ -275,6 +291,12 @@ export struct GalleryVideoOverlayChrome {
             .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
             .clip(false)
             .draggable(false)
+            .parallelGesture(
+              LongPressGesture({ repeat: false })
+                .onAction((): void => {
+                  this.openQualityMenu();
+                })
+            )
             .bindMenu(this.speedMenuVisible, this.speedMenu, fnHdsBindMenuOptions(
               Placement.TopLeft,
               (): void => {

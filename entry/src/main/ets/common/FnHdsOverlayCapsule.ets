@@ -24,6 +24,14 @@ export struct FnHdsOverlayCapsule {
   onBarLongPress: () => void = () => {};
   @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
   private skipNextBarClick: boolean = false;
+  private pressActive: boolean = false;
+  private longPressTimerId: number = -1;
+  private lastLongPressAt: number = 0;
+
+  aboutToDisappear(): void {
+    this.pressActive = false;
+    this.clearLongPressTimer();
+  }
 
   private overlayWidth(): number {
     return fnHdsCapsuleOverlayWidth(this.barWidth);
@@ -33,13 +41,47 @@ export struct FnHdsOverlayCapsule {
     return fnHdsCapsuleOverlayHeight(this.barHeight);
   }
 
+  private clearLongPressTimer(): void {
+    if (this.longPressTimerId < 0) {
+      return;
+    }
+    clearTimeout(this.longPressTimerId);
+    this.longPressTimerId = -1;
+  }
+
+  private fireLongPress(): void {
+    if (!this.enableLongPress) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastLongPressAt < 400) {
+      return;
+    }
+    this.lastLongPressAt = now;
+    this.skipNextBarClick = true;
+    this.onBarLongPress();
+  }
+
   private onPressTouch(event: TouchEvent): void {
     if (event.type === TouchType.Down) {
       this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
+      this.pressActive = true;
+      this.clearLongPressTimer();
+      if (this.enableLongPress) {
+        this.longPressTimerId = setTimeout((): void => {
+          this.longPressTimerId = -1;
+          if (!this.pressActive) {
+            return;
+          }
+          this.fireLongPress();
+        }, 500);
+      }
       return;
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       this.pressShadowType = hdsEffect.PressShadowType.NONE;
+      this.pressActive = false;
+      this.clearLongPressTimer();
     }
   }
 
@@ -115,20 +157,19 @@ export struct FnHdsOverlayCapsule {
       .onTabBarClick((_index: number): void => {
         this.handleBarClick();
       })
-      .gesture(
-        LongPressGesture({ repeat: false })
-          .onAction((): void => {
-            if (!this.enableLongPress) {
-              return;
-            }
-            this.skipNextBarClick = true;
-            this.onBarLongPress();
-          })
-      )
     }
     .width(this.overlayWidth())
     .height(this.overlayHeight())
     .clip(false)
     .shadow({ radius: 0, color: Color.Transparent })
+    .onTouch((event: TouchEvent): void => {
+      this.onPressTouch(event);
+    })
+    .parallelGesture(
+      LongPressGesture({ repeat: false })
+        .onAction((): void => {
+          this.fireLongPress();
+        })
+    )
   }
 }

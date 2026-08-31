@@ -21,6 +21,10 @@
       "value": "16vp"
     },
     {
+      "name": "hds_title_bar_padding_end",
+      "value": "20vp"
+    },
+    {
       "name": "space_card",
       "value": "12vp"
     },

@@ -4,7 +4,7 @@
  * 底栏批量区、上传 FAB、首页 chip 等尺寸常量见 `GalleryButtonStyles.ets`；顶栏胶囊配色与字号组合见该文件头注释。
  */
 export const GALLERY_TOP_BAR_PAD_LEFT_VP: number = 16;
-export const GALLERY_TOP_BAR_PAD_RIGHT_VP: number = 16;
+export const GALLERY_TOP_BAR_PAD_RIGHT_VP: number = 20;
 export const GALLERY_TOP_BAR_PAD_TOP_VP: number = 12;
 export const GALLERY_TOP_BAR_PAD_BOTTOM_VP: number = 8;
 
