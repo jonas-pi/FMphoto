@@ -109,6 +109,10 @@
       "value": "#E8FFFFFF"
     },
     {
+      "name": "gallery_menu_backdrop",
+      "value": "#8CFFFFFF"
+    },
+    {
       "name": "gallery_nav_scrolled_bg",
       "value": "#40FFFFFF"
     },

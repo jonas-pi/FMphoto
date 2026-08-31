@@ -36,6 +36,7 @@ import {
 } from '../pages/galleryPreview/GalleryPreviewVideoStore';
 import { FN_SYSTEM_BOTTOM_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { GalleryVideoGestureHud } from './GalleryVideoGestureHud';
+import { GalleryVideoHoldSpeedHud } from './GalleryVideoHoldSpeedHud';
 import { GalleryVideoOverlayChrome } from './GalleryVideoOverlayChrome';
 
 const DOMAIN = 0xFF00;
@@ -147,6 +148,9 @@ export struct GalleryAuthVideo {
   @State private longPressSpeeding: boolean = false;
   @State private viewW: number = 360;
   @State private viewH: number = 780;
+  /** 片源像素尺寸，用来把倍速标识对齐画面顶而不是窗口顶 */
+  @State private videoPxW: number = 0;
+  @State private videoPxH: number = 0;
   @State private adjustHudVisible: boolean = false;
   @State private adjustIsBrightness: boolean = true;
   @State private screenBrightness: number = 0.5;
@@ -449,6 +453,8 @@ export struct GalleryAuthVideo {
     this.normalizeQualityIndex();
     this.preferTranscodeForUhd();
     this.longPressSpeeding = false;
+    this.videoPxW = 0;
+    this.videoPxH = 0;
     this.hint = '';
     this.showPlaybackRetry = false;
     this.pendingQualitySwitch = false;
@@ -724,6 +730,27 @@ export struct GalleryAuthVideo {
    */
   private applyContainMode(player: media.AVPlayer): void {
     player.videoScaleType = media.VideoScaleType.VIDEO_SCALE_TYPE_SCALED_ASPECT;
+  }
+
+  /**
+   * SCALED_ASPECT 会在容器里留黑边。倍速标识跟画面顶对齐，不要跟窗口/状态栏对齐。
+   */
+  private videoLetterboxTopVp(): number {
+    const cw = this.viewW;
+    const ch = this.viewH;
+    const vw = this.videoPxW;
+    const vh = this.videoPxH;
+    if (vw <= 0 || vh <= 0 || cw <= 1 || ch <= 1) {
+      return 0;
+    }
+    const containerAspect = cw / ch;
+    const videoAspect = vw / vh;
+    if (videoAspect <= containerAspect) {
+      return 0;
+    }
+    const shownH = cw / videoAspect;
+    const top = (ch - shownH) / 2;
+    return top > 0 ? top : 0;
   }
 
   private applySpeed(player: media.AVPlayer, rate: number): void {
@@ -1524,6 +1551,8 @@ export struct GalleryAuthVideo {
         }
       } else if (state === 'prepared') {
         this.durationMs = player.duration > 0 ? player.duration : this.durationMs;
+        this.videoPxW = player.width;
+        this.videoPxH = player.height;
         hilog.info(DOMAIN, TAG, 'prepared durationMs=%{public}s w=%{public}s h=%{public}s',
           `${this.durationMs}`, `${player.width}`, `${player.height}`);
         this.startPlaybackInfoWatch(player, gen);
@@ -1801,6 +1830,16 @@ export struct GalleryAuthVideo {
       })
         .width('100%')
         .height('100%')
+      }
+
+      if (!this.videoLoading) {
+        GalleryVideoHoldSpeedHud({
+          visible: this.longPressSpeeding,
+          videoLetterboxTopVp: this.videoLetterboxTopVp()
+        })
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
 
       // 必须放在全屏控制层之后：否则底部 Column 的占位区会优先命中，重试按钮点击无响应。

@@ -1,8 +1,9 @@
 /**
- * 弹出层走华为官方能力，不要自绘玻璃底：
- * - 半模态 bindSheet：backgroundColor Transparent + systemMaterial（官方沉浸光感示例）
- * - 菜单 bindMenu / bindContextMenu + Menu / MenuItem（菜单默认支持沉浸光感）
- * - 有 systemMaterial 时不要再叠 blurStyle / 不透明底，否则材质会被盖住
+ * 弹出层走华为官方能力：
+ * - 半模态 bindSheet：Transparent + systemMaterial（官方沉浸光感）
+ * - 菜单：HarmonyOS 7 / API 26 默认改为透明模糊；高端机 ImmersiveMaterial
+ *   还会把 backgroundColor 盖成透明，视频 XComponent 采空即全透明。
+ *   官方适配：Material.empty 关掉该菜单沉浸材质，再显式设色 + BlurStyle.NONE。
  */
 import { uiMaterial } from '@kit.ArkUI';
 import { fnCurrentSdkApiVersion } from './FnImmersiveSettings';
@@ -11,7 +12,6 @@ import { fnCurrentSdkApiVersion } from './FnImmersiveSettings';
 const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
 
 let cachedSheetMaterial: uiMaterial.Material | undefined = undefined;
-let cachedMenuMaterial: uiMaterial.Material | undefined = undefined;
 
 function fnCanUseArkUiSystemMaterial(): boolean {
   return fnCurrentSdkApiVersion() >= FN_ARKUI_SYSTEM_MATERIAL_API;
@@ -46,18 +46,30 @@ export function fnHdsSheetSystemMaterial(): uiMaterial.Material | undefined {
   return cachedSheetMaterial;
 }
 
-/** 官方 bindMenu 示例：THICK */
+/**
+ * 关掉菜单上的沉浸材质。ENABLE / 系统沉浸光感开启后，材质优先级高于开发者背景色。
+ * 文档：arkts-apis-uimaterial Material.empty；ContextMenuOptions.systemMaterial 26.0.0。
+ */
 export function fnHdsMenuSystemMaterial(): uiMaterial.Material | undefined {
   if (!fnCanUseArkUiSystemMaterial()) {
     return undefined;
   }
-  if (cachedMenuMaterial === undefined) {
+  return uiMaterial.Material.empty;
+}
+
+/**
+ * cl.arkui.1：统一渲染下 bindMenu / bindContextMenu 默认透明 + 模糊。
+ * 要实底须显式 backgroundColor + BlurStyle.NONE；API 26+ 再设 Material.empty，
+ * 避免高端机把背景色恢复为透明。
+ */
+function fnHdsFillMenuBackdrop(options: ContextMenuOptions): void {
+  options.backgroundBlurStyle = BlurStyle.NONE;
+  options.backgroundColor = $r('app.color.gallery_menu_backdrop');
+  const material = fnHdsMenuSystemMaterial();
+  if (material !== undefined) {
     // @SuppressWarnings compatibility
-    cachedMenuMaterial = new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.THICK
-    });
+    options.systemMaterial = material;
   }
-  return cachedMenuMaterial;
 }
 
 export function fnHdsSheetOptions(
@@ -152,11 +164,7 @@ export function fnHdsBindMenuOptions(
   if (onAppear !== undefined) {
     options.onAppear = onAppear;
   }
-  const material = fnHdsMenuSystemMaterial();
-  if (material !== undefined) {
-    // @SuppressWarnings compatibility
-    options.systemMaterial = material;
-  }
+  fnHdsFillMenuBackdrop(options);
   // 官方：输入法弹出时菜单与软键盘会互相顶布局。先收键盘再弹菜单，菜单本身不避让，
   // 避免 TRANSLATE_AND_RESIZE 与键盘收起动画抢位移。
   // 文档：ts-universal-attributes-menu 示例 20；bpta-keyboard-layout-adapt
@@ -181,11 +189,7 @@ export function fnHdsBindContextMenuOptions(
   if (onDisappear !== undefined) {
     options.onDisappear = onDisappear;
   }
-  const material = fnHdsMenuSystemMaterial();
-  if (material !== undefined) {
-    // @SuppressWarnings compatibility
-    options.systemMaterial = material;
-  }
+  fnHdsFillMenuBackdrop(options);
   return options;
 }
 

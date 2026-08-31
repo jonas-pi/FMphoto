@@ -6,7 +6,8 @@
 import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   fnHdsBindContextMenuOptions,
-  fnHdsBindMenuOptions
+  fnHdsBindMenuOptions,
+  fnHdsMenuSystemMaterial
 } from '../common/FnHdsOverlay';
 import { fnHdsImmersiveTabsFloatingStyle } from '../common/FnUiCommon';
 import {
@@ -190,6 +191,10 @@ export struct GalleryVideoOverlayChrome {
           this.onSelectSpeed(2.0);
         })
     }
+    .backgroundColor($r('app.color.gallery_menu_backdrop'))
+    .backgroundBlurStyle(BlurStyle.NONE)
+    // @SuppressWarnings compatibility
+    .systemMaterial(fnHdsMenuSystemMaterial())
   }
 
   @Builder
@@ -204,6 +209,10 @@ export struct GalleryVideoOverlayChrome {
           })
       }, (label: string, idx: number) => `q_${idx}_${label}`)
     }
+    .backgroundColor($r('app.color.gallery_menu_backdrop'))
+    .backgroundBlurStyle(BlurStyle.NONE)
+    // @SuppressWarnings compatibility
+    .systemMaterial(fnHdsMenuSystemMaterial())
   }
 
   @Builder
