@@ -3,12 +3,16 @@
  * 倍速 / 清晰度走系统 bindMenu、bindContextMenu，不要自绘半模态。
  * 视频手势与控件分层，避免父级单击/长按抢走菜单。
  */
-import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
+import { DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   fnHdsBindContextMenuOptions,
   fnHdsBindMenuOptions
 } from '../common/FnHdsOverlay';
-import { fnHdsImmersiveTabsFloatingStyle } from '../common/FnUiCommon';
+import {
+  fnHdsDockOverlayHeight,
+  fnHdsDockOverlayWidth,
+  fnHdsDockTabsFloatingStyle
+} from '../common/FnUiCommon';
 import {
   FN_SYSTEM_LEFT_INSET_VP_KEY,
   FN_SYSTEM_RIGHT_INSET_VP_KEY
@@ -41,6 +45,14 @@ struct GalleryOverlayHdsCapsule {
       .height('100%')
   }
 
+  private overlayWidth(): number {
+    return fnHdsDockOverlayWidth(this.widthValue);
+  }
+
+  private overlayHeight(): number {
+    return fnHdsDockOverlayHeight(this.heightValue);
+  }
+
   build() {
     Stack({ alignContent: Alignment.Center }) {
       HdsTabs({ index: 0 }) {
@@ -51,26 +63,19 @@ struct GalleryOverlayHdsCapsule {
         }
         .tabBar(this.chromeBar)
       }
-      .width(this.widthValue)
-      .height(this.heightValue)
+      .width(this.overlayWidth())
+      .height(this.overlayHeight())
       .barHeight(this.heightValue)
       .barOverlap(true)
       .vertical(false)
       .barPosition(BarPosition.End)
       .barWidth(this.widthValue)
       // @SuppressWarnings compatibility
-      .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-        this.heightValue,
-        this.widthValue,
-        $r('app.color.gallery_material_surface_bg')
-      ))
+      .barFloatingStyle(fnHdsDockTabsFloatingStyle(this.widthValue))
       .scrollable(false)
       .divider({ mode: DividerMode.NONE })
       .backgroundColor(Color.Transparent)
       .barBackgroundColor(Color.Transparent)
-      .blurStrategy(BlurStrategy.ADAPTIVE)
-      .borderRadius(this.radiusValue)
-      .clip(true)
       .hitTestBehavior(HitTestMode.None)
       .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
         return false;
@@ -79,8 +84,8 @@ struct GalleryOverlayHdsCapsule {
       Row() {
         this.label()
       }
-      .width('100%')
-      .height('100%')
+      .width(this.widthValue)
+      .height(this.heightValue)
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
       .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Default)
@@ -90,11 +95,9 @@ struct GalleryOverlayHdsCapsule {
         }
       })
     }
-    .width(this.widthValue)
-    .height(this.heightValue)
-    .borderRadius(this.radiusValue)
-    .clip(true)
-    .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Default)
+    .width(this.overlayWidth())
+    .height(this.overlayHeight())
+    .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Transparent)
   }
 }
 
@@ -269,7 +272,7 @@ export struct GalleryVideoOverlayChrome {
           if (fingers !== undefined && fingers.length > 0 && this.visible) {
             // 底栏控件区（倍速/进度）不走全屏按住倍速，把长按留给清晰度菜单
             const y = fingers[0].localY;
-            if (y > this.overlayH - 120 - this.bottomPadding) {
+            if (y > this.overlayH - fnHdsDockOverlayHeight(OVERLAY_PILL_HEIGHT_VP) - 80 - this.bottomPadding) {
               return GestureJudgeResult.REJECT;
             }
           }
@@ -366,8 +369,8 @@ export struct GalleryVideoOverlayChrome {
                 }
               })
             }
-            .width(OVERLAY_SPEED_WIDTH_VP)
-            .height(OVERLAY_PILL_HEIGHT_VP)
+            .width(fnHdsDockOverlayWidth(OVERLAY_SPEED_WIDTH_VP))
+            .height(fnHdsDockOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
             .backgroundColor(Color.Transparent)
             .draggable(false)
             .hitTestBehavior(HitTestMode.Default)
@@ -415,7 +418,7 @@ export struct GalleryVideoOverlayChrome {
             })
           }
           .width('100%')
-          .height(OVERLAY_PILL_HEIGHT_VP)
+          .height(fnHdsDockOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
           .alignItems(VerticalAlign.Center)
 
           Column({ space: 4 }) {
