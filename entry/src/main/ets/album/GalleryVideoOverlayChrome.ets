@@ -9,13 +9,20 @@ import {
   fnHdsBindMenuOptions
 } from '../common/FnHdsOverlay';
 import { fnHdsImmersiveTabsFloatingStyle } from '../common/FnUiCommon';
+import {
+  FN_SYSTEM_LEFT_INSET_VP_KEY,
+  FN_SYSTEM_RIGHT_INSET_VP_KEY
+} from '../common/FnSystemAvoidArea';
 import { galleryIsVideoBrightnessVolumeZone } from './GalleryPreviewVerticalGesture';
+import { playGalleryLongPressMenuHaptic } from './GallerySelectionHaptic';
 
 const OVERLAY_PILL_HEIGHT_VP: number = 36;
 const OVERLAY_SPEED_WIDTH_VP: number = 60;
-const OVERLAY_TIME_WIDTH_VP: number = 124;
 const OVERLAY_LANDSCAPE_SIZE_VP: number = 36;
 const OVERLAY_PLAY_SIZE_VP: number = 72;
+const OVERLAY_SIDE_PAD_VP: number = 16;
+/** 横屏左右边距约 70vp，躲开挖孔摄像头 */
+const OVERLAY_LANDSCAPE_SIDE_EXTRA_VP: number = 54;
 
 @Component
 struct GalleryOverlayHdsCapsule {
@@ -127,6 +134,8 @@ export struct GalleryVideoOverlayChrome {
   @State private overlayH: number = 780;
   /** 官方 bindContextMenu(isShown)：长按由按钮自己触发，避免被全屏按住倍速抢走 */
   @State private qualityMenuVisible: boolean = false;
+  @StorageProp(FN_SYSTEM_LEFT_INSET_VP_KEY) private systemLeftInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_RIGHT_INSET_VP_KEY) private systemRightInsetVp: number = 0;
   private dragStartRatio: number = 0;
 
   private isBrightnessVolumeZone(localX: number, localY: number): boolean {
@@ -143,6 +152,13 @@ export struct GalleryVideoOverlayChrome {
 
   private fullscreenSymbol(): Resource {
     return this.landscape ? $r('sys.symbol.exit_full_screen') : $r('sys.symbol.full_screen');
+  }
+
+  private overlaySidePad(insetVp: number): number {
+    if (!this.landscape) {
+      return OVERLAY_SIDE_PAD_VP;
+    }
+    return Math.max(OVERLAY_SIDE_PAD_VP + OVERLAY_LANDSCAPE_SIDE_EXTRA_VP, insetVp + 16);
   }
 
   @Builder
@@ -204,13 +220,12 @@ export struct GalleryVideoOverlayChrome {
   @Builder
   private timeLabel() {
     Text(`${this.currentText} | ${this.durationText}`)
-      .fontSize(13)
+      .fontSize(12)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('app.color.icon_primary'))
       .textAlign(TextAlign.Center)
       .maxLines(1)
       .width('100%')
-      .height('100%')
   }
 
   @Builder
@@ -290,6 +305,7 @@ export struct GalleryVideoOverlayChrome {
             }),
           LongPressGesture({ repeat: false })
             .onAction((): void => {
+              playGalleryLongPressMenuHaptic();
               this.onHoldSpeedStart();
             })
             .onActionEnd((): void => {
@@ -359,6 +375,7 @@ export struct GalleryVideoOverlayChrome {
               LongPressGesture({ repeat: false })
                 .onAction((): void => {
                   this.onInteract();
+                  playGalleryLongPressMenuHaptic();
                   this.qualityMenuVisible = true;
                 })
             )
@@ -401,71 +418,60 @@ export struct GalleryVideoOverlayChrome {
           .height(OVERLAY_PILL_HEIGHT_VP)
           .alignItems(VerticalAlign.Center)
 
-          Stack({ alignContent: Alignment.Center }) {
-            GalleryOverlayHdsCapsule({
-              widthValue: OVERLAY_TIME_WIDTH_VP,
-              heightValue: OVERLAY_PILL_HEIGHT_VP,
-              radiusValue: OVERLAY_PILL_HEIGHT_VP / 2,
-              blockHit: true,
-              label: (): void => {
-                this.timeLabel();
+          Column({ space: 4 }) {
+            this.timeLabel()
+            Stack({ alignContent: Alignment.Start }) {
+              Row()
+                .width('100%')
+                .height(3)
+                .backgroundColor($r('app.color.immersive_panel_border'))
+                .borderRadius(2)
+              Row()
+                .width(`${this.fillPercent()}%`)
+                .height(3)
+                .backgroundColor($r('app.color.brand_primary'))
+                .borderRadius(2)
+            }
+            .width('100%')
+            .height(22)
+            .onAreaChange((_old, area): void => {
+              const w = area.width as number;
+              this.barW = w > 1 ? w : 1;
+            })
+            .gesture(
+              PanGesture({ direction: PanDirection.Horizontal })
+                .onActionStart((): void => {
+                  this.dragStartRatio = this.progress;
+                  this.onSeekStart();
+                })
+                .onActionUpdate((ev: GestureEvent): void => {
+                  const r = this.dragStartRatio + (this.barW > 0 ? ev.offsetX / this.barW : 0);
+                  this.onSeekRatio(Math.max(0, Math.min(1, r)));
+                })
+                .onActionEnd((): void => {
+                  this.onSeekEnd();
+                })
+                .onActionCancel((): void => {
+                  this.onSeekCancel();
+                })
+            )
+            .onTouch((ev: TouchEvent): void => {
+              if (ev.type !== TouchType.Up) {
+                return;
               }
+              const ts = ev.touches;
+              if (ts === undefined || ts.length < 1) {
+                return;
+              }
+              this.onSeekTapRatio(Math.max(0, Math.min(1, ts[0].x / this.barW)));
             })
           }
           .width('100%')
-          .height(OVERLAY_PILL_HEIGHT_VP)
-          .hitTestBehavior(HitTestMode.None)
-
-          Stack({ alignContent: Alignment.Start }) {
-            Row()
-              .width('100%')
-              .height(3)
-              .backgroundColor($r('app.color.immersive_panel_border'))
-              .borderRadius(2)
-            Row()
-              .width(`${this.fillPercent()}%`)
-              .height(3)
-              .backgroundColor($r('app.color.brand_primary'))
-              .borderRadius(2)
-          }
-          .width('100%')
-          .height(22)
-          .onAreaChange((_old, area): void => {
-            const w = area.width as number;
-            this.barW = w > 1 ? w : 1;
-          })
-          .gesture(
-            PanGesture({ direction: PanDirection.Horizontal })
-              .onActionStart((): void => {
-                this.dragStartRatio = this.progress;
-                this.onSeekStart();
-              })
-              .onActionUpdate((ev: GestureEvent): void => {
-                const r = this.dragStartRatio + (this.barW > 0 ? ev.offsetX / this.barW : 0);
-                this.onSeekRatio(Math.max(0, Math.min(1, r)));
-              })
-              .onActionEnd((): void => {
-                this.onSeekEnd();
-              })
-              .onActionCancel((): void => {
-                this.onSeekCancel();
-              })
-          )
-          .onTouch((ev: TouchEvent): void => {
-            if (ev.type !== TouchType.Up) {
-              return;
-            }
-            const ts = ev.touches;
-            if (ts === undefined || ts.length < 1) {
-              return;
-            }
-            this.onSeekTapRatio(Math.max(0, Math.min(1, ts[0].x / this.barW)));
-          })
           }
           .width('100%')
           .padding({
-            left: 16,
-            right: 16,
+            left: this.overlaySidePad(this.systemLeftInsetVp),
+            right: this.overlaySidePad(this.systemRightInsetVp),
             bottom: 8 + this.bottomPadding
           })
         }

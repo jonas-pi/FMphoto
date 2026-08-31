@@ -13,7 +13,7 @@ import { CertPolicy } from '../network/CertPolicy';
 import { FN_PHOTO_H5_MAP, fnPhotoH5Url } from '../network/FnPhotoRoutes';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
-  fnWebDocumentCookieBootstrapScript,
+  fnWebDefaultUserAgent,
   fnWebLocalStorageSecretInjectScript,
   injectFnWebCookies
 } from '../network/FnWebCookies';
@@ -217,6 +217,34 @@ function mapClampScale(value: number): number {
   return Math.max(MAP_MIN_VP_PER_DEGREE, Math.min(MAP_MAX_VP_PER_DEGREE, value));
 }
 
+/** 飞牛 H5 在业务码 401 时会整页跳到 /login；该页再登一次会覆盖会话并循环 */
+function isFnOsLoginUrl(url: string): boolean {
+  const raw = url.trim();
+  if (raw.length === 0) {
+    return false;
+  }
+  const noHash = raw.split('#')[0];
+  const scheme = noHash.indexOf('://');
+  const pathStart = scheme >= 0 ? noHash.indexOf('/', scheme + 3) : 0;
+  const pathAndQuery = pathStart >= 0 ? noHash.substring(pathStart) : noHash;
+  const path = pathAndQuery.split('?')[0].toLowerCase();
+  return path === '/login';
+}
+
+function escapeRegexLiteral(value: string): string {
+  const specials = '.*+?^${}()|[]\\';
+  let out = '';
+  for (let i = 0; i < value.length; i++) {
+    const ch = value.charAt(i);
+    if (specials.indexOf(ch) >= 0) {
+      out += `\\${ch}`;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
 @Entry
 @Component
 struct MapPage {
@@ -267,6 +295,10 @@ struct MapPage {
   }
 
   aboutToAppear(): void {
+    try {
+      webview.WebviewController.setWebDebuggingAccess(true);
+    } catch (_e) {
+    }
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object | string> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
@@ -332,14 +364,17 @@ struct MapPage {
     if (this.webSecretB64.length > 0) {
       script += fnWebLocalStorageSecretInjectScript(this.webSecretB64);
     }
-    if (this.webToken.length > 0) {
-      script += fnWebDocumentCookieBootstrapScript(
-        this.webToken,
-        this.webLongToken.length > 0 ? this.webLongToken : undefined
-      );
-    }
+    // Cookie 只走 WebCookieManager，避免每次进 /p/map 都覆盖 H5 登录刚写入的 fnos-token
     script += this.officialWebHideChromeScript();
     return script;
+  }
+
+  /** 仅在 NAS 照片 H5（/p/...）注入，避免登录页和腾讯地图 iframe 被改写 */
+  private officialWebScriptRules(): string[] {
+    if (this.webBaseUrl.length <= 0) {
+      return [];
+    }
+    return [`${escapeRegexLiteral(this.webBaseUrl)}/p`];
   }
 
   private mapPageSubtitle(): string {
@@ -351,14 +386,15 @@ struct MapPage {
 
   private officialWebStartScripts(): ScriptItem[] {
     const script = this.officialWebBootstrapScript();
-    if (script.length <= 0) {
+    const rules = this.officialWebScriptRules();
+    if (script.length <= 0 || rules.length <= 0) {
       return [];
     }
-    return [{ script: script, scriptRules: ['.*'] }];
+    return [{ script: script, scriptRules: rules }];
   }
 
   private injectOfficialWebRuntime(): void {
-    const script = this.officialWebBootstrapScript();
+    const script = this.officialWebHideChromeScript();
     if (script.length <= 0) {
       return;
     }
@@ -367,6 +403,34 @@ struct MapPage {
       });
     } catch (_e) {
     }
+  }
+
+  private bindOfficialWebController(): void {
+    try {
+      this.webController.setCustomUserAgent(fnWebDefaultUserAgent());
+    } catch (_e) {
+    }
+    if (this.webToken.length <= 0 || this.webBaseUrl.length <= 0) {
+      return;
+    }
+    try {
+      injectFnWebCookies(
+        this.webBaseUrl,
+        this.webToken,
+        this.webBaseUrl.startsWith('https://'),
+        this.webLongToken.length > 0 ? this.webLongToken : undefined
+      );
+    } catch (_e) {
+    }
+  }
+
+  /** 拦截飞牛 /login，避免「登录成功后又被 401 踢回登录页」 */
+  private blockOfficialWebLogin(url: string): boolean {
+    if (!isFnOsLoginUrl(url)) {
+      return false;
+    }
+    this.switchToNativeMapFallback('官方地图需要网页登录，已切换到原生位置视图');
+    return true;
   }
 
   private switchToNativeMapFallback(message: string): void {
@@ -394,10 +458,17 @@ struct MapPage {
 
   private onOfficialWebHttpError(event: OnHttpErrorReceiveEvent): void {
     try {
+      const code = event.response.getResponseCode();
+      const url = event.request.getRequestUrl();
+      // 照片接口 401 会触发 H5 跳 /login；直接切原生图，避免登录循环
+      if (code === 401 && url.indexOf('/p/api/') >= 0) {
+        this.switchToNativeMapFallback('官方地图会话无效，已切换到原生位置视图');
+        return;
+      }
       if (!event.request.isMainFrame()) {
         return;
       }
-      if (event.response.getResponseCode() < 400) {
+      if (code < 400) {
         return;
       }
     } catch (_e) {
@@ -1130,11 +1201,41 @@ struct MapPage {
       .mixedMode(MixedMode.All)
       .cacheMode(CacheMode.Default)
       .runJavaScriptOnDocumentStart(this.officialWebStartScripts())
-      .onPageBegin((_event: OnPageBeginEvent): void => {
+      .onControllerAttached((): void => {
+        this.bindOfficialWebController();
+      })
+      .onLoadIntercept((event: OnLoadInterceptEvent): boolean => {
+        try {
+          if (!event.data.isMainFrame()) {
+            return false;
+          }
+          return this.blockOfficialWebLogin(event.data.getRequestUrl());
+        } catch (_e) {
+          return false;
+        }
+      })
+      .onOverrideUrlLoading((request: WebResourceRequest): boolean => {
+        try {
+          if (!request.isMainFrame()) {
+            return false;
+          }
+          return this.blockOfficialWebLogin(request.getRequestUrl());
+        } catch (_e) {
+          return false;
+        }
+      })
+      .onPageBegin((event: OnPageBeginEvent): void => {
+        if (this.blockOfficialWebLogin(event.url)) {
+          this.webLoading = false;
+          return;
+        }
         this.webLoading = true;
       })
-      .onPageEnd((_event: OnPageEndEvent): void => {
+      .onPageEnd((event: OnPageEndEvent): void => {
         this.webLoading = false;
+        if (isFnOsLoginUrl(event.url)) {
+          return;
+        }
         this.injectOfficialWebRuntime();
       })
       .onErrorReceive((event: OnErrorReceiveEvent): void => {

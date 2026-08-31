@@ -6,19 +6,25 @@
 import { vibrator } from '@kit.SensorServiceKit';
 
 const TOUCH_PRESET_EFFECT: string = 'haptic.effect.soft';
+/** 官方 HapticFeedback.EFFECT_HARD：较沉重、频率居中，用于长按打开菜单等二级操作 */
+const LONG_PRESS_PRESET_EFFECT: string = 'haptic.effect.hard';
 
 function playTouchHaptic(durationMs: number): void {
+  playPresetHaptic(TOUCH_PRESET_EFFECT, durationMs);
+}
+
+function playPresetHaptic(effectId: string, fallbackDurationMs: number): void {
   try {
     const attr: vibrator.VibrateAttribute = { usage: 'touch' };
-    if (vibrator.isSupportEffectSync(TOUCH_PRESET_EFFECT)) {
+    if (vibrator.isSupportEffectSync(effectId)) {
       void vibrator.startVibration(
-        { type: 'preset', effectId: TOUCH_PRESET_EFFECT, count: 1 },
+        { type: 'preset', effectId: effectId, count: 1 },
         attr
       ).catch((): void => {});
       return;
     }
     void vibrator.startVibration(
-      { type: 'time', duration: durationMs },
+      { type: 'time', duration: fallbackDurationMs },
       attr
     ).catch((): void => {});
   } catch (_e) {
@@ -38,4 +44,12 @@ export function playGalleryPullRefreshThresholdHaptic(): void {
 /** 实况长按开始播放时的轻微确认 */
 export function playGalleryLivePhotoHaptic(): void {
   playTouchHaptic(22);
+}
+
+/**
+ * 长按打开菜单：官方 VibratePreset 用于「点击长按」短振；
+ * EFFECT_HARD（haptic.effect.hard）为较沉重、频率居中，强度走预置默认 100。
+ */
+export function playGalleryLongPressMenuHaptic(): void {
+  playPresetHaptic(LONG_PRESS_PRESET_EFFECT, 48);
 }

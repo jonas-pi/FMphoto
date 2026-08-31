@@ -228,14 +228,15 @@ export function fnWebLoadHeaders(sessionToken: string, longToken?: string): FnWe
 }
 
 /**
- * 页面加载完成后注入 document.cookie（兜底 WebCookieManager 与 H5 读 Cookie 时机不一致）
- * token 经 JSON.stringify 转义，避免引号破坏脚本
+ * 页面加载完成后注入 document.cookie（兜底 WebCookieManager 与 H5 读 Cookie 时机不一致）。
+ * 不要 encodeURIComponent：Cookie 头按字面发送，编码后服务端会当成另一个 token，触发 401。
+ * token 经 JSON.stringify 转义，避免引号破坏脚本。
  */
 export function fnWebDocumentCookieBootstrapScript(sessionToken: string, longToken?: string): string {
   const tLit = JSON.stringify(sessionToken);
   let inner = `(function(){function sc(n,v){var p=';path=/;max-age=5184000;SameSite=Lax';` +
     `if(location.protocol==='https:'){p+=';Secure';}` +
-    `document.cookie=n+'='+encodeURIComponent(v)+p;}` +
+    `document.cookie=n+'='+v+p;}` +
     `var t=${tLit};sc('fnos-token',t);sc('Trim-MC-token',t);sc('language','zh-CN');` +
     `document.cookie='mode=relay;path=/;max-age=5184000;SameSite=Lax'+(location.protocol==='https:'?';Secure':'');`;
   if (longToken !== undefined && longToken.length > 0) {

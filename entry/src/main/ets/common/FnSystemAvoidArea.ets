@@ -4,6 +4,10 @@ import { display, UIContext, window } from '@kit.ArkUI';
 export const FN_SYSTEM_TOP_INSET_VP_KEY: string = 'fnSystemTopInsetVp';
 /** 系统导航条/手势条高度（vp） */
 export const FN_SYSTEM_BOTTOM_INSET_VP_KEY: string = 'fnSystemBottomInsetVp';
+/** 横屏时左侧系统栏/挖孔宽度（vp） */
+export const FN_SYSTEM_LEFT_INSET_VP_KEY: string = 'fnSystemLeftInsetVp';
+/** 横屏时右侧系统栏/挖孔宽度（vp） */
+export const FN_SYSTEM_RIGHT_INSET_VP_KEY: string = 'fnSystemRightInsetVp';
 
 interface FnAvoidAreaChangeInfo {
   type: window.AvoidAreaType;
@@ -15,8 +19,12 @@ let boundCallback: ((info: FnAvoidAreaChangeInfo) => void) | null = null;
 /** TYPE_SYSTEM 顶部高度（px），与挖孔区取较大值后写入 AppStorage */
 let lastSystemTopPx: number = 0;
 let lastSystemBottomPx: number = 0;
+let lastSystemLeftPx: number = 0;
+let lastSystemRightPx: number = 0;
 /** TYPE_CUTOUT 顶部高度（px）。官方：摄像头挖孔默认不在避让区，需主动合并。 */
 let lastCutoutTopPx: number = 0;
+let lastCutoutLeftPx: number = 0;
+let lastCutoutRightPx: number = 0;
 
 function fnPxToVp(px: number, uiContext: UIContext | undefined): number {
   if (uiContext !== undefined) {
@@ -61,15 +69,33 @@ function fnPublishTopBottomInsets(uiContext: UIContext | undefined): void {
   );
 }
 
+function fnPublishSideInsets(uiContext: UIContext | undefined): void {
+  // 横屏旋转后左右必须允许写回 0，不能沿用竖屏残留
+  AppStorage.setOrCreate<number>(
+    FN_SYSTEM_LEFT_INSET_VP_KEY,
+    Math.max(0, fnPxToVp(Math.max(lastSystemLeftPx, lastCutoutLeftPx), uiContext))
+  );
+  AppStorage.setOrCreate<number>(
+    FN_SYSTEM_RIGHT_INSET_VP_KEY,
+    Math.max(0, fnPxToVp(Math.max(lastSystemRightPx, lastCutoutRightPx), uiContext))
+  );
+}
+
 function fnApplySystemAvoidArea(area: window.AvoidArea, uiContext: UIContext | undefined): void {
   lastSystemTopPx = Math.max(0, area.topRect.height);
   lastSystemBottomPx = Math.max(0, area.bottomRect.height);
+  lastSystemLeftPx = Math.max(0, area.leftRect.width);
+  lastSystemRightPx = Math.max(0, area.rightRect.width);
   fnPublishTopBottomInsets(uiContext);
+  fnPublishSideInsets(uiContext);
 }
 
 function fnApplyCutoutAvoidArea(area: window.AvoidArea, uiContext: UIContext | undefined): void {
   lastCutoutTopPx = Math.max(0, area.topRect.height);
+  lastCutoutLeftPx = Math.max(0, area.leftRect.width);
+  lastCutoutRightPx = Math.max(0, area.rightRect.width);
   fnPublishTopBottomInsets(uiContext);
+  fnPublishSideInsets(uiContext);
 }
 
 /** 读取当前系统避让区并写入 AppStorage。 */
@@ -94,6 +120,12 @@ export function fnBindSystemAvoidArea(win: window.Window): void {
   }
   if (AppStorage.get<number>(FN_SYSTEM_BOTTOM_INSET_VP_KEY) === undefined) {
     AppStorage.setOrCreate<number>(FN_SYSTEM_BOTTOM_INSET_VP_KEY, 0);
+  }
+  if (AppStorage.get<number>(FN_SYSTEM_LEFT_INSET_VP_KEY) === undefined) {
+    AppStorage.setOrCreate<number>(FN_SYSTEM_LEFT_INSET_VP_KEY, 0);
+  }
+  if (AppStorage.get<number>(FN_SYSTEM_RIGHT_INSET_VP_KEY) === undefined) {
+    AppStorage.setOrCreate<number>(FN_SYSTEM_RIGHT_INSET_VP_KEY, 0);
   }
   fnUnbindSystemAvoidArea();
   fnPublishSystemAvoidArea(win);
