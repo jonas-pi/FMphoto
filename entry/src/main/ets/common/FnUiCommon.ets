@@ -141,6 +141,37 @@ export function fnHdsDockRowSidePadding(): number {
   return Math.max(0, FN_BOTTOM_DOCK_SIDE_PADDING_VP - FN_BOTTOM_DOCK_JELLY_SIDE_VP);
 }
 
+/** 视频浮层等居中胶囊：四周等距留果冻，栏身才能和文字/图标对齐。 */
+export const FN_HDS_CAPSULE_JELLY_VP: number = 12;
+
+export function fnHdsCapsuleOverlayWidth(barWidth: number): number {
+  return barWidth + FN_HDS_CAPSULE_JELLY_VP * 2;
+}
+
+export function fnHdsCapsuleOverlayHeight(barHeight: number): number {
+  return barHeight + FN_HDS_CAPSULE_JELLY_VP * 2;
+}
+
+export function fnHdsCapsuleTabsFloatingStyle(barWidth: Length): HdsTabsFloatingStyle {
+  return {
+    barWidth: {
+      smallWidth: barWidth,
+      mediumWidth: barWidth,
+      largeWidth: barWidth
+    },
+    barSideMargin: FN_HDS_CAPSULE_JELLY_VP,
+    barBottomMargin: FN_HDS_CAPSULE_JELLY_VP,
+    // @SuppressWarnings compatibility
+    adaptToHandedness: false,
+    gradientMask: {
+      maskColor: '#00000000',
+      maskHeight: 1
+    },
+    // @SuppressWarnings compatibility
+    systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
+  };
+}
+
 /** 顶栏按钮开启态（对齐 sys.color.ohos_id_color_activated 语义）背景叠色 */
 const FN_FLOATING_BUTTON_ACTIVE_LIGHT_COLOR: string = '#334A8BFF';
 const FN_FLOATING_BUTTON_ACTIVE_BORDER_COLOR: string = '#664A8BFF';

@@ -9,9 +9,9 @@ import {
   fnHdsBindMenuOptions
 } from '../common/FnHdsOverlay';
 import {
-  fnHdsDockOverlayHeight,
-  fnHdsDockOverlayWidth,
-  fnHdsDockTabsFloatingStyle
+  fnHdsCapsuleOverlayHeight,
+  fnHdsCapsuleOverlayWidth,
+  fnHdsCapsuleTabsFloatingStyle
 } from '../common/FnUiCommon';
 import {
   FN_SYSTEM_LEFT_INSET_VP_KEY,
@@ -40,17 +40,21 @@ struct GalleryOverlayHdsCapsule {
 
   @Builder
   private chromeBar() {
-    Row()
-      .width('100%')
-      .height('100%')
+    Row() {
+      this.label()
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
   }
 
   private overlayWidth(): number {
-    return fnHdsDockOverlayWidth(this.widthValue);
+    return fnHdsCapsuleOverlayWidth(this.widthValue);
   }
 
   private overlayHeight(): number {
-    return fnHdsDockOverlayHeight(this.heightValue);
+    return fnHdsCapsuleOverlayHeight(this.heightValue);
   }
 
   build() {
@@ -71,7 +75,7 @@ struct GalleryOverlayHdsCapsule {
       .barPosition(BarPosition.End)
       .barWidth(this.widthValue)
       // @SuppressWarnings compatibility
-      .barFloatingStyle(fnHdsDockTabsFloatingStyle(this.widthValue))
+      .barFloatingStyle(fnHdsCapsuleTabsFloatingStyle(this.widthValue))
       .scrollable(false)
       .divider({ mode: DividerMode.NONE })
       .backgroundColor(Color.Transparent)
@@ -81,19 +85,16 @@ struct GalleryOverlayHdsCapsule {
         return false;
       })
 
-      Row() {
-        this.label()
-      }
-      .width(this.widthValue)
-      .height(this.heightValue)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-      .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Default)
-      .onClick((): void => {
-        if (this.enableBarClick) {
-          this.onBarClick();
-        }
-      })
+      // 点击层与栏身同大、叠在栏上；文字已在 tabBar 里居中，这里不再画一遍
+      Row()
+        .width(this.widthValue)
+        .height(this.heightValue)
+        .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Default)
+        .onClick((): void => {
+          if (this.enableBarClick) {
+            this.onBarClick();
+          }
+        })
     }
     .width(this.overlayWidth())
     .height(this.overlayHeight())
@@ -272,7 +273,7 @@ export struct GalleryVideoOverlayChrome {
           if (fingers !== undefined && fingers.length > 0 && this.visible) {
             // 底栏控件区（倍速/进度）不走全屏按住倍速，把长按留给清晰度菜单
             const y = fingers[0].localY;
-            if (y > this.overlayH - fnHdsDockOverlayHeight(OVERLAY_PILL_HEIGHT_VP) - 80 - this.bottomPadding) {
+            if (y > this.overlayH - fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP) - 80 - this.bottomPadding) {
               return GestureJudgeResult.REJECT;
             }
           }
@@ -369,8 +370,8 @@ export struct GalleryVideoOverlayChrome {
                 }
               })
             }
-            .width(fnHdsDockOverlayWidth(OVERLAY_SPEED_WIDTH_VP))
-            .height(fnHdsDockOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
+            .width(fnHdsCapsuleOverlayWidth(OVERLAY_SPEED_WIDTH_VP))
+            .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
             .backgroundColor(Color.Transparent)
             .draggable(false)
             .hitTestBehavior(HitTestMode.Default)
@@ -418,7 +419,7 @@ export struct GalleryVideoOverlayChrome {
             })
           }
           .width('100%')
-          .height(fnHdsDockOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
+          .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
           .alignItems(VerticalAlign.Center)
 
           Column({ space: 4 }) {
