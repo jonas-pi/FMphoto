@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { SymbolGlyphModifier, window } from '@kit.ArkUI';
-import { BlurStrategy, DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { retargetGalleryAfterEndpointSwitch } from '../album/GalleryEndpointRetarget';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
@@ -48,7 +48,7 @@ import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
   fnBottomDockBottomGap,
   fnHdsBottomDockActionTabStyle,
-  fnHdsImmersiveTabsFloatingStyle,
+  fnHdsDockTabsFloatingStyle,
   fnImmersiveBackgroundEffect,
   fnLiquidGlassGradient,
   FnHdsPillButton,
@@ -64,7 +64,11 @@ import {
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_GAP_VP,
-  FN_BOTTOM_DOCK_SIDE_PADDING_VP
+  FN_BOTTOM_DOCK_SIDE_PADDING_VP,
+  FN_BOTTOM_DOCK_JELLY_SIDE_VP,
+  fnHdsDockOverlayHeight,
+  fnHdsDockOverlayWidth,
+  fnHdsDockRowSidePadding
 } from '../common/FnUiCommon';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -958,28 +962,46 @@ struct Home {
     }
   }
 
+  private dockRowSidePadding(): number {
+    return this.canUseHds() ? fnHdsDockRowSidePadding() : FN_BOTTOM_DOCK_SIDE_PADDING_VP;
+  }
+
+  private dockRowGap(): number {
+    return this.canUseHds() ? 0 : FN_BOTTOM_DOCK_SIDE_GAP_VP;
+  }
+
   private bottomDockBottomGap(): number {
     return fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
-  /** 中栏胶囊可用宽度：两侧 spacer/侧钮 + 边距预留后剩余空间，供 barWidth 显式传入 */
+  /** 中栏胶囊可用宽度：两侧 overlay/侧钮 + 边距预留后剩余空间，供 barWidth 显式传入 */
   private centerDockWidthVp(): number {
     const total = this.rootContentWidthVp > 0 ? this.rootContentWidthVp : 360;
-    return Math.max(
+    if (!this.canUseHds()) {
+      return Math.max(
+        168,
+        total
+          - FN_BOTTOM_DOCK_SIDE_PADDING_VP * 2
+          - FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP * 2
+          - FN_BOTTOM_DOCK_SIDE_GAP_VP * 2
+      );
+    }
+    const overlay = Math.max(
       168,
       total
-        - FN_BOTTOM_DOCK_SIDE_PADDING_VP * 2
-        - FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP * 2
-        - FN_BOTTOM_DOCK_SIDE_GAP_VP * 2
+        - fnHdsDockRowSidePadding() * 2
+        - fnHdsDockOverlayWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP) * 2
     );
+    return Math.max(120, overlay - FN_BOTTOM_DOCK_JELLY_SIDE_VP * 2);
   }
 
   private dockReserveHeight(): number {
     if (!this.sessionOk || !this.shouldShowBottomDock()) {
       return 0;
     }
-    return Math.max(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP, FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP) +
-      this.bottomDockBottomGap() + 16;
+    return fnHdsDockOverlayHeight(
+      Math.max(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP, FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    ) + this.bottomDockBottomGap() + 16;
   }
 
   private shouldShowBottomDock(): boolean {
@@ -1271,26 +1293,20 @@ struct Home {
       ))
     }
     // 显式固定宽度 + barWidth，符合官方 HdsTabsFloatingStyle 数值约束，避免默认 76vp×3 撑破 Row
-    .width(this.centerDockWidthVp())
-    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .width(fnHdsDockOverlayWidth(this.centerDockWidthVp()))
+    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(this.centerDockWidthVp())
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
-      this.centerDockWidthVp(),
-      $r('app.color.gallery_material_surface_bg')
-    ))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(this.centerDockWidthVp()))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
+    .backgroundColor(Color.Transparent)
     .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
     .onChange((index: number): void => {
       this.switchTab(index, true);
     })
@@ -1364,26 +1380,20 @@ struct Home {
         '#E11D48'
       ))
     }
-    .width(FN_SELECTION_DOCK_WIDTH_VP)
-    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .width(fnHdsDockOverlayWidth(FN_SELECTION_DOCK_WIDTH_VP))
+    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(FN_SELECTION_DOCK_WIDTH_VP)
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
-      FN_SELECTION_DOCK_WIDTH_VP,
-      this.dockMaterialBackgroundColor()
-    ))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(FN_SELECTION_DOCK_WIDTH_VP))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
+    .backgroundColor(Color.Transparent)
     .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
     .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
       return false;
     })
@@ -1465,26 +1475,20 @@ struct Home {
       }
       .tabBar(this.floatingDockGranularityTabBar)
     }
-    .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-    .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .width(fnHdsDockOverlayWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP))
+    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP))
     .barHeight(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-      FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
-      FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
-      $r('app.color.gallery_material_surface_bg')
-    ))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
+    .backgroundColor(Color.Transparent)
     .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
-    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
     .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
       return false;
     })
@@ -1529,8 +1533,12 @@ struct Home {
   @Builder
   private floatingDockSideButtonSpacer() {
     Blank()
-      .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-      .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      .width(this.canUseHds()
+        ? fnHdsDockOverlayWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        : FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+      .height(this.canUseHds()
+        ? fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+        : FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
   }
 
   @Builder
@@ -1544,12 +1552,12 @@ struct Home {
         }
       }
       .width('100%')
-      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+      .padding({ left: this.dockRowSidePadding(), right: this.dockRowSidePadding() })
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
       .margin({ bottom: this.bottomDockBottomGap() })
     } else {
-      Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+      Row({ space: this.dockRowGap() }) {
         this.floatingDockSideButtonSpacer()
 
         if (this.canUseHds()) {
@@ -1565,7 +1573,7 @@ struct Home {
         }
       }
       .width('100%')
-      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+      .padding({ left: this.dockRowSidePadding(), right: this.dockRowSidePadding() })
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
       .margin({ bottom: this.bottomDockBottomGap() })

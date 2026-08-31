@@ -119,6 +119,28 @@ export const FN_BOTTOM_DOCK_INNER_PADDING_H_VP: number = 5;
 export const FN_BOTTOM_DOCK_INNER_SPACE_VP: number = 6;
 export const FN_BOTTOM_DOCK_ITEM_HEIGHT_VP: number = FN_BOTTOM_DOCK_CENTER_HEIGHT_VP - 8;
 export const FN_BOTTOM_DOCK_BASE_GAP_VP: number = 16;
+/**
+ * 官方 HdsTabs 是整页高度，页签只用 barHeight；果冻跟手膨胀会超出栏身。
+ * overlay 比栏身四周更大：下方多留、上方少留、左右同样留空。
+ * barSideMargin / barBottomMargin 把胶囊从容器边缘抬开，果冻才有胀的空间。
+ */
+export const FN_BOTTOM_DOCK_JELLY_TOP_VP: number = 10;
+export const FN_BOTTOM_DOCK_JELLY_BOTTOM_VP: number = 28;
+export const FN_BOTTOM_DOCK_JELLY_SIDE_VP: number = 10;
+
+export function fnHdsDockOverlayHeight(barHeight: number): number {
+  return barHeight + FN_BOTTOM_DOCK_JELLY_TOP_VP + FN_BOTTOM_DOCK_JELLY_BOTTOM_VP;
+}
+
+export function fnHdsDockOverlayWidth(barWidth: number): number {
+  return barWidth + FN_BOTTOM_DOCK_JELLY_SIDE_VP * 2;
+}
+
+/** Hds overlay 已含左右果冻边，Row 侧边距相应收回，避免把栏挤窄。 */
+export function fnHdsDockRowSidePadding(): number {
+  return Math.max(0, FN_BOTTOM_DOCK_SIDE_PADDING_VP - FN_BOTTOM_DOCK_JELLY_SIDE_VP);
+}
+
 /** 顶栏按钮开启态（对齐 sys.color.ohos_id_color_activated 语义）背景叠色 */
 const FN_FLOATING_BUTTON_ACTIVE_LIGHT_COLOR: string = '#334A8BFF';
 const FN_FLOATING_BUTTON_ACTIVE_BORDER_COLOR: string = '#664A8BFF';
@@ -187,9 +209,11 @@ export function fnHdsImmersiveSystemMaterialEffect(): SystemMaterialParams {
  * adaptToHandedness 固定关闭，避免智感握姿把胶囊栏整体右偏。
  */
 export function fnHdsImmersiveTabsFloatingStyle(
-  height: number,
+  barHeight: number,
   width: Length = '100%',
-  lightColor: ResourceColor = $r('app.color.gallery_material_surface_bg')
+  lightColor: ResourceColor = Color.Transparent,
+  barBottomMargin: number = 0,
+  barSideMargin: number = 0
 ): HdsTabsFloatingStyle {
   return {
     barWidth: {
@@ -197,15 +221,38 @@ export function fnHdsImmersiveTabsFloatingStyle(
       mediumWidth: width,
       largeWidth: width
     },
-    barSideMargin: 0,
-    barBottomMargin: 0,
+    barSideMargin: barSideMargin,
+    barBottomMargin: barBottomMargin,
+    // @SuppressWarnings compatibility
+    adaptToHandedness: false,
+    // 官方 gradientMask 默认深色 #99000000、高度=栏高+16，overlay 上会铺成黑矩形。
+    // 关闭遮罩不能省略字段（省略即走默认），须显式全透明；maskHeight 不能为 0。
+    gradientMask: {
+      maskColor: '#00000000',
+      maskHeight: barHeight > 0 ? 1 : 1
+    },
+    lightColor: lightColor,
+    // @SuppressWarnings compatibility
+    systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
+  };
+}
+
+/** 底栏 overlay：胶囊四周留果冻空间。不设 lightColor，避免整块 overlay 被铺成深色矩形。 */
+export function fnHdsDockTabsFloatingStyle(barWidth: Length): HdsTabsFloatingStyle {
+  return {
+    barWidth: {
+      smallWidth: barWidth,
+      mediumWidth: barWidth,
+      largeWidth: barWidth
+    },
+    barSideMargin: FN_BOTTOM_DOCK_JELLY_SIDE_VP,
+    barBottomMargin: FN_BOTTOM_DOCK_JELLY_BOTTOM_VP,
     // @SuppressWarnings compatibility
     adaptToHandedness: false,
     gradientMask: {
-      maskColor: Color.Transparent,
-      maskHeight: height
+      maskColor: '#00000000',
+      maskHeight: 1
     },
-    lightColor: lightColor,
     // @SuppressWarnings compatibility
     systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
   };

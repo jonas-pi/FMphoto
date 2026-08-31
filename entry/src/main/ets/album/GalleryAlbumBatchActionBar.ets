@@ -1,11 +1,11 @@
-import { BlurStrategy, DividerMode, HdsTabs } from '@kit.UIDesignKit';
+import { DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   GALLERY_BATCH_BAR_PAD_BOTTOM_VP,
   GALLERY_BATCH_BAR_PAD_TOP_VP
 } from '../common/GalleryButtonStyles';
 import {
   fnHdsBottomDockActionTabStyle,
-  fnHdsImmersiveTabsFloatingStyle,
+  fnHdsDockTabsFloatingStyle,
   fnLiquidGlassGradient,
   FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
   FN_BOTTOM_DOCK_CENTER_RADIUS_VP,
@@ -15,7 +15,9 @@ import {
   FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
   FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
-  FN_BOTTOM_DOCK_SIDE_PADDING_VP
+  FN_BOTTOM_DOCK_SIDE_PADDING_VP,
+  fnHdsDockOverlayHeight,
+  fnHdsDockOverlayWidth
 } from '../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
@@ -81,26 +83,20 @@ export struct GalleryAlbumBatchActionBar {
         this.actionColor(this.deleting, true)
       ))
     }
-    .width(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP)
-    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .width(fnHdsDockOverlayWidth(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP))
+    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP)
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
-      GALLERY_BATCH_ACTION_DOCK_WIDTH_VP,
-      $r('app.color.gallery_material_surface_bg')
-    ))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(GALLERY_BATCH_ACTION_DOCK_WIDTH_VP))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
+    .backgroundColor(Color.Transparent)
     .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
     .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
       return false;
     })

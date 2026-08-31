@@ -19,7 +19,7 @@ import {
   fnHdsChromeButtonBackgroundColor,
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsImmersiveSystemMaterialEffect,
-  fnHdsImmersiveTabsFloatingStyle,
+  fnHdsDockTabsFloatingStyle,
   fnHdsNavChromeBackgroundStyle,
   fnHdsNavTitleBarPadding,
   fnLiquidGlassGradient,
@@ -32,7 +32,9 @@ import {
   FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-  FN_HDS_NAV_CHROME_HEIGHT_VP
+  FN_HDS_NAV_CHROME_HEIGHT_VP,
+  fnHdsDockOverlayHeight,
+  fnHdsDockOverlayWidth
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
@@ -449,26 +451,20 @@ export struct GalleryPreviewChrome {
         this.previewActionColor(this.deleting)
       ))
     }
-    .width(this.dockWidth())
-    .height(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
+    .width(fnHdsDockOverlayWidth(this.dockWidth()))
+    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(this.dockWidth())
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
-      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP,
-      this.dockWidth(),
-      $r('app.color.gallery_material_surface_bg')
-    ))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(this.dockWidth()))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
+    .backgroundColor(Color.Transparent)
     .barBackgroundColor(Color.Transparent)
-    .barBackgroundStyle({ maskColor: Color.Transparent, maskHeight: FN_BOTTOM_DOCK_CENTER_HEIGHT_VP })
-    .blurStrategy(BlurStrategy.ADAPTIVE)
-    .borderRadius(FN_BOTTOM_DOCK_CENTER_RADIUS_VP)
-    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
     .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
       return false;
     })
