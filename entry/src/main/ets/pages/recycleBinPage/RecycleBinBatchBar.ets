@@ -15,9 +15,7 @@ import {
   FN_BOTTOM_DOCK_ITEM_HEIGHT_VP,
   FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
-  FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-  fnHdsDockOverlayHeight,
-  fnHdsDockOverlayWidth
+  FN_BOTTOM_DOCK_SIDE_PADDING_VP
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
@@ -62,6 +60,7 @@ export struct RecycleBinBatchBar {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.download'),
@@ -73,6 +72,7 @@ export struct RecycleBinBatchBar {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.arrow_counterclockwise'),
@@ -80,15 +80,18 @@ export struct RecycleBinBatchBar {
         this.actionColor(this.restoring)
       ))
     }
-    .width(fnHdsDockOverlayWidth(RECYCLE_BIN_BATCH_DOCK_WIDTH_VP))
-    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
+    .width('100%')
+    .height('100%')
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(RECYCLE_BIN_BATCH_DOCK_WIDTH_VP)
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsDockTabsFloatingStyle(RECYCLE_BIN_BATCH_DOCK_WIDTH_VP))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(
+      RECYCLE_BIN_BATCH_DOCK_WIDTH_VP,
+      GALLERY_BATCH_BAR_PAD_BOTTOM_VP
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .backgroundColor(Color.Transparent)
@@ -156,22 +159,29 @@ export struct RecycleBinBatchBar {
   }
 
   build() {
-    Row() {
-      if (this.canUseHds()) {
-        this.batchHdsTabs()
-      } else {
-        this.batchFallbackTabs()
+    if (this.canUseHds()) {
+      this.batchHdsTabs()
+    } else {
+      Column() {
+        Blank()
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+        Row() {
+          this.batchFallbackTabs()
+        }
+        .width('100%')
+        .padding({
+          left: FN_BOTTOM_DOCK_SIDE_PADDING_VP,
+          right: FN_BOTTOM_DOCK_SIDE_PADDING_VP,
+          top: GALLERY_BATCH_BAR_PAD_TOP_VP,
+          bottom: GALLERY_BATCH_BAR_PAD_BOTTOM_VP
+        })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
       }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
     }
-    .width('100%')
-    .padding({
-      left: FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-      right: FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-      top: GALLERY_BATCH_BAR_PAD_TOP_VP,
-      bottom: GALLERY_BATCH_BAR_PAD_BOTTOM_VP
-    })
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .backgroundColor(Color.Transparent)
   }
 }

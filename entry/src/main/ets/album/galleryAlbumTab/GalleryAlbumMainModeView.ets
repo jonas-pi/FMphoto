@@ -1017,7 +1017,7 @@ export struct GalleryAlbumMainModeView {
             .padding({ left: 16, right: 16, top: this.contentInsetTopVp + 8 })
         }
 
-        Column() {
+        Stack() {
           Stack({ alignContent: Alignment.TopEnd }) {
             Refresh({ refreshing: this.isTimelineRefreshVisualActive(), builder: this.galleryRefreshContent() }) {
               List({ scroller: this.scrollerRef }) {
@@ -1159,7 +1159,7 @@ export struct GalleryAlbumMainModeView {
             }
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .clip(false)
 
           if (this.showBatchActionBar && this.gallerySelectionMode) {
@@ -1169,6 +1169,8 @@ export struct GalleryAlbumMainModeView {
               onDownload: this.onBatchDownload,
               onDelete: this.onBatchDelete
             })
+              .width('100%')
+              .height('100%')
           }
         }
         .width('100%')

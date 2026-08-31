@@ -1505,22 +1505,24 @@ struct CategoryGallery {
                   .justifyContent(FlexAlign.Center)
                   .padding({ top: 8, bottom: this.selectionMode && this.selectedCount > 0 ? 8 : 0 })
                 }
-
-                if (this.selectionMode && this.selectedCount > 0) {
-                  GalleryAlbumBatchActionBar({
-                    downloading: this.cgBatchDownloading,
-                    deleting: this.cgBatchDeleting,
-                    onDownload: (): void => {
-                      void this.confirmCgBatchDownload();
-                    },
-                    onDelete: (): void => {
-                      void this.confirmCgBatchDelete();
-                    }
-                  })
-                }
               }
               .width('100%')
               .height('100%')
+
+              if (this.selectionMode && this.selectedCount > 0) {
+                GalleryAlbumBatchActionBar({
+                  downloading: this.cgBatchDownloading,
+                  deleting: this.cgBatchDeleting,
+                  onDownload: (): void => {
+                    void this.confirmCgBatchDownload();
+                  },
+                  onDelete: (): void => {
+                    void this.confirmCgBatchDelete();
+                  }
+                })
+                  .width('100%')
+                  .height('100%')
+              }
 
               if (this.cgBatchDeleting || this.cgBatchDownloading) {
                 FnFullLoadingMask({

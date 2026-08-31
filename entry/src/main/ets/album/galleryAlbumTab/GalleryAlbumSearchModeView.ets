@@ -413,7 +413,7 @@ export struct GalleryAlbumSearchModeView {
           .textAlign(TextAlign.Center)
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
-        Column() {
+        Stack() {
           List({ scroller: this.scroller }) {
             LazyForEach(this.searchRowSource, (block: GallerySearchRowBlock) => {
               ListItem() {
@@ -551,7 +551,7 @@ export struct GalleryAlbumSearchModeView {
             }
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .id(GALLERY_ALBUM_SEARCH_LIST_DOM_ID)
           .cachedCount(GALLERY_SEARCH_LIST_CACHED_COUNT)
           .edgeEffect(EdgeEffect.Spring)
@@ -589,6 +589,8 @@ export struct GalleryAlbumSearchModeView {
               onDownload: this.onBatchDownload,
               onDelete: this.onBatchDelete
             })
+              .width('100%')
+              .height('100%')
           }
         }
         .width('100%')

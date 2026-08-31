@@ -32,9 +32,7 @@ import {
   FN_BOTTOM_DOCK_ITEM_RADIUS_VP,
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-  FN_HDS_NAV_CHROME_HEIGHT_VP,
-  fnHdsDockOverlayHeight,
-  fnHdsDockOverlayWidth
+  FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
@@ -107,6 +105,7 @@ export struct GalleryPreviewChrome {
   aboutToAppear(): void {
     addGalleryPreviewDismissListener(this.onDismissProgress);
     this.syncChromeOpacity();
+    this.notifyBottomDockHeight();
   }
 
   aboutToDisappear(): void {
@@ -313,6 +312,12 @@ export struct GalleryPreviewChrome {
       GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP;
   }
 
+  private notifyBottomDockHeight(): void {
+    this.onBottomBarHeightChange(
+      FN_BOTTOM_DOCK_CENTER_HEIGHT_VP + fnBottomDockBottomGap(this.bottomSafeInsetVp)
+    );
+  }
+
   private onDockShare(): void {
     if (!this.sharing) {
       this.onShare();
@@ -387,6 +392,7 @@ export struct GalleryPreviewChrome {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.share'),
@@ -398,6 +404,7 @@ export struct GalleryPreviewChrome {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.download'),
@@ -410,6 +417,7 @@ export struct GalleryPreviewChrome {
           Column()
             .width('100%')
             .height('100%')
+            .hitTestBehavior(HitTestMode.None)
         }
         .tabBar(fnHdsBottomDockActionTabStyle(
           this.videoPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'),
@@ -421,6 +429,7 @@ export struct GalleryPreviewChrome {
           Column()
             .width('100%')
             .height('100%')
+            .hitTestBehavior(HitTestMode.None)
         }
         .tabBar(fnHdsBottomDockActionTabStyle(
           this.videoMuted ? $r('sys.symbol.speaker_slash_fill') : $r('sys.symbol.speaker_wave_2_fill'),
@@ -433,6 +442,7 @@ export struct GalleryPreviewChrome {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         this.starFilled ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
@@ -444,6 +454,7 @@ export struct GalleryPreviewChrome {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.trash'),
@@ -451,31 +462,28 @@ export struct GalleryPreviewChrome {
         this.previewActionColor(this.deleting)
       ))
     }
-    .width(fnHdsDockOverlayWidth(this.dockWidth()))
-    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
+    .width('100%')
+    .height('100%')
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(this.dockWidth())
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsDockTabsFloatingStyle(this.dockWidth()))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(
+      this.dockWidth(),
+      fnBottomDockBottomGap(this.bottomSafeInsetVp)
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .backgroundColor(Color.Transparent)
     .barBackgroundColor(Color.Transparent)
-    .hitTestBehavior(HitTestMode.Transparent)
+    .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Transparent : HitTestMode.None)
     .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
       return false;
     })
     .onTabBarClick((index: number): void => {
       this.onPreviewHdsAction(index);
-    })
-    .onAreaChange((_old, area): void => {
-      const h = area.height as number;
-      if (h > 0) {
-        this.onBottomBarHeightChange(h);
-      }
     })
   }
 
@@ -593,19 +601,19 @@ export struct GalleryPreviewChrome {
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
       Stack({ alignContent: Alignment.Bottom }) {
-        Row() {
-          if (this.canUseHds()) {
-            this.previewBottomHdsTabs()
-          } else {
+        if (this.canUseHds()) {
+          this.previewBottomHdsTabs()
+        } else {
+          Row() {
             this.previewBottomFallbackTabs()
           }
+          .width('100%')
+          .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
+          .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Default : HitTestMode.None)
         }
-        .width('100%')
-        .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
-        .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Default : HitTestMode.None)
       }
       .width('100%')
       .height('100%')

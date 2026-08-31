@@ -33,6 +33,7 @@ import {
   fnHdsFitContentSheetOptions,
   fnHdsMediumDetentSheetOptions
 } from '../common/FnHdsOverlay';
+import { FnHdsOverlayCapsule } from '../common/FnHdsOverlayCapsule';
 import {
   buildEndpointProbeDisplay,
   FnEndpointProbeLineItem,
@@ -65,10 +66,7 @@ import {
   FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_GAP_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
-  FN_BOTTOM_DOCK_JELLY_SIDE_VP,
-  fnHdsDockOverlayHeight,
-  fnHdsDockOverlayWidth,
-  fnHdsDockRowSidePadding
+  FN_HDS_CAPSULE_JELLY_VP
 } from '../common/FnUiCommon';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -962,46 +960,32 @@ struct Home {
     }
   }
 
-  private dockRowSidePadding(): number {
-    return this.canUseHds() ? fnHdsDockRowSidePadding() : FN_BOTTOM_DOCK_SIDE_PADDING_VP;
-  }
-
-  private dockRowGap(): number {
-    return this.canUseHds() ? 0 : FN_BOTTOM_DOCK_SIDE_GAP_VP;
-  }
-
   private bottomDockBottomGap(): number {
     return fnBottomDockBottomGap(this.systemBottomInsetVp);
   }
 
-  /** 中栏胶囊可用宽度：两侧 overlay/侧钮 + 边距预留后剩余空间，供 barWidth 显式传入 */
+  /** 中栏胶囊宽度：两侧预留圆钮 + 边距后剩余空间，供 barWidth 显式传入 */
   private centerDockWidthVp(): number {
     const total = this.rootContentWidthVp > 0 ? this.rootContentWidthVp : 360;
-    if (!this.canUseHds()) {
-      return Math.max(
-        168,
-        total
-          - FN_BOTTOM_DOCK_SIDE_PADDING_VP * 2
-          - FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP * 2
-          - FN_BOTTOM_DOCK_SIDE_GAP_VP * 2
-      );
-    }
-    const overlay = Math.max(
+    return Math.max(
       168,
       total
-        - fnHdsDockRowSidePadding() * 2
-        - fnHdsDockOverlayWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP) * 2
+        - FN_BOTTOM_DOCK_SIDE_PADDING_VP * 2
+        - FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP * 2
+        - FN_BOTTOM_DOCK_SIDE_GAP_VP * 2
     );
-    return Math.max(120, overlay - FN_BOTTOM_DOCK_JELLY_SIDE_VP * 2);
+  }
+
+  private dockBarSideMargin(barWidth: number): number {
+    const total = this.rootContentWidthVp > 0 ? this.rootContentWidthVp : 360;
+    return Math.max(0, (total - barWidth) / 2);
   }
 
   private dockReserveHeight(): number {
     if (!this.sessionOk || !this.shouldShowBottomDock()) {
       return 0;
     }
-    return fnHdsDockOverlayHeight(
-      Math.max(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP, FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-    ) + this.bottomDockBottomGap() + 16;
+    return FN_BOTTOM_DOCK_CENTER_HEIGHT_VP + this.bottomDockBottomGap() + 16;
   }
 
   private shouldShowBottomDock(): boolean {
@@ -1263,6 +1247,7 @@ struct Home {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(this.hdsBottomTabStyle(
         $r('sys.symbol.picture'),
@@ -1274,6 +1259,7 @@ struct Home {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(this.hdsBottomTabStyle(
         $r('sys.symbol.rectangle_on_rectangle'),
@@ -1285,6 +1271,7 @@ struct Home {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(this.hdsBottomTabStyle(
         $r('sys.symbol.person'),
@@ -1292,16 +1279,19 @@ struct Home {
         '\u6211\u7684'
       ))
     }
-    // 显式固定宽度 + barWidth，符合官方 HdsTabsFloatingStyle 数值约束，避免默认 76vp×3 撑破 Row
-    .width(fnHdsDockOverlayWidth(this.centerDockWidthVp()))
-    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
+    .width('100%')
+    .height('100%')
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(this.centerDockWidthVp())
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsDockTabsFloatingStyle(this.centerDockWidthVp()))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(
+      this.centerDockWidthVp(),
+      this.bottomDockBottomGap(),
+      this.dockBarSideMargin(this.centerDockWidthVp())
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .backgroundColor(Color.Transparent)
@@ -1363,6 +1353,7 @@ struct Home {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.download'),
@@ -1373,6 +1364,7 @@ struct Home {
         Column()
           .width('100%')
           .height('100%')
+          .hitTestBehavior(HitTestMode.None)
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.trash'),
@@ -1380,15 +1372,19 @@ struct Home {
         '#E11D48'
       ))
     }
-    .width(fnHdsDockOverlayWidth(FN_SELECTION_DOCK_WIDTH_VP))
-    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP))
+    .width('100%')
+    .height('100%')
     .barHeight(FN_BOTTOM_DOCK_CENTER_HEIGHT_VP)
     .barOverlap(true)
     .vertical(false)
     .barPosition(BarPosition.End)
     .barWidth(FN_SELECTION_DOCK_WIDTH_VP)
     // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsDockTabsFloatingStyle(FN_SELECTION_DOCK_WIDTH_VP))
+    .barFloatingStyle(fnHdsDockTabsFloatingStyle(
+      FN_SELECTION_DOCK_WIDTH_VP,
+      this.bottomDockBottomGap(),
+      this.dockBarSideMargin(FN_SELECTION_DOCK_WIDTH_VP)
+    ))
     .scrollable(false)
     .divider({ mode: DividerMode.NONE })
     .backgroundColor(Color.Transparent)
@@ -1454,47 +1450,48 @@ struct Home {
   }
 
   @Builder
-  private floatingDockGranularityTabBar() {
-    Text(this.currentGalleryGranularityLabel())
-      .fontSize(16)
-      .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.text_primary'))
-      .textAlign(TextAlign.Center)
-      .width('100%')
-      .height('100%')
-  }
+  private floatingDockGranularityOverlay() {
+    Column() {
+      Blank()
+        .layoutWeight(1)
+        .hitTestBehavior(HitTestMode.None)
+      Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+        Blank()
+          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .hitTestBehavior(HitTestMode.None)
 
-  @Builder
-  private floatingDockSideButtonHds() {
-    // 与底栏同款：真 HdsTabs 悬浮材质 + systemMaterialEffect
-    HdsTabs({ index: 0 }) {
-      TabContent() {
-        Column()
-          .width('100%')
-          .height('100%')
+        Blank()
+          .width(this.centerDockWidthVp())
+          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          .hitTestBehavior(HitTestMode.None)
+
+        FnHdsOverlayCapsule({
+          barWidth: FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+          barHeight: FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+          text: this.currentGalleryGranularityLabel(),
+          fontSizeValue: 16,
+          fontColorValue: $r('app.color.text_primary'),
+          onBarClick: (): void => {
+            this.toggleGalleryViewGranularity();
+          }
+        })
+        .margin({
+          left: -FN_HDS_CAPSULE_JELLY_VP,
+          right: -FN_HDS_CAPSULE_JELLY_VP
+        })
       }
-      .tabBar(this.floatingDockGranularityTabBar)
+      .width('100%')
+      .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .clip(false)
+      .margin({ bottom: this.bottomDockBottomGap() - FN_HDS_CAPSULE_JELLY_VP })
     }
-    .width(fnHdsDockOverlayWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP))
-    .height(fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP))
-    .barHeight(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-    .barOverlap(true)
-    .vertical(false)
-    .barPosition(BarPosition.End)
-    .barWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-    // @SuppressWarnings compatibility
-    .barFloatingStyle(fnHdsDockTabsFloatingStyle(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP))
-    .scrollable(false)
-    .divider({ mode: DividerMode.NONE })
-    .backgroundColor(Color.Transparent)
-    .barBackgroundColor(Color.Transparent)
+    .width('100%')
+    .height('100%')
+    .clip(false)
     .hitTestBehavior(HitTestMode.Transparent)
-    .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
-      return false;
-    })
-    .onTabBarClick((_index: number): void => {
-      this.toggleGalleryViewGranularity();
-    })
   }
 
   @Builder
@@ -1522,61 +1519,67 @@ struct Home {
   }
 
   @Builder
-  private floatingDockSideButton() {
-    if (this.canUseHds()) {
-      this.floatingDockSideButtonHds()
-    } else {
-      this.floatingDockSideButtonFallback()
-    }
-  }
-
-  @Builder
-  private floatingDockSideButtonSpacer() {
-    Blank()
-      .width(this.canUseHds()
-        ? fnHdsDockOverlayWidth(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-        : FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-      .height(this.canUseHds()
-        ? fnHdsDockOverlayHeight(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-        : FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-  }
-
-  @Builder
   private renderBottomDock() {
-    if (this.gallerySelectionDockActive) {
-      Row() {
-        if (this.canUseHds()) {
+    if (this.canUseHds()) {
+      Stack() {
+        if (this.gallerySelectionDockActive) {
           this.floatingDockSelectionHdsTabs()
         } else {
+          this.floatingDockHdsTabs()
+        }
+        if (this.shouldShowGalleryDockSideButtons()) {
+          this.floatingDockGranularityOverlay()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
+    } else if (this.gallerySelectionDockActive) {
+      Column() {
+        Blank()
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+        Row() {
           this.floatingDockSelectionFallbackTabs()
         }
+        .width('100%')
+        .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: this.bottomDockBottomGap() })
       }
       .width('100%')
-      .padding({ left: this.dockRowSidePadding(), right: this.dockRowSidePadding() })
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-      .margin({ bottom: this.bottomDockBottomGap() })
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
     } else {
-      Row({ space: this.dockRowGap() }) {
-        this.floatingDockSideButtonSpacer()
+      Column() {
+        Blank()
+          .layoutWeight(1)
+          .hitTestBehavior(HitTestMode.None)
+        Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+          Blank()
+            .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
 
-        if (this.canUseHds()) {
-          this.floatingDockHdsTabs()
-        } else {
           this.floatingDockFallbackTabs()
-        }
 
-        if (this.shouldShowGalleryDockSideButtons()) {
-          this.floatingDockSideButton()
-        } else {
-          this.floatingDockSideButtonSpacer()
+          if (this.shouldShowGalleryDockSideButtons()) {
+            this.floatingDockSideButtonFallback()
+          } else {
+            Blank()
+              .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+              .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          }
         }
+        .width('100%')
+        .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: this.bottomDockBottomGap() })
       }
       .width('100%')
-      .padding({ left: this.dockRowSidePadding(), right: this.dockRowSidePadding() })
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-      .margin({ bottom: this.bottomDockBottomGap() })
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
     }
   }
 
@@ -1686,15 +1689,7 @@ struct Home {
         .height('100%')
 
         if (this.shouldShowBottomDock()) {
-          Column() {
-            Blank()
-              .layoutWeight(1)
-              .hitTestBehavior(HitTestMode.None)
-            this.renderBottomDock()
-          }
-          .width('100%')
-          .height('100%')
-          .hitTestBehavior(HitTestMode.Transparent)
+          this.renderBottomDock()
         }
       }
     }

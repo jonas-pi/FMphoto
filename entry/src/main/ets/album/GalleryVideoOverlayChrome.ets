@@ -3,15 +3,14 @@
  * 倍速 / 清晰度走系统 bindMenu、bindContextMenu，不要自绘半模态。
  * 视频手势与控件分层，避免父级单击/长按抢走菜单。
  */
-import { DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   fnHdsBindContextMenuOptions,
   fnHdsBindMenuOptions
 } from '../common/FnHdsOverlay';
+import { FnHdsOverlayCapsule } from '../common/FnHdsOverlayCapsule';
 import {
   fnHdsCapsuleOverlayHeight,
-  fnHdsCapsuleOverlayWidth,
-  fnHdsCapsuleTabsFloatingStyle
+  fnHdsCapsuleOverlayWidth
 } from '../common/FnUiCommon';
 import {
   FN_SYSTEM_LEFT_INSET_VP_KEY,
@@ -27,80 +26,6 @@ const OVERLAY_PLAY_SIZE_VP: number = 72;
 const OVERLAY_SIDE_PAD_VP: number = 16;
 /** 横屏左右边距约 70vp，躲开挖孔摄像头 */
 const OVERLAY_LANDSCAPE_SIDE_EXTRA_VP: number = 54;
-
-@Component
-struct GalleryOverlayHdsCapsule {
-  @Prop widthValue: number = OVERLAY_LANDSCAPE_SIZE_VP;
-  @Prop heightValue: number = OVERLAY_PILL_HEIGHT_VP;
-  @Prop radiusValue: number = OVERLAY_PILL_HEIGHT_VP / 2;
-  @Prop blockHit: boolean = false;
-  @BuilderParam label: () => void;
-  onBarClick: () => void = () => {};
-  enableBarClick: boolean = false;
-
-  @Builder
-  private chromeBar() {
-    Row() {
-      this.label()
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  private overlayWidth(): number {
-    return fnHdsCapsuleOverlayWidth(this.widthValue);
-  }
-
-  private overlayHeight(): number {
-    return fnHdsCapsuleOverlayHeight(this.heightValue);
-  }
-
-  build() {
-    Stack({ alignContent: Alignment.Center }) {
-      HdsTabs({ index: 0 }) {
-        TabContent() {
-          Column()
-            .width('100%')
-            .height('100%')
-        }
-        .tabBar(this.chromeBar)
-      }
-      .width(this.overlayWidth())
-      .height(this.overlayHeight())
-      .barHeight(this.heightValue)
-      .barOverlap(true)
-      .vertical(false)
-      .barPosition(BarPosition.End)
-      .barWidth(this.widthValue)
-      // @SuppressWarnings compatibility
-      .barFloatingStyle(fnHdsCapsuleTabsFloatingStyle(this.widthValue))
-      .scrollable(false)
-      .divider({ mode: DividerMode.NONE })
-      .backgroundColor(Color.Transparent)
-      .barBackgroundColor(Color.Transparent)
-      .hitTestBehavior(HitTestMode.None)
-      .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
-        return false;
-      })
-
-      // 点击层与栏身同大、叠在栏上；文字已在 tabBar 里居中，这里不再画一遍
-      Row()
-        .width(this.widthValue)
-        .height(this.heightValue)
-        .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Default)
-        .onClick((): void => {
-          if (this.enableBarClick) {
-            this.onBarClick();
-          }
-        })
-    }
-    .width(this.overlayWidth())
-    .height(this.overlayHeight())
-    .hitTestBehavior(this.blockHit ? HitTestMode.None : HitTestMode.Transparent)
-  }
-}
 
 @Component
 export struct GalleryVideoOverlayChrome {
@@ -136,7 +61,8 @@ export struct GalleryVideoOverlayChrome {
   @State private barW: number = 1;
   @State private overlayW: number = 360;
   @State private overlayH: number = 780;
-  /** 官方 bindContextMenu(isShown)：长按由按钮自己触发，避免被全屏按住倍速抢走 */
+  /** 官方 bindMenu(isShown) / bindContextMenu(isShown)：由栏身点击/长按驱动，避免菜单绑在被吃掉的外层 Stack 上 */
+  @State private speedMenuVisible: boolean = false;
   @State private qualityMenuVisible: boolean = false;
   @StorageProp(FN_SYSTEM_LEFT_INSET_VP_KEY) private systemLeftInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_RIGHT_INSET_VP_KEY) private systemRightInsetVp: number = 0;
@@ -211,17 +137,6 @@ export struct GalleryVideoOverlayChrome {
   }
 
   @Builder
-  private speedLabel() {
-    Text(this.speedText)
-      .fontSize(13)
-      .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.icon_primary'))
-      .textAlign(TextAlign.Center)
-      .width('100%')
-      .height('100%')
-  }
-
-  @Builder
   private timeLabel() {
     Text(`${this.currentText} | ${this.durationText}`)
       .fontSize(12)
@@ -230,24 +145,6 @@ export struct GalleryVideoOverlayChrome {
       .textAlign(TextAlign.Center)
       .maxLines(1)
       .width('100%')
-  }
-
-  @Builder
-  private landscapeLabel() {
-    SymbolGlyph(this.fullscreenSymbol())
-      .fontSize(18)
-      .fontColor([$r('app.color.icon_primary')])
-      .width(18)
-      .height(18)
-  }
-
-  @Builder
-  private playLabel() {
-    SymbolGlyph($r('sys.symbol.play_fill'))
-      .fontSize(30)
-      .fontColor([$r('app.color.icon_primary')])
-      .width(30)
-      .height(30)
   }
 
   @Builder
@@ -273,7 +170,7 @@ export struct GalleryVideoOverlayChrome {
           if (fingers !== undefined && fingers.length > 0 && this.visible) {
             // 底栏控件区（倍速/进度）不走全屏按住倍速，把长按留给清晰度菜单
             const y = fingers[0].localY;
-            if (y > this.overlayH - fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP) - 80 - this.bottomPadding) {
+            if (y > this.overlayH - OVERLAY_PILL_HEIGHT_VP - 80 - this.bottomPadding) {
               return GestureJudgeResult.REJECT;
             }
           }
@@ -336,16 +233,14 @@ export struct GalleryVideoOverlayChrome {
 
       if (this.visible && this.showCenterPlay) {
         Stack({ alignContent: Alignment.Center }) {
-          GalleryOverlayHdsCapsule({
-            widthValue: OVERLAY_PLAY_SIZE_VP,
-            heightValue: OVERLAY_PLAY_SIZE_VP,
-            radiusValue: OVERLAY_PLAY_SIZE_VP / 2,
-            enableBarClick: true,
+          FnHdsOverlayCapsule({
+            barWidth: OVERLAY_PLAY_SIZE_VP,
+            barHeight: OVERLAY_PLAY_SIZE_VP,
+            useSymbol: true,
+            symbol: $r('sys.symbol.play_fill'),
+            fontSizeValue: 30,
             onBarClick: (): void => {
               this.onPlay();
-            },
-            label: (): void => {
-              this.playLabel();
             }
           })
         }
@@ -356,36 +251,35 @@ export struct GalleryVideoOverlayChrome {
 
       if (this.visible) {
         Stack({ alignContent: Alignment.Bottom }) {
-          Column({ space: 10 }) {
+          Column({ space: 16 }) {
           Row() {
             Stack() {
-              GalleryOverlayHdsCapsule({
-                widthValue: OVERLAY_SPEED_WIDTH_VP,
-                heightValue: OVERLAY_PILL_HEIGHT_VP,
-                radiusValue: OVERLAY_PILL_HEIGHT_VP / 2,
-                blockHit: true,
-                enableBarClick: false,
-                label: (): void => {
-                  this.speedLabel();
+              FnHdsOverlayCapsule({
+                barWidth: OVERLAY_SPEED_WIDTH_VP,
+                barHeight: OVERLAY_PILL_HEIGHT_VP,
+                text: this.speedText,
+                fontSizeValue: 13,
+                enableLongPress: true,
+                onBarClick: (): void => {
+                  this.onInteract();
+                  this.speedMenuVisible = true;
+                },
+                onBarLongPress: (): void => {
+                  this.onInteract();
+                  playGalleryLongPressMenuHaptic();
+                  this.qualityMenuVisible = true;
                 }
               })
             }
             .width(fnHdsCapsuleOverlayWidth(OVERLAY_SPEED_WIDTH_VP))
             .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
-            .backgroundColor(Color.Transparent)
+            .clip(false)
             .draggable(false)
-            .hitTestBehavior(HitTestMode.Default)
-            .priorityGesture(
-              LongPressGesture({ repeat: false })
-                .onAction((): void => {
-                  this.onInteract();
-                  playGalleryLongPressMenuHaptic();
-                  this.qualityMenuVisible = true;
-                })
-            )
-            .bindMenu(this.speedMenu, fnHdsBindMenuOptions(
+            .bindMenu(this.speedMenuVisible, this.speedMenu, fnHdsBindMenuOptions(
               Placement.TopLeft,
-              (): void => {},
+              (): void => {
+                this.speedMenuVisible = false;
+              },
               (): void => {
                 this.onInteract();
               }
@@ -404,23 +298,22 @@ export struct GalleryVideoOverlayChrome {
               .layoutWeight(1)
               .hitTestBehavior(HitTestMode.None)
 
-            GalleryOverlayHdsCapsule({
-              widthValue: OVERLAY_LANDSCAPE_SIZE_VP,
-              heightValue: OVERLAY_LANDSCAPE_SIZE_VP,
-              radiusValue: OVERLAY_LANDSCAPE_SIZE_VP / 2,
-              enableBarClick: true,
+            FnHdsOverlayCapsule({
+              barWidth: OVERLAY_LANDSCAPE_SIZE_VP,
+              barHeight: OVERLAY_LANDSCAPE_SIZE_VP,
+              useSymbol: true,
+              symbol: this.fullscreenSymbol(),
+              fontSizeValue: 18,
               onBarClick: (): void => {
                 this.onInteract();
                 this.onFullscreen();
-              },
-              label: (): void => {
-                this.landscapeLabel();
               }
             })
           }
           .width('100%')
           .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
           .alignItems(VerticalAlign.Center)
+          .clip(false)
 
           Column({ space: 4 }) {
             this.timeLabel()

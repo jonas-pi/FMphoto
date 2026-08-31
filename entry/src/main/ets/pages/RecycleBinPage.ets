@@ -894,22 +894,24 @@ struct RecycleBinPage {
               .justifyContent(FlexAlign.Center)
               .padding({ top: 8, bottom: this.selectionMode && this.selectedCount > 0 ? 8 : 0 })
             }
-
-            if (this.selectionMode && this.selectedCount > 0) {
-              RecycleBinBatchBar({
-                downloading: this.rbBatchDownloading,
-                restoring: this.restoring,
-                onDownload: (): void => {
-                  void this.confirmBatchDownloadRecycle();
-                },
-                onRestore: (): void => {
-                  void this.confirmRestore();
-                }
-              })
-            }
           }
           .width('100%')
           .height('100%')
+
+          if (this.selectionMode && this.selectedCount > 0) {
+            RecycleBinBatchBar({
+              downloading: this.rbBatchDownloading,
+              restoring: this.restoring,
+              onDownload: (): void => {
+                void this.confirmBatchDownloadRecycle();
+              },
+              onRestore: (): void => {
+                void this.confirmRestore();
+              }
+            })
+              .width('100%')
+              .height('100%')
+          }
 
           if (this.restoring || this.rbBatchDownloading) {
             FnFullLoadingMask({

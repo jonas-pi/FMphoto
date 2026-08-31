@@ -119,59 +119,6 @@ export const FN_BOTTOM_DOCK_INNER_PADDING_H_VP: number = 5;
 export const FN_BOTTOM_DOCK_INNER_SPACE_VP: number = 6;
 export const FN_BOTTOM_DOCK_ITEM_HEIGHT_VP: number = FN_BOTTOM_DOCK_CENTER_HEIGHT_VP - 8;
 export const FN_BOTTOM_DOCK_BASE_GAP_VP: number = 16;
-/**
- * 官方 HdsTabs 是整页高度，页签只用 barHeight；果冻跟手膨胀会超出栏身。
- * overlay 比栏身四周更大：下方多留、上方少留、左右同样留空。
- * barSideMargin / barBottomMargin 把胶囊从容器边缘抬开，果冻才有胀的空间。
- */
-export const FN_BOTTOM_DOCK_JELLY_TOP_VP: number = 10;
-export const FN_BOTTOM_DOCK_JELLY_BOTTOM_VP: number = 28;
-export const FN_BOTTOM_DOCK_JELLY_SIDE_VP: number = 10;
-
-export function fnHdsDockOverlayHeight(barHeight: number): number {
-  return barHeight + FN_BOTTOM_DOCK_JELLY_TOP_VP + FN_BOTTOM_DOCK_JELLY_BOTTOM_VP;
-}
-
-export function fnHdsDockOverlayWidth(barWidth: number): number {
-  return barWidth + FN_BOTTOM_DOCK_JELLY_SIDE_VP * 2;
-}
-
-/** Hds overlay 已含左右果冻边，Row 侧边距相应收回，避免把栏挤窄。 */
-export function fnHdsDockRowSidePadding(): number {
-  return Math.max(0, FN_BOTTOM_DOCK_SIDE_PADDING_VP - FN_BOTTOM_DOCK_JELLY_SIDE_VP);
-}
-
-/** 视频浮层等居中胶囊：四周等距留果冻，栏身才能和文字/图标对齐。 */
-export const FN_HDS_CAPSULE_JELLY_VP: number = 12;
-
-export function fnHdsCapsuleOverlayWidth(barWidth: number): number {
-  return barWidth + FN_HDS_CAPSULE_JELLY_VP * 2;
-}
-
-export function fnHdsCapsuleOverlayHeight(barHeight: number): number {
-  return barHeight + FN_HDS_CAPSULE_JELLY_VP * 2;
-}
-
-export function fnHdsCapsuleTabsFloatingStyle(barWidth: Length): HdsTabsFloatingStyle {
-  return {
-    barWidth: {
-      smallWidth: barWidth,
-      mediumWidth: barWidth,
-      largeWidth: barWidth
-    },
-    barSideMargin: FN_HDS_CAPSULE_JELLY_VP,
-    barBottomMargin: FN_HDS_CAPSULE_JELLY_VP,
-    // @SuppressWarnings compatibility
-    adaptToHandedness: false,
-    gradientMask: {
-      maskColor: '#00000000',
-      maskHeight: 1
-    },
-    // @SuppressWarnings compatibility
-    systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
-  };
-}
-
 /** 顶栏按钮开启态（对齐 sys.color.ohos_id_color_activated 语义）背景叠色 */
 const FN_FLOATING_BUTTON_ACTIVE_LIGHT_COLOR: string = '#334A8BFF';
 const FN_FLOATING_BUTTON_ACTIVE_BORDER_COLOR: string = '#664A8BFF';
@@ -268,16 +215,34 @@ export function fnHdsImmersiveTabsFloatingStyle(
   };
 }
 
-/** 底栏 overlay：胶囊四周留果冻空间。不设 lightColor，避免整块 overlay 被铺成深色矩形。 */
-export function fnHdsDockTabsFloatingStyle(barWidth: Length): HdsTabsFloatingStyle {
+/** 离中胶囊给果冻膨胀留的四周余量。容器必须比栏身大，且不能 clip。 */
+export const FN_HDS_CAPSULE_JELLY_VP: number = 12;
+
+export function fnHdsCapsuleOverlayWidth(barWidth: number): number {
+  return barWidth + FN_HDS_CAPSULE_JELLY_VP * 2;
+}
+
+export function fnHdsCapsuleOverlayHeight(barHeight: number): number {
+  return barHeight + FN_HDS_CAPSULE_JELLY_VP * 2;
+}
+
+/**
+ * 官方悬浮页签：HdsTabs 必须铺满宿主（width/height 100%），栏身由 barWidth + barBottomMargin 定位。
+ * 缩成 54vp 小盒子时，systemMaterialEffect 会铺成矩形阴影。
+ */
+export function fnHdsDockTabsFloatingStyle(
+  barWidth: Length,
+  barBottomMargin: number,
+  barSideMargin: number = 0
+): HdsTabsFloatingStyle {
   return {
     barWidth: {
       smallWidth: barWidth,
       mediumWidth: barWidth,
       largeWidth: barWidth
     },
-    barSideMargin: FN_BOTTOM_DOCK_JELLY_SIDE_VP,
-    barBottomMargin: FN_BOTTOM_DOCK_JELLY_BOTTOM_VP,
+    barSideMargin: barSideMargin,
+    barBottomMargin: barBottomMargin,
     // @SuppressWarnings compatibility
     adaptToHandedness: false,
     gradientMask: {
