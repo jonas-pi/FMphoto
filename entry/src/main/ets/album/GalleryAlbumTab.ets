@@ -111,6 +111,7 @@ import {
   smartCategoryCover,
   smartCategoryName,
 } from './galleryAlbumTab/GalleryAlbumModeData';
+import { SmartCategoryCountStore } from './SmartCategoryCountStore';
 import {
   galleryAlbumCountGalleryListedItems,
   galleryAlbumCollectListedTimelineItems,
@@ -2863,7 +2864,10 @@ export struct GalleryAlbumTab {
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           getCategoryName: (item: SmartCategoryItem): string => smartCategoryName(item),
           getCategoryCover: (item: SmartCategoryItem): string => smartCategoryCover(item),
-          getCategoryCount: (item: SmartCategoryItem): number => smartCategoryCount(item),
+          getCategoryCount: (item: SmartCategoryItem): number => {
+            const cached = SmartCategoryCountStore.get(smartCategoryName(item));
+            return cached >= 0 ? cached : smartCategoryCount(item);
+          },
           onRunSearch: (keyword: string): void => {
             this.searchQuery = keyword;
             this.searchSeed = keyword;

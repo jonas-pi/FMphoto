@@ -97,6 +97,34 @@ export async function loadSmartCategoryGalleryItems(
   return { items: mapped, errorMessage: '' };
 }
 
+/** 封面计数回调：按分类名回写，返回 false 则中止后续刷新。 */
+export type SmartCategoryCountSink = (name: string, count: number) => boolean;
+
+/** 用与内页相同的 magic-search 条数刷新封面计数。 */
+export async function enrichSmartCategoryCountsFromSearch(
+  client: FnHttpClient,
+  items: SmartCategoryItem[],
+  onCount: SmartCategoryCountSink,
+  timeoutMs: number = 12000
+): Promise<void> {
+  const names: string[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const name = smartCategoryName(items[i]);
+    if (name.length > 0) {
+      names.push(name);
+    }
+  }
+  for (let i = 0; i < names.length; i++) {
+    const mapped = await loadSmartCategoryGalleryItems(client, names[i], timeoutMs);
+    if (mapped.errorMessage.length > 0) {
+      continue;
+    }
+    if (!onCount(names[i], mapped.items.length)) {
+      return;
+    }
+  }
+}
+
 export function smartCategoryCoverPatchFromItems(
   customId: string,
   items: GalleryListItem[]

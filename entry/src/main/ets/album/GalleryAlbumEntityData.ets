@@ -240,9 +240,7 @@ export function smartCategoryCount(item: SmartCategoryItem): number {
     item.total,
     item.item_count,
     item.photoCount,
-    item.photo_count,
-    item.num,
-    item.size
+    item.photo_count
   ];
   for (let i = 0; i < directVals.length; i++) {
     const v = directVals[i];

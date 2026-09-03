@@ -415,7 +415,7 @@ export function smartCategoryWithCover(
     id: item.id,
     name: item.name,
     count: count,
-    total: item.total,
+    total: count,
     itemCount: count,
     poster: item.poster,
     customId: item.customId
@@ -426,6 +426,32 @@ export function smartCategoryWithCover(
     next.cover = item.cover;
   }
   return next;
+}
+
+/** 按分类名回写封面数量，与点进分类后的实际媒体条数对齐。 */
+export function smartCategoryPatchCountByName(
+  items: SmartCategoryItem[],
+  name: string,
+  count: number
+): SmartCategoryItem[] {
+  const keyword = name.trim();
+  const n = Math.max(0, Math.floor(count));
+  if (keyword.length === 0 || items.length === 0) {
+    return items;
+  }
+  let changed = false;
+  const out: SmartCategoryItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (smartCategoryName(item) !== keyword || smartCategoryCount(item) === n) {
+      out.push(item);
+      continue;
+    }
+    changed = true;
+    const cover = item.cover !== undefined ? item.cover : '';
+    out.push(smartCategoryWithCover(item, cover, n));
+  }
+  return changed ? out : items;
 }
 
 export interface SmartCategoryCoverPatch {

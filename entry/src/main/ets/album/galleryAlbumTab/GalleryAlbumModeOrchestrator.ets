@@ -39,7 +39,9 @@ import {
   loadRecentAddedItems,
   loadSmartCategories
 } from './GalleryAlbumModeLoaders';
-import { fillAndPersistCustomSmartCategoryCovers } from '../SmartCategoryMagicSearch';
+import { fillAndPersistCustomSmartCategoryCovers, enrichSmartCategoryCountsFromSearch } from '../SmartCategoryMagicSearch';
+import { smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
+import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
 import {
   categoryTitle,
   personId,
@@ -470,6 +472,27 @@ export async function galleryAlbumLoadSmartCategories(host: GalleryAlbumModeOrch
       return;
     }
     host.smartCustomItems = filled;
+  })();
+  void (async (): Promise<void> => {
+    await enrichSmartCategoryCountsFromSearch(client, result.sceneItems, (name: string, count: number): boolean => {
+      if (!host.inSmartCategoryMode) {
+        return false;
+      }
+      SmartCategoryCountStore.put(name, count);
+      host.smartSceneItems = smartCategoryPatchCountByName(host.smartSceneItems, name, count);
+      return true;
+    });
+    if (!host.inSmartCategoryMode) {
+      return;
+    }
+    await enrichSmartCategoryCountsFromSearch(client, result.infoItems, (name: string, count: number): boolean => {
+      if (!host.inSmartCategoryMode) {
+        return false;
+      }
+      SmartCategoryCountStore.put(name, count);
+      host.smartInfoItems = smartCategoryPatchCountByName(host.smartInfoItems, name, count);
+      return true;
+    });
   })();
 }
 

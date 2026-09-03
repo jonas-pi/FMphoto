@@ -9,6 +9,7 @@ import {
   officialSizeMtimeSetHas
 } from '../main/ets/album/GalleryAutoSyncOfficialFingerprint';
 import { smartCategoryCount } from '../main/ets/album/GalleryAlbumEntityData';
+import { smartCategoryPatchCountByName } from '../main/ets/album/SmartCategoryLayoutPreferences';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -109,6 +110,16 @@ export default function localUnitTest() {
       expect(smartCategoryCount({ name: '跳舞', itemCount: 106 })).assertEqual(106);
       expect(smartCategoryCount({ name: '证件', count: 12 })).assertEqual(12);
       expect(smartCategoryCount({ name: '空' })).assertEqual(0);
+    });
+
+    it('smartCategoryPatchCountByName_updates_matching_item', 0, () => {
+      const patched = smartCategoryPatchCountByName(
+        [{ name: '猫', itemCount: 1 }, { name: '狗', itemCount: 8 }],
+        '猫',
+        276
+      );
+      expect(smartCategoryCount(patched[0])).assertEqual(276);
+      expect(smartCategoryCount(patched[1])).assertEqual(8);
     });
 
     it('fnWebViewBaseUrl_preserves_domain_https_port', 0, () => {

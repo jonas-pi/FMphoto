@@ -2,10 +2,17 @@ import { common } from '@kit.AbilityKit';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { SmartCategoryItem } from '../model/FnApiTypes';
-import { loadSmartCategoryGalleryItems, fetchMissingCustomSmartCategoryCovers, smartCategoryCoverPatchFromItems } from '../album/SmartCategoryMagicSearch';
+import {
+  loadSmartCategoryGalleryItems,
+  fetchMissingCustomSmartCategoryCovers,
+  smartCategoryCoverPatchFromItems,
+  enrichSmartCategoryCountsFromSearch
+} from '../album/SmartCategoryMagicSearch';
 import { loadSmartCategories } from '../album/galleryAlbumTab/GalleryAlbumModeLoaders';
+import { SmartCategoryCountStore } from '../album/SmartCategoryCountStore';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { smartCategoryCover, smartCategoryCount, smartCategoryName } from '../album/GalleryAlbumEntityData';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   smartCategoryApplyCoverPatches,
   smartCategoryCurrentAccount,
@@ -15,18 +22,23 @@ import {
   smartCategoryMonogram,
   smartCategoryMoveItems,
   smartCategoryNewCustomId,
+  smartCategoryPatchCountByName,
   smartCategorySaveLayout,
   smartCategoryValidateNewKeyword,
   SMART_CATEGORY_KEYWORD_MAX_LEN
 } from '../album/SmartCategoryLayoutPreferences';
-import { FnFullLoadingMask, FnInlineLoading, FnPrimaryButton, FnStateText, FnTopBar } from '../common/FnUiCommon';
-import { fnHdsFitContentSheetOptions } from '../common/FnHdsOverlay';
+
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { FnFullLoadingMask, FnInlineLoading, FnPrimaryButton, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import { fnHdsFitContentSheetOptions } from '../common/FnHdsOverlay';
+
+const SMART_CAT_LOG_DOMAIN: number = 0xFF00;
+const SMART_CAT_LOG_TAG: string = 'SmartCategory';
 
 @Entry
 @Component
@@ -42,9 +54,11 @@ struct SmartCategoryPage {
   @State private addSheetVisible: boolean = false;
   @State private addKeywordDraft: string = '';
   @State private thumbLoadingPaused: boolean = false;
+  @State private countVersion: number = 0;
   private thumbResumeTimer: number = -1;
   private persistSeq: number = 0;
   private coverEnrichGen: number = 0;
+  private countEnrichGen: number = 0;
 
   onBackPress(): boolean {
     if (this.addSheetVisible) {
@@ -68,13 +82,21 @@ struct SmartCategoryPage {
     void this.loadData();
   }
 
+  onPageShow(): void {
+    this.opening = false;
+    this.countVersion = SmartCategoryCountStore.version;
+  }
+
   aboutToDisappear(): void {
+    if (!this.opening) {
+      this.countEnrichGen++;
+      const client = AppSession.getClient();
+      if (client !== null) {
+        client.cancelPendingRequests();
+      }
+    }
     this.clearThumbResumeTimer();
     this.recycleThumbCache(true);
-    const client = AppSession.getClient();
-    if (client !== null) {
-      client.cancelPendingRequests();
-    }
   }
 
   private totalSmartItemCount(): number {
@@ -135,7 +157,9 @@ struct SmartCategoryPage {
   }
 
   private countLabelOf(item: SmartCategoryItem): string {
-    const n = smartCategoryCount(item);
+    const name = this.nameOf(item);
+    const cached = SmartCategoryCountStore.get(name);
+    const n = cached >= 0 ? cached : smartCategoryCount(item);
     if (n > 0) {
       return `${n} 项`;
     }
@@ -144,15 +168,36 @@ struct SmartCategoryPage {
 
   private smartCategoryGridKey(item: SmartCategoryItem, index: number, prefix: string): string {
     const customId = smartCategoryCustomIdOf(item);
+    const countPart = this.countLabelOf(item);
     if (customId.length > 0) {
-      return `${prefix}_c_${customId}_${this.coverOf(item)}`;
+      return `${prefix}_c_${customId}_${this.coverOf(item)}_${countPart}_${this.countVersion}`;
     }
-    return `${prefix}_${index}_${this.nameOf(item)}_${this.coverOf(item)}`;
+    return `${prefix}_${index}_${this.nameOf(item)}_${this.coverOf(item)}_${countPart}_${this.countVersion}`;
+  }
+
+  private rememberSearchCount(keyword: string, count: number): void {
+    this.countVersion = SmartCategoryCountStore.put(keyword, count);
+    this.sceneItems = smartCategoryPatchCountByName(this.sceneItems, keyword, count);
+    this.infoItems = smartCategoryPatchCountByName(this.infoItems, keyword, count);
+    this.customItems = smartCategoryPatchCountByName(this.customItems, keyword, count);
+  }
+
+  private applyCachedCounts(items: SmartCategoryItem[]): SmartCategoryItem[] {
+    let current = items;
+    for (let i = 0; i < items.length; i++) {
+      const name = smartCategoryName(items[i]);
+      const cached = SmartCategoryCountStore.get(name);
+      if (cached >= 0) {
+        current = smartCategoryPatchCountByName(current, name, cached);
+      }
+    }
+    return current;
   }
 
   private async loadData(): Promise<void> {
     this.loading = true;
     this.error = '';
+    this.countEnrichGen++;
     this.sceneItems = [];
     this.infoItems = [];
     this.customItems = [];
@@ -164,11 +209,13 @@ struct SmartCategoryPage {
     }
     try {
       const result = await loadSmartCategories(client, this.hostContext());
-      this.sceneItems = result.sceneItems;
-      this.infoItems = result.infoItems;
-      this.customItems = result.customItems;
+      this.sceneItems = this.applyCachedCounts(result.sceneItems);
+      this.infoItems = this.applyCachedCounts(result.infoItems);
+      this.customItems = this.applyCachedCounts(result.customItems);
       this.error = result.error;
+      this.countVersion = SmartCategoryCountStore.version;
       void this.enrichCustomCovers();
+      void this.enrichSystemCounts();
     } catch (e) {
       this.error = String(e) || '智能分类加载异常';
     }
@@ -206,6 +253,34 @@ struct SmartCategoryPage {
     }
     this.customItems = smartCategoryApplyCoverPatches(this.customItems, patches);
     await this.persistLayout();
+  }
+
+  /** 系统分类封面数量与点进后的 magic-search 条数对齐。 */
+  private async enrichSystemCounts(): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      return;
+    }
+    const gen = ++this.countEnrichGen;
+    await enrichSmartCategoryCountsFromSearch(client, this.sceneItems, (name: string, count: number): boolean => {
+      if (gen !== this.countEnrichGen) {
+        return false;
+      }
+      hilog.info(SMART_CAT_LOG_DOMAIN, SMART_CAT_LOG_TAG, 'scene count %{public}s -> %{public}d', name, count);
+      this.rememberSearchCount(name, count);
+      return true;
+    });
+    if (gen !== this.countEnrichGen) {
+      return;
+    }
+    await enrichSmartCategoryCountsFromSearch(client, this.infoItems, (name: string, count: number): boolean => {
+      if (gen !== this.countEnrichGen) {
+        return false;
+      }
+      hilog.info(SMART_CAT_LOG_DOMAIN, SMART_CAT_LOG_TAG, 'info count %{public}s -> %{public}d', name, count);
+      this.rememberSearchCount(name, count);
+      return true;
+    });
   }
 
   private handleBack(): void {
@@ -322,6 +397,7 @@ struct SmartCategoryPage {
         this.toast('该分类暂无可预览媒体');
         return;
       }
+      this.rememberSearchCount(keyword, mapped.items.length);
       const ok = await CategoryGalleryNavStore.open(
         this.baseUrl,
         keyword,
@@ -376,7 +452,7 @@ struct SmartCategoryPage {
   }
 
   @Builder
-  private categoryGrid(list: SmartCategoryItem[], keyPrefix: string) {
+  private categoryGrid(list: SmartCategoryItem[], keyPrefix: string, countVersion: number) {
     Grid() {
       ForEach(list, (item: SmartCategoryItem, idx: number) => {
         GridItem() {
@@ -403,7 +479,7 @@ struct SmartCategoryPage {
             void this.openSmartCategory(item);
           })
         }
-      }, (item: SmartCategoryItem, i: number) => this.smartCategoryGridKey(item, i, keyPrefix))
+      }, (item: SmartCategoryItem, i: number) => `${this.smartCategoryGridKey(item, i, keyPrefix)}_v${countVersion}`)
     }
     .columnsTemplate('1fr 1fr 1fr')
     .columnsGap(10)
@@ -422,7 +498,7 @@ struct SmartCategoryPage {
         .fontColor($r('app.color.text_primary'))
         .width('100%')
         .padding({ left: 14, right: 14, top: 8, bottom: 4 })
-      this.categoryGrid(list, keyPrefix)
+      this.categoryGrid(list, keyPrefix, this.countVersion)
     }
   }
 

@@ -13,6 +13,7 @@ export struct GalleryAlbumSmartCategoryModeView {
   @Prop sceneItems: SmartCategoryItem[] = [];
   @Prop infoItems: SmartCategoryItem[] = [];
   @Prop customItems: SmartCategoryItem[] = [];
+  @Prop countVersion: number = 0;
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
   @State private smartThumbLoadingPaused: boolean = false;
@@ -114,7 +115,7 @@ export struct GalleryAlbumSmartCategoryModeView {
             this.onRunSearch(this.getCategoryName(item));
           })
         }
-      }, (item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}_${this.getCategoryCover(item)}`)
+      }, (item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}_${this.getCategoryCover(item)}_${this.getCategoryCount(item)}_${this.countVersion}`)
     }
     .columnsTemplate('1fr 1fr 1fr')
     .columnsGap(8)
