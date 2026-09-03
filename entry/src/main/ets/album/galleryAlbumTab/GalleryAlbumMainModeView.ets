@@ -17,6 +17,7 @@ import {
 import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
 import { gallerySharedTransitionId } from '../GallerySharedTransition';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
+import { gallerySlideAutoScrollOnListDidScroll } from '../GallerySlideAutoScroll';
 import {
   GALLERY_TIMELINE_REFRESH_PULL_RATIO,
   galleryTimelineRefreshTriggerOffsetVp
@@ -540,6 +541,7 @@ export struct GalleryAlbumMainModeView {
   }
 
   private handleListDidScroll(offset: number, scrollState: ScrollState): void {
+    gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
     if (!this.isGranularityPinchBlockingScroll() && this.pinchCoverPix === undefined) {
       this.maybeDropThumbThroughputForPressure(scrollState);
     }
@@ -722,7 +724,8 @@ export struct GalleryAlbumMainModeView {
         isVideo: isVideoItem(item),
         isGif: isGifItem(item),
         isLive: isLivePhotoItem(item),
-        paused: this.timelineSidebarDragging || (this.isDraggingOrFling && this.pinchCoverPix === undefined),
+        paused: this.timelineSidebarDragging ||
+          (this.isDraggingOrFling && this.pinchCoverPix === undefined),
         fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY && this.pinchCoverPix === undefined,
         cacheIdentity: thumbIdentityOfItem(item),
         cacheRank: thumbDensityCacheRank(this.currentThumbDensity()),

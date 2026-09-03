@@ -399,8 +399,8 @@ function categoryGalleryBindSlideAutoScroll(host: CategoryGallerySelectionHost):
   cgSlideAutoScrollSession.shiftHitBoundsY = (dyPx: number): void => {
     categoryGalleryShiftHitBoundsY(host, dyPx);
   };
-  cgSlideAutoScrollSession.followPointer = (xPx: number, yPx: number): void => {
-    categoryGalleryFollowSlidePointer(host, xPx, yPx);
+  cgSlideAutoScrollSession.followPointer = (xPx: number, yPx: number, cacheOnly: boolean): void => {
+    categoryGalleryFollowSlidePointer(host, xPx, yPx, cacheOnly);
   };
   return cgSlideAutoScrollSession;
 }
@@ -408,12 +408,15 @@ function categoryGalleryBindSlideAutoScroll(host: CategoryGallerySelectionHost):
 function categoryGalleryFollowSlidePointer(
   host: CategoryGallerySelectionHost,
   xPx: number,
-  yPx: number
+  yPx: number,
+  cacheOnly: boolean = false
 ): void {
   if (!host.cgSlideGestureActive) {
     return;
   }
-  let hitFlat = categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
+  let hitFlat = cacheOnly
+    ? categoryGalleryPickFlatUnderPoint(host, xPx, yPx)
+    : categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
   if (hitFlat < 0) {
     hitFlat = pickSlideEndFlatFromRowBand(
       yPx,
@@ -461,8 +464,8 @@ export function categoryGalleryOnSlidePanUpdate(host: CategoryGallerySelectionHo
   if (pt === null) {
     return;
   }
-  categoryGalleryFollowSlidePointer(host, pt.x, pt.y);
   categoryGalleryUpdateSlideAutoScroll(host, pt.x, pt.y);
+  categoryGalleryFollowSlidePointer(host, pt.x, pt.y);
 }
 
 export function categoryGalleryOnSlideTouchMoveWindow(
@@ -470,8 +473,8 @@ export function categoryGalleryOnSlideTouchMoveWindow(
   xPx: number,
   yPx: number
 ): void {
-  categoryGalleryFollowSlidePointer(host, xPx, yPx);
   categoryGalleryUpdateSlideAutoScroll(host, xPx, yPx);
+  categoryGalleryFollowSlidePointer(host, xPx, yPx);
 }
 
 export function categoryGalleryOnThumbLongPress(

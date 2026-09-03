@@ -1,19 +1,24 @@
 /**
- * 划选贴边自动滚：与系统图库一致，DisplaySync 对齐 vsync，scrollBy 无动画相对位移。
- * 主时间线、搜索、分类子页、回收站共用。
+ * 划选贴边自动滚。
+ *
+ * 手指按在列表上时，系统会停掉 fling / 惯性滚动，但 scrollTo / scrollToIndex
+ * 带动画的滚动除外。DisplaySync + scrollBy 是每帧一次瞬时跳变，高刷机上会
+ * 「一帧帧」卡。这里用 List 自己的 scrollTo 线性动画带滚，选区在 onDidScroll
+ * 里跟手，不再在帧回调里滚动。
  */
 import { UIContext } from '@kit.ArkUI';
-import { displaySync } from '@kit.ArkGraphics2D';
 import { GallerySlideThumbRectPx } from './GallerySlidePick';
 
 export const GALLERY_SLIDE_AUTO_SCROLL_EDGE_VP: number = 64;
 
 const GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S: number = 140;
-const GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S: number = 520;
-const GALLERY_SLIDE_AUTO_SCROLL_DT_MIN_S: number = 0.004;
-const GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S: number = 0.032;
-const GALLERY_SLIDE_AUTO_SCROLL_NS_PER_S: number = 1000000000;
-const GALLERY_SLIDE_AUTO_SCROLL_FRAME_RATE: ExpectedFrameRateRange = { expected: 60, min: 30, max: 120 };
+const GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S: number = 420;
+/** 单次 scrollTo 动画时长上限，结束后若仍贴边则在 Idle 里续一段。 */
+const GALLERY_SLIDE_AUTO_SCROLL_DURATION_MS: number = 6000;
+const GALLERY_SLIDE_AUTO_SCROLL_DURATION_MIN_MS: number = 400;
+const GALLERY_SLIDE_AUTO_SCROLL_RETARGET_MIN_MS: number = 160;
+const GALLERY_SLIDE_AUTO_SCROLL_RETARGET_VEL_VP_S: number = 48;
+const GALLERY_SLIDE_AUTO_SCROLL_FOLLOW_VP: number = 18;
 
 export class GallerySlideAutoScrollSession {
   uiContext: UIContext | null = null;
@@ -23,16 +28,18 @@ export class GallerySlideAutoScrollSession {
   bottomInsetVp: number = 0;
   isActive: () => boolean = (): boolean => false;
   shiftHitBoundsY: (dyPx: number) => void = (_dyPx: number): void => {};
-  followPointer: (xPx: number, yPx: number) => void = (_xPx: number, _yPx: number): void => {};
+  followPointer: (xPx: number, yPx: number, cacheOnly: boolean) => void =
+    (_xPx: number, _yPx: number, _cacheOnly: boolean): void => {};
 }
 
-let autoScrollSync: displaySync.DisplaySync | null = null;
 let autoScrollSession: GallerySlideAutoScrollSession | null = null;
 let autoScrollPointerX: number = 0;
 let autoScrollPointerY: number = 0;
-let autoScrollLastTsNs: number = 0;
 let autoScrollListRect: GallerySlideThumbRectPx | null = null;
 let autoScrollRunning: boolean = false;
+let lastScrollToVel: number = 0;
+let lastScrollToAtMs: number = 0;
+let autoScrollFollowAccumVp: number = 0;
 
 function vpToPx(session: GallerySlideAutoScrollSession, value: number): number {
   const ui = session.uiContext;
@@ -81,7 +88,32 @@ function easedVelocity(ratio: number): number {
     (GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S - GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S) * eased;
 }
 
-function computeVelocityVpPerSec(session: GallerySlideAutoScrollSession, yPx: number): number {
+function isScrollerAtBottom(session: GallerySlideAutoScrollSession): boolean {
+  try {
+    return session.scroller.isAtEnd();
+  } catch (_e) {
+    return false;
+  }
+}
+
+function readScrollerYOffset(session: GallerySlideAutoScrollSession): number {
+  try {
+    const yRaw = session.scroller.currentOffset().yOffset;
+    return typeof yRaw === 'number' && Number.isFinite(yRaw) ? yRaw : 0;
+  } catch (_e) {
+    return 0;
+  }
+}
+
+function isScrollerAtTop(session: GallerySlideAutoScrollSession): boolean {
+  return readScrollerYOffset(session) <= 0.5;
+}
+
+function computeVelocityVpPerSec(
+  session: GallerySlideAutoScrollSession,
+  yPx: number,
+  checkEdge: boolean
+): number {
   if (!session.isActive()) {
     return 0;
   }
@@ -94,94 +126,92 @@ function computeVelocityVpPerSec(session: GallerySlideAutoScrollSession, yPx: nu
   const visibleBottom = rect.bottom - vpToPx(session, session.bottomInsetVp);
   const bottomStart = visibleBottom - edgePx;
   if (yPx > bottomStart) {
-    try {
-      if (session.scroller.isAtEnd()) {
-        return 0;
-      }
-    } catch (_e) {
+    if (checkEdge && isScrollerAtBottom(session)) {
+      return 0;
     }
     return easedVelocity((yPx - bottomStart) / edgePx);
   }
   const topEnd = visibleTop + edgePx;
   if (yPx < topEnd) {
-    try {
-      const off = session.scroller.currentOffset();
-      const yRaw = off.yOffset;
-      const y = typeof yRaw === 'number' && Number.isFinite(yRaw) ? yRaw : 0;
-      if (y <= 0.5) {
-        return 0;
-      }
-    } catch (_e) {
+    if (checkEdge && isScrollerAtTop(session)) {
+      return 0;
     }
     return -easedVelocity((topEnd - yPx) / edgePx);
   }
   return 0;
 }
 
-function scrollByVp(session: GallerySlideAutoScrollSession, deltaVp: number): void {
-  if (Math.abs(deltaVp) < 0.01) {
-    return;
-  }
+function cancelAnimatedScroll(session: GallerySlideAutoScrollSession): void {
   try {
-    session.scroller.scrollBy(0, deltaVp);
-    session.shiftHitBoundsY(-vpToPx(session, deltaVp));
+    session.scroller.scrollTo({
+      xOffset: 0,
+      yOffset: readScrollerYOffset(session),
+      animation: false
+    });
   } catch (_e) {
   }
 }
 
-function onFrame(info: displaySync.IntervalInfo): void {
-  const session = autoScrollSession;
-  if (session === null || !session.isActive()) {
-    gallerySlideAutoScrollStop();
+function startAnimatedScroll(session: GallerySlideAutoScrollSession, velVpS: number): void {
+  const currentY = readScrollerYOffset(session);
+  let targetY = currentY + velVpS * (GALLERY_SLIDE_AUTO_SCROLL_DURATION_MS / 1000);
+  if (targetY < 0) {
+    targetY = 0;
+  }
+  const distance = Math.abs(targetY - currentY);
+  if (distance < 0.5) {
     return;
   }
-  const velocityVpS = computeVelocityVpPerSec(session, autoScrollPointerY);
-  if (velocityVpS === 0) {
-    gallerySlideAutoScrollStop();
-    return;
+  const durationMs = Math.max(
+    GALLERY_SLIDE_AUTO_SCROLL_DURATION_MIN_MS,
+    Math.min(
+      GALLERY_SLIDE_AUTO_SCROLL_DURATION_MS,
+      Math.round(distance / Math.abs(velVpS) * 1000)
+    )
+  );
+  try {
+    session.scroller.scrollTo({
+      xOffset: 0,
+      yOffset: targetY,
+      animation: { duration: durationMs, curve: Curve.Linear, canOverScroll: false }
+    });
+    lastScrollToVel = velVpS;
+    lastScrollToAtMs = Date.now();
+  } catch (_e) {
   }
-  let dtS = GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S;
-  if (autoScrollLastTsNs > 0 && info.timestamp > autoScrollLastTsNs) {
-    dtS = (info.timestamp - autoScrollLastTsNs) / GALLERY_SLIDE_AUTO_SCROLL_NS_PER_S;
-  }
-  autoScrollLastTsNs = info.timestamp;
-  if (dtS < GALLERY_SLIDE_AUTO_SCROLL_DT_MIN_S) {
-    dtS = GALLERY_SLIDE_AUTO_SCROLL_DT_MIN_S;
-  } else if (dtS > GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S) {
-    dtS = GALLERY_SLIDE_AUTO_SCROLL_DT_MAX_S;
-  }
-  scrollByVp(session, velocityVpS * dtS);
-  session.followPointer(autoScrollPointerX, autoScrollPointerY);
 }
 
-function ensureSync(): displaySync.DisplaySync {
-  if (autoScrollSync !== null) {
-    return autoScrollSync;
+function shouldRetargetScroll(velVpS: number): boolean {
+  if (lastScrollToVel === 0) {
+    return true;
   }
-  const sync = displaySync.create();
-  sync.setExpectedFrameRateRange(GALLERY_SLIDE_AUTO_SCROLL_FRAME_RATE);
-  sync.on('frame', (info: displaySync.IntervalInfo): void => {
-    onFrame(info);
-  });
-  autoScrollSync = sync;
-  return sync;
+  if ((velVpS > 0) !== (lastScrollToVel > 0)) {
+    return true;
+  }
+  if ((Date.now() - lastScrollToAtMs) < GALLERY_SLIDE_AUTO_SCROLL_RETARGET_MIN_MS) {
+    return false;
+  }
+  return Math.abs(velVpS - lastScrollToVel) >= GALLERY_SLIDE_AUTO_SCROLL_RETARGET_VEL_VP_S;
+}
+
+function resetAutoScrollState(): void {
+  autoScrollSession = null;
+  autoScrollListRect = null;
+  autoScrollRunning = false;
+  lastScrollToVel = 0;
+  lastScrollToAtMs = 0;
+  autoScrollFollowAccumVp = 0;
+}
+
+export function gallerySlideAutoScrollIsRunning(): boolean {
+  return autoScrollRunning;
 }
 
 export function gallerySlideAutoScrollStop(): void {
-  autoScrollSession = null;
-  autoScrollLastTsNs = 0;
-  autoScrollListRect = null;
-  autoScrollRunning = false;
-  if (autoScrollSync !== null) {
-    try {
-      autoScrollSync.off('frame');
-    } catch (_e) {
-    }
-    try {
-      autoScrollSync.stop();
-    } catch (_e) {
-    }
-    autoScrollSync = null;
+  const session = autoScrollSession;
+  resetAutoScrollState();
+  if (session !== null) {
+    cancelAnimatedScroll(session);
   }
 }
 
@@ -192,24 +222,52 @@ export function gallerySlideAutoScrollUpdate(
 ): void {
   autoScrollPointerX = xPx;
   autoScrollPointerY = yPx;
-  const velocityVpS = computeVelocityVpPerSec(session, yPx);
+  const velocityVpS = computeVelocityVpPerSec(session, yPx, true);
   if (velocityVpS === 0) {
     if (autoScrollRunning) {
       gallerySlideAutoScrollStop();
     }
     return;
   }
-  if (autoScrollRunning && autoScrollSession === session) {
+  autoScrollSession = session;
+  if (!autoScrollRunning) {
+    autoScrollListRect = readListRect(session);
+    autoScrollRunning = true;
+    autoScrollFollowAccumVp = 0;
+    startAnimatedScroll(session, velocityVpS);
     return;
   }
-  autoScrollSession = session;
-  autoScrollLastTsNs = 0;
-  autoScrollListRect = readListRect(session);
-  try {
-    ensureSync().start();
-    autoScrollRunning = true;
-  } catch (_e) {
-    autoScrollSession = null;
-    autoScrollRunning = false;
+  if (shouldRetargetScroll(velocityVpS)) {
+    startAnimatedScroll(session, velocityVpS);
+  }
+}
+
+/**
+ * 列表实际滚动时跟手。scrollTo 动画走 List 自己的 vsync，选区在这里更新，
+ * 不要在 DisplaySync 回调里 scrollBy。
+ */
+export function gallerySlideAutoScrollOnListDidScroll(offset: number, scrollState: ScrollState): void {
+  const session = autoScrollSession;
+  if (!autoScrollRunning || session === null) {
+    return;
+  }
+  if (!session.isActive()) {
+    gallerySlideAutoScrollStop();
+    return;
+  }
+  if (Number.isFinite(offset) && Math.abs(offset) >= 0.01) {
+    autoScrollFollowAccumVp += Math.abs(offset);
+  }
+  if (autoScrollFollowAccumVp >= GALLERY_SLIDE_AUTO_SCROLL_FOLLOW_VP) {
+    autoScrollFollowAccumVp = 0;
+    session.followPointer(autoScrollPointerX, autoScrollPointerY, true);
+  }
+  if (scrollState === ScrollState.Idle && (Date.now() - lastScrollToAtMs) > 80) {
+    const velocityVpS = computeVelocityVpPerSec(session, autoScrollPointerY, true);
+    if (velocityVpS === 0) {
+      gallerySlideAutoScrollStop();
+      return;
+    }
+    startAnimatedScroll(session, velocityVpS);
   }
 }

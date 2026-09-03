@@ -35,6 +35,7 @@ import {
   GALLERY_SHARED_TRANSITION_CURVE
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
+import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { FnListDataSource } from '../common/FnListDataSource';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
@@ -1488,7 +1489,8 @@ struct CategoryGallery {
                     this.endCgSlideSelectGesture();
                   }
                 })
-                .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+                .onDidScroll((offset: number, scrollState: ScrollState): void => {
+                  gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
                   this.onListScrollStateChange(scrollState);
                 })
 

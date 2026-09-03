@@ -306,8 +306,8 @@ function selectionBindSlideAutoScroll(host: SelectionGestureControllerHost): Gal
     selectionShiftThumbHitBoundsY(host.galleryThumbHitBounds, dyPx);
     selectionShiftThumbHitBoundsY(host.searchThumbHitBounds, dyPx);
   };
-  gallerySlideAutoScrollSession.followPointer = (xPx: number, yPx: number): void => {
-    selectionFollowSlidePointer(host, xPx, yPx);
+  gallerySlideAutoScrollSession.followPointer = (xPx: number, yPx: number, cacheOnly: boolean): void => {
+    selectionFollowSlidePointer(host, xPx, yPx, cacheOnly);
   };
   return gallerySlideAutoScrollSession;
 }
@@ -327,13 +327,25 @@ function selectionResolveSlideMissFlat(
   return selectionPickGallerySlideMissFlat(host, yPx);
 }
 
-function selectionFollowSlidePointer(host: SelectionGestureControllerHost, xPx: number, yPx: number): void {
+function selectionFollowSlidePointer(
+  host: SelectionGestureControllerHost,
+  xPx: number,
+  yPx: number,
+  cacheOnly: boolean = false
+): void {
   if (!host.gallerySlideGestureActive) {
     return;
   }
-  let hitFlat = host.inSearchMode
-    ? pickSearchThumbFlatUnderPointForSlide(host, xPx, yPx)
-    : selectionPickGalleryThumbFlatUnderPointForSlide(host, xPx, yPx);
+  let hitFlat = -1;
+  if (cacheOnly) {
+    hitFlat = host.inSearchMode
+      ? selectionPickSearchThumbFlatUnderPoint(host, xPx, yPx)
+      : selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
+  } else {
+    hitFlat = host.inSearchMode
+      ? pickSearchThumbFlatUnderPointForSlide(host, xPx, yPx)
+      : selectionPickGalleryThumbFlatUnderPointForSlide(host, xPx, yPx);
+  }
   if (hitFlat < 0) {
     hitFlat = selectionResolveSlideMissFlat(host, yPx);
   }

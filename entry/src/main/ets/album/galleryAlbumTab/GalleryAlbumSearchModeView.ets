@@ -5,6 +5,7 @@ import { GalleryNetworkThumb, isGifItem, isVideoItem, nasUrl, pickThumb, trimThu
 import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
 import { gallerySharedTransitionId } from '../GallerySharedTransition';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE, GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE } from '../GallerySlidePick';
+import { gallerySlideAutoScrollOnListDidScroll } from '../GallerySlideAutoScroll';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
@@ -578,7 +579,8 @@ export struct GalleryAlbumSearchModeView {
           .onScrollIndex((firstIdx: number, lastIdx: number, centerIdx: number): void => {
             this.onSearchScrollIndex(firstIdx, lastIdx, centerIdx);
           })
-          .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+          .onDidScroll((offset: number, scrollState: ScrollState): void => {
+            gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
             this.onSearchScrollStateChange(scrollState);
           })
 

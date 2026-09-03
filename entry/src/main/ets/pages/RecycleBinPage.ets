@@ -49,6 +49,7 @@ import {
   GALLERY_SHARED_TRANSITION_CURVE
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
+import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
@@ -877,7 +878,8 @@ struct RecycleBinPage {
                 this.endRbSlideSelectGesture();
               }
             })
-            .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+            .onDidScroll((offset: number, scrollState: ScrollState): void => {
+              gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
               this.onListScrollStateChange(scrollState);
             })
 
