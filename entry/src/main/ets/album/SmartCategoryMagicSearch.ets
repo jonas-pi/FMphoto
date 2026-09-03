@@ -6,6 +6,7 @@ import { GalleryListItem, GalleryThumbnailBlock, MagicSearchItem, SmartCategoryI
 import { FnHttpClient } from '../network/FnHttpClient';
 import { pickThumb } from './GalleryAlbumCommon';
 import { smartCategoryCover, smartCategoryName } from './GalleryAlbumEntityData';
+import { SmartCategoryCountStore } from './SmartCategoryCountStore';
 import {
   SmartCategoryCoverPatch,
   smartCategoryApplyCoverPatches,
@@ -115,6 +116,9 @@ export async function enrichSmartCategoryCountsFromSearch(
     }
   }
   for (let i = 0; i < names.length; i++) {
+    if (SmartCategoryCountStore.has(names[i])) {
+      continue;
+    }
     const mapped = await loadSmartCategoryGalleryItems(client, names[i], timeoutMs);
     if (mapped.errorMessage.length > 0) {
       continue;

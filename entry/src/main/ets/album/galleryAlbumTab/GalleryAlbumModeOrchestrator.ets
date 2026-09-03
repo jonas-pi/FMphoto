@@ -40,7 +40,7 @@ import {
   loadSmartCategories
 } from './GalleryAlbumModeLoaders';
 import { fillAndPersistCustomSmartCategoryCovers, enrichSmartCategoryCountsFromSearch } from '../SmartCategoryMagicSearch';
-import { smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
+import { smartCategoryCurrentAccount, smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
 import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
 import {
   categoryTitle,
@@ -454,10 +454,11 @@ export async function galleryAlbumLoadSmartCategories(host: GalleryAlbumModeOrch
     return;
   }
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  await SmartCategoryCountStore.ensureLoaded(ctx, smartCategoryCurrentAccount());
   const result = await loadSmartCategories(client, ctx);
-  host.smartSceneItems = result.sceneItems;
-  host.smartInfoItems = result.infoItems;
-  host.smartCustomItems = result.customItems;
+  host.smartSceneItems = SmartCategoryCountStore.applyToItems(result.sceneItems);
+  host.smartInfoItems = SmartCategoryCountStore.applyToItems(result.infoItems);
+  host.smartCustomItems = SmartCategoryCountStore.applyToItems(result.customItems);
   host.smartCategoryError = result.error;
   host.smartCategoryLoading = false;
   void (async (): Promise<void> => {

@@ -88,6 +88,7 @@ struct SmartCategoryPage {
   }
 
   aboutToDisappear(): void {
+    void SmartCategoryCountStore.flush();
     if (!this.opening) {
       this.countEnrichGen++;
       const client = AppSession.getClient();
@@ -182,18 +183,6 @@ struct SmartCategoryPage {
     this.customItems = smartCategoryPatchCountByName(this.customItems, keyword, count);
   }
 
-  private applyCachedCounts(items: SmartCategoryItem[]): SmartCategoryItem[] {
-    let current = items;
-    for (let i = 0; i < items.length; i++) {
-      const name = smartCategoryName(items[i]);
-      const cached = SmartCategoryCountStore.get(name);
-      if (cached >= 0) {
-        current = smartCategoryPatchCountByName(current, name, cached);
-      }
-    }
-    return current;
-  }
-
   private async loadData(): Promise<void> {
     this.loading = true;
     this.error = '';
@@ -208,10 +197,11 @@ struct SmartCategoryPage {
       return;
     }
     try {
+      await SmartCategoryCountStore.ensureLoaded(this.hostContext(), smartCategoryCurrentAccount());
       const result = await loadSmartCategories(client, this.hostContext());
-      this.sceneItems = this.applyCachedCounts(result.sceneItems);
-      this.infoItems = this.applyCachedCounts(result.infoItems);
-      this.customItems = this.applyCachedCounts(result.customItems);
+      this.sceneItems = SmartCategoryCountStore.applyToItems(result.sceneItems);
+      this.infoItems = SmartCategoryCountStore.applyToItems(result.infoItems);
+      this.customItems = SmartCategoryCountStore.applyToItems(result.customItems);
       this.error = result.error;
       this.countVersion = SmartCategoryCountStore.version;
       void this.enrichCustomCovers();
