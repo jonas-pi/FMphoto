@@ -9,7 +9,8 @@ import {
 import {
   GALLERY_SLIDE_DOM_BUDGET_PER_FRAME,
   GALLERY_SLIDE_FLOW_ROW_RADIUS,
-  pickIndexedFlatForSlidePointer
+  pickIndexedFlatForSlidePointer,
+  pickSlideEndFlatFromRowBand
 } from '../GallerySlidePick';
 import { GalleryPreviewNavStore } from '../GalleryPreviewNavStore';
 import { playGalleryEnterSelectionHaptic } from '../GallerySelectionHaptic';
@@ -311,10 +312,31 @@ function selectionBindSlideAutoScroll(host: SelectionGestureControllerHost): Gal
   return gallerySlideAutoScrollSession;
 }
 
+function selectionResolveSlideMissFlat(
+  host: SelectionGestureControllerHost,
+  yPx: number
+): number {
+  if (host.inSearchMode) {
+    return pickSlideEndFlatFromRowBand(
+      yPx,
+      host.searchResults.length,
+      host.gallerySlideAnchorFlat,
+      (fi: number) => host.searchThumbHitBounds.get(`${fi}`)
+    );
+  }
+  return selectionPickGallerySlideMissFlat(host, yPx);
+}
+
 function selectionFollowSlidePointer(host: SelectionGestureControllerHost, xPx: number, yPx: number): void {
-  const hitFlat = host.inSearchMode
+  if (!host.gallerySlideGestureActive) {
+    return;
+  }
+  let hitFlat = host.inSearchMode
     ? pickSearchThumbFlatUnderPointForSlide(host, xPx, yPx)
     : selectionPickGalleryThumbFlatUnderPointForSlide(host, xPx, yPx);
+  if (hitFlat < 0) {
+    hitFlat = selectionResolveSlideMissFlat(host, yPx);
+  }
   if (hitFlat >= 0) {
     host.gallerySlideLastEndFlat = hitFlat;
   }
@@ -654,6 +676,115 @@ function selectionClampInt(value: number, min: number, max: number): number {
   return value;
 }
 
+function selectionFirstLoadedFlatInRow(node: GalleryFlowNode): number {
+  for (let k = 0; k < node.rowSlotItems.length; k++) {
+    if (node.rowSlotItems[k] !== null && node.rowSlotItems[k] !== undefined && node.rowSlotFlatIndices[k] >= 0) {
+      return node.rowSlotFlatIndices[k];
+    }
+  }
+  return -1;
+}
+
+function selectionLastLoadedFlatInRow(node: GalleryFlowNode): number {
+  for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
+    if (node.rowSlotItems[k] !== null && node.rowSlotItems[k] !== undefined && node.rowSlotFlatIndices[k] >= 0) {
+      return node.rowSlotFlatIndices[k];
+    }
+  }
+  return -1;
+}
+
+function selectionGetGalleryRowVerticalBand(
+  host: SelectionGestureControllerHost,
+  node: GalleryFlowNode
+): GalleryThumbHitRect | null {
+  let top: number = Number.POSITIVE_INFINITY;
+  let bottom: number = Number.NEGATIVE_INFINITY;
+  let left: number = 0;
+  let right: number = 0;
+  let found: boolean = false;
+  for (let k = 0; k < node.rowSlotItems.length; k++) {
+    const slot = node.rowSlotItems[k];
+    if (slot === null || slot === undefined) {
+      continue;
+    }
+    const id = host.itemIdOf(slot);
+    if (id.length === 0) {
+      continue;
+    }
+    const rect = host.galleryThumbHitBounds.get(id);
+    if (rect === undefined) {
+      continue;
+    }
+    if (!found) {
+      left = rect.left;
+      right = rect.right;
+      found = true;
+    }
+    if (rect.top < top) {
+      top = rect.top;
+    }
+    if (rect.bottom > bottom) {
+      bottom = rect.bottom;
+    }
+    if (rect.left < left) {
+      left = rect.left;
+    }
+    if (rect.right > right) {
+      right = rect.right;
+    }
+  }
+  if (!found || !Number.isFinite(top) || !Number.isFinite(bottom) || bottom < top) {
+    return null;
+  }
+  return { left, top, right, bottom };
+}
+
+/** 手指落在行尾空位、日期标题或行间时，对齐到该行（或已划过的上一行）边界项。 */
+function selectionPickGallerySlideMissFlat(host: SelectionGestureControllerHost, yPx: number): number {
+  const range = selectionGalleryFlowScanRange(host);
+  let inBandFirst: number = -1;
+  let inBandLast: number = -1;
+  let aboveLast: number = -1;
+  let belowFirst: number = -1;
+  for (let i = range[0]; i <= range[1]; i++) {
+    const node = host.flowDataSource.getData(i);
+    if (node.kind !== 'row') {
+      continue;
+    }
+    const firstFlat = selectionFirstLoadedFlatInRow(node);
+    const lastFlat = selectionLastLoadedFlatInRow(node);
+    if (firstFlat < 0 || lastFlat < 0) {
+      continue;
+    }
+    const band = selectionGetGalleryRowVerticalBand(host, node);
+    if (band === null) {
+      continue;
+    }
+    if (yPx >= band.top && yPx <= band.bottom) {
+      if (inBandFirst < 0) {
+        inBandFirst = firstFlat;
+      }
+      inBandLast = lastFlat;
+    } else if (band.bottom < yPx) {
+      aboveLast = lastFlat;
+    } else if (band.top > yPx && belowFirst < 0) {
+      belowFirst = firstFlat;
+    }
+  }
+  const anchor = host.gallerySlideAnchorFlat;
+  if (inBandLast >= 0) {
+    return anchor <= inBandLast ? inBandLast : inBandFirst;
+  }
+  if (aboveLast >= 0 && belowFirst >= 0) {
+    return anchor <= aboveLast ? aboveLast : belowFirst;
+  }
+  if (aboveLast >= 0) {
+    return aboveLast;
+  }
+  return belowFirst;
+}
+
 function selectionPickLoadedFlatInRowNearSlot(node: GalleryFlowNode, slotIndex: number): number {
   const count = node.rowSlotFlatIndices.length;
   if (count <= 0) {
@@ -923,6 +1054,9 @@ export function selectionApplyGallerySlideRowRangeSelection(
       next.push(id);
     }
   }
+  if (next.length === 0 && host.gallerySlideGestureActive && host.gallerySelectedIds.length > 0) {
+    return;
+  }
   host.gallerySlideLastAppliedEndFlat = ef;
   host.gallerySlideLastApplyMs = Date.now();
   host.gallerySlidePendingEndFlat = ef;
@@ -947,6 +1081,9 @@ export function selectionOnGallerySlidePanUpdate(
   let hitFlat = host.inSearchMode ?
     pickSearchThumbFlatUnderPointForSlide(host, pt.x, pt.y) :
     selectionPickGalleryThumbFlatUnderPointForSlide(host, pt.x, pt.y);
+  if (hitFlat < 0) {
+    hitFlat = selectionResolveSlideMissFlat(host, pt.y);
+  }
   if (hitFlat < 0 && !host.inSearchMode) {
     hitFlat = selectionEstimateGalleryFlatFromPanOffset(host, ev);
   }

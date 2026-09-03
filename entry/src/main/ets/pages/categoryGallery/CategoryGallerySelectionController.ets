@@ -9,7 +9,8 @@ import {
 import {
   GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
   GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
-  pickIndexedFlatForSlidePointer
+  pickIndexedFlatForSlidePointer,
+  pickSlideEndFlatFromRowBand
 } from '../../album/GallerySlidePick';
 import {
   CgFingerCoordCompat,
@@ -327,6 +328,9 @@ export function categoryGalleryApplySlideRowRangeSelection(
       next.push(id);
     }
   }
+  if (next.length === 0 && host.cgSlideGestureActive && host.selectedIds.length > 0) {
+    return;
+  }
   host.cgSlideLastAppliedEndFlat = ef;
   host.selectedIds = next;
 }
@@ -409,7 +413,15 @@ function categoryGalleryFollowSlidePointer(
   if (!host.cgSlideGestureActive) {
     return;
   }
-  const hitFlat = categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
+  let hitFlat = categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
+  if (hitFlat < 0) {
+    hitFlat = pickSlideEndFlatFromRowBand(
+      yPx,
+      host.flatItems.length,
+      host.cgSlideAnchorFlat,
+      (fi: number): CgThumbHitRect | undefined => host.cgThumbHitBounds.get(`${fi}`)
+    );
+  }
   if (hitFlat >= 0) {
     host.cgSlideLastEndFlat = hitFlat;
   }

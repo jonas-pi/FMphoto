@@ -92,3 +92,49 @@ export function pickIndexedFlatForSlidePointer(
   }
   return -1;
 }
+
+/**
+ * 划选手指没落在缩略图上时，用当前行（或上方最近一行）的边界项作为终点。
+ * 向下划取该行最后一个已缓存项，向上划取该行第一个，避免选中数掉成 0。
+ */
+export function pickSlideEndFlatFromRowBand(
+  yPx: number,
+  flatCount: number,
+  slideAnchorFlat: number,
+  getCachedRect: (flatIdx: number) => GallerySlideThumbRectPx | undefined
+): number {
+  let inBandMin: number = -1;
+  let inBandMax: number = -1;
+  let aboveMax: number = -1;
+  let belowMin: number = -1;
+  for (let i = 0; i < flatCount; i++) {
+    const rect = getCachedRect(i);
+    if (rect === undefined) {
+      continue;
+    }
+    if (yPx >= rect.top && yPx <= rect.bottom) {
+      if (inBandMin < 0 || i < inBandMin) {
+        inBandMin = i;
+      }
+      if (i > inBandMax) {
+        inBandMax = i;
+      }
+    } else if (rect.bottom < yPx) {
+      if (i > aboveMax) {
+        aboveMax = i;
+      }
+    } else if (rect.top > yPx && (belowMin < 0 || i < belowMin)) {
+      belowMin = i;
+    }
+  }
+  if (inBandMax >= 0) {
+    return slideAnchorFlat <= inBandMax ? inBandMax : inBandMin;
+  }
+  if (aboveMax >= 0 && belowMin >= 0) {
+    return slideAnchorFlat <= aboveMax ? aboveMax : belowMin;
+  }
+  if (aboveMax >= 0) {
+    return aboveMax;
+  }
+  return belowMin;
+}

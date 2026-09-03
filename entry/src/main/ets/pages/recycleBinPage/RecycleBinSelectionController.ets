@@ -9,7 +9,8 @@ import {
 import {
   GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
   GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
-  pickIndexedFlatForSlidePointer
+  pickIndexedFlatForSlidePointer,
+  pickSlideEndFlatFromRowBand
 } from '../../album/GallerySlidePick';
 import { GalleryListItem, RecycleBinListItem } from '../../model/FnApiTypes';
 import { RbFingerCoordCompat, RbFingerWindowPoint, RbThumbHitRect } from './RecycleBinTypes';
@@ -370,6 +371,9 @@ export function recycleBinApplySlideRowRangeSelection(host: RecycleBinSelectionH
       next.push(id);
     }
   }
+  if (next.length === 0 && host.rbSlideGestureActive && host.selectedIds.length > 0) {
+    return;
+  }
   host.rbSlideLastAppliedEndFlat = ef;
   host.selectedIds = next;
 }
@@ -448,7 +452,15 @@ function recycleBinFollowSlidePointer(host: RecycleBinSelectionHost, xPx: number
   if (!host.rbSlideGestureActive) {
     return;
   }
-  const hitFlat = recycleBinPickThumbFlatForSlidePointer(host, xPx, yPx);
+  let hitFlat = recycleBinPickThumbFlatForSlidePointer(host, xPx, yPx);
+  if (hitFlat < 0) {
+    hitFlat = pickSlideEndFlatFromRowBand(
+      yPx,
+      host.items.length,
+      host.rbSlideAnchorFlat,
+      (fi: number): RbThumbHitRect | undefined => host.rbThumbHitBounds.get(`${fi}`)
+    );
+  }
   if (hitFlat >= 0) {
     host.rbSlideLastEndFlat = hitFlat;
   }
