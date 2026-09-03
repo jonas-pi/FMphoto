@@ -6,6 +6,36 @@
 
 ---
 
+## [1.3.4-beta.2] - 2026-09-03
+
+在 [1.3.4] 上增强智能分类与划选手势，并优化预览详情路径展示。
+
+### 新增
+
+- **自定义分类**：智能分类页支持自定义分类管理与封面处理；布局偏好可持久化。
+- **分类计数缓存**：`SmartCategoryCountStore` 缓存分类计数，封面数量与列表展示保持一致。
+
+### 改进
+
+- **划选贴边自动滚**：改用 `scrollTo` 线性动画并在 `onDidScroll` 跟手，减少逐帧 `scrollBy` 卡顿。
+- **划选行带命中**：新增 `pickSlideEndFlatFromRowBand`，手指落在行空白处也能准确扩选。
+- **预览详情路径**：折叠路径时保留末尾最多 4 级目录，详情半模态路径区增至 3 行。
+
+### 修复
+
+- **划选跟手**：自动滚动期间不再跳过 Pan/Touch 跟手与矩形缓存，修复多选回归。
+- **智能分类计数**：刷新与持久化逻辑对齐 NAS 返回，减少计数跳动。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.3.4` 或 `1.3.4-beta.1` 的设备可直接覆盖升级（`versionCode` 1003012）。
+
+---
+
 ## [1.3.4-beta.1] - 2026-08-31
 
 在 [1.3.3] 上统一官方沉浸顶栏与底栏胶囊，并修视频播控。
@@ -424,6 +454,9 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.4-beta.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4...v1.3.4-beta.2
+[1.3.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4-beta.1...v1.3.4
+[1.3.4-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.3...v1.3.4-beta.1
 [1.3.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.4...v1.3.2
 [1.3.2-beta.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.2-beta.3...v1.3.2-beta.4
