@@ -16,8 +16,9 @@ import { GalleryHomeTimelineCache } from '../GalleryHomeTimelineCache';
 import {
   galleryMediaCategoryModeLoader,
   galleryPersonModeLoader,
-  gallerySmartCategoryModeLoader
+  loadSmartCategories
 } from './GalleryAlbumModeLoaders';
+import { fillAndPersistCustomSmartCategoryCovers } from '../SmartCategoryMagicSearch';
 import {
   DATE_FEED_BATCH,
   DAY_MAX_ROUNDS,
@@ -66,6 +67,7 @@ export interface GalleryAlbumLoadOrchestratorHost {
   smartCategoryError: string;
   smartSceneItems: SmartCategoryItem[];
   smartInfoItems: SmartCategoryItem[];
+  smartCustomItems: SmartCategoryItem[];
   personLoading: boolean;
   personError: string;
   personItems: AiPersonItem[];
@@ -150,11 +152,26 @@ export async function galleryAlbumRefreshSmartCategoriesInPlace(
     galleryAlbumMarkTimelineRefreshCaughtUp(host);
     return;
   }
-  const result = await gallerySmartCategoryModeLoader.load(client);
-  host.smartSceneItems = result.data.sceneItems;
-  host.smartInfoItems = result.data.infoItems;
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  const result = await loadSmartCategories(client, ctx);
+  host.smartSceneItems = result.sceneItems;
+  host.smartInfoItems = result.infoItems;
+  host.smartCustomItems = result.customItems;
   host.smartCategoryLoading = false;
   galleryAlbumMarkTimelineRefreshCaughtUp(host);
+  void (async (): Promise<void> => {
+    const filled = await fillAndPersistCustomSmartCategoryCovers(
+      client,
+      ctx,
+      result.sceneItems,
+      result.infoItems,
+      result.customItems
+    );
+    if (!host.inSmartCategoryMode) {
+      return;
+    }
+    host.smartCustomItems = filled;
+  })();
 }
 
 export async function galleryAlbumRefreshPersonListInPlace(

@@ -61,6 +61,7 @@ export interface GalleryAlbumSmartCategoryState {
   smartCategoryError: string;
   smartSceneItems: SmartCategoryItem[];
   smartInfoItems: SmartCategoryItem[];
+  smartCustomItems: SmartCategoryItem[];
 }
 
 export interface GalleryAlbumPersonState {

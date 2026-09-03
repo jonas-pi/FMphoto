@@ -679,6 +679,22 @@ export struct FnTopBar {
   @Prop backText: string = '返回';
   @Prop rightText: string = '';
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
+  onBack: (() => void) | undefined = undefined;
+  onRightClick: (() => void) | undefined = undefined;
+
+  private invokeBack(): void {
+    if (this.onBack !== undefined) {
+      this.onBack();
+      return;
+    }
+    this.getUIContext().getRouter().back();
+  }
+
+  private invokeRight(): void {
+    if (this.onRightClick !== undefined) {
+      this.onRightClick();
+    }
+  }
 
   build() {
     Row() {
@@ -686,7 +702,7 @@ export struct FnTopBar {
         FnFloatingTopPillButton({
           text: this.backText,
           action: (): void => {
-            this.getUIContext().getRouter().back();
+            this.invokeBack();
           }
         })
       }
@@ -718,11 +734,12 @@ export struct FnTopBar {
 
       Row() {
         if (this.rightText.length > 0) {
-          Text(this.rightText)
-            .fontSize(GALLERY_TOP_BAR_BUTTON_FONT_VP)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          FnFloatingTopPillButton({
+            text: this.rightText,
+            action: (): void => {
+              this.invokeRight();
+            }
+          })
         }
       }
       .layoutWeight(1)

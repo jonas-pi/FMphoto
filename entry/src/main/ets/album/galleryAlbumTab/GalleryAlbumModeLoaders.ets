@@ -20,11 +20,17 @@ import {
   sortDaysDesc,
   TimelineDayModel
 } from './GalleryAlbumTabTypes';
+import { common } from '@kit.AbilityKit';
 import {
   collectMediaCategoryItems,
   collectPersonItems,
   collectSmartCategoryItems
 } from './GalleryAlbumModeData';
+import {
+  smartCategoryCurrentAccount,
+  smartCategoryLoadLayout,
+  smartCategoryMergeDisplay
+} from '../SmartCategoryLayoutPreferences';
 
 export interface MediaCategoryLoadResult {
   items: MediaCategoryItem[];
@@ -34,6 +40,7 @@ export interface MediaCategoryLoadResult {
 export interface SmartCategoryLoadResult {
   sceneItems: SmartCategoryItem[];
   infoItems: SmartCategoryItem[];
+  customItems: SmartCategoryItem[];
   error: string;
 }
 
@@ -64,6 +71,7 @@ export interface GalleryMediaCategoryModeData {
 export interface GallerySmartCategoryModeData {
   sceneItems: SmartCategoryItem[];
   infoItems: SmartCategoryItem[];
+  customItems: SmartCategoryItem[];
 }
 
 export interface GalleryPersonModeData {
@@ -77,6 +85,7 @@ class EmptyGalleryMediaCategoryModeData implements GalleryMediaCategoryModeData 
 class EmptyGallerySmartCategoryModeData implements GallerySmartCategoryModeData {
   sceneItems: SmartCategoryItem[] = [];
   infoItems: SmartCategoryItem[] = [];
+  customItems: SmartCategoryItem[] = [];
 }
 
 class EmptyGalleryPersonModeData implements GalleryPersonModeData {
@@ -172,7 +181,8 @@ export const galleryMediaCategoryModeLoader: GalleryAlbumModeLoader<GalleryMedia
   new GalleryMediaCategoryModeLoaderImpl();
 
 export async function loadSmartCategories(
-  client: FnHttpClient
+  client: FnHttpClient,
+  ctx?: common.UIAbilityContext
 ): Promise<SmartCategoryLoadResult> {
   try {
     const pair = await Promise.all([
@@ -187,15 +197,25 @@ export async function loadSmartCategories(
       infoRes.success && infoRes.data !== undefined ? (infoRes.data.list ?? infoRes.data.items ?? []) : [];
     const sceneItems = collectSmartCategoryItems(sceneRaw);
     const infoItems = collectSmartCategoryItems(infoRaw);
+    let mergedScene = sceneItems;
+    let mergedInfo = infoItems;
+    let customItems: SmartCategoryItem[] = [];
+    if (ctx !== undefined) {
+      const layout = await smartCategoryLoadLayout(ctx, smartCategoryCurrentAccount());
+      const merged = smartCategoryMergeDisplay(sceneItems, infoItems, layout);
+      mergedScene = merged.sceneItems;
+      mergedInfo = merged.infoItems;
+      customItems = merged.customItems;
+    }
+    const hasAny = mergedScene.length > 0 || mergedInfo.length > 0 || customItems.length > 0;
     return {
-      sceneItems: sceneItems,
-      infoItems: infoItems,
-      error: sceneItems.length > 0 || infoItems.length > 0
-        ? ''
-        : '暂无智能分类（请先在系统设置中开启智能识别）'
+      sceneItems: mergedScene,
+      infoItems: mergedInfo,
+      customItems: customItems,
+      error: hasAny ? '' : '暂无智能分类（请先在系统设置中开启智能识别）'
     };
   } catch (e) {
-    return { sceneItems: [], infoItems: [], error: String(e) || '智能分类加载异常' };
+    return { sceneItems: [], infoItems: [], customItems: [], error: String(e) || '智能分类加载异常' };
   }
 }
 
@@ -209,7 +229,8 @@ class GallerySmartCategoryModeLoaderImpl implements GalleryAlbumModeLoader<Galle
     return {
       data: {
         sceneItems: result.sceneItems,
-        infoItems: result.infoItems
+        infoItems: result.infoItems,
+        customItems: result.customItems
       },
       error: result.error
     };

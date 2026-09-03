@@ -36,8 +36,10 @@ import {
   galleryPersonModeLoader,
   gallerySmartCategoryModeLoader,
   loadCollectGalleryItems,
-  loadRecentAddedItems
+  loadRecentAddedItems,
+  loadSmartCategories
 } from './GalleryAlbumModeLoaders';
+import { fillAndPersistCustomSmartCategoryCovers } from '../SmartCategoryMagicSearch';
 import {
   categoryTitle,
   personId,
@@ -68,6 +70,7 @@ export interface GalleryAlbumModeOrchestratorHost extends AutoSyncRunnerCallback
   smartCategoryError: string;
   smartSceneItems: SmartCategoryItem[];
   smartInfoItems: SmartCategoryItem[];
+  smartCustomItems: SmartCategoryItem[];
   personLoading: boolean;
   personOpening: boolean;
   personError: string;
@@ -186,6 +189,7 @@ export function galleryAlbumClearSmartCategory(host: GalleryAlbumModeOrchestrato
   host.smartCategoryError = '';
   host.smartSceneItems = [];
   host.smartInfoItems = [];
+  host.smartCustomItems = [];
 }
 
 export function galleryAlbumClearPerson(host: GalleryAlbumModeOrchestratorHost): void {
@@ -440,17 +444,33 @@ export async function galleryAlbumLoadSmartCategories(host: GalleryAlbumModeOrch
   const reset = gallerySmartCategoryModeLoader.reset();
   host.smartSceneItems = reset.sceneItems;
   host.smartInfoItems = reset.infoItems;
+  host.smartCustomItems = reset.customItems;
   const client = AppSession.getClient();
   if (client === null) {
     host.smartCategoryError = '未登录';
     host.smartCategoryLoading = false;
     return;
   }
-  const result = await gallerySmartCategoryModeLoader.load(client);
-  host.smartSceneItems = result.data.sceneItems;
-  host.smartInfoItems = result.data.infoItems;
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  const result = await loadSmartCategories(client, ctx);
+  host.smartSceneItems = result.sceneItems;
+  host.smartInfoItems = result.infoItems;
+  host.smartCustomItems = result.customItems;
   host.smartCategoryError = result.error;
   host.smartCategoryLoading = false;
+  void (async (): Promise<void> => {
+    const filled = await fillAndPersistCustomSmartCategoryCovers(
+      client,
+      ctx,
+      result.sceneItems,
+      result.infoItems,
+      result.customItems
+    );
+    if (!host.inSmartCategoryMode) {
+      return;
+    }
+    host.smartCustomItems = filled;
+  })();
 }
 
 export async function galleryAlbumEnrichPersonStats(

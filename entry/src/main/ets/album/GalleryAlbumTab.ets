@@ -496,6 +496,7 @@ export struct GalleryAlbumTab {
   @State private smartCategoryError: string = '';
   @State private smartSceneItems: SmartCategoryItem[] = [];
   @State private smartInfoItems: SmartCategoryItem[] = [];
+  @State private smartCustomItems: SmartCategoryItem[] = [];
   @State @Watch('onBottomDockVisibilityChanged') private inPersonMode: boolean = false;
   @State private personLoading: boolean = false;
   @State @Watch('onBottomDockVisibilityChanged') private personOpening: boolean = false;
@@ -1288,6 +1289,8 @@ export struct GalleryAlbumTab {
       set smartSceneItems(value: SmartCategoryItem[]) { self.smartSceneItems = value; }
       get smartInfoItems(): SmartCategoryItem[] { return self.smartInfoItems; }
       set smartInfoItems(value: SmartCategoryItem[]) { self.smartInfoItems = value; }
+      get smartCustomItems(): SmartCategoryItem[] { return self.smartCustomItems; }
+      set smartCustomItems(value: SmartCategoryItem[]) { self.smartCustomItems = value; }
       get personLoading(): boolean { return self.personLoading; }
       set personLoading(value: boolean) { self.personLoading = value; }
       get personOpening(): boolean { return self.personOpening; }
@@ -1348,6 +1351,8 @@ export struct GalleryAlbumTab {
       set smartSceneItems(value: SmartCategoryItem[]) { self.smartSceneItems = value; }
       get smartInfoItems(): SmartCategoryItem[] { return self.smartInfoItems; }
       set smartInfoItems(value: SmartCategoryItem[]) { self.smartInfoItems = value; }
+      get smartCustomItems(): SmartCategoryItem[] { return self.smartCustomItems; }
+      set smartCustomItems(value: SmartCategoryItem[]) { self.smartCustomItems = value; }
       get personLoading(): boolean { return self.personLoading; }
       set personLoading(value: boolean) { self.personLoading = value; }
       get personError(): string { return self.personError; }
@@ -1574,6 +1579,8 @@ export struct GalleryAlbumTab {
       set smartSceneItems(value: SmartCategoryItem[]) { self.smartSceneItems = value; }
       get smartInfoItems(): SmartCategoryItem[] { return self.smartInfoItems; }
       set smartInfoItems(value: SmartCategoryItem[]) { self.smartInfoItems = value; }
+      get smartCustomItems(): SmartCategoryItem[] { return self.smartCustomItems; }
+      set smartCustomItems(value: SmartCategoryItem[]) { self.smartCustomItems = value; }
       get personLoading(): boolean { return self.personLoading; }
       set personLoading(value: boolean) { self.personLoading = value; }
       get personError(): string { return self.personError; }
@@ -2161,7 +2168,7 @@ export struct GalleryAlbumTab {
       return this.categoryItems.length;
     }
     if (this.inSmartCategoryMode) {
-      return this.smartSceneItems.length + this.smartInfoItems.length;
+      return this.smartSceneItems.length + this.smartInfoItems.length + this.smartCustomItems.length;
     }
     if (this.inPersonMode) {
       return this.personItems.length;
@@ -2851,6 +2858,7 @@ export struct GalleryAlbumTab {
           error: this.smartCategoryError,
           sceneItems: this.smartSceneItems,
           infoItems: this.smartInfoItems,
+          customItems: this.smartCustomItems,
           modeSwitchOpacity: this.modeSwitchOpacity,
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           getCategoryName: (item: SmartCategoryItem): string => smartCategoryName(item),

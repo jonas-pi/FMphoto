@@ -419,6 +419,10 @@ export interface SmartCategoryItem {
   num?: number | string;
   size?: number | string;
   poster?: SmartCategoryPoster;
+  /** 本地自定义关键词缓存的封面相对路径 */
+  cover?: string;
+  /** 本地自定义关键词 id；有值则属「我的分类」 */
+  customId?: string;
 }
 
 /** GET /p/api/v1/ai-smart-rec/categories 返回 data */

@@ -1,4 +1,5 @@
 ﻿import { UIContext } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../../common/FnMotion';
@@ -113,7 +114,8 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
     host.smartCategoryLoading = true;
     host.smartCategoryError = '';
     void (async (): Promise<void> => {
-      const result = await requestSmartCategories(client);
+      const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+      const result = await requestSmartCategories(client, ctx);
       if (gen !== host.albumsHomeSmartPrefetchGen) {
         return;
       }

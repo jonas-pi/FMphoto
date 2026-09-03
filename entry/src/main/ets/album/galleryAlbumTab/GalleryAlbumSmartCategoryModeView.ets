@@ -1,6 +1,7 @@
 import { SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { smartCategoryIsCustom, smartCategoryMonogram } from '../SmartCategoryLayoutPreferences';
 
 @Component
 export struct GalleryAlbumSmartCategoryModeView {
@@ -11,6 +12,7 @@ export struct GalleryAlbumSmartCategoryModeView {
   @Prop error: string = '';
   @Prop sceneItems: SmartCategoryItem[] = [];
   @Prop infoItems: SmartCategoryItem[] = [];
+  @Prop customItems: SmartCategoryItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
   @State private smartThumbLoadingPaused: boolean = false;
@@ -30,7 +32,7 @@ export struct GalleryAlbumSmartCategoryModeView {
   }
 
   private totalSmartItemCount(): number {
-    return this.sceneItems.length + this.infoItems.length;
+    return this.sceneItems.length + this.infoItems.length + this.customItems.length;
   }
 
   private recycleThumbCache(aggressive: boolean = false): void {
@@ -61,27 +63,47 @@ export struct GalleryAlbumSmartCategoryModeView {
   }
 
   @Builder
+  private categoryThumb(item: SmartCategoryItem) {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.getCategoryCover(item).length > 0) {
+        GalleryNetworkThumb({
+          uri: nasUrl(this.baseUrl, this.getCategoryCover(item)),
+          isVideo: false,
+          isGif: false,
+          paused: this.smartThumbLoadingPaused,
+        })
+          .width('100%')
+          .height('100%')
+      } else {
+        Text(smartCategoryMonogram(item))
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_secondary'))
+      }
+    }
+    .width('100%')
+    .aspectRatio(1)
+    .borderRadius(12)
+    .clip(true)
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+  }
+
+  @Builder
   private sectionGrid(items: SmartCategoryItem[], keyPrefix: string) {
     Grid() {
       ForEach(items, (item: SmartCategoryItem, idx: number) => {
         GridItem() {
           Column({ space: 8 }) {
-            GalleryNetworkThumb({
-              uri: nasUrl(this.baseUrl, this.getCategoryCover(item)),
-              isVideo: false,
-              isGif: false,
-              paused: this.smartThumbLoadingPaused,
-            })
-              .width('100%')
-              .aspectRatio(1)
+            this.categoryThumb(item)
             Text(this.getCategoryName(item))
               .fontSize(13)
               .fontColor($r('app.color.text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
-            // 与媒体分类宫格一致：副标题展示该项数量
-            Text(`${this.getCategoryCount(item)} 项`)
+            Text(this.getCategoryCount(item) > 0
+              ? `${this.getCategoryCount(item)} 项`
+              : (smartCategoryIsCustom(item) ? '自定义' : '0 项'))
               .fontSize(11)
               .fontColor($r('app.color.text_secondary'))
               .width('100%')
@@ -92,7 +114,7 @@ export struct GalleryAlbumSmartCategoryModeView {
             this.onRunSearch(this.getCategoryName(item));
           })
         }
-      }, (_item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}`)
+      }, (item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}_${this.getCategoryCover(item)}`)
     }
     .columnsTemplate('1fr 1fr 1fr')
     .columnsGap(8)
@@ -111,7 +133,7 @@ export struct GalleryAlbumSmartCategoryModeView {
         .width('100%')
         .justifyContent(FlexAlign.Center)
         .padding({ top: this.contentInsetTopVp + 40 })
-      } else if (this.error.length > 0) {
+      } else if (this.error.length > 0 && this.totalSmartItemCount() <= 0) {
         Text(this.error)
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
@@ -120,6 +142,22 @@ export struct GalleryAlbumSmartCategoryModeView {
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         List() {
+          if (this.customItems.length > 0) {
+            ListItem() {
+              Text('我的分类')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.text_primary'))
+                .width('100%')
+                .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+            }
+            ListItem() {
+              Column() {
+                this.sectionGrid(this.customItems, 'sc_custom')
+              }
+              .padding({ left: 12, right: 12 })
+            }
+          }
           if (this.sceneItems.length > 0) {
             ListItem() {
               Text('场景事物')
