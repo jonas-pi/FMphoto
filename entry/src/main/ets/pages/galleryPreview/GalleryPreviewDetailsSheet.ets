@@ -97,7 +97,7 @@ export struct GalleryPreviewDetailsSheet {
           Text(galleryPreviewCompactDisplayPath(fullPath))
             .fontSize(13)
             .fontColor($r('app.color.brand_primary'))
-            .maxLines(2)
+            .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(this.folderOpening ? '正在打开同目录媒体...' : '点击打开同目录媒体')
             .fontSize(11)

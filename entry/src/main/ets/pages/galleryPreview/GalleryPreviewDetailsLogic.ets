@@ -2,6 +2,9 @@ import { isVideoItem, itemFileExt, pickOriginal } from '../../album/GalleryAlbum
 import { isLivePhotoItem } from '../../album/livephoto/LivePhotoDetect';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
 
+/** 详情路径折叠时，从文件所在目录向上保留的最多层级数（超出则在顶部用 … 省略）。 */
+const GALLERY_PREVIEW_PATH_MAX_TAIL_SEGMENTS: number = 4;
+
 export function galleryPreviewResolveCollectStateFromItem(item: GalleryListItem | null): number {
   if (item === null) {
     return -1;
@@ -179,11 +182,7 @@ export function galleryPreviewParentFolderPath(fullPath: string): string {
   return path.substring(0, idx);
 }
 
-export function galleryPreviewCompactFolderTitle(folderPath: string): string {
-  const path = folderPath.trim();
-  if (path.length === 0) {
-    return '文件夹';
-  }
+export function galleryPreviewSplitPathSegments(path: string): string[] {
   const partsRaw = path.split('/');
   const parts: string[] = [];
   for (let i = 0; i < partsRaw.length; i++) {
@@ -192,15 +191,23 @@ export function galleryPreviewCompactFolderTitle(folderPath: string): string {
       parts.push(seg);
     }
   }
+  return parts;
+}
+
+export function galleryPreviewCompactFolderTitle(folderPath: string): string {
+  const path = folderPath.trim();
+  if (path.length === 0) {
+    return '文件夹';
+  }
+  const parts = galleryPreviewSplitPathSegments(path);
   if (parts.length === 0) {
     return path;
   }
-  if (parts.length <= 2) {
+  if (parts.length <= GALLERY_PREVIEW_PATH_MAX_TAIL_SEGMENTS) {
     return `/${parts.join('/')}`;
   }
-  const first = parts[0];
-  const last = parts[parts.length - 1];
-  return `/${first}/.../${last}`;
+  const tail = parts.slice(parts.length - GALLERY_PREVIEW_PATH_MAX_TAIL_SEGMENTS);
+  return `/.../${tail.join('/')}`;
 }
 
 export function galleryPreviewCompactDisplayPath(fullPath: string): string {
