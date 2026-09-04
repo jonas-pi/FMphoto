@@ -1490,7 +1490,7 @@ struct CategoryGallery {
                 .width('100%')
                 .layoutWeight(1)
                 .id(CATEGORY_GALLERY_LIST_DOM_ID)
-                .cachedCount(this.isRecentAddedStreamingMode() ? 1 : 3)
+                .cachedCount(this.isRecentAddedStreamingMode() ? 1 : (this.columnsPerRow >= 4 ? 2 : 3))
                 .margin({ top: this.contentInsetTopVp() })
                 .scrollBar(BarState.Auto)
                 .backgroundColor(Color.Transparent)

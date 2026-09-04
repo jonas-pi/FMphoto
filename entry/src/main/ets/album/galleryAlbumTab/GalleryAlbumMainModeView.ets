@@ -582,7 +582,8 @@ export struct GalleryAlbumMainModeView {
     if (this.viewGranularity === GalleryViewGranularity.MONTH) {
       return 8;
     }
-    return 3;
+    // 官方 List.cachedCount：可视行约 n/2；列数变多时每行更重，预加载行略减
+    return this.gridColumns >= 4 ? 2 : 3;
   }
 
   private shouldTrackGalleryThumbRect(): boolean {

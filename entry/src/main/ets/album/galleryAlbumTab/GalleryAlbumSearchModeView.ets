@@ -566,7 +566,7 @@ export struct GalleryAlbumSearchModeView {
           .width('100%')
           .height('100%')
           .id(GALLERY_ALBUM_SEARCH_LIST_DOM_ID)
-          .cachedCount(GALLERY_SEARCH_LIST_CACHED_COUNT)
+          .cachedCount(this.searchGridColumns() >= 4 ? 2 : GALLERY_SEARCH_LIST_CACHED_COUNT)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
           .divider({ strokeWidth: 0 })

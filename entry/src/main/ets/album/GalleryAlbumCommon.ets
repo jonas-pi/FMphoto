@@ -41,6 +41,8 @@ const FULL_IMAGE_PREVIEW_MAX_EDGE_PX = 4096;
 const FULL_IMAGE_SAFE_DECODE_BYTES = 24 * 1024 * 1024;
 const FULL_IMAGE_SAFE_DECODE_PIXELS = FULL_IMAGE_PREVIEW_MAX_EDGE_PX * FULL_IMAGE_PREVIEW_MAX_EDGE_PX;
 const FULL_IMAGE_NATIVE_RESPONSE_LIMIT_BYTES = 20 * 1024 * 1024;
+/** 宫格缩略图最大边：按显示尺寸降采样解码（官方 Image Kit desiredSize） */
+const THUMB_DECODE_MAX_EDGE_PX: number = 360;
 
 export interface GalleryThumbLoadTelemetry {
   active: number;
@@ -91,6 +93,21 @@ function shouldUseSafeFullDecode(srcSize?: image.Size, expectedBytes?: number): 
     return false;
   }
   return srcSize.width * srcSize.height > FULL_IMAGE_SAFE_DECODE_PIXELS;
+}
+
+function buildThumbDecodeSize(srcSize?: image.Size): image.Size | undefined {
+  if (srcSize === undefined || srcSize.width <= 0 || srcSize.height <= 0) {
+    return undefined;
+  }
+  const maxEdge = Math.max(srcSize.width, srcSize.height);
+  if (maxEdge <= THUMB_DECODE_MAX_EDGE_PX) {
+    return undefined;
+  }
+  const scale = THUMB_DECODE_MAX_EDGE_PX / maxEdge;
+  return {
+    height: Math.max(1, Math.floor(srcSize.height * scale)),
+    width: Math.max(1, Math.floor(srcSize.width * scale))
+  };
 }
 
 function buildSafeFullDecodeSize(srcSize?: image.Size): image.Size | undefined {
@@ -902,7 +919,15 @@ async function autoCropBlackBorders(pix: PixelMap): Promise<void> {
 async function decodeThumbPixFromBuffer(buf: ArrayBuffer, autoCropBlack: boolean): Promise<PixelMap | undefined> {
   const src = image.createImageSource(buf);
   try {
-    const pix = await src.createPixelMap({ desiredDynamicRange: image.DecodingDynamicRange.SDR });
+    const srcSize = await readImageSourceSize(src);
+    const desired = buildThumbDecodeSize(srcSize);
+    let pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR, desired);
+    if (pix === undefined && desired !== undefined) {
+      pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR);
+    }
+    if (pix === undefined) {
+      return undefined;
+    }
     if (autoCropBlack) {
       await autoCropBlackBorders(pix);
     }
@@ -1139,7 +1164,12 @@ export struct GalleryStaticThumbPlaceholder {
   }
 }
 
-@Component
+/**
+ * 网格缩略图。@Reusable + freezeWhenInactive：长列表滑出后进复用池并冻结，
+ * 避免平板加列后每帧反复创建/销毁 Image（官方 List 性能实践）。
+ */
+@Reusable
+@Component({ freezeWhenInactive: true })
 export struct GalleryNetworkThumb {
   @Prop @Watch('onUriChange') uri: string = '';
   @Prop isVideo: boolean = false;
@@ -1206,6 +1236,10 @@ export struct GalleryNetworkThumb {
   aboutToAppear(): void {
     this.logDebug('aboutToAppear');
     void this.loadPix();
+  }
+
+  aboutToReuse(_params: Record<string, Object | undefined | null>): void {
+    this.reloadFromScratch();
   }
 
   aboutToDisappear(): void {
@@ -1305,54 +1339,52 @@ export struct GalleryNetworkThumb {
 
   build() {
     Stack({ alignContent: Alignment.Center }) {
-      if (this.loading || this.pix === undefined) {
-        GalleryThumbSkeleton()
-      }
+      GalleryThumbSkeleton()
+        .visibility(this.pix === undefined ? Visibility.Visible : Visibility.Hidden)
       if (this.pix !== undefined) {
-        // 官方：Image 默认 draggable=true，长按易拖入系统「中转站」；相册缩略图关闭拖拽
+        // PixelMap 已按宫格边长降采样；缩小显示用 Medium 插值（官方 Image 清晰度建议）
         Image(this.pix)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
           .autoResize(false)
+          .interpolation(ImageInterpolation.Medium)
           .opacity(this.pixAlpha)
           .draggable(false)
       }
-      if (this.isVideo) {
-        // 使用鸿蒙官方 Symbol 图标
-        Stack({ alignContent: Alignment.Center }) {
-          Circle()
-            .width(34).height(34)
-            .fill('#66000000')
-          SymbolGlyph($r('sys.symbol.play_fill'))
-            .fontSize(16)
-            .fontColor([Color.White])
-            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-        }
+      Stack({ alignContent: Alignment.Center }) {
+        Circle()
+          .width(34).height(34)
+          .fill('#66000000')
+        SymbolGlyph($r('sys.symbol.play_fill'))
+          .fontSize(16)
+          .fontColor([Color.White])
+          .renderingStrategy(SymbolRenderingStrategy.SINGLE)
       }
-      if (this.isGif) {
-        Text('GIF')
-          .fontSize(10)
-          .fontColor(Color.White)
-          .fontWeight(FontWeight.Medium)
-          .backgroundColor('#66000000')
-          .padding({ left: 5, right: 5, top: 2, bottom: 2 })
-          .borderRadius(4)
-          .position({ x: 5, y: 5 })
-      }
-      if (this.isLive && !this.isVideo) {
-        Column() {
-          Blank().layoutWeight(1)
-          Row() {
-            Blank().layoutWeight(1)
-            GalleryLivePhotoMark({ sizeVp: 22 })
-              .margin({ right: 6, bottom: 6 })
-          }
-        }
-        .width('100%')
-        .height('100%')
+      .visibility(this.isVideo ? Visibility.Visible : Visibility.None)
+      .hitTestBehavior(HitTestMode.None)
+      Text('GIF')
+        .fontSize(10)
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Medium)
+        .backgroundColor('#66000000')
+        .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+        .borderRadius(4)
+        .position({ x: 5, y: 5 })
+        .visibility(this.isGif ? Visibility.Visible : Visibility.None)
         .hitTestBehavior(HitTestMode.None)
+      Column() {
+        Blank().layoutWeight(1)
+        Row() {
+          Blank().layoutWeight(1)
+          GalleryLivePhotoMark({ sizeVp: 22 })
+            .margin({ right: 6, bottom: 6 })
+        }
       }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.None)
+      .visibility(this.isLive && !this.isVideo ? Visibility.Visible : Visibility.None)
     }
     .width('100%')
     .aspectRatio(1)

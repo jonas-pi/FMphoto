@@ -874,7 +874,7 @@ struct RecycleBinPage {
             .width('100%')
             .layoutWeight(1)
             .id(RECYCLE_BIN_LIST_DOM_ID)
-            .cachedCount(3)
+            .cachedCount(this.columnsPerRow >= 4 ? 2 : 3)
             .margin({ top: this.contentInsetTopVp() })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
