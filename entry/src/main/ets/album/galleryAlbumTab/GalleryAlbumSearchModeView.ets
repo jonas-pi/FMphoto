@@ -427,7 +427,12 @@ export struct GalleryAlbumSearchModeView {
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         Stack() {
-          List({ scroller: this.scroller }) {
+          Column() {
+            // 顶栏/搜索框为浮层，用占位把列表视口压到控件下方，避免首行缩略图钻到背后
+            Blank()
+              .width('100%')
+              .height(this.contentInsetTopVp)
+            List({ scroller: this.scroller }) {
             LazyForEach(this.searchRowSource, (block: GallerySearchRowBlock) => {
               ListItem() {
                 Row({ space: 2 }) {
@@ -564,14 +569,14 @@ export struct GalleryAlbumSearchModeView {
             }
           }
           .width('100%')
-          .height('100%')
+          .layoutWeight(1)
+          .clip(true)
           .id(GALLERY_ALBUM_SEARCH_LIST_DOM_ID)
           .cachedCount(this.searchGridColumns() >= 4 ? 2 : GALLERY_SEARCH_LIST_CACHED_COUNT)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
           .divider({ strokeWidth: 0 })
           .enableScrollInteraction(this.galleryMainListScrollEnabled)
-          .margin({ top: this.contentInsetTopVp })
           .onTouch((event: TouchEvent): void => {
             this.releaseScrollLockIfIdle();
             if (!this.gallerySlideGestureActive) {
@@ -595,6 +600,10 @@ export struct GalleryAlbumSearchModeView {
             gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
             this.onSearchScrollStateChange(scrollState);
           })
+          }
+          .width('100%')
+          .height('100%')
+          .clip(true)
 
           if (this.gallerySelectionMode) {
             GalleryAlbumBatchActionBar({
