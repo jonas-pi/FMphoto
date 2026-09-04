@@ -1,6 +1,6 @@
 /**
  * 媒体分类浏览页：展示某一分类（照片/视频/动图等）内所有媒体，
- * 按日期降序分组，3 列网格；长按 + 滑动连选、批量下载/删除（与图库主时间线交互一致）。
+ * 按日期降序分组，列数随窗口宽度断点变化；长按 + 滑动连选、批量下载/删除（与图库主时间线交互一致）。
  */
 import { UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -38,6 +38,12 @@ import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { FnListDataSource } from '../common/FnListDataSource';
+import {
+  FN_WINDOW_WIDTH_BP_KEY,
+  fnAdaptiveGridColumns,
+  fnClampGridColumns,
+  fnGridColumnIndexes
+} from '../common/FnWindowBreakpoint';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
@@ -129,6 +135,9 @@ struct CategoryGallery {
   @State private totalCount: number = 0;
   @State private heroImageUri: string = '';
   @State private columnsPerRow: number = 3;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
+    WidthBreakpoint.WIDTH_SM;
+  private baseColumnsPerRow: number = 3;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
@@ -663,7 +672,7 @@ struct CategoryGallery {
       for (let rowIdx = 0; rowIdx < group.rows.length; rowIdx++) {
         const row = group.rows[rowIdx];
         const cellKeys: string[] = [];
-        const cols = this.columnsPerRow === 4 ? 4 : 3;
+        const cols = fnClampGridColumns(this.columnsPerRow);
         for (let col = 0; col < cols; col++) {
           const item = this.rowCellAt(row, col);
           if (item === undefined) {
@@ -702,7 +711,8 @@ struct CategoryGallery {
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
     this.heroImageUri = CategoryGalleryNavStore.heroImageUri;
-    this.columnsPerRow = CategoryGalleryNavStore.columnsPerRow === 4 ? 4 : 3;
+    this.baseColumnsPerRow = fnClampGridColumns(CategoryGalleryNavStore.columnsPerRow);
+    this.columnsPerRow = this.resolvedColumns();
     this.flatItems = CategoryGalleryNavStore.items.slice();
     this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
     this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
@@ -1014,7 +1024,7 @@ struct CategoryGallery {
       set groupOffsets(v: number[]) { self.groupOffsets = v; }
 
       get columnsPerRow(): number { return self.columnsPerRow; }
-      set columnsPerRow(v: number) { self.columnsPerRow = v === 4 ? 4 : 3; }
+      set columnsPerRow(v: number) { self.columnsPerRow = fnClampGridColumns(v); }
 
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.setSelectionModeState(v); }
@@ -1170,6 +1180,9 @@ struct CategoryGallery {
 
       get handledDeleteSyncVersion(): number { return self.handledDeleteSyncVersion; }
       set handledDeleteSyncVersion(v: number) { self.handledDeleteSyncVersion = v; }
+
+      get columnsPerRow(): number { return self.columnsPerRow; }
+      set columnsPerRow(v: number) { self.columnsPerRow = fnClampGridColumns(v); }
 
       get selectedIds(): string[] { return self.selectedIds; }
       set selectedIds(v: string[]) { self.setSelectedIdsState(v); }
@@ -1344,8 +1357,23 @@ struct CategoryGallery {
     .margin({ bottom: 2 })
   }
 
+  private resolvedColumns(): number {
+    return fnAdaptiveGridColumns(this.baseColumnsPerRow, this.windowWidthBp);
+  }
+
+  private onWindowWidthBpChanged(): void {
+    const next = this.resolvedColumns();
+    if (next === this.columnsPerRow) {
+      return;
+    }
+    this.columnsPerRow = next;
+    if (this.flatItems.length > 0) {
+      this.rebuildByFlatItems();
+    }
+  }
+
   private rowColumnIndexes(): number[] {
-    return this.columnsPerRow === 4 ? [0, 1, 2, 3] : [0, 1, 2];
+    return fnGridColumnIndexes(this.columnsPerRow);
   }
 
   private rowCellAt(row: RowModel, col: number): GalleryListItem | undefined {

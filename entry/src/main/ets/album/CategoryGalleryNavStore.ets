@@ -6,6 +6,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { router, UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './GalleryAlbumEntityData';
+import { fnClampGridColumns } from '../common/FnWindowBreakpoint';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
@@ -141,7 +142,7 @@ export class CategoryGalleryNavStore {
     );
     CategoryGalleryNavStore.categoryKey = categoryKey;
     CategoryGalleryNavStore.heroImageUri = meta?.heroImageUri ?? '';
-    CategoryGalleryNavStore.columnsPerRow = meta?.columnsPerRow === 4 ? 4 : 3;
+    CategoryGalleryNavStore.columnsPerRow = fnClampGridColumns(meta?.columnsPerRow ?? 3);
     CategoryGalleryNavStore.sourceKind = meta?.sourceKind ?? '';
     CategoryGalleryNavStore.personId = meta?.personId?.trim() ?? '';
     CategoryGalleryNavStore.smartCategoryKeyword = meta?.smartCategoryKeyword?.trim() ?? '';

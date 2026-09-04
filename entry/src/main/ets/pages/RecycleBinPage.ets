@@ -11,6 +11,11 @@ import {
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
 import { FnListDataSource } from '../common/FnListDataSource';
+import {
+  FN_WINDOW_WIDTH_BP_KEY,
+  fnAdaptiveGridColumns,
+  fnClampGridColumns
+} from '../common/FnWindowBreakpoint';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { RecycleBinListItem } from '../model/FnApiTypes';
@@ -81,7 +86,7 @@ import {
 import { RbFingerWindowPoint, RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
 
 const RECYCLE_BIN_CONTENT_INSET_TOP_VP: number = 68;
-const RECYCLE_BIN_COLUMNS_PER_ROW: number = 4;
+const RECYCLE_BIN_BASE_COLUMNS: number = 4;
 
 interface RecycleBinRowBlockCell {
   flatIdx: number;
@@ -122,6 +127,9 @@ struct RecycleBinPage {
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
   @StorageProp(GALLERY_PREVIEW_HERO_ACTIVE_KEY) private previewHeroActive: boolean = false;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
+    WidthBreakpoint.WIDTH_SM;
+  @State private columnsPerRow: number = RECYCLE_BIN_BASE_COLUMNS;
 
   private rbLongPressIgnoreUntil: number = 0;
   private rbThumbHitBounds: Map<string, RbThumbHitRect> = new Map();
@@ -196,6 +204,7 @@ struct RecycleBinPage {
   }
 
   aboutToAppear(): void {
+    this.columnsPerRow = fnAdaptiveGridColumns(RECYCLE_BIN_BASE_COLUMNS, this.windowWidthBp);
     this.applySystemBar(true);
     this.rbThumbLoadingPaused = false;
     this.rebuildRowBlocks();
@@ -220,6 +229,15 @@ struct RecycleBinPage {
   }
 
   onItemsChanged(): void {
+    this.rebuildRowBlocks();
+  }
+
+  private onWindowWidthBpChanged(): void {
+    const next = fnAdaptiveGridColumns(RECYCLE_BIN_BASE_COLUMNS, this.windowWidthBp);
+    if (next === this.columnsPerRow) {
+      return;
+    }
+    this.columnsPerRow = next;
     this.rebuildRowBlocks();
   }
 
@@ -334,12 +352,13 @@ struct RecycleBinPage {
 
   private buildRowBlocks(): RecycleBinRowBlock[] {
     const blocks: RecycleBinRowBlock[] = [];
-    const rowCount = Math.ceil(this.items.length / RECYCLE_BIN_COLUMNS_PER_ROW);
+    const cols = this.columnsPerRow;
+    const rowCount = Math.ceil(this.items.length / cols);
     for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
-      const rowStart = rowIdx * RECYCLE_BIN_COLUMNS_PER_ROW;
+      const rowStart = rowIdx * cols;
       const cells: RecycleBinRowBlockCell[] = [];
       let cellSig = '';
-      for (let col = 0; col < RECYCLE_BIN_COLUMNS_PER_ROW; col++) {
+      for (let col = 0; col < cols; col++) {
         const flatIdx = rowStart + col;
         if (flatIdx >= this.items.length) {
           cells.push({
@@ -473,6 +492,9 @@ struct RecycleBinPage {
 
       get items(): RecycleBinListItem[] { return self.items; }
       set items(v: RecycleBinListItem[]) { self.items = v; }
+
+      get columnsPerRow(): number { return self.columnsPerRow; }
+      set columnsPerRow(v: number) { self.columnsPerRow = fnClampGridColumns(v); }
 
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.setSelectionModeState(v); }

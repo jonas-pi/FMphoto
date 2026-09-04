@@ -28,6 +28,7 @@ export interface CategoryGalleryBatchActionsHost {
   flatItems: GalleryListItem[];
   groupOffsets: number[];
   handledDeleteSyncVersion: number;
+  columnsPerRow: number;
   selectedIds: string[];
   cgBatchDeleting: boolean;
   cgBatchDownloading: boolean;
@@ -129,8 +130,8 @@ export async function categoryGalleryConfirmBatchDelete(host: CategoryGalleryBat
 export function categoryGalleryRebuildByFlatItems(host: CategoryGalleryBatchActionsHost): void {
   const useCreatedAt = CategoryGalleryNavStore.useCreatedAtGrouping;
   const viewData = CategoryGalleryNavStore.sourceKind === 'smart-category'
-    ? buildCategoryGalleryInputOrderViewData(host.flatItems, CategoryGalleryNavStore.columnsPerRow)
-    : buildCategoryGalleryViewData(host.flatItems, useCreatedAt, CategoryGalleryNavStore.columnsPerRow);
+    ? buildCategoryGalleryInputOrderViewData(host.flatItems, host.columnsPerRow)
+    : buildCategoryGalleryViewData(host.flatItems, useCreatedAt, host.columnsPerRow);
   host.groups = viewData.groups;
   host.groupOffsets = viewData.groupOffsets;
 }

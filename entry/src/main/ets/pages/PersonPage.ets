@@ -2,6 +2,7 @@ import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
 import { personFace as resolvePersonFace } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
@@ -15,6 +16,7 @@ import {
 @Component
 struct PersonPage {
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private error: string = '';
@@ -217,7 +219,7 @@ struct PersonPage {
               }
             }, (_item: AiPersonItem, i: number) => `person_${i}`)
           }
-          .columnsTemplate('1fr 1fr 1fr')
+          .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
           .columnsGap(8)
           .rowsGap(8)
           .cachedCount(6)

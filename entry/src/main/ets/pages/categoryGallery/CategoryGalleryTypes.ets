@@ -1,4 +1,5 @@
 import { GalleryListItem } from '../../model/FnApiTypes';
+import { fnClampGridColumns } from '../../common/FnWindowBreakpoint';
 
 export interface RowModel {
   startIdx: number;
@@ -72,7 +73,7 @@ export function buildCategoryGalleryViewData(
   useCreatedAt: boolean = false,
   columnsPerRow: number = 3
 ): CategoryGalleryViewData {
-  const normalizedColumns = columnsPerRow === 4 ? 4 : 3;
+  const normalizedColumns = fnClampGridColumns(columnsPerRow);
   const keyOrder: string[] = [];
   const mapItems: Map<string, GalleryListItem[]> = new Map();
 
@@ -138,7 +139,7 @@ export function buildCategoryGalleryInputOrderViewData(
   if (items.length === 0) {
     return { groups: [], flatItems: [], groupOffsets: [] };
   }
-  const normalizedColumns = columnsPerRow === 4 ? 4 : 3;
+  const normalizedColumns = fnClampGridColumns(columnsPerRow);
   const rows: RowModel[] = [];
   for (let ri = 0; ri < items.length; ri += normalizedColumns) {
     const cells: GalleryListItem[] = [];

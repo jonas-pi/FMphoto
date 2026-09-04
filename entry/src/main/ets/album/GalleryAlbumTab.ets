@@ -97,6 +97,7 @@ import {
   GalleryAlbumMainModeView
 } from './galleryAlbumTab/GalleryAlbumMainModeView';
 import { GalleryViewGranularity, galleryViewGranularityColumns } from './galleryAlbumTab/GalleryAlbumGranularity';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns } from '../common/FnWindowBreakpoint';
 import {
   categoryCount,
   categoryCover,
@@ -450,6 +451,8 @@ export struct GalleryAlbumTab {
   /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
+    WidthBreakpoint.WIDTH_SM;
 
   @State private bootLoading: boolean = false;
   @State private loadError: string = '';
@@ -1029,6 +1032,8 @@ export struct GalleryAlbumTab {
       set gallerySlideHasRef(value: boolean) { self.gallerySlideHasRef = value; }
       get searchResults(): GalleryListItem[] { return self.searchResults; }
       set searchResults(value: GalleryListItem[]) { self.searchResults = value; }
+      get searchGridColumns(): number { return fnAdaptiveGridColumns(3, self.windowWidthBp); }
+      set searchGridColumns(_value: number) {}
       get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
       set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
       get scrollerRef(): Scroller { return self.scrollerRef; }
@@ -2411,7 +2416,15 @@ export struct GalleryAlbumTab {
   }
 
   private currentGalleryGridColumns(): number {
-    return galleryViewGranularityColumns(this.renderedViewGranularity);
+    return galleryViewGranularityColumns(this.renderedViewGranularity, this.windowWidthBp);
+  }
+
+  private onWindowWidthBpChanged(): void {
+    if (this.homeSurface !== 'photos' || this.inSearchMode || this.inCategoryMode ||
+      this.inSmartCategoryMode || this.inPersonMode) {
+      return;
+    }
+    galleryAlbumRebuildFlow(this.asVisibleLoadHost());
   }
 
   private granularitySwitchDirection(nextMode: GalleryViewGranularity): number {

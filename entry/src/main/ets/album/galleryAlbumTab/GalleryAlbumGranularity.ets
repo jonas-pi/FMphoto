@@ -1,3 +1,5 @@
+import { fnAdaptiveGridColumns } from '../../common/FnWindowBreakpoint';
+
 export enum GalleryViewGranularity {
   DAY = 0,
   MONTH = 1,
@@ -63,7 +65,7 @@ export function galleryViewGranularityLabel(mode: GalleryViewGranularity): strin
   return '\u65e5';
 }
 
-export function galleryViewGranularityColumns(mode: GalleryViewGranularity): number {
+export function galleryViewGranularityBaseColumns(mode: GalleryViewGranularity): number {
   if (mode === GalleryViewGranularity.MONTH) {
     return 8;
   }
@@ -71,6 +73,13 @@ export function galleryViewGranularityColumns(mode: GalleryViewGranularity): num
     return 12;
   }
   return 3;
+}
+
+export function galleryViewGranularityColumns(
+  mode: GalleryViewGranularity,
+  widthBp: number = WidthBreakpoint.WIDTH_SM
+): number {
+  return fnAdaptiveGridColumns(galleryViewGranularityBaseColumns(mode), widthBp);
 }
 
 export function galleryViewGranularityTitle(

@@ -27,6 +27,8 @@ export interface SmartCategoryLayout {
   sceneOrder: string[];
   infoOrder: string[];
   customOrder: string[];
+  /** 本地最后写入时间，供跨设备 Last-Write-Wins；0 表示尚未标记 */
+  updatedAt: number;
 }
 
 export interface SmartCategoryMergedLists {
@@ -43,7 +45,8 @@ function emptyLayout(account: string): SmartCategoryLayout {
     custom: [],
     sceneOrder: [],
     infoOrder: [],
-    customOrder: []
+    customOrder: [],
+    updatedAt: 0
   };
 }
 
@@ -72,6 +75,19 @@ function asString(value: Object | string | number | boolean | undefined | null, 
     return String(value);
   }
   return fallback;
+}
+
+function asTime(value: Object | string | number | boolean | undefined | null): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === 'string') {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) {
+      return Math.floor(n);
+    }
+  }
+  return 0;
 }
 
 function parseStringArray(raw: Object | string | number | boolean | undefined | null): string[] {
@@ -135,7 +151,8 @@ function parseAccountPayload(raw: Object | undefined | null): SmartCategoryLayou
     custom: parseCustomList(rec['custom']),
     sceneOrder: parseStringArray(rec['sceneOrder']),
     infoOrder: parseStringArray(rec['infoOrder']),
-    customOrder: parseStringArray(rec['customOrder'])
+    customOrder: parseStringArray(rec['customOrder']),
+    updatedAt: asTime(rec['updatedAt'])
   };
 }
 
@@ -173,7 +190,7 @@ function parseStore(rawJson: string): Map<string, SmartCategoryLayout> {
 }
 
 function storeToJson(map: Map<string, SmartCategoryLayout>): string {
-  const byAccount: Record<string, Object> = {};
+  const byAccount: Record<string, LooseJson> = {};
   map.forEach((layout: SmartCategoryLayout, account: string): void => {
     const customObjs: Record<string, string>[] = [];
     for (let c = 0; c < layout.custom.length; c++) {
@@ -189,14 +206,18 @@ function storeToJson(map: Map<string, SmartCategoryLayout>): string {
       }
       customObjs.push(rec);
     }
-    const payload: Record<string, Object> = {};
+    const payload: LooseJson = {};
     payload['custom'] = customObjs;
     payload['sceneOrder'] = layout.sceneOrder;
     payload['infoOrder'] = layout.infoOrder;
     payload['customOrder'] = layout.customOrder;
+    const updatedAt = layout.updatedAt > 0 ? layout.updatedAt : 0;
+    if (updatedAt > 0) {
+      payload['updatedAt'] = updatedAt;
+    }
     byAccount[account] = payload;
   });
-  const root: Record<string, Object> = {};
+  const root: LooseJson = {};
   root['byAccount'] = byAccount;
   return JSON.stringify(root);
 }
@@ -242,12 +263,14 @@ export async function smartCategorySaveLayout(
   try {
     const raw = await p.get(K_LAYOUT_JSON, '') as string;
     const map = parseStore(raw);
+    const updatedAt = layout.updatedAt > 0 ? layout.updatedAt : Date.now();
     map.set(acc, {
       account: acc,
       custom: layout.custom,
       sceneOrder: layout.sceneOrder,
       infoOrder: layout.infoOrder,
-      customOrder: layout.customOrder
+      customOrder: layout.customOrder,
+      updatedAt: updatedAt
     });
     await p.put(K_LAYOUT_JSON, storeToJson(map));
     await p.flush();
@@ -394,7 +417,8 @@ export function smartCategoryLayoutFromDisplay(
     custom: custom,
     sceneOrder: sceneOrder,
     infoOrder: infoOrder,
-    customOrder: customOrder
+    customOrder: customOrder,
+    updatedAt: 0
   };
 }
 

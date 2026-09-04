@@ -10,6 +10,7 @@ import {
   fnRestoreAppSystemBars
 } from '../common/FnSplashTheme';
 import { fnBindSystemAvoidArea, fnPublishSystemAvoidArea, fnUnbindSystemAvoidArea } from '../common/FnSystemAvoidArea';
+import { fnBindWindowBreakpoint, fnEnsureWindowBreakpointStorage, fnUnbindWindowBreakpoint } from '../common/FnWindowBreakpoint';
 import {
   fnLoadImmersiveLightPreference,
   fnSetImmersiveLightEnabled
@@ -37,6 +38,7 @@ export default class EntryAbility extends UIAbility {
     GalleryThumbDiskCache.init(this.context.cacheDir);
     ensureGalleryThumbCacheEpochStorage();
     FnTransferQueueStore.ensureStorage();
+    fnEnsureWindowBreakpointStorage();
     ensureStarted(this.context);
   }
 
@@ -94,11 +96,18 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, LOG_TAG, 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
+      try {
+        const win = windowStage.getMainWindowSync();
+        this.mainWindow = win;
+        fnBindWindowBreakpoint(win);
+      } catch (_e) {
+      }
       hilog.info(DOMAIN, LOG_TAG, 'Succeeded in loading the content.');
     });
   }
 
   onWindowStageDestroy(): void {
+    fnUnbindWindowBreakpoint();
     fnUnbindSystemAvoidArea();
     this.mainWindow = null;
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onWindowStageDestroy');

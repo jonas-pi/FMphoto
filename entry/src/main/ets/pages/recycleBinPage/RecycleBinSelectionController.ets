@@ -13,15 +13,16 @@ import {
   pickSlideEndFlatFromRowBand
 } from '../../album/GallerySlidePick';
 import { GalleryListItem, RecycleBinListItem } from '../../model/FnApiTypes';
+import { fnClampGridColumns } from '../../common/FnWindowBreakpoint';
 import { RbFingerCoordCompat, RbFingerWindowPoint, RbThumbHitRect } from './RecycleBinTypes';
 
-const RECYCLE_BIN_COLUMNS_PER_ROW: number = 4;
 export const RECYCLE_BIN_LIST_DOM_ID: string = 'recycle_bin_main_list';
 
 export interface RecycleBinSelectionHost {
   getUIContext(): UIContext;
   baseUrl: string;
   items: RecycleBinListItem[];
+  columnsPerRow: number;
   selectionMode: boolean;
   selectedIds: number[];
   listScroller: Scroller;
@@ -279,11 +280,12 @@ export function recycleBinPickThumbFlatForRow(
   yPx: number
 ): number {
   const n = host.items.length;
+  const columnsPerRow = fnClampGridColumns(host.columnsPerRow);
   const fromCache = recycleBinPickThumbFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= rowStart && fromCache < rowStart + RECYCLE_BIN_COLUMNS_PER_ROW && fromCache < n) {
+  if (fromCache >= rowStart && fromCache < rowStart + columnsPerRow && fromCache < n) {
     return fromCache;
   }
-  for (let k = RECYCLE_BIN_COLUMNS_PER_ROW - 1; k >= 0; k--) {
+  for (let k = columnsPerRow - 1; k >= 0; k--) {
     const fi = rowStart + k;
     if (fi >= n) {
       continue;
@@ -564,13 +566,14 @@ export function recycleBinOnCellClick(
   GalleryPreviewNavStore.openPreview(host.getUIContext(), host.baseUrl, list, pIdx);
 }
 
-export function recycleBinRowCount(items: RecycleBinListItem[]): number {
+export function recycleBinRowCount(items: RecycleBinListItem[], columnsPerRow: number = 4): number {
   const n = items.length;
-  return n <= 0 ? 0 : Math.floor((n + RECYCLE_BIN_COLUMNS_PER_ROW - 1) / RECYCLE_BIN_COLUMNS_PER_ROW);
+  const cols = fnClampGridColumns(columnsPerRow);
+  return n <= 0 ? 0 : Math.floor((n + cols - 1) / cols);
 }
 
-export function recycleBinRowIndexArray(items: RecycleBinListItem[]): number[] {
-  const count = recycleBinRowCount(items);
+export function recycleBinRowIndexArray(items: RecycleBinListItem[], columnsPerRow: number = 4): number[] {
+  const count = recycleBinRowCount(items, columnsPerRow);
   const out: number[] = [];
   for (let i = 0; i < count; i++) {
     out.push(i);

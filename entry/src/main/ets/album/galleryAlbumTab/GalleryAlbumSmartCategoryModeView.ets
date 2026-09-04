@@ -1,6 +1,7 @@
 import { SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
 import { smartCategoryIsCustom, smartCategoryMonogram } from '../SmartCategoryLayoutPreferences';
 
 @Component
@@ -17,6 +18,7 @@ export struct GalleryAlbumSmartCategoryModeView {
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
   @State private smartThumbLoadingPaused: boolean = false;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   private smartThumbResumeTimer: number = -1;
 
   getCategoryName: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
@@ -117,7 +119,7 @@ export struct GalleryAlbumSmartCategoryModeView {
         }
       }, (item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}_${this.getCategoryCover(item)}_${this.getCategoryCount(item)}_${this.countVersion}`)
     }
-    .columnsTemplate('1fr 1fr 1fr')
+    .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
     .columnsGap(8)
     .rowsGap(8)
     .cachedCount(4)

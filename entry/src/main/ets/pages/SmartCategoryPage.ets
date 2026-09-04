@@ -11,6 +11,7 @@ import {
 import { loadSmartCategories } from '../album/galleryAlbumTab/GalleryAlbumModeLoaders';
 import { SmartCategoryCountStore } from '../album/SmartCategoryCountStore';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
 import { smartCategoryCover, smartCategoryCount, smartCategoryName } from '../album/GalleryAlbumEntityData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
@@ -44,6 +45,7 @@ const SMART_CAT_LOG_TAG: string = 'SmartCategory';
 @Component
 struct SmartCategoryPage {
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private error: string = '';
@@ -471,7 +473,7 @@ struct SmartCategoryPage {
         }
       }, (item: SmartCategoryItem, i: number) => `${this.smartCategoryGridKey(item, i, keyPrefix)}_v${countVersion}`)
     }
-    .columnsTemplate('1fr 1fr 1fr')
+    .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
     .columnsGap(10)
     .rowsGap(10)
     .cachedCount(6)

@@ -12,6 +12,7 @@ import {
   pickIndexedFlatForSlidePointer,
   pickSlideEndFlatFromRowBand
 } from '../../album/GallerySlidePick';
+import { fnClampGridColumns } from '../../common/FnWindowBreakpoint';
 import {
   CgFingerCoordCompat,
   CgFingerWindowPoint,
@@ -229,7 +230,7 @@ export function categoryGalleryPickFlatForRow(
   yPx: number
 ): number {
   const n = host.flatItems.length;
-  const columnsPerRow = host.columnsPerRow === 4 ? 4 : 3;
+  const columnsPerRow = fnClampGridColumns(host.columnsPerRow);
   const fromCache = categoryGalleryPickFlatUnderPoint(host, xPx, yPx);
   if (fromCache >= rowStart && fromCache < rowStart + columnsPerRow && fromCache < n) {
     return fromCache;

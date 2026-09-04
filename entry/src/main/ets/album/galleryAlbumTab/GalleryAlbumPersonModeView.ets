@@ -2,6 +2,7 @@ import { AiPersonItem } from '../../model/FnApiTypes';
 import { FnFullLoadingMask } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
 
 @Component
 export struct GalleryAlbumPersonModeView {
@@ -15,6 +16,7 @@ export struct GalleryAlbumPersonModeView {
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
   @State private personThumbLoadingPaused: boolean = false;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   private personThumbResumeTimer: number = -1;
 
   getPersonName: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
@@ -112,7 +114,7 @@ export struct GalleryAlbumPersonModeView {
             return identity.length > 0 ? `person_${identity}` : `person_${i}`;
           })
         }
-        .columnsTemplate('1fr 1fr 1fr')
+        .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
         .columnsGap(8)
         .rowsGap(8)
         .cachedCount(6)

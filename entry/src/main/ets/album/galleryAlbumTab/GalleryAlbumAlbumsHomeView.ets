@@ -10,6 +10,11 @@ import { scheduleGalleryAlbumCoverPersist } from '../GalleryThumbPersist';
 import { GALLERY_THUMB_CACHE_EPOCH_KEY, THUMB_DISK_ALBUM_COVER } from '../GalleryThumbDiskCache';
 import { loadFirstRecentAddedItem } from '../RecentAddedOpenHelper';
 import { loadFirstCollectGalleryItem } from './GalleryAlbumModeLoaders';
+import {
+  FN_WINDOW_WIDTH_BP_KEY,
+  fnAdaptiveGridColumns,
+  fnGridColumnIndexes
+} from '../../common/FnWindowBreakpoint';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const ALBUMS_HOME_SECTION_SIDE_PAD_VP: number = 14;
@@ -73,6 +78,7 @@ export struct GalleryAlbumAlbumsHomeView {
   @State private shortcutPreviewLoaded: boolean = false;
   @StorageProp(GALLERY_THUMB_CACHE_EPOCH_KEY) @Watch('onThumbCacheEpochChanged')
   private thumbCacheEpoch: number = 0;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   private thumbResumeTimer: number = -1;
   private previewRefreshTimer: number = -1;
   private coverPersistTimer: number = -1;
@@ -431,8 +437,13 @@ export struct GalleryAlbumAlbumsHomeView {
     return this.smartSceneItems.concat(this.smartInfoItems);
   }
 
+  private mediaGridColumns(): number {
+    return fnAdaptiveGridColumns(3, this.windowWidthBp);
+  }
+
   private mediaRowIndexes(): number[] {
-    const totalRows = Math.ceil(this.mediaItems.length / 3);
+    const cols = this.mediaGridColumns();
+    const totalRows = Math.ceil(this.mediaItems.length / cols);
     const out: number[] = [];
     for (let i = 0; i < totalRows; i++) {
       out.push(i);
@@ -441,11 +452,15 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   private mediaCategoryAt(rowIdx: number, colIdx: number): MediaCategoryItem | undefined {
-    const idx = rowIdx * 3 + colIdx;
+    const idx = rowIdx * this.mediaGridColumns() + colIdx;
     if (idx < 0 || idx >= this.mediaItems.length) {
       return undefined;
     }
     return this.mediaItems[idx];
+  }
+
+  private mediaPlaceholderRowIndexes(): number[] {
+    return [0, 1];
   }
 
   @Builder
@@ -477,21 +492,15 @@ export struct GalleryAlbumAlbumsHomeView {
   @Builder
   private mediaLoadingPlaceholder() {
     Column({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-      Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-        this.mediaPlaceholderCell()
-        this.mediaPlaceholderCell()
-        this.mediaPlaceholderCell()
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-
-      Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-        this.mediaPlaceholderCell()
-        this.mediaPlaceholderCell()
-        this.mediaPlaceholderCell()
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
+      ForEach(this.mediaPlaceholderRowIndexes(), (rowIdx: number) => {
+        Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
+          ForEach(fnGridColumnIndexes(this.mediaGridColumns()), (_colIdx: number) => {
+            this.mediaPlaceholderCell()
+          }, (colIdx: number) => `album_media_ph_${rowIdx}_${colIdx}`)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (rowIdx: number) => `album_media_ph_row_${rowIdx}_${this.mediaGridColumns()}`)
     }
     .width('100%')
     .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP })
@@ -1125,13 +1134,13 @@ export struct GalleryAlbumAlbumsHomeView {
           Column({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
             ForEach(this.mediaRowIndexes(), (rowIdx: number) => {
               Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-                this.mediaCategoryCell(this.mediaCategoryAt(rowIdx, 0))
-                this.mediaCategoryCell(this.mediaCategoryAt(rowIdx, 1))
-                this.mediaCategoryCell(this.mediaCategoryAt(rowIdx, 2))
+                ForEach(fnGridColumnIndexes(this.mediaGridColumns()), (colIdx: number) => {
+                  this.mediaCategoryCell(this.mediaCategoryAt(rowIdx, colIdx))
+                }, (colIdx: number) => `album_media_cell_${rowIdx}_${colIdx}`)
               }
               .width('100%')
               .alignItems(VerticalAlign.Top)
-            }, (rowIdx: number) => `album_media_row_${rowIdx}`)
+            }, (rowIdx: number) => `album_media_row_${rowIdx}_${this.mediaGridColumns()}`)
           }
           .width('100%')
           .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP })

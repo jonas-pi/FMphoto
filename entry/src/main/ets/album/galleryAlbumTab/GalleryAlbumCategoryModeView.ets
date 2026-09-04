@@ -2,6 +2,7 @@ import { MediaCategoryItem } from '../../model/FnApiTypes';
 import { FnFullLoadingMask } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
 
 @Component
 export struct GalleryAlbumCategoryModeView {
@@ -15,6 +16,7 @@ export struct GalleryAlbumCategoryModeView {
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
   @State private categoryThumbLoadingPaused: boolean = false;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   private categoryThumbResumeTimer: number = -1;
 
   getCategoryTitle: (item: MediaCategoryItem) => string = (_: MediaCategoryItem) => '';
@@ -107,7 +109,7 @@ export struct GalleryAlbumCategoryModeView {
               }
             }, (cat: MediaCategoryItem, i: number) => `mc_${i}_${this.getCategoryTitle(cat)}`)
           }
-          .columnsTemplate('1fr 1fr')
+          .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(2, this.windowWidthBp)))
           .columnsGap(8)
           .rowsGap(8)
           .cachedCount(4)

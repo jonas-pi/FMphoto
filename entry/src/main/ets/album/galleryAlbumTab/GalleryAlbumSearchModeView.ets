@@ -9,6 +9,7 @@ import { gallerySlideAutoScrollOnListDidScroll } from '../GallerySlideAutoScroll
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns } from '../../common/FnWindowBreakpoint';
 
 const GALLERY_SEARCH_INITIAL_RENDER_COUNT = 120;
 const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
@@ -66,6 +67,8 @@ export struct GalleryAlbumSearchModeView {
   onBatchDelete: () => void = () => {};
   @State private renderedSearchCount: number = 0;
   @State private searchThumbLoadingPaused: boolean = false;
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
+    WidthBreakpoint.WIDTH_SM;
   private searchAppendTimer: number = -1;
   private searchThumbResumeTimer: number = -1;
   private searchLastVisibleIndex: number = -1;
@@ -96,8 +99,12 @@ export struct GalleryAlbumSearchModeView {
     }
   }
 
+  private searchGridColumns(): number {
+    return fnAdaptiveGridColumns(3, this.windowWidthBp);
+  }
+
   private currentRenderedRowCount(): number {
-    return Math.ceil(this.currentRenderedCount() / 3);
+    return Math.ceil(this.currentRenderedCount() / this.searchGridColumns());
   }
 
   private normalizeSearchKeyPart(value: string | number | undefined | null): string {
@@ -153,12 +160,13 @@ export struct GalleryAlbumSearchModeView {
   private buildSearchRowBlocks(): GallerySearchRowBlock[] {
     const blocks: GallerySearchRowBlock[] = [];
     const visibleCount = this.currentRenderedCount();
-    const rowCount = Math.ceil(visibleCount / 3);
+    const cols = this.searchGridColumns();
+    const rowCount = Math.ceil(visibleCount / cols);
     for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
-      const rowStart = rowIdx * 3;
+      const rowStart = rowIdx * cols;
       const cells: GallerySearchRowBlockCell[] = [];
       const keys: string[] = [];
-      for (let col = 0; col < 3; col++) {
+      for (let col = 0; col < cols; col++) {
         const flatIdx = rowStart + col;
         if (flatIdx >= visibleCount) {
           cells.push({ flatIdx: -1 });
@@ -250,6 +258,10 @@ export struct GalleryAlbumSearchModeView {
   private onSearchResultsChanged(): void {
     this.ensureMainListScrollEnabled();
     this.resetRenderedSearchResults();
+  }
+
+  private onWindowWidthBpChanged(): void {
+    this.rebuildSearchRowBlocks();
   }
 
   private onLoadingChanged(): void {

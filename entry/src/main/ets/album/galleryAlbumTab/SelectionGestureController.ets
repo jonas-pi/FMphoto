@@ -46,6 +46,7 @@ export interface SelectionGestureControllerHost {
   gallerySlideRefY: number;
   gallerySlideHasRef: boolean;
   searchResults: GalleryListItem[];
+  searchGridColumns: number;
   scrollerRef: Scroller;
   searchScroller: Scroller;
   searchListDomId: string;
@@ -1009,11 +1010,12 @@ export function selectionPickSearchThumbFlatForRow(
   yPx: number
 ): number {
   const n = host.searchResults.length;
+  const columnsPerRow = Math.max(1, Math.floor(host.searchGridColumns));
   const fromCache = selectionPickSearchThumbFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= rowStart && fromCache < rowStart + 3 && fromCache < n) {
+  if (fromCache >= rowStart && fromCache < rowStart + columnsPerRow && fromCache < n) {
     return fromCache;
   }
-  for (let k = 2; k >= 0; k--) {
+  for (let k = columnsPerRow - 1; k >= 0; k--) {
     const fi = rowStart + k;
     if (fi >= n) {
       continue;

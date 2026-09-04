@@ -295,6 +295,58 @@
     {
       "name": "privacy_policy_title",
       "value": "隐私政策"
+    },
+    {
+      "name": "config_sync_title",
+      "value": "配置同步"
+    },
+    {
+      "name": "config_sync_entry_title",
+      "value": "配置同步"
+    },
+    {
+      "name": "config_sync_entry_subtitle",
+      "value": "二维码或 WebDAV 同步智能分类"
+    },
+    {
+      "name": "config_sync_qr_section",
+      "value": "二维码"
+    },
+    {
+      "name": "config_sync_scan",
+      "value": "扫一扫导入"
+    },
+    {
+      "name": "config_sync_webdav_section",
+      "value": "WebDAV"
+    },
+    {
+      "name": "config_sync_webdav_url_hint",
+      "value": "WebDAV 地址，例如 https://192.168.1.1:5006/dav"
+    },
+    {
+      "name": "config_sync_webdav_user",
+      "value": "用户名"
+    },
+    {
+      "name": "config_sync_webdav_password",
+      "value": "密码"
+    },
+    {
+      "name": "config_sync_webdav_path_hint",
+      "value": "远程文件路径，默认 /fmphoto/settings.json"
+    },
+    {
+      "name": "config_sync_skip_cert",
+      "value": "跳过证书校验"
+    },
+    {
+      "name": "config_sync_upload",
+      "value": "上传到 WebDAV"
+    },
+    {
+      "name": "config_sync_download",
+      "value": "从 WebDAV 下载"
     }
   ]
 }

@@ -14,6 +14,7 @@ import {
   GalleryViewGranularity,
   galleryViewGranularityColumns
 } from './galleryAlbumTab/GalleryAlbumGranularity';
+import { FN_WINDOW_WIDTH_BP_KEY } from '../common/FnWindowBreakpoint';
 
 function densityOf(mode: GalleryViewGranularity): 'day' | 'month' | 'year' {
   if (mode === GalleryViewGranularity.MONTH) {
@@ -53,7 +54,9 @@ export function scheduleGalleryFirstScreenThumbPersist(
   items: GalleryListItem[],
   mode: GalleryViewGranularity
 ): void {
-  const columns = galleryViewGranularityColumns(mode);
+  const storedBp = AppStorage.get<number>(FN_WINDOW_WIDTH_BP_KEY);
+  const widthBp: number = storedBp !== undefined ? storedBp : WidthBreakpoint.WIDTH_SM;
+  const columns = galleryViewGranularityColumns(mode, widthBp);
   const maxCount = GalleryThumbDiskCache.recommendedFirstScreenCount(columns, listCachedCountOf(mode));
   const density = densityOf(mode);
   const keys: string[] = [];

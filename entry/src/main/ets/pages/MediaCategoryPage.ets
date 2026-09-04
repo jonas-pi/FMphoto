@@ -2,6 +2,7 @@ import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { openMediaCategoryGallery, openingTextForCategory } from '../album/MediaCategoryOpenHelper';
 import { MediaCategoryItem } from '../model/FnApiTypes';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -14,6 +15,7 @@ import {
 @Component
 struct MediaCategoryPage {
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
+  @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private openingText: string = '打开中…';
@@ -224,7 +226,7 @@ struct MediaCategoryPage {
               }
             }, (_cat: MediaCategoryItem, i: number) => `mc_${i}`)
           }
-          .columnsTemplate('1fr 1fr')
+          .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(2, this.windowWidthBp)))
           .columnsGap(8)
           .rowsGap(8)
           .layoutWeight(1)
