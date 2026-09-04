@@ -560,3 +560,20 @@ export function smartCategoryMoveItems(list: SmartCategoryItem[], from: number, 
     list.splice(to, 0, removed[0]);
   }
 }
+
+export async function smartCategoryPersistFromDisplay(
+  ctx: common.UIAbilityContext | undefined,
+  sceneItems: SmartCategoryItem[],
+  infoItems: SmartCategoryItem[],
+  customItems: SmartCategoryItem[]
+): Promise<void> {
+  if (ctx === undefined) {
+    return;
+  }
+  const account = smartCategoryCurrentAccount();
+  if (account.length === 0) {
+    return;
+  }
+  const layout = smartCategoryLayoutFromDisplay(account, sceneItems, infoItems, customItems);
+  await smartCategorySaveLayout(ctx, layout);
+}

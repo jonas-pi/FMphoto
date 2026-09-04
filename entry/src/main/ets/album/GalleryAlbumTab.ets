@@ -113,6 +113,11 @@ import {
   smartCategoryName,
 } from './galleryAlbumTab/GalleryAlbumModeData';
 import { SmartCategoryCountStore } from './SmartCategoryCountStore';
+import { mediaCategoryPersistOrderFromUi } from './MediaCategoryOrderPreferences';
+import {
+  smartCategoryMoveItems,
+  smartCategoryPersistFromDisplay
+} from './SmartCategoryLayoutPreferences';
 import {
   galleryAlbumCountGalleryListedItems,
   galleryAlbumCollectListedTimelineItems,
@@ -2340,6 +2345,37 @@ export struct GalleryAlbumTab {
     galleryAlbumOpenSmartCategoryPage(this.asRootSurfaceHost());
   }
 
+  private persistSmartCategoryOrder(): void {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      void smartCategoryPersistFromDisplay(
+        ctx,
+        this.smartSceneItems,
+        this.smartInfoItems,
+        this.smartCustomItems
+      );
+    } catch (_e) {
+    }
+  }
+
+  private reorderSmartScene(from: number, to: number): void {
+    smartCategoryMoveItems(this.smartSceneItems, from, to);
+    this.smartSceneItems = this.smartSceneItems.slice();
+    this.persistSmartCategoryOrder();
+  }
+
+  private reorderSmartInfo(from: number, to: number): void {
+    smartCategoryMoveItems(this.smartInfoItems, from, to);
+    this.smartInfoItems = this.smartInfoItems.slice();
+    this.persistSmartCategoryOrder();
+  }
+
+  private reorderSmartCustom(from: number, to: number): void {
+    smartCategoryMoveItems(this.smartCustomItems, from, to);
+    this.smartCustomItems = this.smartCustomItems.slice();
+    this.persistSmartCategoryOrder();
+  }
+
   private isRootPhotosSurfaceVisible(): boolean {
     return galleryAlbumIsRootPhotosSurfaceVisible(this.asRootSurfaceHost());
   }
@@ -2819,6 +2855,10 @@ export struct GalleryAlbumTab {
           onOpenMediaCategory: (item: MediaCategoryItem): void => {
             void galleryAlbumOpenCategory(this.asModeOrchestratorHost(), item);
           },
+          onReorderMediaCategories: (items: MediaCategoryItem[]): void => {
+            this.categoryItems = items;
+            void mediaCategoryPersistOrderFromUi(this.getUIContext(), items);
+          },
           onOpenPersonPage: (): void => {
             this.openPersonPage();
           },
@@ -2887,6 +2927,15 @@ export struct GalleryAlbumTab {
             this.searchQuery = keyword;
             this.searchSeed = keyword;
             void galleryAlbumRunSearch(this.asModeOrchestratorHost(), keyword);
+          },
+          onReorderScene: (from: number, to: number): void => {
+            this.reorderSmartScene(from, to);
+          },
+          onReorderInfo: (from: number, to: number): void => {
+            this.reorderSmartInfo(from, to);
+          },
+          onReorderCustom: (from: number, to: number): void => {
+            this.reorderSmartCustom(from, to);
           }
         })
       }

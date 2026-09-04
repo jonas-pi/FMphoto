@@ -17,10 +17,14 @@ function playPresetHaptic(effectId: string, fallbackDurationMs: number): void {
   try {
     const attr: vibrator.VibrateAttribute = { usage: 'touch' };
     if (vibrator.isSupportEffectSync(effectId)) {
-      void vibrator.startVibration(
-        { type: 'preset', effectId: effectId, count: 1 },
-        attr
-      ).catch((): void => {});
+      // 官方 VibratePreset：长按/拖拽短振；count 默认 1，intensity 默认 100，时长由预置波形决定
+      const preset: vibrator.VibratePreset = {
+        type: 'preset',
+        effectId: effectId,
+        count: 1,
+        intensity: 100
+      };
+      void vibrator.startVibration(preset, attr).catch((): void => {});
       return;
     }
     void vibrator.startVibration(
@@ -52,4 +56,11 @@ export function playGalleryLivePhotoHaptic(): void {
  */
 export function playGalleryLongPressMenuHaptic(): void {
   playPresetHaptic(LONG_PRESS_PRESET_EFFECT, 48);
+}
+
+/**
+ * 长按拖拽排序抬起：官方推荐 VibratePreset（长按/拖拽），与菜单长按同一档 EFFECT_HARD。
+ */
+export function playGalleryDragSortHaptic(): void {
+  playGalleryLongPressMenuHaptic();
 }

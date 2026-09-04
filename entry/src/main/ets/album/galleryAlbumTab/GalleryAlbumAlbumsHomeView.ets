@@ -13,9 +13,13 @@ import { loadFirstCollectGalleryItem } from './GalleryAlbumModeLoaders';
 import {
   FN_WINDOW_WIDTH_BP_KEY,
   fnAdaptiveGridColumns,
-  fnGridColumnIndexes
+  fnGridColumnIndexes,
+  fnRepeatFrTemplate
 } from '../../common/FnWindowBreakpoint';
+import { mediaCategoryMoveItems } from '../MediaCategoryOrderPreferences';
+import { mediaCategoryStableId } from '../GalleryAlbumEntityData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { playGalleryDragSortHaptic } from '../GallerySelectionHaptic';
 
 const ALBUMS_HOME_SECTION_SIDE_PAD_VP: number = 14;
 const ALBUMS_HOME_MEDIA_GRID_GAP_VP: number = 10;
@@ -29,6 +33,8 @@ const ALBUMS_HOME_SHORTCUT_DIVIDER_LEFT_VP: number = 78;
 const ALBUMS_HOME_SMART_RING_GAP_VP: number = 6;
 const ALBUMS_HOME_SMART_GRID_GAP_VP: number = 4;
 const ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP: number = 10;
+/** 封面下方标题+数量+间距，用于宫格自适应高度 */
+const ALBUMS_HOME_MEDIA_CARD_TEXT_VP: number = 62;
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
 
@@ -62,6 +68,7 @@ export struct GalleryAlbumAlbumsHomeView {
   getPersonFace: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   getSmartCategoryCover: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
   onOpenMediaCategory: (item: MediaCategoryItem) => void = (_: MediaCategoryItem) => {};
+  onReorderMediaCategories: (items: MediaCategoryItem[]) => void = (_: MediaCategoryItem[]) => {};
   onOpenPersonPage: () => void = () => {};
   onOpenSmartCategoryPage: () => void = () => {};
   onOpenPlacePlaceholder: () => void = () => {};
@@ -79,6 +86,8 @@ export struct GalleryAlbumAlbumsHomeView {
   @StorageProp(GALLERY_THUMB_CACHE_EPOCH_KEY) @Watch('onThumbCacheEpochChanged')
   private thumbCacheEpoch: number = 0;
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
+  @State private mediaReorderActive: boolean = false;
+  @State private mediaGridWidthVp: number = 0;
   private thumbResumeTimer: number = -1;
   private previewRefreshTimer: number = -1;
   private coverPersistTimer: number = -1;
@@ -441,22 +450,33 @@ export struct GalleryAlbumAlbumsHomeView {
     return fnAdaptiveGridColumns(3, this.windowWidthBp);
   }
 
-  private mediaRowIndexes(): number[] {
+  private mediaAlbumGridHeightVp(): number {
     const cols = this.mediaGridColumns();
-    const totalRows = Math.ceil(this.mediaItems.length / cols);
-    const out: number[] = [];
-    for (let i = 0; i < totalRows; i++) {
-      out.push(i);
-    }
-    return out;
+    const count = this.mediaItems.length;
+    const rows = Math.max(1, Math.ceil(count / cols));
+    const gap = ALBUMS_HOME_MEDIA_GRID_GAP_VP;
+    const width = this.mediaGridWidthVp > 8 ? this.mediaGridWidthVp : 332;
+    const cellW = Math.max(1, (width - gap * (cols - 1)) / cols);
+    const itemH = cellW + ALBUMS_HOME_MEDIA_CARD_TEXT_VP;
+    return rows * itemH + Math.max(0, rows - 1) * gap;
   }
 
-  private mediaCategoryAt(rowIdx: number, colIdx: number): MediaCategoryItem | undefined {
-    const idx = rowIdx * this.mediaGridColumns() + colIdx;
-    if (idx < 0 || idx >= this.mediaItems.length) {
-      return undefined;
+  private mediaCategoryKey(item: MediaCategoryItem): string {
+    return mediaCategoryStableId(item);
+  }
+
+  private onMediaCategoryMove(from: number, to: number): void {
+    const next = mediaCategoryMoveItems(this.mediaItems, from, to);
+    if (next === this.mediaItems) {
+      return;
     }
-    return this.mediaItems[idx];
+    this.onReorderMediaCategories(next);
+  }
+
+  private setMediaReorderActive(active: boolean): void {
+    if (this.mediaReorderActive !== active) {
+      this.mediaReorderActive = active;
+    }
   }
 
   private mediaPlaceholderRowIndexes(): number[] {
@@ -705,6 +725,7 @@ export struct GalleryAlbumAlbumsHomeView {
         })
           .width('100%')
           .aspectRatio(1)
+          .draggable(false)
       } else {
         Column() {
           Text(placeholder)
@@ -751,9 +772,12 @@ export struct GalleryAlbumAlbumsHomeView {
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
       }
-      .layoutWeight(1)
+      .width('100%')
       .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
       .onClick((): void => {
+        if (this.mediaReorderActive) {
+          return;
+        }
         this.onOpenMediaCategory(item);
       })
     }
@@ -1131,16 +1155,49 @@ export struct GalleryAlbumAlbumsHomeView {
         }
       } else if (this.mediaItems.length > 0) {
         ListItem() {
-          Column({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-            ForEach(this.mediaRowIndexes(), (rowIdx: number) => {
-              Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-                ForEach(fnGridColumnIndexes(this.mediaGridColumns()), (colIdx: number) => {
-                  this.mediaCategoryCell(this.mediaCategoryAt(rowIdx, colIdx))
-                }, (colIdx: number) => `album_media_cell_${rowIdx}_${colIdx}`)
+          Column() {
+            Grid() {
+              ForEach(this.mediaItems, (item: MediaCategoryItem) => {
+                GridItem() {
+                  this.mediaCategoryCell(item)
+                }
+                .width('100%')
+              }, (item: MediaCategoryItem) => this.mediaCategoryKey(item))
+                .onMove((from: number, to: number): void => {
+                  this.onMediaCategoryMove(from, to);
+                }, {
+                onLongPress: (_index: number): void => {
+                  playGalleryDragSortHaptic();
+                  this.setMediaReorderActive(true);
+                },
+                  onDragStart: (_index: number): void => {
+                    this.setMediaReorderActive(true);
+                  },
+                  onDrop: (_index: number): void => {
+                    this.setMediaReorderActive(false);
+                  }
+                })
+            }
+            .columnsTemplate(fnRepeatFrTemplate(this.mediaGridColumns()))
+            .columnsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
+            .rowsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
+            .width('100%')
+            .height(this.mediaAlbumGridHeightVp())
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.None)
+            .enableScrollInteraction(false)
+            .supportAnimation(true)
+            .nestedScroll({
+              scrollForward: NestedScrollMode.PARENT_FIRST,
+              scrollBackward: NestedScrollMode.PARENT_FIRST
+            })
+            .onAreaChange((_old: Area, area: Area): void => {
+              const next = Number(area.width);
+              if (!Number.isFinite(next) || next <= 0 || Math.abs(next - this.mediaGridWidthVp) < 0.5) {
+                return;
               }
-              .width('100%')
-              .alignItems(VerticalAlign.Top)
-            }, (rowIdx: number) => `album_media_row_${rowIdx}_${this.mediaGridColumns()}`)
+              this.mediaGridWidthVp = next;
+            })
           }
           .width('100%')
           .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP })
@@ -1189,6 +1246,7 @@ export struct GalleryAlbumAlbumsHomeView {
     .height('100%')
     .divider({ strokeWidth: 0 })
     .scrollBar(BarState.Off)
+    .enableScrollInteraction(!this.mediaReorderActive)
     .edgeEffect(EdgeEffect.Spring)
     .onDidScroll((_offset: number, scrollState: ScrollState): void => {
       if (scrollState !== ScrollState.Idle) {

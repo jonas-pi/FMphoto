@@ -1,8 +1,9 @@
 import { SmartCategoryItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
-import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
-import { smartCategoryIsCustom, smartCategoryMonogram } from '../SmartCategoryLayoutPreferences';
+import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns } from '../../common/FnWindowBreakpoint';
+import { smartCategoryCustomIdOf, smartCategoryIsCustom, smartCategoryMonogram } from '../SmartCategoryLayoutPreferences';
+import { playGalleryDragSortHaptic } from '../GallerySelectionHaptic';
 
 @Component
 export struct GalleryAlbumSmartCategoryModeView {
@@ -18,6 +19,7 @@ export struct GalleryAlbumSmartCategoryModeView {
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
   @State private smartThumbLoadingPaused: boolean = false;
+  @State private reorderActive: boolean = false;
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   private smartThumbResumeTimer: number = -1;
 
@@ -25,6 +27,9 @@ export struct GalleryAlbumSmartCategoryModeView {
   getCategoryCover: (item: SmartCategoryItem) => string = (_: SmartCategoryItem) => '';
   getCategoryCount: (item: SmartCategoryItem) => number = (_: SmartCategoryItem) => 0;
   onRunSearch: (keyword: string) => void = (_: string) => {};
+  onReorderScene: (from: number, to: number) => void = (_from: number, _to: number) => {};
+  onReorderInfo: (from: number, to: number) => void = (_from: number, _to: number) => {};
+  onReorderCustom: (from: number, to: number) => void = (_from: number, _to: number) => {};
 
   aboutToAppear(): void {
     this.smartThumbLoadingPaused = false;
@@ -49,6 +54,12 @@ export struct GalleryAlbumSmartCategoryModeView {
     }
   }
 
+  private setReorderActive(active: boolean): void {
+    if (this.reorderActive !== active) {
+      this.reorderActive = active;
+    }
+  }
+
   private onListScrollStateChange(scrollState: ScrollState): void {
     if (scrollState !== ScrollState.Idle) {
       this.clearSmartThumbResumeTimer();
@@ -65,6 +76,14 @@ export struct GalleryAlbumSmartCategoryModeView {
     }, 96);
   }
 
+  private itemStableKey(item: SmartCategoryItem, prefix: string): string {
+    const customId = smartCategoryCustomIdOf(item);
+    if (customId.length > 0) {
+      return `${prefix}_c_${customId}`;
+    }
+    return `${prefix}_n_${this.getCategoryName(item)}`;
+  }
+
   @Builder
   private categoryThumb(item: SmartCategoryItem) {
     Stack({ alignContent: Alignment.Center }) {
@@ -77,6 +96,7 @@ export struct GalleryAlbumSmartCategoryModeView {
         })
           .width('100%')
           .height('100%')
+          .draggable(false)
       } else {
         Text(smartCategoryMonogram(item))
           .fontSize(20)
@@ -92,38 +112,60 @@ export struct GalleryAlbumSmartCategoryModeView {
   }
 
   @Builder
-  private sectionGrid(items: SmartCategoryItem[], keyPrefix: string) {
-    Grid() {
-      ForEach(items, (item: SmartCategoryItem, idx: number) => {
-        GridItem() {
-          Column({ space: 8 }) {
-            this.categoryThumb(item)
-            Text(this.getCategoryName(item))
-              .fontSize(13)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-            Text(this.getCategoryCount(item) > 0
-              ? `${this.getCategoryCount(item)} 项`
-              : (smartCategoryIsCustom(item) ? '自定义' : '0 项'))
-              .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
-              .width('100%')
-          }
-          .width('100%')
-          .padding({ left: 2, right: 2, bottom: 8 })
-          .onClick((): void => {
-            this.onRunSearch(this.getCategoryName(item));
-          })
-        }
-      }, (item: SmartCategoryItem, i: number) => `${keyPrefix}_${i}_${this.getCategoryCover(item)}_${this.getCategoryCount(item)}_${this.countVersion}`)
+  private headerMyCategories() {
+    Text('我的分类')
+      .fontSize(14)
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.text_primary'))
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 8, bottom: 8 })
+  }
+
+  @Builder
+  private headerSceneCategories() {
+    Text('场景事物')
+      .fontSize(14)
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.text_primary'))
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 8, bottom: 8 })
+  }
+
+  @Builder
+  private headerInfoCategories() {
+    Text('资料记录')
+      .fontSize(14)
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.text_primary'))
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 16, bottom: 8 })
+  }
+
+  @Builder
+  private browseCard(item: SmartCategoryItem) {
+    Column({ space: 8 }) {
+      this.categoryThumb(item)
+      Text(this.getCategoryName(item))
+        .fontSize(13)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Text(this.getCategoryCount(item) > 0
+        ? `${this.getCategoryCount(item)} 项`
+        : (smartCategoryIsCustom(item) ? '自定义' : '0 项'))
+        .fontSize(11)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
     }
-    .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
-    .columnsGap(8)
-    .rowsGap(8)
-    .cachedCount(4)
     .width('100%')
+    .padding({ left: 2, right: 2, bottom: 8 })
+    .onClick((): void => {
+      if (this.reorderActive) {
+        return;
+      }
+      this.onRunSearch(this.getCategoryName(item));
+    })
   }
 
   build() {
@@ -144,59 +186,81 @@ export struct GalleryAlbumSmartCategoryModeView {
           .textAlign(TextAlign.Center)
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
-        List() {
+        List({ space: 8 }) {
           if (this.customItems.length > 0) {
-            ListItem() {
-              Text('我的分类')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.text_primary'))
-                .width('100%')
-                .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+            ListItemGroup({ header: this.headerMyCategories }) {
             }
-            ListItem() {
-              Column() {
-                this.sectionGrid(this.customItems, 'sc_custom')
+            ForEach(this.customItems, (item: SmartCategoryItem) => {
+              ListItem() {
+                this.browseCard(item)
               }
-              .padding({ left: 12, right: 12 })
-            }
+            }, (item: SmartCategoryItem) => this.itemStableKey(item, 'sc_custom'))
+              .onMove((from: number, to: number): void => {
+                this.onReorderCustom(from, to);
+              }, {
+                onLongPress: (_index: number): void => {
+                  playGalleryDragSortHaptic();
+                  this.setReorderActive(true);
+                },
+                onDragStart: (_index: number): void => {
+                  this.setReorderActive(true);
+                },
+                onDrop: (_index: number): void => {
+                  this.setReorderActive(false);
+                }
+              })
           }
           if (this.sceneItems.length > 0) {
-            ListItem() {
-              Text('场景事物')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.text_primary'))
-                .width('100%')
-                .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+            ListItemGroup({ header: this.headerSceneCategories }) {
             }
-            ListItem() {
-              Column() {
-                this.sectionGrid(this.sceneItems, 'sc_scene')
+            ForEach(this.sceneItems, (item: SmartCategoryItem) => {
+              ListItem() {
+                this.browseCard(item)
               }
-              .padding({ left: 12, right: 12 })
-            }
+            }, (item: SmartCategoryItem) => this.itemStableKey(item, 'sc_scene'))
+              .onMove((from: number, to: number): void => {
+                this.onReorderScene(from, to);
+              }, {
+                onLongPress: (_index: number): void => {
+                  playGalleryDragSortHaptic();
+                  this.setReorderActive(true);
+                },
+                onDragStart: (_index: number): void => {
+                  this.setReorderActive(true);
+                },
+                onDrop: (_index: number): void => {
+                  this.setReorderActive(false);
+                }
+              })
           }
           if (this.infoItems.length > 0) {
-            ListItem() {
-              Text('资料记录')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.text_primary'))
-                .width('100%')
-                .padding({ left: 14, right: 14, top: 16, bottom: 8 })
+            ListItemGroup({ header: this.headerInfoCategories }) {
             }
-            ListItem() {
-              Column() {
-                this.sectionGrid(this.infoItems, 'sc_info')
+            ForEach(this.infoItems, (item: SmartCategoryItem) => {
+              ListItem() {
+                this.browseCard(item)
               }
-              .padding({ left: 12, right: 12, bottom: 10 })
-            }
+            }, (item: SmartCategoryItem) => this.itemStableKey(item, 'sc_info'))
+              .onMove((from: number, to: number): void => {
+                this.onReorderInfo(from, to);
+              }, {
+                onLongPress: (_index: number): void => {
+                  playGalleryDragSortHaptic();
+                  this.setReorderActive(true);
+                },
+                onDragStart: (_index: number): void => {
+                  this.setReorderActive(true);
+                },
+                onDrop: (_index: number): void => {
+                  this.setReorderActive(false);
+                }
+              })
           }
         }
+        .lanes(fnAdaptiveGridColumns(3, this.windowWidthBp), 8)
         .width('100%')
         .layoutWeight(1)
-        .padding({ top: 0, bottom: this.contentInsetBottomVp + 12 })
+        .padding({ left: 12, right: 12, bottom: this.contentInsetBottomVp + 12 })
         .margin({ top: this.contentInsetTopVp })
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)

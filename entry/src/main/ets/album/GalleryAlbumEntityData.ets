@@ -154,6 +154,21 @@ export function categoryTitle(item: MediaCategoryItem): string {
   return t !== undefined && t.length > 0 ? t : '未命名分类';
 }
 
+/** 媒体分类稳定键：拖拽排序与本地顺序持久化共用，避免仅靠下标错位 */
+export function mediaCategoryStableId(item: MediaCategoryItem): string {
+  if (item.id !== undefined) {
+    const idText = `${item.id}`.trim();
+    if (idText.length > 0) {
+      return `id:${idText}`;
+    }
+  }
+  const key = item.key !== undefined ? item.key.trim() : '';
+  if (key.length > 0) {
+    return `key:${key}`;
+  }
+  return `name:${categoryTitle(item)}`;
+}
+
 export function categoryCount(item: MediaCategoryItem): number {
   const directVals: Array<number | string | undefined> = [
     item.count,

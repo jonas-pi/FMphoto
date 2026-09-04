@@ -20,6 +20,7 @@ import {
 } from './GalleryAlbumModeLoaders';
 import { fillAndPersistCustomSmartCategoryCovers, enrichSmartCategoryCountsFromSearch } from '../SmartCategoryMagicSearch';
 import { smartCategoryCurrentAccount, smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
+import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
 import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
 import {
   DATE_FEED_BATCH,
@@ -134,7 +135,7 @@ export async function galleryAlbumRefreshMediaCategoriesInPlace(
     return;
   }
   const result = await galleryMediaCategoryModeLoader.load(client);
-  host.categoryItems = result.data.items;
+  host.categoryItems = await mediaCategoryItemsWithSavedOrderFromUi(host.getUIContext(), result.data.items);
   host.categoryLoading = false;
   galleryAlbumMarkTimelineRefreshCaughtUp(host);
 }

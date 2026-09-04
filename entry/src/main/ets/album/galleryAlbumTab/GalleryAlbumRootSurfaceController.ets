@@ -6,6 +6,7 @@ import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../..
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { galleryAlbumTopBarChromeHeightVp } from './GalleryAlbumTopBar';
 import { loadMediaCategories as requestMediaCategories, loadPersons as requestPersons, loadSmartCategories as requestSmartCategories } from './GalleryAlbumModeLoaders';
+import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
 
 export interface GalleryAlbumRootSurfaceHost {
   getUIContext(): UIContext;
@@ -104,7 +105,7 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
       if (mediaGen !== host.albumsHomeMediaPrefetchGen) {
         return;
       }
-      host.categoryItems = result.items;
+      host.categoryItems = await mediaCategoryItemsWithSavedOrderFromUi(host.getUIContext(), result.items);
       host.categoryError = result.error;
       host.categoryLoading = false;
     })();
