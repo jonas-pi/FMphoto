@@ -29,10 +29,12 @@ const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOFT_VP = 64;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP = 42;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
 
-/** 缩略图全局缓存上限；HDR 缩略图单张占用大，过高易 OOM；配合 SDR 解码与 release 淘汰 */
-export const THUMB_CACHE_MAX = 192;
+/** 缩略图全局缓存上限。宫格已按最长边 360px 降采样，可比全分辨率多留一些 */
+export const THUMB_CACHE_MAX = 288;
 const thumbPixCache = new Map<string, PixelMap>();
 const thumbPixIdentityCache = new Map<string, ThumbIdentityCacheEntry>();
+const previewMidPixCache = new Map<string, PixelMap>();
+const previewMidInflight: Map<string, Promise<PixelMap | undefined>> = new Map();
 const thumbLoadFailAt = new Map<string, number>();
 const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
 /** 原图下载智能超时：先短后长，兼顾小图响应与大图成功率 */
@@ -43,6 +45,9 @@ const FULL_IMAGE_SAFE_DECODE_PIXELS = FULL_IMAGE_PREVIEW_MAX_EDGE_PX * FULL_IMAG
 const FULL_IMAGE_NATIVE_RESPONSE_LIMIT_BYTES = 20 * 1024 * 1024;
 /** 宫格缩略图最大边：按显示尺寸降采样解码（官方 Image Kit desiredSize） */
 const THUMB_DECODE_MAX_EDGE_PX: number = 360;
+/** 预览中档缩略图最大边：接近屏宽，仍走 m 档、不拉原图 */
+const PREVIEW_MID_MAX_EDGE_PX: number = 2880;
+const PREVIEW_MID_CACHE_MAX: number = 20;
 
 export interface GalleryThumbLoadTelemetry {
   active: number;
@@ -104,6 +109,21 @@ function buildThumbDecodeSize(srcSize?: image.Size): image.Size | undefined {
     return undefined;
   }
   const scale = THUMB_DECODE_MAX_EDGE_PX / maxEdge;
+  return {
+    height: Math.max(1, Math.floor(srcSize.height * scale)),
+    width: Math.max(1, Math.floor(srcSize.width * scale))
+  };
+}
+
+function buildPreviewMidDecodeSize(srcSize?: image.Size): image.Size | undefined {
+  if (srcSize === undefined || srcSize.width <= 0 || srcSize.height <= 0) {
+    return undefined;
+  }
+  const maxEdge = Math.max(srcSize.width, srcSize.height);
+  if (maxEdge <= PREVIEW_MID_MAX_EDGE_PX) {
+    return undefined;
+  }
+  const scale = PREVIEW_MID_MAX_EDGE_PX / maxEdge;
   return {
     height: Math.max(1, Math.floor(srcSize.height * scale)),
     width: Math.max(1, Math.floor(srcSize.width * scale))
@@ -501,35 +521,35 @@ export function recommendedThumbCacheKeep(itemCount: number, aggressive: boolean
   const total = Math.max(0, Math.floor(itemCount));
   if (aggressive) {
     if (total > 1200) {
-      return 12;
+      return 20;
     }
     if (total > 720) {
-      return 14;
+      return 24;
     }
     if (total > 360) {
-      return 16;
+      return 28;
     }
     if (total > 180) {
-      return 18;
+      return 32;
     }
-    return 24;
-  }
-  if (total > 2400) {
-    return 24;
-  }
-  if (total > 1200) {
-    return 28;
-  }
-  if (total > 720) {
-    return 32;
-  }
-  if (total > 360) {
     return 40;
   }
-  if (total > 180) {
-    return 52;
+  if (total > 2400) {
+    return 48;
   }
-  return 64;
+  if (total > 1200) {
+    return 56;
+  }
+  if (total > 720) {
+    return 64;
+  }
+  if (total > 360) {
+    return 80;
+  }
+  if (total > 180) {
+    return 96;
+  }
+  return 120;
 }
 
 export function trimThumbPixCacheForList(itemCount: number, aggressive: boolean = false): void {
@@ -704,6 +724,50 @@ export function pickThumb(it: GalleryListItem): string {
     }
   }
   return '';
+}
+
+/**
+ * 预览中档地址：优先 mUrl，流路径 /s|/xs|/xxs 升到 /m，绝不走原图 /o。
+ */
+export function pickPreviewThumb(it: GalleryListItem): string {
+  const th = it.additional?.thumbnail;
+  const fromAdditional = th !== undefined ? pickFirstThumbUrl([th.mUrl, th.sUrl, th.xsUrl, th.xxsUrl]) : '';
+  if (fromAdditional.length > 0) {
+    return promoteStreamThumbToMedium(fromAdditional);
+  }
+  const topTh = it.thumbnail;
+  if (topTh !== undefined && typeof topTh === 'object') {
+    const tb = topTh as GalleryThumbnailBlock;
+    const fromTopBlock = pickFirstThumbUrl([tb.mUrl, tb.sUrl, tb.xsUrl, tb.xxsUrl]);
+    if (fromTopBlock.length > 0) {
+      return promoteStreamThumbToMedium(fromTopBlock);
+    }
+  }
+  for (const u of [it.thumb, it.small_thumb, it.thumb_url, it.cover, it.poster]) {
+    if (u !== undefined && u.trim().length > 0) {
+      return promoteStreamThumbToMedium(u.trim());
+    }
+  }
+  if (typeof topTh === 'string' && topTh.trim().length > 0) {
+    return promoteStreamThumbToMedium(topTh.trim());
+  }
+  const looseThumb = pickNestedPhotoThumb(it);
+  if (looseThumb.length > 0) {
+    return promoteStreamThumbToMedium(looseThumb);
+  }
+  for (const u of [it.url, it.src, it.path]) {
+    if (u !== undefined && u.trim().length > 0) {
+      return promoteStreamThumbToMedium(u.trim());
+    }
+  }
+  return '';
+}
+
+function promoteStreamThumbToMedium(url: string): string {
+  if (url.indexOf('/stream/p/t/') < 0) {
+    return url;
+  }
+  return url.replace('/xxs/', '/m/').replace('/xs/', '/m/').replace('/s/', '/m/');
 }
 
 export function pickThumbForGridDensity(it: GalleryListItem, density: 'day' | 'month' | 'year'): string {
@@ -935,6 +999,104 @@ async function decodeThumbPixFromBuffer(buf: ArrayBuffer, autoCropBlack: boolean
   } finally {
     src.release();
   }
+}
+
+async function decodePreviewMidPixFromBuffer(buf: ArrayBuffer): Promise<PixelMap | undefined> {
+  const src = image.createImageSource(buf);
+  try {
+    const srcSize = await readImageSourceSize(src);
+    const desired = buildPreviewMidDecodeSize(srcSize);
+    let pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR, desired);
+    if (pix === undefined && desired !== undefined) {
+      pix = await tryCreateFullPixelMap(src, image.DecodingDynamicRange.SDR);
+    }
+    return pix;
+  } finally {
+    src.release();
+  }
+}
+
+function previewMidCacheKey(url: string): string {
+  return `mid|${url}`;
+}
+
+function rememberPreviewMidPix(key: string, pix: PixelMap): void {
+  if (previewMidPixCache.size >= PREVIEW_MID_CACHE_MAX && !previewMidPixCache.has(key)) {
+    let firstKey: string | undefined = undefined;
+    for (const k of previewMidPixCache.keys()) {
+      firstKey = k;
+      break;
+    }
+    if (firstKey !== undefined) {
+      const old = previewMidPixCache.get(firstKey);
+      previewMidPixCache.delete(firstKey);
+      if (old !== undefined) {
+        releaseThumbPix(old);
+      }
+    }
+  }
+  previewMidPixCache.set(key, pix);
+}
+
+export function getPreviewMidPixCached(uri: string): PixelMap | undefined {
+  if (uri.length === 0) {
+    return undefined;
+  }
+  return previewMidPixCache.get(previewMidCacheKey(uri));
+}
+
+/**
+ * 预览中档缩略图：优先复用宫格已落盘的 JPEG，按 1600px 边长解码，不拉原图。
+ */
+export async function loadPreviewMidPix(fullUrl: string): Promise<PixelMap | undefined> {
+  if (fullUrl.length === 0) {
+    return undefined;
+  }
+  const midKey = previewMidCacheKey(fullUrl);
+  const cached = previewMidPixCache.get(midKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const pending = previewMidInflight.get(fullUrl);
+  if (pending !== undefined) {
+    return pending;
+  }
+  const task = thisLoadPreviewMidPix(fullUrl, midKey);
+  previewMidInflight.set(fullUrl, task);
+  try {
+    return await task;
+  } finally {
+    previewMidInflight.delete(fullUrl);
+  }
+}
+
+async function thisLoadPreviewMidPix(fullUrl: string, midKey: string): Promise<PixelMap | undefined> {
+  const genAtStart = GalleryThumbDiskCache.generation;
+  const gridKey = thumbCacheKey(fullUrl, false);
+  let buf = await GalleryThumbDiskCache.tryRead(gridKey);
+  if (buf === undefined || buf.byteLength === 0) {
+    const client = AppSession.getClient();
+    if (client === null) {
+      return undefined;
+    }
+    buf = await client.fetchGalleryImageBuffer(fullUrl, 15000);
+  }
+  if (buf === undefined || buf.byteLength === 0) {
+    return undefined;
+  }
+  if (genAtStart !== GalleryThumbDiskCache.generation) {
+    return undefined;
+  }
+  const pix = await decodePreviewMidPixFromBuffer(buf);
+  if (pix === undefined) {
+    return undefined;
+  }
+  if (genAtStart !== GalleryThumbDiskCache.generation) {
+    releaseThumbPix(pix);
+    return undefined;
+  }
+  rememberPreviewMidPix(midKey, pix);
+  return pix;
 }
 
 function rememberDecodedThumbPix(key: string, pix: PixelMap, cacheIdentity: string, cacheRank: number): void {
@@ -1239,7 +1401,19 @@ export struct GalleryNetworkThumb {
   }
 
   aboutToReuse(_params: Record<string, Object | undefined | null>): void {
-    this.reloadFromScratch();
+    this.loadVersion++;
+    this.retryCount = 0;
+    this.needsUpgradeAfterResume = false;
+    this.loading = false;
+    const cached = getThumbPixCached(this.uri) ?? getThumbPixCachedByIdentity(this.cacheIdentity);
+    if (cached !== undefined) {
+      this.pix = cached;
+      this.pixAlpha = 1;
+      return;
+    }
+    this.pix = undefined;
+    this.pixAlpha = 0;
+    void this.loadPix();
   }
 
   aboutToDisappear(): void {

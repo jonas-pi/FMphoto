@@ -2189,10 +2189,12 @@ export struct GalleryAlbumTab {
       return Math.min(THUMB_CACHE_MAX, baseKeep);
     }
     const columns = this.currentGalleryGridColumns();
-    let floor = 36;
+    let floor = 64;
     if (columns >= 17) {
-      floor = 160;
+      floor = 192;
     } else if (columns >= 8) {
+      floor = 128;
+    } else if (columns >= 4) {
       floor = 96;
     }
     return Math.min(THUMB_CACHE_MAX, Math.max(baseKeep, floor));

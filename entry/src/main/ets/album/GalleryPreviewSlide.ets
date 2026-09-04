@@ -16,15 +16,20 @@ import {
   GALLERY_PREVIEW_SCALE_MIN,
   GALLERY_PREVIEW_SNAP_EPS,
   GALLERY_PREVIEW_ZOOM_EPS,
+  getPreviewMidPixCached,
   getThumbPixCached,
+  getThumbPixCachedByIdentity,
   isGifItem,
   isVideoItem,
   loadFullPix,
+  loadPreviewMidPix,
   loadThumbPix,
   nasUrl,
   pickOriginal,
+  pickPreviewThumb,
   pickThumb,
-  pickVideo
+  pickVideo,
+  thumbIdentityOfItem
 } from './GalleryAlbumCommon';
 import { common } from '@kit.AbilityKit';
 import { AnimatorResult, curves, display } from '@kit.ArkUI';
@@ -175,6 +180,8 @@ export struct GalleryPreviewSlide {
   private gifLoadToken: number = 0;
   private liveLoadToken: number = 0;
   private fullLoadToken: number = 0;
+  /** 中档图已上屏后，忽略迟到的宫格小图回调，避免把清晰图盖回去 */
+  private previewMidShown: boolean = false;
   private livePair: LivePhotoPairFiles | undefined = undefined;
   private liveLoadInFlight: boolean = false;
   private liveController: MovingPhotoViewController = new MovingPhotoViewController();
@@ -226,6 +233,7 @@ export struct GalleryPreviewSlide {
     this.liveLoadToken++;
     this.liveLoadInFlight = false;
     this.fullLoadToken++;
+    this.previewMidShown = false;
   }
 
   private cancelDeferredParentGestureReset(): void {
@@ -266,6 +274,7 @@ export struct GalleryPreviewSlide {
     this.contentAspect = 0;
     this.showingOriginal = false;
     this.fullLoading = false;
+    this.previewMidShown = false;
     this.videoSrc = '';
     this.gifUri = '';
     this.gifTempPath = '';
@@ -291,6 +300,7 @@ export struct GalleryPreviewSlide {
   onActiveChanged(): void {
     if (this.active) {
       this.armHeroIdFreeze(true);
+      this.upgradeToPreviewMid();
     }
     if (!this.active) {
       this.resetVerticalDragInstant();
@@ -375,22 +385,67 @@ export struct GalleryPreviewSlide {
 
   private prepareStillThumb(): void {
     const tUrl = this.thumbUrl();
-    if (tUrl.length === 0) { return; }
+    const pUrl = this.previewThumbUrl();
+    if (tUrl.length === 0 && pUrl.length === 0) {
+      return;
+    }
     const token = ++this.thumbLoadToken;
-    // 优先同步读缓存，保证页面首帧即有内容（无 loading 空白）
-    const cached = getThumbPixCached(tUrl);
-    if (cached !== undefined) {
+    this.previewMidShown = false;
+    const midCached = pUrl.length > 0 ? getPreviewMidPixCached(pUrl) : undefined;
+    if (midCached !== undefined) {
       if (token === this.thumbLoadToken) {
-        this.thumbPix = cached;
-        this.syncContentAspect(cached);
+        this.previewMidShown = true;
+        this.thumbPix = midCached;
+        this.syncContentAspect(midCached);
       }
       return;
     }
-    void loadThumbPix(tUrl).then((p: PixelMap | undefined) => {
+    const identity = this.item !== null ? thumbIdentityOfItem(this.item) : '';
+    const gridCached = (tUrl.length > 0 ? getThumbPixCached(tUrl) : undefined) ??
+      getThumbPixCachedByIdentity(identity);
+    if (gridCached !== undefined) {
       if (token === this.thumbLoadToken) {
+        this.thumbPix = gridCached;
+        this.syncContentAspect(gridCached);
+      }
+    } else if (tUrl.length > 0) {
+      void loadThumbPix(tUrl).then((p: PixelMap | undefined) => {
+        if (token !== this.thumbLoadToken || this.previewMidShown) {
+          return;
+        }
         this.thumbPix = p;
         this.syncContentAspect(p);
+      });
+    }
+    this.upgradeToPreviewMid(token);
+  }
+
+  /** 阶梯第二档：宫格小图上屏后再拉 m 档、1600px 解码，不请求原图 */
+  private upgradeToPreviewMid(token?: number): void {
+    if (this.isGif()) {
+      return;
+    }
+    const loadToken = token !== undefined ? token : this.thumbLoadToken;
+    const pUrl = this.previewThumbUrl();
+    if (pUrl.length === 0) {
+      return;
+    }
+    const midCached = getPreviewMidPixCached(pUrl);
+    if (midCached !== undefined) {
+      if (loadToken === this.thumbLoadToken) {
+        this.previewMidShown = true;
+        this.thumbPix = midCached;
+        this.syncContentAspect(midCached);
       }
+      return;
+    }
+    void loadPreviewMidPix(pUrl).then((p: PixelMap | undefined) => {
+      if (loadToken !== this.thumbLoadToken || p === undefined) {
+        return;
+      }
+      this.previewMidShown = true;
+      this.thumbPix = p;
+      this.syncContentAspect(p);
     });
   }
 
@@ -841,6 +896,9 @@ export struct GalleryPreviewSlide {
     return nasUrl(this.baseUrl, pickThumb(this.item));
   }
   private thumbUrl(): string { return this.item !== null ? nasUrl(this.baseUrl, pickThumb(this.item)) : ''; }
+  private previewThumbUrl(): string {
+    return this.item !== null ? nasUrl(this.baseUrl, pickPreviewThumb(this.item)) : '';
+  }
   private originalUrl(): string { return this.item !== null ? nasUrl(this.baseUrl, pickOriginal(this.item)) : ''; }
   private isImageZoomed(): boolean { return !this.isVideo() && this.previewScale > 1 + GALLERY_PREVIEW_ZOOM_EPS; }
   private emitZoomLock(): void {
@@ -1403,6 +1461,7 @@ export struct GalleryPreviewSlide {
           .height('100%')
           .objectFit(ImageFit.Cover)
           .autoResize(false)
+          .interpolation(ImageInterpolation.High)
           .dynamicRangeMode(DynamicRangeMode.HIGH)
           .syncLoad(true)
           .draggable(false)

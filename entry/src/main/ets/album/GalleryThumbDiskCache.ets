@@ -5,8 +5,8 @@
  * - Image 内置缓存（setImageCacheCount / setImageFileCacheSize）只覆盖 Image(网络 URL)；
  *   本应用网格走鉴权 HTTP + PixelMap，官方建议「数量较多时用 HTTP 预下载并由应用侧管理」。
  * - 长列表 cachedCount 建议约为可视条数 n/2；未设置时默认等于可视节点数、上限 16。
- * - 日视图约 3 列 × 6 行 = 18 张可视，再加 cachedCount=3 行预加载 ≈ 9 张，合计约 27 张。
- *   首屏磁盘只固化 [18, 36] 区间，避免整库落盘。
+ * - 日视图约 3 列 × 6 行 = 18 张可视，再加 cachedCount 预加载若干行。
+ *   首屏磁盘只固化 [18, 54] 区间，避免整库落盘。
  * - 相册页封面数量少且常驻，全部落盘。
  */
 import { fileIo } from '@kit.CoreFileKit';
@@ -27,8 +27,8 @@ export const GALLERY_THUMB_CACHE_EPOCH_KEY: string = 'galleryThumbCacheEpoch';
 
 /** 日视图约一屏 18 张；低于此值仍补到一屏下限 */
 export const THUMB_DISK_FIRST_SCREEN_MIN: number = 18;
-/** 两屏上限，与官方「网络图 cachedCount 可大于 n/2、但过大伤首屏」一致 */
-export const THUMB_DISK_FIRST_SCREEN_MAX: number = 36;
+/** 约两屏上限；平板加列后一屏更多，略放宽以免首屏落盘被夹死 */
+export const THUMB_DISK_FIRST_SCREEN_MAX: number = 54;
 /** 相册封面数量远小于网格，给足余量即可 */
 const THUMB_DISK_ALBUM_COVER_MAX: number = 80;
 const THUMB_DISK_MAX_FILE_BYTES: number = 4 * 1024 * 1024;
@@ -62,7 +62,7 @@ export class GalleryThumbDiskCache {
   }
 
   /**
-   * 首屏落盘张数：可视行 × 列 + 最多 3 行预加载，再夹到 [18, 36]。
+   * 首屏落盘张数：可视行 × 列 + 最多 3 行预加载，再夹到 [18, 54]。
    * cachedCount 与 List 日/月/年设置对齐（3 / 8 / 14），但磁盘不跟月/年把预加载扩到整屏。
    */
   static recommendedFirstScreenCount(columns: number, listCachedCount: number): number {

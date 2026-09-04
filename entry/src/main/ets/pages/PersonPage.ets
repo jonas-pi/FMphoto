@@ -3,7 +3,8 @@ import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
-import { personFace as resolvePersonFace } from '../album/GalleryAlbumEntityData';
+import { FnListDataSource } from '../common/FnListDataSource';
+import { personCacheIdentity, personFace as resolvePersonFace } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -21,8 +22,7 @@ struct PersonPage {
   @State private opening: boolean = false;
   @State private error: string = '';
   @State private items: AiPersonItem[] = [];
-  @State private thumbLoadingPaused: boolean = false;
-  private thumbResumeTimer: number = -1;
+  private readonly personSource: FnListDataSource<AiPersonItem> = new FnListDataSource<AiPersonItem>();
 
   onBackPress(): boolean {
     this.getUIContext().getRouter().back();
@@ -32,7 +32,6 @@ struct PersonPage {
   aboutToAppear(): void {
     // 返回到该页时确保遮罩状态被清理
     this.opening = false;
-    this.thumbLoadingPaused = false;
     const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (rp !== undefined && rp['baseUrl'] !== undefined) {
       this.baseUrl = String(rp['baseUrl']);
@@ -41,39 +40,7 @@ struct PersonPage {
   }
 
   aboutToDisappear(): void {
-    this.clearThumbResumeTimer();
-    this.recycleThumbCache(true);
-    const client = AppSession.getClient();
-    if (client !== null) {
-      client.cancelPendingRequests();
-    }
-  }
-
-  private recycleThumbCache(aggressive: boolean = false): void {
-    trimThumbPixCacheForList(this.items.length, aggressive);
-  }
-
-  private clearThumbResumeTimer(): void {
-    if (this.thumbResumeTimer >= 0) {
-      clearTimeout(this.thumbResumeTimer);
-      this.thumbResumeTimer = -1;
-    }
-  }
-
-  private onGridScrollStateChange(scrollState: ScrollState): void {
-    if (scrollState !== ScrollState.Idle) {
-      this.clearThumbResumeTimer();
-      if (!this.thumbLoadingPaused) {
-        this.thumbLoadingPaused = true;
-      }
-      this.recycleThumbCache(false);
-      return;
-    }
-    this.clearThumbResumeTimer();
-    this.thumbResumeTimer = setTimeout((): void => {
-      this.thumbResumeTimer = -1;
-      this.thumbLoadingPaused = false;
-    }, 96);
+    trimThumbPixCacheForList(this.items.length, false);
   }
 
   private toast(msg: string): void {
@@ -109,9 +76,9 @@ struct PersonPage {
   }
 
   private async loadData(): Promise<void> {
-    this.loading = true;
+    const firstOpen = this.items.length <= 0;
+    this.loading = firstOpen;
     this.error = '';
-    this.items = [];
     const client = AppSession.getClient();
     if (client === null) {
       this.loading = false;
@@ -134,6 +101,7 @@ struct PersonPage {
         }
       }
       this.items = out;
+      this.personSource.reloadAll(out);
       if (out.length === 0) {
         this.error = '暂无人物';
       }
@@ -192,12 +160,15 @@ struct PersonPage {
       } else {
         Stack({ alignContent: Alignment.Center }) {
           Grid() {
-            ForEach(this.items, (item: AiPersonItem, idx: number) => {
+            LazyForEach(this.personSource, (item: AiPersonItem) => {
               GridItem() {
                 Column({ space: 8 }) {
                 GalleryNetworkThumb({
                   uri: nasUrl(this.baseUrl, this.personFace(item)),
-                  paused: this.thumbLoadingPaused
+                  paused: false,
+                  fadeInEnabled: false,
+                  cacheIdentity: personCacheIdentity(item),
+                  cacheRank: 3
                 })
                     .width('100%')
                     .aspectRatio(1)
@@ -217,15 +188,15 @@ struct PersonPage {
                 .padding({ left: 2, right: 2, bottom: 8 })
                 .onClick((): void => { void this.openPerson(item); })
               }
-            }, (_item: AiPersonItem, i: number) => `person_${i}`)
+            }, (item: AiPersonItem) => {
+              const identity = personCacheIdentity(item);
+              return identity.length > 0 ? `person_${identity}` : this.personName(item);
+            })
           }
           .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
           .columnsGap(8)
           .rowsGap(8)
-          .cachedCount(6)
-          .onDidScroll((_offset: number, scrollState: ScrollState): void => {
-            this.onGridScrollStateChange(scrollState);
-          })
+          .cachedCount(4)
           .layoutWeight(1)
           .width('100%')
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })

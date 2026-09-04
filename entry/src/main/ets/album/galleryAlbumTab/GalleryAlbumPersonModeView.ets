@@ -1,8 +1,9 @@
 import { AiPersonItem } from '../../model/FnApiTypes';
 import { FnFullLoadingMask } from '../../common/FnUiCommon';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
-import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../GalleryAlbumCommon';
+import { GalleryNetworkThumb, nasUrl } from '../GalleryAlbumCommon';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
+import { FnListDataSource } from '../../common/FnListDataSource';
 
 @Component
 export struct GalleryAlbumPersonModeView {
@@ -12,12 +13,11 @@ export struct GalleryAlbumPersonModeView {
   @Prop loading: boolean = false;
   @Prop error: string = '';
   @Prop opening: boolean = false;
-  @Prop items: AiPersonItem[] = [];
+  @Prop @Watch('onItemsChanged') items: AiPersonItem[] = [];
   @Prop modeSwitchOpacity: number = 1;
   @Prop modeSwitchOffsetY: number = 0;
-  @State private personThumbLoadingPaused: boolean = false;
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
-  private personThumbResumeTimer: number = -1;
+  private readonly personSource: FnListDataSource<AiPersonItem> = new FnListDataSource<AiPersonItem>();
 
   getPersonName: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
   getPersonFace: (item: AiPersonItem) => string = (_: AiPersonItem) => '';
@@ -26,38 +26,11 @@ export struct GalleryAlbumPersonModeView {
   onOpenPerson: (item: AiPersonItem) => void = (_: AiPersonItem) => {};
 
   aboutToAppear(): void {
-    this.personThumbLoadingPaused = false;
+    this.personSource.reloadAll(this.items);
   }
 
-  aboutToDisappear(): void {
-    this.clearPersonThumbResumeTimer();
-  }
-
-  private recycleThumbCache(aggressive: boolean = false): void {
-    trimThumbPixCacheForList(this.items.length, aggressive);
-  }
-
-  private clearPersonThumbResumeTimer(): void {
-    if (this.personThumbResumeTimer >= 0) {
-      clearTimeout(this.personThumbResumeTimer);
-      this.personThumbResumeTimer = -1;
-    }
-  }
-
-  private onGridScrollStateChange(scrollState: ScrollState): void {
-    if (scrollState !== ScrollState.Idle) {
-      this.clearPersonThumbResumeTimer();
-      if (!this.personThumbLoadingPaused) {
-        this.personThumbLoadingPaused = true;
-      }
-      this.recycleThumbCache(false);
-      return;
-    }
-    this.clearPersonThumbResumeTimer();
-    this.personThumbResumeTimer = setTimeout((): void => {
-      this.personThumbResumeTimer = -1;
-      this.personThumbLoadingPaused = false;
-    }, 96);
+  onItemsChanged(): void {
+    this.personSource.reloadAll(this.items);
   }
 
   build() {
@@ -79,12 +52,13 @@ export struct GalleryAlbumPersonModeView {
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
       } else {
         Grid() {
-          ForEach(this.items, (item: AiPersonItem, idx: number) => {
+          LazyForEach(this.personSource, (item: AiPersonItem) => {
             GridItem() {
               Column({ space: 8 }) {
                 GalleryNetworkThumb({
                   uri: nasUrl(this.baseUrl, this.getPersonFace(item)),
-                  paused: this.personThumbLoadingPaused,
+                  paused: false,
+                  fadeInEnabled: false,
                   cacheIdentity: this.getPersonIdentity(item),
                   cacheRank: 3
                 })
@@ -109,18 +83,15 @@ export struct GalleryAlbumPersonModeView {
                 this.onOpenPerson(item);
               })
             }
-          }, (item: AiPersonItem, i: number) => {
+          }, (item: AiPersonItem) => {
             const identity = this.getPersonIdentity(item);
-            return identity.length > 0 ? `person_${identity}` : `person_${i}`;
+            return identity.length > 0 ? `person_${identity}` : this.getPersonName(item);
           })
         }
         .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(3, this.windowWidthBp)))
         .columnsGap(8)
         .rowsGap(8)
-        .cachedCount(6)
-        .onDidScroll((_offset: number, scrollState: ScrollState): void => {
-          this.onGridScrollStateChange(scrollState);
-        })
+        .cachedCount(4)
         .width('100%')
         .layoutWeight(1)
         .padding({
