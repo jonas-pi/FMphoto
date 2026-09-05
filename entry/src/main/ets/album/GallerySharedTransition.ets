@@ -15,13 +15,13 @@ export const GALLERY_PREVIEW_HERO_ACTIVE_KEY: string = 'galleryPreviewHeroActive
 export const GALLERY_SHARED_TRANSITION_DURATION: number = 260;
 export const GALLERY_SHARED_TRANSITION_CURVE: Curve = Curve.Friction;
 /**
- * 官方自定义导航一镜到底：背景在共享元素到位后再淡入/淡出（delay 后再动透明度）。
- * 文档：开发指南「共享元素转场」自定义 Navigation 示例
- * 「页面由透明逐渐变为设置背景色」；返回时 delay 后再把背景收到 Transparent。
- * 源页 pageTransition 只做透明度、不做位移，避免与 sharedTransition 双重驱动位置。
+ * 预览背景必须与共享图片同步变化并在图片到位时完成。
+ *
+ * 若等图片到位后才淡入，源页与目标页会在 260ms 边界同时切换透明度，
+ * 中间一帧可能露出 Navigation/窗口底色，表现为预览即将展开完成时背景跳变。
  */
-export const GALLERY_SCRIM_FADE_DURATION: number = 120;
-export const GALLERY_SCRIM_FADE_DELAY: number = GALLERY_SHARED_TRANSITION_DURATION;
+export const GALLERY_SCRIM_FADE_DURATION: number = GALLERY_SHARED_TRANSITION_DURATION;
+export const GALLERY_SCRIM_FADE_DELAY: number = 0;
 /** 转场 + 背景淡出结束后再关 hero 开关，避免源页 pageTransition 中途翻分支 */
 const GALLERY_HERO_RESET_DELAY_MS: number =
   GALLERY_SCRIM_FADE_DELAY + GALLERY_SCRIM_FADE_DURATION + 80;

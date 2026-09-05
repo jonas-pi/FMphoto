@@ -106,10 +106,7 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
-  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
-  GALLERY_SCRIM_FADE_DELAY,
-  GALLERY_SCRIM_FADE_DURATION,
-  GALLERY_SHARED_TRANSITION_CURVE
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY
 } from '../album/GallerySharedTransition';
 import {
   GalleryViewGranularity,
@@ -1813,17 +1810,10 @@ struct Home {
 
   pageTransition(): void {
     if (this.previewHeroActive) {
-      // 官方一镜到底：页面本身不位移。源页背景等共享元素展开完再淡出，
-      // 避免 duration 0 时网格被立刻盖住、背景突兀消失。
-      // 文档：ts-page-transition-animation、bpta-one-shot-to-the-end
+      // 源页保持不透明并固定在预览页后方；预览遮罩与共享图片同步淡入。
+      // 不在共享图片到位后再次淡出整页，否则会短暂露出 Navigation 底色。
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({
-        type: RouteType.None,
-        duration: GALLERY_SCRIM_FADE_DURATION,
-        delay: GALLERY_SCRIM_FADE_DELAY,
-        curve: GALLERY_SHARED_TRANSITION_CURVE
-      })
-        .opacity(0)
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

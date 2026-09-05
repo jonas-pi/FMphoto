@@ -29,10 +29,7 @@ import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
 import {
   GALLERY_PREVIEW_HERO_ACTIVE_KEY,
-  gallerySharedTransitionId,
-  GALLERY_SCRIM_FADE_DELAY,
-  GALLERY_SCRIM_FADE_DURATION,
-  GALLERY_SHARED_TRANSITION_CURVE
+  gallerySharedTransitionId
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
@@ -1635,13 +1632,7 @@ struct CategoryGallery {
   pageTransition(): void {
     if (this.previewHeroActive) {
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
-      PageTransitionExit({
-        type: RouteType.None,
-        duration: GALLERY_SCRIM_FADE_DURATION,
-        delay: GALLERY_SCRIM_FADE_DELAY,
-        curve: GALLERY_SHARED_TRANSITION_CURVE
-      })
-        .opacity(0)
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)
