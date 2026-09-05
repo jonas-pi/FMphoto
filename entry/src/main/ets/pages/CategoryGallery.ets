@@ -497,7 +497,9 @@ struct CategoryGallery {
   aboutToAppear(): void {
     // 必须先恢复活动状态，后续快照应用和后台加载才允许更新页面。
     this.cgPageActive = true;
-    this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
+    // 仅 NavDestination 内的实例使用 Home 内部栈；独立 Router 页必须通过 router.back() 返回。
+    this.albumNavigationMode = this.queryNavDestinationInfo() !== undefined &&
+      GalleryAlbumNavigation.isAvailable();
     this.isDarkTheme = this.colorMode === 1;
     this.cgThumbLoadingPaused = false;
     this.applyNavStoreSnapshot();

@@ -62,7 +62,9 @@ export class GalleryAlbumNavigation {
   }
 
   static pop(): boolean {
-    if (GalleryAlbumNavigation.stack === null || GalleryAlbumNavigation.stack.size() <= 0) {
+    if (GalleryAlbumNavigation.suspended ||
+      GalleryAlbumNavigation.stack === null ||
+      GalleryAlbumNavigation.stack.size() <= 0) {
       return false;
     }
     try {
@@ -90,7 +92,9 @@ export class GalleryAlbumNavigation {
   }
 
   static handleBack(): boolean {
-    if (GalleryAlbumNavigation.stack === null || GalleryAlbumNavigation.stack.size() <= 0) {
+    if (GalleryAlbumNavigation.suspended ||
+      GalleryAlbumNavigation.stack === null ||
+      GalleryAlbumNavigation.stack.size() <= 0) {
       return false;
     }
     if (GalleryAlbumNavigation.backHandler !== null) {

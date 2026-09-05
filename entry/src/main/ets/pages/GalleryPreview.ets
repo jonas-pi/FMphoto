@@ -12,6 +12,7 @@ import { curves, display, UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
   addGalleryPreviewDismissListener,
@@ -232,6 +233,8 @@ struct GalleryPreview {
   }
 
   aboutToAppear(): void {
+    // 预览盖住 Home 时挂起内部导航，避免详情里打开文件夹/人物误入 Home 的 NavPathStack。
+    GalleryAlbumNavigation.setSuspended(true);
     this.sourcePageSnapshot = GalleryPreviewNavStore.sourcePageSnapshot;
     const uiCtx = this.getUIContext();
     this.sourcePlaceholderX = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderX);
@@ -506,6 +509,7 @@ struct GalleryPreview {
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.setSuspended(false);
     this.clearSlideshowTimer();
     this.clearSlideshowPrefetchTimer();
     this.clearChromeRevealTimer();
