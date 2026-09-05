@@ -4,7 +4,6 @@ import {
 } from '../../common/FnUiCommon';
 import { GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
 import {
-  galleryPreviewCompactDisplayPath,
   galleryPreviewDetailText,
   galleryPreviewFormatBytes,
   galleryPreviewJoinPair,
@@ -27,6 +26,36 @@ export struct GalleryPreviewDetailsSheet {
 
   onPersonClick: (p: PersonInPhotoItem) => void = (_: PersonInPhotoItem) => {};
   onFolderClick: () => void = () => {};
+
+  private hasMoreInfo(): boolean {
+    return galleryPreviewDetailText(this.detailsData?.make).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.model).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.fumber).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.exposureTime).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.isoSpeedRatings).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.focalLength).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.mp).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.exposureProgram).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.meteringMode).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.geo).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.latitude).length > 0 ||
+      galleryPreviewDetailText(this.detailsData?.longitude).length > 0;
+  }
+
+  private hasRelatedInfo(): boolean {
+    const path = galleryPreviewDetailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath);
+    return this.personsInPhoto.length > 0 || path.length > 0;
+  }
+
+  @Builder
+  private sectionTitle(title: string) {
+    Text(title)
+      .fontSize(12)
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.text_secondary'))
+      .width('100%')
+      .margin({ top: 10, bottom: 4 })
+  }
 
   @Builder
   private detailRow(label: string, value: string) {
@@ -94,11 +123,10 @@ export struct GalleryPreviewDetailsSheet {
           .fontColor($r('app.color.text_secondary'))
           .width(92)
         Column({ space: 4 }) {
-          Text(galleryPreviewCompactDisplayPath(fullPath))
+          // 详情区已支持滚动，路径不再截断层级或限制行数，直接完整展示原始路径。
+          Text(fullPath)
             .fontSize(13)
             .fontColor($r('app.color.brand_primary'))
-            .maxLines(3)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(this.folderOpening ? '正在打开同目录媒体...' : '点击打开同目录媒体')
             .fontSize(11)
             .fontColor($r('app.color.text_secondary'))
@@ -126,6 +154,7 @@ export struct GalleryPreviewDetailsSheet {
       } else {
         Scroll() {
           Column() {
+            this.sectionTitle('基本信息')
             this.detailRow('文件名', galleryPreviewDetailText(this.detailsData?.fileName))
             this.detailRow('拍摄时间', galleryPreviewDetailText(this.detailsData?.photoDateTime ?? this.detailsData?.dateTime))
             this.detailRow('文件类型', galleryPreviewMediaKindLabel(this.detailsData))
@@ -138,39 +167,59 @@ export struct GalleryPreviewDetailsSheet {
                 ' x '
               )
             )
-            this.detailRow('设备厂商', galleryPreviewDetailText(this.detailsData?.make))
-            this.detailRow('设备型号', galleryPreviewDetailText(this.detailsData?.model))
-            this.detailRow('光圈', galleryPreviewDetailText(this.detailsData?.fumber))
-            this.detailRow('快门', galleryPreviewDetailText(this.detailsData?.exposureTime))
-            this.detailRow('ISO', galleryPreviewDetailText(this.detailsData?.isoSpeedRatings))
-            this.detailRow('焦距', galleryPreviewDetailText(this.detailsData?.focalLength))
-            this.detailRow('像素', galleryPreviewDetailText(this.detailsData?.mp))
-            this.detailRow('曝光程序', galleryPreviewDetailText(this.detailsData?.exposureProgram))
-            this.detailRow('测光模式', galleryPreviewDetailText(this.detailsData?.meteringMode))
-            this.detailRow('地理位置', galleryPreviewDetailText(this.detailsData?.geo))
-            this.detailRow(
-              '经纬度',
-              galleryPreviewJoinPair(
-                galleryPreviewDetailText(this.detailsData?.latitude),
-                galleryPreviewDetailText(this.detailsData?.longitude),
-                ', '
+
+            if (this.hasMoreInfo()) {
+              this.sectionTitle('更多信息')
+              this.detailRow('设备厂商', galleryPreviewDetailText(this.detailsData?.make))
+              this.detailRow('设备型号', galleryPreviewDetailText(this.detailsData?.model))
+              this.detailRow('光圈', galleryPreviewDetailText(this.detailsData?.fumber))
+              this.detailRow('快门', galleryPreviewDetailText(this.detailsData?.exposureTime))
+              this.detailRow('ISO', galleryPreviewDetailText(this.detailsData?.isoSpeedRatings))
+              this.detailRow('焦距', galleryPreviewDetailText(this.detailsData?.focalLength))
+              this.detailRow('像素', galleryPreviewDetailText(this.detailsData?.mp))
+              this.detailRow('曝光程序', galleryPreviewDetailText(this.detailsData?.exposureProgram))
+              this.detailRow('测光模式', galleryPreviewDetailText(this.detailsData?.meteringMode))
+              this.detailRow('地理位置', galleryPreviewDetailText(this.detailsData?.geo))
+              this.detailRow(
+                '经纬度',
+                galleryPreviewJoinPair(
+                  galleryPreviewDetailText(this.detailsData?.latitude),
+                  galleryPreviewDetailText(this.detailsData?.longitude),
+                  ', '
+                )
               )
-            )
-            this.detailPersonsSection()
-            this.detailPathRow('文件路径', galleryPreviewDetailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath))
+            }
+
+            if (this.hasRelatedInfo()) {
+              this.sectionTitle('相关内容')
+              if (this.personsInPhoto.length > 0) {
+                this.detailPersonsSection()
+              }
+              this.detailPathRow(
+                '文件路径',
+                galleryPreviewDetailText(this.detailsData?.filePath ?? this.detailsData?.showFilePath)
+              )
+            }
           }
           .width('100%')
           .padding({ bottom: 10 })
           .alignItems(HorizontalAlign.Start)
+          // Scroll 占满剩余高度时，显式从顶部开始排布；信息少时只在底部留下稳定空白。
+          .justifyContent(FlexAlign.Start)
         }
         .width('100%')
         .layoutWeight(1)
-        .scrollBar(BarState.Auto)
+        // HarmonyOS Scroll 在受 layoutWeight 限高且内容较少时默认居中；
+        // 必须把 align 设置在 Scroll 自身，内部 Column 的 justifyContent 无法改变该行为。
+        .align(Alignment.Top)
+        // 信息较多时保持完整滚动能力，但像系统相册一样不显示常驻滚动条。
+        .scrollBar(BarState.Off)
       }
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 4, bottom: 24 })
     .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Start)
     .backgroundColor(Color.Transparent)
   }
 }
