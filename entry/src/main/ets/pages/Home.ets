@@ -896,13 +896,27 @@ struct MePanel {
           fontColorValue: '#E11D48',
           action: (): void => {
             const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-            void SessionPreferences.clearSession(ctx).then(async (): Promise<void> => {
+            void (async (): Promise<void> => {
+              const snap = AppSession.getStored();
+              const existing = await SessionPreferences.loadLoginFormDefaults(ctx);
+              const fromSnap = snap !== null ? SessionPreferences.loginFormFromStored(snap) : existing;
+              await SessionPreferences.saveLoginFormDefaults(ctx, {
+                fnIdInput: fromSnap.fnIdInput.length > 0 ? fromSnap.fnIdInput : existing.fnIdInput,
+                domainInput: fromSnap.domainInput.length > 0 ? fromSnap.domainInput : existing.domainInput,
+                lanInput: fromSnap.lanInput.length > 0 ? fromSnap.lanInput : existing.lanInput,
+                loginEndpointPreference: fromSnap.loginEndpointPreference.length > 0 ?
+                  fromSnap.loginEndpointPreference : existing.loginEndpointPreference,
+                username: fromSnap.username.length > 0 ? fromSnap.username : existing.username,
+                password: '',
+                useHttps: fromSnap.username.length > 0 || fromSnap.fnIdInput.length > 0 ? fromSnap.useHttps : existing.useHttps
+              });
+              await SessionPreferences.clearSession(ctx);
               invalidateAutoSync();
               await GalleryAutoSyncLedger.clear(ctx);
               AppSession.clear();
               this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
               });
-            });
+            })();
           }
         })
       }

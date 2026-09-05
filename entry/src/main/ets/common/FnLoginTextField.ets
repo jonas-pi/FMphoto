@@ -1,6 +1,6 @@
 /**
- * 登录页输入框：透明底 + 组件模糊（与顶栏玻璃同一套，targetSdk 24 上可见）。
- * 不要叠 systemMaterial：API 26 材质在当前工程里不生效，却会盖住模糊。
+ * 登录页输入框：透明底 + 组件模糊。
+ * 回填用单向 text + 换代 key，避免 $$ 双向绑定把异步 seed 吃掉。
  */
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 
@@ -13,15 +13,18 @@ export struct FnLoginTextField {
   @Prop maxLength: number = -1;
   onChange: (value: string) => void = (_: string) => {};
   @State private inputText: string = '';
+  @State private bindGen: number = 0;
 
   aboutToAppear(): void {
     this.inputText = this.seedText;
   }
 
   private onSeedTextChanged(): void {
-    if (this.inputText !== this.seedText) {
-      this.inputText = this.seedText;
+    if (this.inputText === this.seedText) {
+      return;
     }
+    this.inputText = this.seedText;
+    this.bindGen = this.bindGen + 1;
   }
 
   private fieldGlassEffect(): BackgroundEffectOptions {
@@ -35,12 +38,13 @@ export struct FnLoginTextField {
   }
 
   build() {
-    TextInput({ text: $$this.inputText, placeholder: this.placeholder })
+    TextInput({ text: this.inputText, placeholder: this.placeholder })
       .type(this.inputType)
-      .maxLength(this.maxLength >= 0 ? this.maxLength : undefined)
+      .maxLength(this.maxLength >= 0 ? this.maxLength : 512)
       .enableAutoFill(false)
       .enableKeyboardOnFocus(true)
       .onChange((value: string): void => {
+        this.inputText = value;
         this.onChange(value);
       })
       .width('100%')
@@ -56,5 +60,6 @@ export struct FnLoginTextField {
       .backgroundColor(Color.Transparent)
       .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
       .backgroundEffect(this.fieldGlassEffect())
+      .key(`login-field-${this.bindGen}`)
   }
 }

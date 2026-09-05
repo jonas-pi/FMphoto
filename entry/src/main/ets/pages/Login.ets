@@ -56,6 +56,8 @@ struct Login {
   @State private useHttps: boolean = true;
   @State private loading: boolean = false;
   @State private errorText: string = '';
+  /** 表单默认值读完再挂输入框，避免 TextInput 先以空 seed 建好后回填不刷新 */
+  @State private formReady: boolean = false;
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
   @State private otpCode: string = '';
@@ -101,40 +103,16 @@ struct Login {
   aboutToAppear(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void SessionPreferences.loadLoginFormDefaults(ctx).then((d) => {
-      // 共用栏：优先 FN ID，否则回填旧版内网 IP
-      if (d.fnIdInput.length > 0) {
-        this.fnIdInput = d.fnIdInput;
-      } else if (d.lanInput.length > 0) {
-        this.fnIdInput = d.lanInput;
-      }
-      if (d.domainInput.length > 0) {
-        this.domainInput = d.domainInput;
-      }
+      this.fnIdInput = d.fnIdInput.length > 0 ? d.fnIdInput : d.lanInput;
+      this.domainInput = d.domainInput;
       if (d.loginEndpointPreference.length > 0) {
         this.endpointPreference = d.loginEndpointPreference;
       }
-      if (d.username.length > 0) {
-        this.username = d.username;
-      }
+      this.username = d.username;
       this.useHttps = d.useHttps;
-    });
-  }
-
-  aboutToDisappear(): void {
-    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const shared = this.parseSharedHostInput(this.fnIdInput);
-    if (shared[0].length === 0 && shared[1].length === 0 && this.domainInput.trim().length === 0 &&
-      this.username.trim().length === 0) {
-      return;
-    }
-    void SessionPreferences.saveLoginFormDefaults(ctx, {
-      fnIdInput: shared[0],
-      domainInput: this.domainInput.trim(),
-      lanInput: shared[1],
-      loginEndpointPreference: this.endpointPreference,
-      username: this.username.trim(),
-      password: '',
-      useHttps: this.useHttps
+      this.formReady = true;
+    }).catch((_e: Error) => {
+      this.formReady = true;
     });
   }
 
@@ -227,7 +205,7 @@ struct Login {
     try {
       AppSession.setLoginPassword(pass);
       await SessionPreferences.saveLoginFormDefaults(ctx, {
-        fnIdInput: stored.fnIdInput,
+        fnIdInput: this.fnIdInput.trim(),
         domainInput: stored.domainInput,
         lanInput: stored.lanInput,
         loginEndpointPreference: stored.loginEndpointPreference,
@@ -685,6 +663,12 @@ struct Login {
   @Builder
   private loginFormBody() {
     Column({ space: 14 }) {
+      if (!this.formReady) {
+        Blank()
+          .width('100%')
+          .height(LOGIN_FIELD_HEIGHT_VP)
+      } else {
+      Column({ space: 14 }) {
       this.loginField(this.fnIdInput, $r('app.string.hint_fnid'), InputType.Normal, !this.show2faStep, (v: string) => {
         this.fnIdInput = v;
       })
@@ -798,6 +782,9 @@ struct Login {
             void this.onLoginClick();
           }
         })
+      }
+      }
+      .width('100%')
       }
     }
     .width('100%')

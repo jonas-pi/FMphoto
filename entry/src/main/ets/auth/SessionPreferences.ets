@@ -10,6 +10,8 @@ const K_ACCOUNT = 'account';
 const K_DOMAIN_INPUT = 'domain_input';
 const K_FN_ID_INPUT = 'fn_id_input';
 const K_LAN_INPUT = 'lan_input';
+/** 登录页共用栏原文（FN ID 或内网 IP），退出后按此回填，不依赖拆分结果 */
+const K_LOGIN_SHARED_INPUT = 'login_shared_input';
 const K_ENDPOINT_PUBLIC_URL = 'endpoint_public_url';
 const K_ENDPOINT_PUBLIC_DOMAIN_URL = 'endpoint_public_domain_url';
 const K_ENDPOINT_PUBLIC_IP_URL = 'endpoint_public_ip_url';
@@ -235,7 +237,9 @@ export class SessionPreferences {
   /** 只写登录表单（不含密码、不含会话 token），退出登录后仍可回填。 */
   static async saveLoginFormDefaults(ctx: common.UIAbilityContext, d: LoginFormDefaults): Promise<void> {
     const p = await openPrefs(ctx);
-    await prefsPutString(p, K_FN_ID_INPUT, d.fnIdInput);
+    const shared = d.fnIdInput.trim().length > 0 ? d.fnIdInput.trim() :
+      (d.lanInput.trim().length > 0 ? d.lanInput.trim() : '');
+    await prefsPutString(p, K_LOGIN_SHARED_INPUT, shared);
     await prefsPutString(p, K_DOMAIN_INPUT, d.domainInput);
     await prefsPutString(p, K_LAN_INPUT, d.lanInput);
     await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, d.loginEndpointPreference.length > 0 ? d.loginEndpointPreference : 'auto');
@@ -246,8 +250,9 @@ export class SessionPreferences {
   }
 
   static loginFormFromStored(s: StoredSession): LoginFormDefaults {
+    const shared = s.fnIdInput.trim().length > 0 ? s.fnIdInput.trim() : s.lanInput.trim();
     return {
-      fnIdInput: s.fnIdInput,
+      fnIdInput: shared,
       domainInput: s.domainInput,
       lanInput: s.lanInput,
       loginEndpointPreference: s.loginEndpointPreference,
@@ -288,10 +293,14 @@ export class SessionPreferences {
       await prefsDelete(p, K_LAST_PASSWORD);
       await prefsFlush(p);
     }
+    const shared = await prefsGetString(p, K_LOGIN_SHARED_INPUT, '');
+    const fnIdPref = fnId;
+    const lanPref = await prefsGetString(p, K_LAN_INPUT, '');
+    const sharedBox = shared.length > 0 ? shared : (fnIdPref.length > 0 ? fnIdPref : lanPref);
     return {
-      fnIdInput: fnId,
+      fnIdInput: sharedBox,
       domainInput: domain,
-      lanInput: await prefsGetString(p, K_LAN_INPUT, ''),
+      lanInput: lanPref,
       loginEndpointPreference: await prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       username: await prefsGetString(p, K_ACCOUNT, ''),
       password: '',
@@ -299,11 +308,8 @@ export class SessionPreferences {
     };
   }
 
-  /** 只清会话凭据。FN ID / 域名 / 用户名 / 选路策略等登录表单一律保留。 */
+  /** 只清会话凭据，不动登录表单。 */
   static async clearSession(ctx: common.UIAbilityContext): Promise<void> {
-    const form = await SessionPreferences.loadLoginFormDefaults(ctx);
-    const stored = await SessionPreferences.load(ctx);
-    const keep = stored !== null ? SessionPreferences.loginFormFromStored(stored) : form;
     const p = await openPrefs(ctx);
     await prefsPutString(p, K_TOKEN, '');
     await prefsPutString(p, K_BASE_URL, '');
@@ -314,7 +320,6 @@ export class SessionPreferences {
     await prefsPutString(p, K_OPENAPI_AUTHX_KEY, '');
     await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, '');
     await prefsFlush(p);
-    await SessionPreferences.saveLoginFormDefaults(ctx, keep);
   }
 
   static async loadTrustedHostsSnapshot(ctx: common.UIAbilityContext): Promise<string[]> {
