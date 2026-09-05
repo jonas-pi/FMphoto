@@ -1065,12 +1065,13 @@ export struct GalleryPreviewSlide {
       this.viewH,
       this.contentAspect
     );
+    const toScale = this.panScale * fit.scale;
     const toY = (this.panY > 0 ? this.panY : 0) + fit.translateY;
     if (!isGalleryPreviewDetailsAvoidAnimating()) {
       // 详情已展开：继续停在让位位置，不要把 translate 清 0（会跳回全屏中心）。
       if (this.avoidAnimOn) {
         this.avoidAnimY = toY;
-        this.transformUpdater.apply(this.panScale * fit.scale, 0, toY);
+        this.transformUpdater.apply(toScale, 0, toY);
         return;
       }
       this.applyComposedTransform();
@@ -1079,7 +1080,7 @@ export struct GalleryPreviewSlide {
     const fromY = this.avoidAnimOn ? this.avoidAnimY : this.transformUpdater.getTranslateY();
     if (Math.abs(fromY - toY) < 0.5) {
       this.avoidAnimGen++;
-      this.settleAvoidPropertyAnim(toY);
+      this.settleAvoidPropertyAnim(toY, toScale);
       return;
     }
     this.transformUpdater.lockTranslate(true);
@@ -1098,19 +1099,22 @@ export struct GalleryPreviewSlide {
         if (gen !== this.avoidAnimGen) {
           return;
         }
-        this.settleAvoidPropertyAnim(toY);
+        this.settleAvoidPropertyAnim(toY, toScale);
       }
     }, (): void => {
       this.avoidAnimOn = true;
       this.avoidAnimY = toY;
+      // scale 与 translate 在同一个 animateTo 中提交，确保图片一次到达最终几何，
+      // 不再在位置弹簧结束后由 settle 突然切到另一缩放值。
+      this.transformUpdater.apply(toScale, 0, toY);
     });
   }
 
   /** 只同步终点，不切换 .translate 绑定来源（官方：尽量不要用结束回调做时序） */
-  private settleAvoidPropertyAnim(toY: number): void {
+  private settleAvoidPropertyAnim(toY: number, toScale: number): void {
     setGalleryPreviewDetailsAvoidAnimating(false);
     this.avoidAnimY = toY;
-    this.transformUpdater.apply(this.panScale, 0, toY);
+    this.transformUpdater.apply(toScale, 0, toY);
     if (Math.abs(toY) >= 0.5) {
       this.transformUpdater.lockTranslate(true);
       this.avoidAnimOn = true;
@@ -1133,8 +1137,9 @@ export struct GalleryPreviewSlide {
     // 跟手改走 AttributeUpdater；先对齐再关 avoidAnimOn，避免 translate 换绑闪一帧
     if (this.avoidAnimOn) {
       this.transformUpdater.lockTranslate(false);
-      this.transformUpdater.apply(this.panScale, 0, this.avoidAnimY);
       this.avoidAnimOn = false;
+      // 从详情态开始下滑时先按当前详情高度恢复组合变换，避免解锁 translate 的一帧缩放跳变。
+      this.applyComposedTransform();
     }
   }
 

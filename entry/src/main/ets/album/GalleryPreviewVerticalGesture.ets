@@ -161,14 +161,17 @@ export class GalleryDetailsFit {
 }
 
 /**
- * 页内详情让位：画面中心对齐上方剩余区域，并随详情进度略微缩小。
- * 缩放幅度保持克制，重点是让照片和详情像同一页面连续重排，而不是两个叠层。
+ * 页内详情让位：画面中心对齐上方剩余区域。
+ *
+ * 官方相册的详情态不会固定缩小图片：先按全屏 Contain 计算媒体显示高度；
+ * 若最终显示高度不足以上方非详情区域，则等比例放大到高度刚好填满。
+ * 缩放按详情展开进度从 1 连续插值，避免图片到位后再二次放大造成视觉跳变。
  */
 export function galleryDetailsFit(
   sheetHeightVp: number,
-  _viewportW: number,
+  viewportW: number,
   viewportH: number,
-  _contentAspect: number
+  contentAspect: number
 ): GalleryDetailsFit {
   const out = new GalleryDetailsFit();
   if (viewportH <= 1 || sheetHeightVp <= 0) {
@@ -176,7 +179,13 @@ export function galleryDetailsFit(
   }
   const usedH = Math.min(sheetHeightVp, viewportH - 1);
   const progress = Math.max(0, Math.min(1, usedH / (viewportH * GALLERY_SHEET_MEDIUM_RATIO)));
-  out.scale = 1 - progress * 0.08;
+  const finalAvailableH = viewportH * (1 - GALLERY_SHEET_MEDIUM_RATIO);
+  if (viewportW > 1 && contentAspect > 0) {
+    const viewportAspect = viewportW / viewportH;
+    const containHeight = contentAspect > viewportAspect ? viewportW / contentAspect : viewportH;
+    const finalScale = containHeight > 0 ? Math.max(1, finalAvailableH / containHeight) : 1;
+    out.scale = 1 + (finalScale - 1) * progress;
+  }
   out.translateY = -usedH / 2;
   return out;
 }
