@@ -100,6 +100,18 @@ async function prefsPutString(p: preferences.Preferences, key: string, value: st
   }
 }
 
+async function prefsDelete(p: preferences.Preferences, key: string): Promise<void> {
+  try {
+    await p.delete(key);
+  } catch (_e) {
+    try {
+      await p.put(key, '');
+    } catch (e) {
+      throw new Error(`preferences delete ${key} failed: ${String(e)}`);
+    }
+  }
+}
+
 async function prefsFlush(p: preferences.Preferences): Promise<void> {
   try {
     await p.flush();
@@ -191,7 +203,7 @@ export class SessionPreferences {
     };
   }
 
-  static async save(ctx: common.UIAbilityContext, s: StoredSession, loginPassword?: string): Promise<void> {
+  static async save(ctx: common.UIAbilityContext, s: StoredSession): Promise<void> {
     const p = await openPrefs(ctx);
     await prefsPutString(p, K_BASE_URL, s.baseUrl);
     await prefsPutString(p, K_TOKEN, s.token);
@@ -210,18 +222,39 @@ export class SessionPreferences {
     await prefsPutString(p, K_USE_HTTPS, s.useHttps ? '1' : '0');
     await prefsPutString(p, K_ALBUM_PARENT, s.albumParentGuid);
     await prefsPutString(p, K_TRUSTED, JSON.stringify(s.trustedHosts));
-    if (loginPassword !== undefined) {
-      const prevPw = await prefsGetString(p, K_LAST_PASSWORD, '');
-      if (prevPw !== loginPassword) {
-        await prefsPutString(p, K_LAST_PASSWORD, loginPassword);
-      }
-    }
+    // 不落盘密码：清掉历史 last_password，切网/静默重登只用进程内口令
+    await prefsDelete(p, K_LAST_PASSWORD);
     await prefsPutString(p, K_FNOS_LONG_TOKEN, s.fnosLongToken);
     await prefsPutString(p, K_LOGIN_VIA_WS, s.loginViaWebSocket ? '1' : '0');
     await prefsPutString(p, K_WS_SIGN_KEY_B64, s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '');
     await prefsPutString(p, K_OPENAPI_AUTHX_KEY, s.openApiAuthxKey.length > 0 ? s.openApiAuthxKey : '');
     await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, s.openApiAuthxSecret.length > 0 ? s.openApiAuthxSecret : '');
     await prefsFlush(p);
+  }
+
+  /** 只写登录表单（不含密码、不含会话 token），退出登录后仍可回填。 */
+  static async saveLoginFormDefaults(ctx: common.UIAbilityContext, d: LoginFormDefaults): Promise<void> {
+    const p = await openPrefs(ctx);
+    await prefsPutString(p, K_FN_ID_INPUT, d.fnIdInput);
+    await prefsPutString(p, K_DOMAIN_INPUT, d.domainInput);
+    await prefsPutString(p, K_LAN_INPUT, d.lanInput);
+    await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, d.loginEndpointPreference.length > 0 ? d.loginEndpointPreference : 'auto');
+    await prefsPutString(p, K_ACCOUNT, d.username);
+    await prefsPutString(p, K_USE_HTTPS, d.useHttps ? '1' : '0');
+    await prefsDelete(p, K_LAST_PASSWORD);
+    await prefsFlush(p);
+  }
+
+  static loginFormFromStored(s: StoredSession): LoginFormDefaults {
+    return {
+      fnIdInput: s.fnIdInput,
+      domainInput: s.domainInput,
+      lanInput: s.lanInput,
+      loginEndpointPreference: s.loginEndpointPreference,
+      username: s.account,
+      password: '',
+      useHttps: s.useHttps
+    };
   }
 
   /** 读取或生成本机稳定的 WS did（信任设备须每次登录携带同一值） */
@@ -250,18 +283,27 @@ export class SessionPreferences {
         domain = '';
       }
     }
+    const leftoverPassword = await prefsGetString(p, K_LAST_PASSWORD, '');
+    if (leftoverPassword.length > 0) {
+      await prefsDelete(p, K_LAST_PASSWORD);
+      await prefsFlush(p);
+    }
     return {
       fnIdInput: fnId,
       domainInput: domain,
       lanInput: await prefsGetString(p, K_LAN_INPUT, ''),
       loginEndpointPreference: await prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       username: await prefsGetString(p, K_ACCOUNT, ''),
-      password: await prefsGetString(p, K_LAST_PASSWORD, ''),
+      password: '',
       useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1'
     };
   }
 
+  /** 只清会话凭据。FN ID / 域名 / 用户名 / 选路策略等登录表单一律保留。 */
   static async clearSession(ctx: common.UIAbilityContext): Promise<void> {
+    const form = await SessionPreferences.loadLoginFormDefaults(ctx);
+    const stored = await SessionPreferences.load(ctx);
+    const keep = stored !== null ? SessionPreferences.loginFormFromStored(stored) : form;
     const p = await openPrefs(ctx);
     await prefsPutString(p, K_TOKEN, '');
     await prefsPutString(p, K_BASE_URL, '');
@@ -272,6 +314,7 @@ export class SessionPreferences {
     await prefsPutString(p, K_OPENAPI_AUTHX_KEY, '');
     await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, '');
     await prefsFlush(p);
+    await SessionPreferences.saveLoginFormDefaults(ctx, keep);
   }
 
   static async loadTrustedHostsSnapshot(ctx: common.UIAbilityContext): Promise<string[]> {

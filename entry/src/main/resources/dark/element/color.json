@@ -145,16 +145,20 @@
       "value": "#662E3644"
     },
     {
+      "name": "login_button_hds_fill",
+      "value": "#B37DB0FF"
+    },
+    {
       "name": "login_input_border",
       "value": "#66FFFFFF"
     },
     {
       "name": "login_glow_blue_soft",
-      "value": "#3358A6FF"
+      "value": "#994A8BFF"
     },
     {
       "name": "login_glow_blue_core",
-      "value": "#3D7DB0FF"
+      "value": "#CC4A8BFF"
     },
     {
       "name": "immersive_glow_primary",

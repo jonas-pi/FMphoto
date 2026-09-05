@@ -14,6 +14,8 @@ export const FN_MEDIA_BASE_URL: string = 'FN_MEDIA_BASE_URL';
 export class AppSession {
   private static stored: StoredSession | null = null;
   private static client: FnHttpClient | null = null;
+  /** 本次进程内登录口令，不落盘；供切网 / 静默重登使用 */
+  private static loginPassword: string = '';
 
   static getClient(): FnHttpClient | null {
     return AppSession.client;
@@ -21,6 +23,14 @@ export class AppSession {
 
   static getStored(): StoredSession | null {
     return AppSession.stored;
+  }
+
+  static setLoginPassword(password: string): void {
+    AppSession.loginPassword = password;
+  }
+
+  static getLoginPassword(): string {
+    return AppSession.loginPassword;
   }
 
   static currentWebBaseUrl(): string {
@@ -59,6 +69,7 @@ export class AppSession {
   static clear(): void {
     AppSession.stored = null;
     AppSession.client = null;
+    AppSession.loginPassword = '';
     // 退出会话时清理内存中的签名凭据，避免跨账号误用。
     clearOpenApiAuthxCredentials();
     AppStorage.setOrCreate<string>(FN_MEDIA_BASE_URL, '');

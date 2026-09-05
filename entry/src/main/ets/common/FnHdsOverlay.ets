@@ -34,6 +34,7 @@ function fnCreateInteractiveImmersiveMaterial(
   const options: uiMaterial.ImmersiveOptions = {
     style: style,
     interactive: true,
+    applyShadow: true,
     lightEffect: { color: undefined }
   };
   if (materialColor !== undefined) {
@@ -96,15 +97,14 @@ export function fnHdsLoginInputSystemMaterial(): uiMaterial.Material | undefined
   return cachedLoginInputMaterial;
 }
 
-/** 登录表单卡片：ULTRA_THICK + 较高不透明底色 */
+/** 登录前景整块：ULTRA_THICK，不赋不透明色，让材质滤镜模糊并折射背后蓝圆 */
 export function fnHdsLoginCardSystemMaterial(): uiMaterial.Material | undefined {
   if (!fnCanUseArkUiSystemMaterial()) {
     return undefined;
   }
   if (cachedLoginCardMaterial === undefined) {
     cachedLoginCardMaterial = fnCreateInteractiveImmersiveMaterial(
-      uiMaterial.ImmersiveStyle.ULTRA_THICK,
-      $r('app.color.login_card_fill')
+      uiMaterial.ImmersiveStyle.ULTRA_THICK
     );
   }
   return cachedLoginCardMaterial;

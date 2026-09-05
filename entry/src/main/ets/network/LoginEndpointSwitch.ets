@@ -12,7 +12,11 @@ import { FnHttpClient } from './FnHttpClient';
 import { fnWs2faVerify, fnWsLogin } from './FnWsLogin';
 import {
   LOGIN_ENDPOINT_PREF_LAN,
+  LOGIN_ENDPOINT_PREF_LAN_IPV6,
   LOGIN_ENDPOINT_PREF_PUBLIC,
+  LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN,
+  LOGIN_ENDPOINT_PREF_PUBLIC_IP,
+  LOGIN_ENDPOINT_PREF_PUBLIC_IPV6,
   LOGIN_ENDPOINT_PREF_RELAY,
   LoginEndpointPool,
   selectAmongEndpointPool
@@ -93,6 +97,23 @@ function endpointKindLabel(kind: string): string {
     return '当前地址';
   }
   return '未知';
+}
+
+/** 切网成功提示：只说当前走哪条通道，不带探测明细。 */
+export function currentEndpointConnectionToast(kind: string): string {
+  if (kind === LOGIN_ENDPOINT_PREF_LAN || kind === LOGIN_ENDPOINT_PREF_LAN_IPV6) {
+    return '当前内网连接';
+  }
+  if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
+    return '当前中继连接';
+  }
+  if (kind === LOGIN_ENDPOINT_PREF_PUBLIC ||
+    kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN ||
+    kind === LOGIN_ENDPOINT_PREF_PUBLIC_IP ||
+    kind === LOGIN_ENDPOINT_PREF_PUBLIC_IPV6) {
+    return '当前公网连接';
+  }
+  return '当前连接';
 }
 
 function compactAddressFromUrl(baseUrl: string, fallbackInput: string): string {
@@ -424,7 +445,7 @@ async function finishSwitchSession(
   if (longTok.length === 0 && deferLongTokenProbe) {
     scheduleDeferredLongTokenProbe(ctx, newBaseUrl, token, signKeyB64);
   }
-  return { ok: true, message: '已切换连接' };
+  return { ok: true, message: currentEndpointConnectionToast(resolveEndpointConnectionInfo(stored).kind) };
 }
 
 function scheduleDeferredLongTokenProbe(
@@ -473,7 +494,7 @@ export async function switchStoredLoginEndpointToUrl(
     };
   }
   const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
-  const pass = defaults.password;
+  const pass = AppSession.getLoginPassword();
   const user = stored.account.length > 0 ? stored.account : defaults.username;
   if (pass.length === 0 || user.length === 0) {
     return { ok: false, message: '缺少保存的登录凭据，请重新登录' };

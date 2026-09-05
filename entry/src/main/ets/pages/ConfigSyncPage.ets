@@ -30,18 +30,21 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
-import { SessionPreferences } from '../auth/SessionPreferences';
+import { SessionPreferences, LoginFormDefaults } from '../auth/SessionPreferences';
 import {
   smartCategoryCurrentAccount,
+  smartCategoryEmptyLayout,
   smartCategoryLoadLayout,
   smartCategorySaveLayout,
   SmartCategoryLayout
 } from '../album/SmartCategoryLayoutPreferences';
 import {
   AppSettingsEnvelope,
+  AppSettingsLogin,
   applyEnvelopeToAccount,
   envelopeFromLayout,
   layoutLocalUpdatedAt,
+  loginConfigHasContent,
   parseEnvelopeJson,
   parseQrPayload,
   serializeEnvelope
@@ -167,6 +170,38 @@ struct ConfigSyncPage {
     return await smartCategoryLoadLayout(this.hostContext(), smartCategoryCurrentAccount());
   }
 
+  private async loadLoginConfig(): Promise<AppSettingsLogin> {
+    const ctx = this.hostContext();
+    const stored = await SessionPreferences.load(ctx);
+    const d: LoginFormDefaults = stored !== null ?
+      SessionPreferences.loginFormFromStored(stored) :
+      await SessionPreferences.loadLoginFormDefaults(ctx);
+    return {
+      fnId: d.fnIdInput.trim(),
+      domain: d.domainInput.trim(),
+      lan: d.lanInput.trim(),
+      username: d.username.trim(),
+      endpointPref: d.loginEndpointPreference.trim().length > 0 ? d.loginEndpointPreference : 'auto',
+      useHttps: d.useHttps
+    };
+  }
+
+  private async persistImportedLogin(login: AppSettingsLogin): Promise<boolean> {
+    if (!loginConfigHasContent(login)) {
+      return false;
+    }
+    await SessionPreferences.saveLoginFormDefaults(this.hostContext(), {
+      fnIdInput: login.fnId,
+      domainInput: login.domain,
+      lanInput: login.lan,
+      loginEndpointPreference: login.endpointPref.length > 0 ? login.endpointPref : 'auto',
+      username: login.username,
+      password: '',
+      useHttps: login.useHttps
+    });
+    return true;
+  }
+
   private async refreshQr(): Promise<void> {
     if (this.qrBusy) {
       return;
@@ -174,15 +209,11 @@ struct ConfigSyncPage {
     this.qrBusy = true;
     try {
       const account = smartCategoryCurrentAccount();
-      if (account.length === 0) {
-        this.releaseQrPixelMap();
-        this.qrHint = '当前未登录，无法生成配置码';
-        return;
-      }
-      const layout = await this.loadCurrentLayout();
+      const layout = account.length > 0 ? await this.loadCurrentLayout() : smartCategoryEmptyLayout('');
       const deviceId = await SessionPreferences.ensureWsDeviceId(this.hostContext());
       const updatedAt = layoutLocalUpdatedAt(layout) > 0 ? layoutLocalUpdatedAt(layout) : Date.now();
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt);
+      const login = await this.loadLoginConfig();
+      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login);
       const created = await createSettingsQrImage(envelope);
       if (!created.ok || created.pixelMap === undefined) {
         this.releaseQrPixelMap();
@@ -232,19 +263,24 @@ struct ConfigSyncPage {
   }
 
   private async applyImportedEnvelope(envelope: AppSettingsEnvelope, force: boolean): Promise<void> {
+    const loginApplied = await this.persistImportedLogin(envelope.login);
     const account = smartCategoryCurrentAccount();
+    if (account.length === 0) {
+      this.toast(loginApplied ? '已导入登录配置' : '当前未登录，无法导入分类');
+      return;
+    }
     const local = await this.loadCurrentLayout();
     const applied = applyEnvelopeToAccount(envelope, account, layoutLocalUpdatedAt(local), force);
     if (!applied.ok || applied.layout === undefined) {
-      this.toast(applied.message);
+      this.toast(loginApplied ? `登录配置已导入。${applied.message}` : applied.message);
       return;
     }
     const saved = await smartCategorySaveLayout(this.hostContext(), applied.layout);
     if (!saved) {
-      this.toast('保存失败');
+      this.toast(loginApplied ? '登录配置已导入，分类保存失败' : '保存失败');
       return;
     }
-    this.toast(applied.message);
+    this.toast(loginApplied ? `${applied.message}；登录配置已同步` : applied.message);
     await this.refreshQr();
   }
 
@@ -277,7 +313,8 @@ struct ConfigSyncPage {
         return;
       }
       const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt);
+      const login = await this.loadLoginConfig();
+      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login);
       const res = await webDavPutJson(this.currentWebDavConfig(), serializeEnvelope(envelope));
       this.toast(res.ok ? '已上传到 WebDAV' : res.message);
       if (res.ok) {

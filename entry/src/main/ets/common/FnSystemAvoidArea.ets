@@ -4,6 +4,8 @@ import { display, UIContext, window } from '@kit.ArkUI';
 export const FN_SYSTEM_TOP_INSET_VP_KEY: string = 'fnSystemTopInsetVp';
 /** 系统导航条/手势条高度（vp） */
 export const FN_SYSTEM_BOTTOM_INSET_VP_KEY: string = 'fnSystemBottomInsetVp';
+/** 底部小白条（手势条指示器）高度（vp）；TYPE_SYSTEM 底部在全面屏上常为 0 */
+export const FN_NAV_INDICATOR_INSET_VP_KEY: string = 'fnNavIndicatorInsetVp';
 /** 横屏时左侧系统栏/挖孔宽度（vp） */
 export const FN_SYSTEM_LEFT_INSET_VP_KEY: string = 'fnSystemLeftInsetVp';
 /** 横屏时右侧系统栏/挖孔宽度（vp） */
@@ -21,6 +23,7 @@ let lastSystemTopPx: number = 0;
 let lastSystemBottomPx: number = 0;
 let lastSystemLeftPx: number = 0;
 let lastSystemRightPx: number = 0;
+let lastNavIndicatorBottomPx: number = 0;
 /** TYPE_CUTOUT 顶部高度（px）。官方：摄像头挖孔默认不在避让区，需主动合并。 */
 let lastCutoutTopPx: number = 0;
 let lastCutoutLeftPx: number = 0;
@@ -67,6 +70,10 @@ function fnPublishTopBottomInsets(uiContext: UIContext | undefined): void {
     FN_SYSTEM_BOTTOM_INSET_VP_KEY,
     Math.max(0, fnPxToVp(lastSystemBottomPx, uiContext))
   );
+  AppStorage.setOrCreate<number>(
+    FN_NAV_INDICATOR_INSET_VP_KEY,
+    Math.max(0, fnPxToVp(lastNavIndicatorBottomPx, uiContext))
+  );
 }
 
 function fnPublishSideInsets(uiContext: UIContext | undefined): void {
@@ -98,6 +105,11 @@ function fnApplyCutoutAvoidArea(area: window.AvoidArea, uiContext: UIContext | u
   fnPublishSideInsets(uiContext);
 }
 
+function fnApplyNavigationIndicatorAvoidArea(area: window.AvoidArea, uiContext: UIContext | undefined): void {
+  lastNavIndicatorBottomPx = Math.max(0, area.bottomRect.height);
+  fnPublishTopBottomInsets(uiContext);
+}
+
 /** 读取当前系统避让区并写入 AppStorage。 */
 export function fnPublishSystemAvoidArea(win: window.Window, uiContext: UIContext | undefined = undefined): void {
   try {
@@ -111,6 +123,11 @@ export function fnPublishSystemAvoidArea(win: window.Window, uiContext: UIContex
     fnApplyCutoutAvoidArea(cutoutArea, uiContext);
   } catch (_e) {
   }
+  try {
+    const navArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+    fnApplyNavigationIndicatorAvoidArea(navArea, uiContext);
+  } catch (_e) {
+  }
 }
 
 /** 主窗口创建后订阅避让区变化，主题重绘后也能收回真实 inset。 */
@@ -120,6 +137,9 @@ export function fnBindSystemAvoidArea(win: window.Window): void {
   }
   if (AppStorage.get<number>(FN_SYSTEM_BOTTOM_INSET_VP_KEY) === undefined) {
     AppStorage.setOrCreate<number>(FN_SYSTEM_BOTTOM_INSET_VP_KEY, 0);
+  }
+  if (AppStorage.get<number>(FN_NAV_INDICATOR_INSET_VP_KEY) === undefined) {
+    AppStorage.setOrCreate<number>(FN_NAV_INDICATOR_INSET_VP_KEY, 0);
   }
   if (AppStorage.get<number>(FN_SYSTEM_LEFT_INSET_VP_KEY) === undefined) {
     AppStorage.setOrCreate<number>(FN_SYSTEM_LEFT_INSET_VP_KEY, 0);
@@ -136,6 +156,10 @@ export function fnBindSystemAvoidArea(win: window.Window): void {
     }
     if (info.type === window.AvoidAreaType.TYPE_CUTOUT) {
       fnApplyCutoutAvoidArea(info.area, undefined);
+      return;
+    }
+    if (info.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+      fnApplyNavigationIndicatorAvoidArea(info.area, undefined);
     }
   };
   try {

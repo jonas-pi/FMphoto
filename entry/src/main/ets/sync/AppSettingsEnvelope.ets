@@ -29,12 +29,23 @@ export interface AppSettingsSmartCategory {
   customOrder: string[];
 }
 
+/** 登录页可同步字段，不含密码。 */
+export interface AppSettingsLogin {
+  fnId: string;
+  domain: string;
+  lan: string;
+  username: string;
+  endpointPref: string;
+  useHttps: boolean;
+}
+
 export interface AppSettingsEnvelope {
   schema: number;
   updatedAt: number;
   deviceId: string;
   account: string;
   smartCategory: AppSettingsSmartCategory;
+  login: AppSettingsLogin;
 }
 
 export interface ParseEnvelopeResult {
@@ -95,6 +106,72 @@ function emptySmartCategory(): AppSettingsSmartCategory {
     infoOrder: [],
     customOrder: []
   };
+}
+
+export function emptyLoginConfig(): AppSettingsLogin {
+  return {
+    fnId: '',
+    domain: '',
+    lan: '',
+    username: '',
+    endpointPref: 'auto',
+    useHttps: true
+  };
+}
+
+function parseBoolFlag(raw: Object | string | number | boolean | undefined | null, fallback: boolean): boolean {
+  if (typeof raw === 'boolean') {
+    return raw;
+  }
+  if (typeof raw === 'number') {
+    return raw !== 0;
+  }
+  if (typeof raw === 'string') {
+    const t = raw.trim().toLowerCase();
+    if (t === '1' || t === 'true' || t === 'yes') {
+      return true;
+    }
+    if (t === '0' || t === 'false' || t === 'no') {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+export function parseLoginConfig(raw: Object | string | number | boolean | undefined | null): AppSettingsLogin {
+  const empty = emptyLoginConfig();
+  if (raw === undefined || raw === null) {
+    return empty;
+  }
+  if (Array.isArray(raw)) {
+    const arr = raw as Object[];
+    return {
+      fnId: arr.length > 0 ? asString(arr[0] as Object | string | number | boolean | undefined | null, '').trim() : '',
+      domain: arr.length > 1 ? asString(arr[1] as Object | string | number | boolean | undefined | null, '').trim() : '',
+      lan: arr.length > 2 ? asString(arr[2] as Object | string | number | boolean | undefined | null, '').trim() : '',
+      username: arr.length > 3 ? asString(arr[3] as Object | string | number | boolean | undefined | null, '').trim() : '',
+      endpointPref: arr.length > 4 ? asString(arr[4] as Object | string | number | boolean | undefined | null, 'auto').trim() : 'auto',
+      useHttps: arr.length > 5 ? parseBoolFlag(arr[5] as Object | string | number | boolean | undefined | null, true) : true
+    };
+  }
+  if (typeof raw !== 'object') {
+    return empty;
+  }
+  const rec = raw as LooseJson;
+  const pref = asString(rec['endpointPref'] !== undefined ? rec['endpointPref'] : rec['p'], 'auto').trim();
+  return {
+    fnId: asString(rec['fnId'] !== undefined ? rec['fnId'] : rec['f'], '').trim(),
+    domain: asString(rec['domain'] !== undefined ? rec['domain'] : rec['d'], '').trim(),
+    lan: asString(rec['lan'] !== undefined ? rec['lan'] : rec['n'], '').trim(),
+    username: asString(rec['username'] !== undefined ? rec['username'] : rec['u'], '').trim(),
+    endpointPref: pref.length > 0 ? pref : 'auto',
+    useHttps: parseBoolFlag(rec['useHttps'] !== undefined ? rec['useHttps'] : rec['h'], true)
+  };
+}
+
+export function loginConfigHasContent(login: AppSettingsLogin): boolean {
+  return login.fnId.length > 0 || login.domain.length > 0 || login.lan.length > 0 ||
+    login.username.length > 0 || (login.endpointPref.length > 0 && login.endpointPref !== 'auto');
 }
 
 function parseCustomItems(raw: Object | string | number | boolean | undefined | null): AppSettingsCustomItem[] {
@@ -173,7 +250,8 @@ export function layoutLocalUpdatedAt(layout: SmartCategoryLayout): number {
 export function envelopeFromLayout(
   layout: SmartCategoryLayout,
   deviceId: string,
-  updatedAt: number
+  updatedAt: number,
+  login: AppSettingsLogin = emptyLoginConfig()
 ): AppSettingsEnvelope {
   const custom: AppSettingsCustomItem[] = [];
   for (let i = 0; i < layout.custom.length; i++) {
@@ -196,7 +274,8 @@ export function envelopeFromLayout(
       sceneOrder: layout.sceneOrder,
       infoOrder: layout.infoOrder,
       customOrder: layout.customOrder
-    }
+    },
+    login: login
   };
 }
 
@@ -220,6 +299,14 @@ export function serializeEnvelope(envelope: AppSettingsEnvelope): string {
   root['deviceId'] = envelope.deviceId;
   root['account'] = envelope.account;
   root['smartCategory'] = smart;
+  const loginRec: LooseJson = {};
+  loginRec['fnId'] = envelope.login.fnId;
+  loginRec['domain'] = envelope.login.domain;
+  loginRec['lan'] = envelope.login.lan;
+  loginRec['username'] = envelope.login.username;
+  loginRec['endpointPref'] = envelope.login.endpointPref;
+  loginRec['useHttps'] = envelope.login.useHttps;
+  root['login'] = loginRec;
   return JSON.stringify(root);
 }
 
@@ -271,6 +358,14 @@ function compactRootObject(
   root['t'] = envelope.updatedAt;
   root['a'] = envelope.account;
   root['c'] = compactCustomPairs(envelope.smartCategory.custom);
+  const loginRow: string[] = [];
+  loginRow.push(envelope.login.fnId);
+  loginRow.push(envelope.login.domain);
+  loginRow.push(envelope.login.lan);
+  loginRow.push(envelope.login.username);
+  loginRow.push(envelope.login.endpointPref);
+  loginRow.push(envelope.login.useHttps ? '1' : '0');
+  root['l'] = loginRow;
   if (includeOrders) {
     root['so'] = envelope.smartCategory.sceneOrder;
     root['io'] = envelope.smartCategory.infoOrder;
@@ -354,7 +449,8 @@ export function parseEnvelopeJson(rawText: string): ParseEnvelopeResult {
       updatedAt: asTime(parsed['updatedAt'] !== undefined ? parsed['updatedAt'] : parsed['t']),
       deviceId: asString(parsed['deviceId'] !== undefined ? parsed['deviceId'] : parsed['d'], '').trim(),
       account: asString(parsed['account'] !== undefined ? parsed['account'] : parsed['a'], '').trim(),
-      smartCategory: smart
+      smartCategory: smart,
+      login: parseLoginConfig(parsed['login'] !== undefined ? parsed['login'] : parsed['l'])
     };
     return { ok: true, message: '', envelope: envelope };
   } catch (_e) {

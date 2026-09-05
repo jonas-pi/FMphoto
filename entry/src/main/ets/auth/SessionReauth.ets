@@ -2,7 +2,7 @@
  * 会话恢复：长时间挂起后图库接口易出现 HTTP 401（token / Cookie 失效）。
  *
  * 策略：
- * 1) 静默 WebSocket 重登：依赖登录时写入的账号与 K_LAST_PASSWORD（与登录页回填同源）。
+ * 1) 静默 WebSocket 重登：依赖本次进程内口令（不落盘）。
  * 2) 补充 long-token：重登后若仍无 longToken，再探测首页 Set-Cookie（与 Login.persistSessionAndGoHome 一致）。
  * 3) 回前台节流探测：仅刷新 long-token，减轻「很久后进相册」概率（不能替代 token 续期）。
  *
@@ -49,7 +49,7 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
   // WebSocket 登录会话：用本地保存的密码静默重登（最有效应对「很久未用 token 过期」）
   if (stored.loginViaWebSocket === true) {
     const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
-    const pass = defaults.password;
+    const pass = AppSession.getLoginPassword();
     const user = stored.account.length > 0 ? stored.account : defaults.username;
     if (pass.length > 0 && user.length > 0) {
       const trusted = CertPolicy.isTrusted(stored.baseUrl);
@@ -95,7 +95,7 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
         wsRes.message !== undefined ? wsRes.message : 'unknown'
       );
     } else {
-      hilog.warn(DOMAIN, TAG, 'silent WS relogin skipped: no saved password (re-login once to store)');
+      hilog.warn(DOMAIN, TAG, 'silent WS relogin skipped: no in-memory password');
     }
   }
 

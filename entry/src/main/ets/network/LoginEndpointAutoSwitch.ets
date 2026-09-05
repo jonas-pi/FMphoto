@@ -119,9 +119,8 @@ async function probeAndSwitch(ctx: common.UIAbilityContext, stored: StoredSessio
   if (res.message.length === 0) {
     return;
   }
-  const summary = selected.summary.length > 0 ? selected.summary : '已自动切换连接';
-  hilog.info(DOMAIN, TAG, 'auto switched: %{public}s', summary);
-  notifyEndpointSwitched(summary);
+  hilog.info(DOMAIN, TAG, 'auto switched: %{public}s', res.message);
+  notifyEndpointSwitched(res.message);
 }
 
 async function runAutoSwitch(): Promise<void> {

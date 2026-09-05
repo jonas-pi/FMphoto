@@ -1,10 +1,7 @@
 /**
- * 登录页输入框：透明底 + 可见描边 + systemMaterial(THIN)。
- * 官方 FAQ：不透明 materialColor / 不透明底会盖住材质；systemMaterial 须放在边框之后。
- * $$ 绑定本地文本，避免父页每敲一字重建 TextInput 导致输入法延迟。
+ * 登录页输入框：透明底 + 组件模糊（与顶栏玻璃同一套，targetSdk 24 上可见）。
+ * 不要叠 systemMaterial：API 26 材质在当前工程里不生效，却会盖住模糊。
  */
-import { fnArkUiSupportsSystemMaterial, fnHdsLoginInputSystemMaterial } from './FnHdsOverlay';
-
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 
 @Component
@@ -27,6 +24,16 @@ export struct FnLoginTextField {
     }
   }
 
+  private fieldGlassEffect(): BackgroundEffectOptions {
+    return {
+      radius: 24,
+      saturation: 1.2,
+      brightness: 1.05,
+      color: $r('app.color.login_input_fill'),
+      adaptiveColor: AdaptiveColor.DEFAULT
+    };
+  }
+
   build() {
     TextInput({ text: $$this.inputText, placeholder: this.placeholder })
       .type(this.inputType)
@@ -46,7 +53,8 @@ export struct FnLoginTextField {
       .placeholderColor($r('app.color.gallery_material_search_placeholder'))
       .caretColor($r('app.color.brand_primary'))
       .enabled(this.fieldEnabled)
-      .backgroundColor(fnArkUiSupportsSystemMaterial() ? Color.Transparent : $r('app.color.login_input_fill'))
-      .systemMaterial(fnHdsLoginInputSystemMaterial())
+      .backgroundColor(Color.Transparent)
+      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
+      .backgroundEffect(this.fieldGlassEffect())
   }
 }

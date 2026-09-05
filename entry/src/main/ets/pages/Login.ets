@@ -6,16 +6,12 @@
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { hdsEffect } from '@kit.UIDesignKit';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
 import {
   LOGIN_ENDPOINT_PREF_AUTO,
-  LOGIN_ENDPOINT_PREF_BANDWIDTH,
-  LOGIN_ENDPOINT_PREF_LAN,
-  LOGIN_ENDPOINT_PREF_LATENCY,
-  LOGIN_ENDPOINT_PREF_PUBLIC,
-  LoginEndpointSelectionResult,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
 import { extractFnId, isFnId, isFnRelayBaseUrl, lookupFnConnect } from '../network/FnConnectApi';
@@ -27,17 +23,13 @@ import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { FnLoginPrimaryButton, FnLoginSecondaryButton } from '../common/FnLoginButtons';
 import { FnLoginRoutePrefSegment } from '../common/FnLoginRoutePrefSegment';
 import { FnLoginTextField } from '../common/FnLoginTextField';
-import {
-  fnArkUiSupportsSystemMaterial,
-  fnHdsLoginCardSystemMaterial
-} from '../common/FnHdsOverlay';
-import {
-  buildEndpointProbeDisplay,
-  FnEndpointProbeLineItem,
-  FnEndpointProbeView
-} from '../common/FnEndpointProbeView';
 import { fnApplyImmersiveSystemBarColors, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
-import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
+import {
+  FN_NAV_INDICATOR_INSET_VP_KEY,
+  FN_SYSTEM_BOTTOM_INSET_VP_KEY,
+  FN_SYSTEM_TOP_INSET_VP_KEY,
+  fnPublishSystemAvoidArea
+} from '../common/FnSystemAvoidArea';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -50,6 +42,8 @@ const LOGIN_TAG = 'Login';
 const LOGIN_CARD_RADIUS_VP: number = 24;
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 const LOGIN_HERO_ICON_VP: number = 72;
+/** 前景卡片相对状态栏 / 小白条的额外留白，上下共用 */
+const LOGIN_PANEL_EDGE_GAP_VP: number = 12;
 
 @Entry
 @Component
@@ -62,12 +56,6 @@ struct Login {
   @State private useHttps: boolean = true;
   @State private loading: boolean = false;
   @State private errorText: string = '';
-  @State private probeStatus: string = '';
-  @State private probeFnHint: string = '';
-  @State private probeSelectedLabel: string = '';
-  @State private probeSelectedAddress: string = '';
-  @State private probeSelectedLatencyText: string = '';
-  @State private probeOtherItems: FnEndpointProbeLineItem[] = [];
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
   @State private otpCode: string = '';
@@ -87,6 +75,8 @@ struct Login {
   private pendingEndpointRelayUrl: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
+  @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
 
   onPageShow(): void {
     this.applySystemBarTheme();
@@ -126,11 +116,31 @@ struct Login {
       if (d.username.length > 0) {
         this.username = d.username;
       }
-      if (d.password.length > 0) {
-        this.password = d.password;
-      }
       this.useHttps = d.useHttps;
     });
+  }
+
+  aboutToDisappear(): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const shared = this.parseSharedHostInput(this.fnIdInput);
+    if (shared[0].length === 0 && shared[1].length === 0 && this.domainInput.trim().length === 0 &&
+      this.username.trim().length === 0) {
+      return;
+    }
+    void SessionPreferences.saveLoginFormDefaults(ctx, {
+      fnIdInput: shared[0],
+      domainInput: this.domainInput.trim(),
+      lanInput: shared[1],
+      loginEndpointPreference: this.endpointPreference,
+      username: this.username.trim(),
+      password: '',
+      useHttps: this.useHttps
+    });
+  }
+
+  private loginBottomChromeInsetVp(): number {
+    const chrome = Math.max(this.systemBottomInsetVp, this.navIndicatorInsetVp);
+    return chrome > 0 ? chrome : 20;
   }
 
   /**
@@ -215,7 +225,17 @@ struct Login {
     }
 
     try {
-      await SessionPreferences.save(ctx, stored, pass);
+      AppSession.setLoginPassword(pass);
+      await SessionPreferences.saveLoginFormDefaults(ctx, {
+        fnIdInput: stored.fnIdInput,
+        domainInput: stored.domainInput,
+        lanInput: stored.lanInput,
+        loginEndpointPreference: stored.loginEndpointPreference,
+        username: stored.account,
+        password: '',
+        useHttps: stored.useHttps
+      });
+      await SessionPreferences.save(ctx, stored);
     } catch (e) {
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'SessionPreferences.save: %{public}s', String(e));
       this.errorText = '保存登录信息失败，请检查存储权限后重试';
@@ -357,25 +377,6 @@ struct Login {
     return fallback !== '[object Object]' ? fallback : '';
   }
 
-  private clearProbeDisplay(): void {
-    this.probeStatus = '';
-    this.probeFnHint = '';
-    this.probeSelectedLabel = '';
-    this.probeSelectedAddress = '';
-    this.probeSelectedLatencyText = '';
-    this.probeOtherItems = [];
-  }
-
-  private applyProbeSelection(fnHint: string, selected: LoginEndpointSelectionResult): void {
-    const display = buildEndpointProbeDisplay(selected, '', fnHint);
-    this.probeStatus = '';
-    this.probeFnHint = display.hintText;
-    this.probeSelectedLabel = display.selectedLabel;
-    this.probeSelectedAddress = display.selectedAddress;
-    this.probeSelectedLatencyText = display.selectedLatencyText;
-    this.probeOtherItems = display.otherItems;
-  }
-
   private async onLoginClick(): Promise<void> {
     this.errorText = '';
     const sharedRaw = this.fnIdInput.trim();
@@ -389,8 +390,6 @@ struct Login {
       return;
     }
     this.loading = true;
-    this.clearProbeDisplay();
-    this.probeStatus = '正在探测可达路径…';
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       this.show2faStep = false;
@@ -403,8 +402,6 @@ struct Login {
       this.pendingEndpointLanIpv6Url = '';
       this.pendingEndpointPublicIpv6Url = '';
       this.pendingEndpointRelayUrl = '';
-
-      let fnSummary = '';
 
       // 可选公网域名；误填 FN Connect 门户时忽略
       if (publicDomainRaw.length > 0) {
@@ -460,7 +457,6 @@ struct Login {
         if (looked.relayServer.length > 0) {
           this.pendingEndpointRelayUrl = looked.relayServer;
         }
-        fnSummary = looked.summary;
       }
 
       this.pendingEndpointPublicUrl = preferPublicEndpointUrl(
@@ -477,7 +473,6 @@ struct Login {
         publicIpv6Url: this.pendingEndpointPublicIpv6Url,
         relayUrl: this.pendingEndpointRelayUrl
       }, this.endpointPreference);
-      this.applyProbeSelection(fnSummary, selected);
       if (selected.server.length === 0 || !selected.selectedOk) {
         this.errorText = selected.summary.length > 0
           ? selected.summary
@@ -494,9 +489,6 @@ struct Login {
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {
       this.loading = false;
-      if (this.probeSelectedLabel.length === 0) {
-        this.probeStatus = '';
-      }
     }
   }
 
@@ -554,56 +546,73 @@ struct Login {
 
   @Builder
   private loginBackdrop() {
-    Stack() {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.page_background'))
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.page_background'))
+      .hitTestBehavior(HitTestMode.None)
+  }
 
-      this.loginAmbientBackground()
+  /**
+   * 蓝圆只做光源，不自绘 blur。泛光和边缘扭曲走 HDS 点光源；
+   * 前景材质的 materialFilter 再把圆采样成光晕。
+   */
+  private loginGlowSourceEffect(color: ResourceColor, heightVp: number): VisualEffect {
+    return new hdsEffect.HdsEffectBuilder()
+      .pointLight({
+        options: {
+          color: color,
+          intensity: 0.92,
+          height: heightVp,
+          bloom: 0.88
+        }
+      })
+      .buildEffect();
+  }
 
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.login_backdrop_veil'))
-    }
-    .width('100%')
-    .height('100%')
-    .hitTestBehavior(HitTestMode.None)
+  /** 前景玻璃板边缘接住蓝圆点光源，形成扭曲光线 */
+  private loginForegroundIllumination(): VisualEffect {
+    return new hdsEffect.HdsEffectBuilder()
+      .pointLight({
+        illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER
+      })
+      .buildEffect();
   }
 
   @Builder
-  private loginAmbientBackground() {
+  private loginPanelGlow() {
     Stack() {
       Column()
-        .width(300)
-        .height(300)
-        .borderRadius(150)
+        .width(180)
+        .height(180)
+        .borderRadius(90)
         .backgroundColor($r('app.color.login_glow_blue_core'))
-        .blur(80)
-        .opacity(0.42)
-        .position({ x: '-20%', y: '-8%' })
+        .opacity(0.9)
+        .visualEffect(this.loginGlowSourceEffect($r('app.color.login_glow_blue_core'), 72))
+        .position({ x: '6%', y: '8%' })
 
       Column()
-        .width(240)
-        .height(240)
-        .borderRadius(120)
+        .width(150)
+        .height(150)
+        .borderRadius(75)
         .backgroundColor($r('app.color.login_glow_blue_soft'))
-        .blur(64)
-        .opacity(0.36)
-        .position({ x: '58%', y: '12%' })
+        .opacity(0.85)
+        .visualEffect(this.loginGlowSourceEffect($r('app.color.login_glow_blue_soft'), 60))
+        .position({ x: '52%', y: '28%' })
 
       Column()
-        .width(200)
-        .height(200)
-        .borderRadius(100)
+        .width(130)
+        .height(130)
+        .borderRadius(65)
         .backgroundColor($r('app.color.brand_primary'))
-        .blur(56)
-        .opacity(0.22)
-        .position({ x: '10%', y: '62%' })
+        .opacity(0.78)
+        .visualEffect(this.loginGlowSourceEffect($r('app.color.brand_primary'), 52))
+        .position({ x: '18%', y: '58%' })
     }
     .width('100%')
     .height('100%')
+    .borderRadius(LOGIN_CARD_RADIUS_VP)
+    .clip(true)
     .hitTestBehavior(HitTestMode.None)
   }
 
@@ -626,41 +635,51 @@ struct Login {
     })
   }
 
-  @Builder
-  private loginFormCardImmersive() {
-    Column() {
-      this.loginFormBody()
-    }
-    .width('100%')
-    .padding(20)
-    .borderRadius(LOGIN_CARD_RADIUS_VP)
-    .borderWidth(1)
-    .borderColor($r('app.color.login_input_border'))
-    .backgroundColor(Color.Transparent)
-    .systemMaterial(fnHdsLoginCardSystemMaterial())
+  private loginPanelBackgroundEffect(): BackgroundEffectOptions {
+    return {
+      radius: 80,
+      saturation: 1.4,
+      brightness: 1.12,
+      color: $r('app.color.login_card_fill'),
+      adaptiveColor: AdaptiveColor.DEFAULT
+    };
   }
 
   @Builder
-  private loginFormCardFallback() {
-    Column() {
-      this.loginFormBody()
+  private loginForegroundPanel() {
+    Stack() {
+      this.loginPanelGlow()
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .borderRadius(LOGIN_CARD_RADIUS_VP)
+        .clip(true)
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .backgroundEffect(this.loginPanelBackgroundEffect())
+        .visualEffect(this.loginForegroundIllumination())
+        .hitTestBehavior(HitTestMode.None)
+
+      Scroll() {
+        Column({ space: 12 }) {
+          this.loginHeroSection()
+          this.loginFormBody()
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, top: 16, bottom: 20 })
+      }
+      .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.None)
+      .align(Alignment.TopStart)
+      .clip(false)
     }
     .width('100%')
-    .padding(20)
+    .height('100%')
     .borderRadius(LOGIN_CARD_RADIUS_VP)
-    .clip(true)
-    .backgroundColor($r('app.color.login_card_fill'))
-    .borderWidth(1)
-    .borderColor($r('app.color.login_input_border'))
-  }
-
-  @Builder
-  private loginFormCard() {
-    if (fnArkUiSupportsSystemMaterial()) {
-      this.loginFormCardImmersive()
-    } else {
-      this.loginFormCardFallback()
-    }
+    .clip(false)
   }
 
   @Builder
@@ -755,19 +774,6 @@ struct Login {
           .width('100%')
       }
 
-      if (this.probeStatus.length > 0 || this.probeSelectedLabel.length > 0) {
-        FnEndpointProbeView({
-          probing: this.probeStatus.length > 0,
-          hintText: this.probeFnHint,
-          selectedTitle: $r('app.string.login_probe_selected'),
-          selectedLabel: this.probeSelectedLabel,
-          selectedAddress: this.probeSelectedAddress,
-          selectedLatencyText: this.probeSelectedLatencyText,
-          otherItems: this.probeOtherItems,
-          useCardStyle: true
-        })
-      }
-
       if (this.show2faStep) {
         FnLoginPrimaryButton({
           text: this.loading ? $r('app.string.verifying_2fa') : $r('app.string.verify_2fa'),
@@ -827,21 +833,23 @@ struct Login {
     Stack({ alignContent: Alignment.TopStart }) {
       this.loginBackdrop()
 
-      Scroll() {
-        Column({ space: 20 }) {
-          Blank().height(this.systemTopInsetVp + 12)
-
-          this.loginHeroSection()
-
-          this.loginFormCard()
+      Column() {
+        Blank().height(this.systemTopInsetVp + LOGIN_PANEL_EDGE_GAP_VP)
+        Column() {
+          this.loginForegroundPanel()
         }
-        .padding({ left: 20, right: 20, bottom: 24 })
         .width('100%')
+        .layoutWeight(1)
+        .constraintSize({ minHeight: 0 })
       }
+      .padding({
+        left: 20,
+        right: 20,
+        bottom: this.loginBottomChromeInsetVp() + LOGIN_PANEL_EDGE_GAP_VP
+      })
       .width('100%')
       .height('100%')
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
+      .backgroundColor(Color.Transparent)
     }
     .width('100%')
     .height('100%')

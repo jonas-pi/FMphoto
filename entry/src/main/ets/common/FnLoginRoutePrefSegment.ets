@@ -1,6 +1,7 @@
 /**
- * 登录选路策略：按住横向滑动，指示器跟手，松手吸附到最近项。
+ * 登录选路策略：抓住滑块才跟手，松手吸附；轨道用 HdsTabs 沉浸果冻。
  */
+import { DividerMode, HdsTabs } from '@kit.UIDesignKit';
 import {
   LOGIN_ENDPOINT_PREF_AUTO,
   LOGIN_ENDPOINT_PREF_BANDWIDTH,
@@ -8,7 +9,12 @@ import {
   LOGIN_ENDPOINT_PREF_LATENCY,
   LOGIN_ENDPOINT_PREF_PUBLIC
 } from '../network/LoginEndpointSelector';
-import { fnArkUiSupportsSystemMaterial, fnHdsSegmentSystemMaterial } from './FnHdsOverlay';
+import {
+  FN_HDS_CAPSULE_JELLY_VP,
+  fnHdsCapsuleOverlayHeight,
+  fnHdsCapsuleOverlayWidth,
+  fnHdsImmersiveTabsFloatingStyle
+} from './FnUiCommon';
 
 const LOGIN_ROUTE_PREF_VALUES: string[] = [
   LOGIN_ENDPOINT_PREF_AUTO,
@@ -21,9 +27,9 @@ const LOGIN_ROUTE_PREF_VALUES: string[] = [
 const LOGIN_ROUTE_PREF_LABELS: string[] = ['自动', '内网', '公网', '延迟', '带宽'];
 const LOGIN_ROUTE_ITEM_COUNT: number = LOGIN_ROUTE_PREF_VALUES.length;
 const LOGIN_ROUTE_SEGMENT_HEIGHT_VP: number = 40;
-const LOGIN_ROUTE_SEGMENT_RADIUS_VP: number = 20;
 const LOGIN_ROUTE_SEGMENT_INNER_PAD_VP: number = 3;
 const LOGIN_ROUTE_SEGMENT_INNER_RADIUS_VP: number = 17;
+const LOGIN_ROUTE_THUMB_GRAB_PAD_VP: number = 10;
 
 function fnLoginRoutePrefIndex(value: string): number {
   const idx = LOGIN_ROUTE_PREF_VALUES.indexOf(value);
@@ -39,7 +45,8 @@ export struct FnLoginRoutePrefSegment {
   @State private trackWidthVp: number = 0;
   @State private thumbXVp: number = LOGIN_ROUTE_SEGMENT_INNER_PAD_VP;
   @State private dragging: boolean = false;
-  private panStartThumbX: number = 0;
+  private panActive: boolean = false;
+  private grabOffsetX: number = 0;
 
   aboutToAppear(): void {
     this.selectedIndex = fnLoginRoutePrefIndex(this.selectedValue);
@@ -102,6 +109,23 @@ export struct FnLoginRoutePrefSegment {
     return Math.max(0, Math.min(LOGIN_ROUTE_ITEM_COUNT - 1, raw));
   }
 
+  private isOnThumb(localX: number): boolean {
+    const w = this.itemWidth();
+    if (w <= 0) {
+      return false;
+    }
+    const left = this.thumbXVp - LOGIN_ROUTE_THUMB_GRAB_PAD_VP;
+    const right = this.thumbXVp + w + LOGIN_ROUTE_THUMB_GRAB_PAD_VP;
+    return localX >= left && localX <= right;
+  }
+
+  private eventLocalX(event: GestureEvent): number {
+    if (event.fingerList.length > 0) {
+      return event.fingerList[0].localX;
+    }
+    return this.thumbXVp + this.itemWidth() / 2;
+  }
+
   private commitIndex(index: number): void {
     if (this.disabled) {
       return;
@@ -111,26 +135,34 @@ export struct FnLoginRoutePrefSegment {
     this.onValueChange(LOGIN_ROUTE_PREF_VALUES[index]);
   }
 
-  private onPanStart(): void {
-    if (this.disabled) {
+  private onPanStart(event: GestureEvent): void {
+    if (this.disabled || this.itemWidth() <= 0) {
+      this.panActive = false;
       return;
     }
+    const localX = this.eventLocalX(event);
+    if (!this.isOnThumb(localX)) {
+      this.panActive = false;
+      return;
+    }
+    this.panActive = true;
     this.dragging = true;
-    this.panStartThumbX = this.thumbXVp;
+    this.grabOffsetX = localX - this.thumbXVp;
   }
 
-  private onPanUpdate(offsetX: number): void {
-    if (this.disabled || this.itemWidth() <= 0) {
+  private onPanUpdate(event: GestureEvent): void {
+    if (!this.panActive || this.disabled) {
       return;
     }
-    this.thumbXVp = this.clampThumbX(this.panStartThumbX + offsetX);
+    this.thumbXVp = this.clampThumbX(this.eventLocalX(event) - this.grabOffsetX);
   }
 
   private onPanEnd(): void {
-    if (this.disabled) {
+    if (!this.panActive) {
       this.dragging = false;
       return;
     }
+    this.panActive = false;
     this.dragging = false;
     this.commitIndex(this.indexFromThumbX(this.thumbXVp));
   }
@@ -143,15 +175,10 @@ export struct FnLoginRoutePrefSegment {
   }
 
   @Builder
-  private segmentTrack() {
+  private segmentTrackBar() {
     Row()
       .width('100%')
-      .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
-      .borderRadius(LOGIN_ROUTE_SEGMENT_RADIUS_VP)
-      .borderWidth(1)
-      .borderColor($r('app.color.login_input_border'))
-      .backgroundColor(fnArkUiSupportsSystemMaterial() ? Color.Transparent : $r('app.color.login_input_fill'))
-      .systemMaterial(fnHdsSegmentSystemMaterial())
+      .height('100%')
   }
 
   @Builder
@@ -162,7 +189,11 @@ export struct FnLoginRoutePrefSegment {
       .borderRadius(LOGIN_ROUTE_SEGMENT_INNER_RADIUS_VP)
       .backgroundColor($r('app.color.brand_primary'))
       .offset({ x: this.thumbXVp, y: LOGIN_ROUTE_SEGMENT_INNER_PAD_VP })
-      .animation(this.dragging ? { duration: 0 } : { duration: 180, curve: Curve.EaseOut })
+      .scale({
+        x: this.dragging ? 1.08 : 1,
+        y: this.dragging ? 1.12 : 1
+      })
+      .animation(this.dragging ? { duration: 0 } : { duration: 200, curve: Curve.FastOutSlowIn })
       .hitTestBehavior(HitTestMode.None)
   }
 
@@ -192,14 +223,77 @@ export struct FnLoginRoutePrefSegment {
         .width('100%')
         .textAlign(TextAlign.Center)
 
-      Stack({ alignContent: Alignment.TopStart }) {
-        this.segmentTrack()
-        this.segmentThumb()
-        this.segmentLabels()
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.trackWidthVp > 0) {
+          HdsTabs({ index: 0 }) {
+            TabContent() {
+              Column()
+                .width('100%')
+                .height('100%')
+                .hitTestBehavior(HitTestMode.None)
+            }
+            .tabBar(this.segmentTrackBar)
+          }
+          .width(fnHdsCapsuleOverlayWidth(this.trackWidthVp))
+          .height(fnHdsCapsuleOverlayHeight(LOGIN_ROUTE_SEGMENT_HEIGHT_VP))
+          .barHeight(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
+          .barOverlap(true)
+          .vertical(false)
+          .barPosition(BarPosition.End)
+          .barWidth(this.trackWidthVp)
+          .barFloatingStyle(fnHdsImmersiveTabsFloatingStyle(
+            LOGIN_ROUTE_SEGMENT_HEIGHT_VP,
+            this.trackWidthVp,
+            Color.White,
+            FN_HDS_CAPSULE_JELLY_VP,
+            FN_HDS_CAPSULE_JELLY_VP
+          ))
+          .scrollable(false)
+          .divider({ mode: DividerMode.NONE })
+          .backgroundColor(Color.Transparent)
+          .barBackgroundColor($r('app.color.login_input_fill'))
+          .clip(false)
+          .shadow({ radius: 0, color: Color.Transparent })
+          .hitTestBehavior(HitTestMode.None)
+          .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
+            return false;
+          })
+        }
+
+        Stack({ alignContent: Alignment.TopStart }) {
+          this.segmentThumb()
+          this.segmentLabels()
+        }
+        .width('100%')
+        .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
+        .clip(false)
+        .priorityGesture(
+          PanGesture({ direction: PanDirection.Horizontal, distance: 1 })
+            .onActionStart((event: GestureEvent): void => {
+              this.onPanStart(event);
+            })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.onPanUpdate(event);
+            })
+            .onActionEnd((): void => {
+              this.onPanEnd();
+            })
+            .onActionCancel((): void => {
+              this.onPanEnd();
+            })
+        )
+        .gesture(
+          TapGesture()
+            .onAction((event: GestureEvent): void => {
+              if (event.fingerList.length > 0) {
+                this.onTapLocalX(event.fingerList[0].localX);
+              }
+            })
+        )
       }
       .width('100%')
-      .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
-      .clip(true)
+      .height(fnHdsCapsuleOverlayHeight(LOGIN_ROUTE_SEGMENT_HEIGHT_VP))
+      .clip(false)
       .opacity(this.disabled ? 0.45 : 1)
       .onAreaChange((_old, area: Area) => {
         const w = area.width as number;
@@ -208,29 +302,6 @@ export struct FnLoginRoutePrefSegment {
           this.thumbXVp = this.snapXForIndex(this.selectedIndex);
         }
       })
-      .priorityGesture(
-        PanGesture({ direction: PanDirection.Horizontal, distance: 2 })
-          .onActionStart((): void => {
-            this.onPanStart();
-          })
-          .onActionUpdate((event: GestureEvent): void => {
-            this.onPanUpdate(event.offsetX);
-          })
-          .onActionEnd((): void => {
-            this.onPanEnd();
-          })
-          .onActionCancel((): void => {
-            this.onPanEnd();
-          })
-      )
-      .gesture(
-        TapGesture()
-          .onAction((event: GestureEvent): void => {
-            if (event.fingerList.length > 0) {
-              this.onTapLocalX(event.fingerList[0].localX);
-            }
-          })
-      )
     }
     .width('100%')
   }
