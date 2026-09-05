@@ -11,14 +11,23 @@ import { GallerySlideThumbRectPx } from './GallerySlidePick';
 
 export const GALLERY_SLIDE_AUTO_SCROLL_EDGE_VP: number = 64;
 
-const GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S: number = 140;
-const GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S: number = 420;
+/**
+ * 贴边进入 / 最外沿速度。
+ *
+ * 对齐系统相册划选体感，取值取自官方贴边滚默认值（vp 与 dp 同量纲）：
+ * - Android AutoScrollHelper：下限 315 dp/s、上限 1575 dp/s
+ * - ArkUI Scroller.scrollEdge 文档示例：700 vp/s
+ * 上限取 1200，介于文档示例与 AutoScrollHelper 天花板之间，避免缩略图跟不上。
+ */
+const GALLERY_SLIDE_AUTO_SCROLL_MIN_VEL_VP_S: number = 315;
+const GALLERY_SLIDE_AUTO_SCROLL_MAX_VEL_VP_S: number = 1200;
 /** 单次 scrollTo 动画时长上限，结束后若仍贴边则在 Idle 里续一段。 */
 const GALLERY_SLIDE_AUTO_SCROLL_DURATION_MS: number = 6000;
 const GALLERY_SLIDE_AUTO_SCROLL_DURATION_MIN_MS: number = 400;
 const GALLERY_SLIDE_AUTO_SCROLL_RETARGET_MIN_MS: number = 160;
 const GALLERY_SLIDE_AUTO_SCROLL_RETARGET_VEL_VP_S: number = 48;
-const GALLERY_SLIDE_AUTO_SCROLL_FOLLOW_VP: number = 18;
+/** 滚动累计超过该位移再跟一次选区；速度提高后略加密，避免漏选。 */
+const GALLERY_SLIDE_AUTO_SCROLL_FOLLOW_VP: number = 12;
 
 export class GallerySlideAutoScrollSession {
   uiContext: UIContext | null = null;
