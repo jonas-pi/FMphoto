@@ -1,10 +1,9 @@
 import { AnimatorResult, AttributeUpdater } from '@kit.ArkUI';
 
 /**
- * 预览页纵向手势：未放大时下滑跟手退出、上滑打开官方 bindSheet 详情。
+ * 预览页纵向手势：未放大时下滑跟手退出、上滑打开页内详情面板。
  *
- * 半模态是系统叠层，自身遮挡下层，不要 clipShape 裁出洞（会露出页面浅底）。
- * 避让只把画面中心平移到剩余区；跟手走 AttributeUpdater，不写 @State。
+ * 图片与详情面板共用同一高度进度，保证上移、缩放和面板滑入始终连续。
  *
  * 文档：
  * https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-sheet-page
@@ -15,7 +14,7 @@ import { AnimatorResult, AttributeUpdater } from '@kit.ArkUI';
 
 /** 未放大时纵向识别距离，避免微移抢走单击 */
 export const GALLERY_VERTICAL_PAN_DISTANCE: number = 8;
-/** 官方 bindSheet 档位速度阈值 */
+/** 纵向快速甩动速度阈值 */
 export const GALLERY_VERTICAL_VELOCITY_THRESHOLD: number = 1000;
 /** 下滑超过屏高该比例则退出 */
 export const GALLERY_DISMISS_DISTANCE_RATIO: number = 0.22;
@@ -39,7 +38,7 @@ export const VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO: number = 0.20;
 /**
  * 官方：interpolatingSpring 是 0→1 阻尼弹簧，初速度要归一化（绝对速度/改变量），
  * 时长由物理参数决定。ζ<1 会过冲，createAnimator 采样超出 [begin,end] 就是「动画逃逸」。
- * 避让用临界阻尼 ζ=1，周期仍对齐 bindSheet 的 0.347。
+ * 详情让位使用临界阻尼 ζ=1，周期保持 0.347 秒。
  * 文档：arkts-spring-curve、arkts-animation-smoothing、faqs-arkui-1365
  */
 export const GALLERY_SHEET_SPRING_STIFFNESS: number = 327.8;
@@ -76,7 +75,7 @@ export function getGalleryPreviewDetailsFitNormVel(): number {
   return detailsFitNormVel;
 }
 
-/** 松手时半模态高度方向的速度（vp/s），供避让弹簧继承，避免从 0 急刹停顿 */
+/** 松手时详情高度方向的速度（vp/s），供让位弹簧继承，避免从 0 急刹停顿。 */
 let detailsAvoidVelocityVpPerSec: number = 0;
 
 export function setGalleryPreviewDetailsAvoidVelocity(vpPerSec: number): void {
@@ -89,7 +88,7 @@ export function takeGalleryPreviewDetailsAvoidVelocity(): number {
   return v;
 }
 
-/** 官方 SheetSize.MEDIUM：半模态父窗口高度的 60% */
+/** 系统相册式详情区域默认占视口高度的 60%。 */
 export const GALLERY_SHEET_MEDIUM_RATIO: number = 0.6;
 
 let dismissProgress: number = 0;
@@ -148,7 +147,7 @@ export function galleryDetailsMediumHeightVp(viewportH: number): number {
   return viewportH * GALLERY_SHEET_MEDIUM_RATIO;
 }
 
-/** 跟手向上位移换算成半模态高度，使松手后避让动画从当前画面接着播 */
+/** 跟手向上位移换算成详情面板高度，使松手后动画从当前画面接着播。 */
 export function gallerySheetHeightFromAvoidY(translateY: number): number {
   if (translateY >= -0.5) {
     return 0;
@@ -162,10 +161,8 @@ export class GalleryDetailsFit {
 }
 
 /**
- * 半模态让位：画面中心对齐剩余区中心（translateY = -半模态高 / 2）。
- * 官方 bindSheet 本身盖住下层，不裁切；FAQ 改的是 Video 布局高度，
- * 这里 Swiper 子项写死 height 100%，改高度不生效，只平移让系统半模态遮挡下半。
- * 文档：faqs-arkui-1365、ts-universal-attributes-sheet-transition
+ * 页内详情让位：画面中心对齐上方剩余区域，并随详情进度略微缩小。
+ * 缩放幅度保持克制，重点是让照片和详情像同一页面连续重排，而不是两个叠层。
  */
 export function galleryDetailsFit(
   sheetHeightVp: number,
@@ -178,6 +175,8 @@ export function galleryDetailsFit(
     return out;
   }
   const usedH = Math.min(sheetHeightVp, viewportH - 1);
+  const progress = Math.max(0, Math.min(1, usedH / (viewportH * GALLERY_SHEET_MEDIUM_RATIO)));
+  out.scale = 1 - progress * 0.08;
   out.translateY = -usedH / 2;
   return out;
 }
@@ -285,6 +284,24 @@ export class GalleryPreviewOpacityUpdater extends AttributeUpdater<CommonAttribu
     this.lastOpacity = next;
     // 绑定前 attribute 为 null，只记下目标值，等 initializeModifier 生效
     this.attribute?.opacity(next);
+  }
+}
+
+/** 页内详情面板位移直通渲染层，跟手时不触发详情内容重建。 */
+export class GalleryPreviewTranslateYUpdater extends AttributeUpdater<ColumnAttribute> {
+  private lastY: number = 0;
+
+  initializeModifier(instance: ColumnAttribute): void {
+    instance.translate({ y: this.lastY });
+  }
+
+  onComponentChanged(component: ColumnAttribute): void {
+    component.translate({ y: this.lastY });
+  }
+
+  apply(translateY: number): void {
+    this.lastY = translateY;
+    this.attribute?.translate({ y: translateY });
   }
 }
 

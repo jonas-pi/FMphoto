@@ -191,25 +191,6 @@ export function fnHdsMediumDetentSheetOptions(title: ResourceStr, onDisappear: (
 }
 
 /**
- * 图库详情半模态：官方 BOTTOM + MEDIUM/LARGE 档位跟手。
- * 底部弹窗默认不允许下层交互、显示蒙层；点击剩余区即点击遮罩，立刻离场。
- * 不要 enableOutsideInteractive=true：会关掉蒙层，点击落到预览还要等双击识别，收回会慢半拍。
- * 蒙层透明，剩余区照片仍由半模态叠层遮挡，不额外压暗。
- * 文档：ts-universal-attributes-sheet-transition（enableOutsideInteractive / maskColor）
- */
-export function fnHdsGalleryDetailsSheetOptions(
-  title: ResourceStr,
-  onDisappear: () => void,
-  onHeightDidChange: (heightPx: number) => void
-): SheetOptions {
-  const options = fnHdsSheetOptions(title, onDisappear, SheetSize.MEDIUM);
-  options.detents = [SheetSize.MEDIUM, SheetSize.LARGE];
-  options.maskColor = Color.Transparent;
-  options.onHeightDidChange = onHeightDidChange;
-  return options;
-}
-
-/**
  * SaveButton 专用半模态：实底、无模糊/材质，避免安全控件授权失败。
  */
 export function fnHdsSaveButtonSheetOptions(title: string, onDisappear: () => void): SheetOptions {

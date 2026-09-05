@@ -23,6 +23,8 @@ export interface CategoryGalleryOpenMeta {
   personId?: string;
   /** 智能分类来源时的 AI 搜索关键词 */
   smartCategoryKeyword?: string;
+  /** 文件夹来源的完整路径；用于从预览详情再次点击同一路径时复用当前层。 */
+  folderPath?: string;
 }
 
 interface CategoryGallerySessionBackup {
@@ -41,6 +43,7 @@ interface CategoryGallerySessionBackup {
   sourceKind: string;
   personId: string;
   smartCategoryKeyword: string;
+  folderPath: string;
   version: number;
 }
 
@@ -59,6 +62,8 @@ export class CategoryGalleryNavStore {
   static sourceKind: string = '';
   static personId: string = '';
   static smartCategoryKeyword: string = '';
+  /** 当前页面对应的完整文件夹路径；非文件夹页面为空。 */
+  static folderPath: string = '';
   /** open 时首屏裁剪后、已在 search 响应中的剩余条目（避免丢弃后重复请求） */
   static prefetchedRemainder: GalleryListItem[] = [];
   /** 本次打开时 search/open 传入的条目总数，作为 getCategoryPhotos 续拉 offset 起点 */
@@ -81,6 +86,7 @@ export class CategoryGalleryNavStore {
       sourceKind: CategoryGalleryNavStore.sourceKind,
       personId: CategoryGalleryNavStore.personId,
       smartCategoryKeyword: CategoryGalleryNavStore.smartCategoryKeyword,
+      folderPath: CategoryGalleryNavStore.folderPath,
       version: CategoryGalleryNavStore.version
     };
   }
@@ -101,6 +107,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.sourceKind = backup.sourceKind;
     CategoryGalleryNavStore.personId = backup.personId;
     CategoryGalleryNavStore.smartCategoryKeyword = backup.smartCategoryKeyword;
+    CategoryGalleryNavStore.folderPath = backup.folderPath;
     CategoryGalleryNavStore.version = backup.version;
   }
 
@@ -110,7 +117,8 @@ export class CategoryGalleryNavStore {
     items: GalleryListItem[],
     uiCtx: UIContext,
     useCreatedAtGrouping: boolean = false,
-    meta?: CategoryGalleryOpenMeta
+    meta?: CategoryGalleryOpenMeta,
+    replaceCurrentRouter: boolean = false
   ): Promise<boolean> {
     const allowEmptyPage = meta?.sourceKind === 'collect';
     if (items.length === 0 && !allowEmptyPage) {
@@ -147,6 +155,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.sourceKind = meta?.sourceKind ?? '';
     CategoryGalleryNavStore.personId = meta?.personId?.trim() ?? '';
     CategoryGalleryNavStore.smartCategoryKeyword = meta?.smartCategoryKeyword?.trim() ?? '';
+    CategoryGalleryNavStore.folderPath = CategoryGalleryNavStore.normalizeFolderPath(meta?.folderPath ?? '');
     hilog.warn(
       DOMAIN,
       TAG,
@@ -161,16 +170,20 @@ export class CategoryGalleryNavStore {
       CategoryGalleryNavStore.columnsPerRow
     );
     CategoryGalleryNavStore.version++;
-    if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_CATEGORY)) {
+    // replaceCurrentRouter 表示调用方正在独立预览页中：必须跳过仍可能存活的 Home NavPathStack，
+    // 否则目录页会被压入预览页下方的内部栈，界面仍停留在预览。普通入口继续优先使用内部导航。
+    if (!replaceCurrentRouter && GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_CATEGORY)) {
       return Promise.resolve(true);
     }
-    return uiCtx.getRouter().pushUrl(
-      { url: 'pages/CategoryGallery' },
-      router.RouterMode.Standard
-    ).then((): boolean => {
+    // 从独立预览页的详情路径进入目录时，用替换路由真正收回预览；
+    // 其他入口仍保持压栈，确保原有返回行为不变。
+    const routePromise = replaceCurrentRouter
+      ? uiCtx.getRouter().replaceUrl({ url: 'pages/CategoryGallery' })
+      : uiCtx.getRouter().pushUrl({ url: 'pages/CategoryGallery' }, router.RouterMode.Standard);
+    return routePromise.then((): boolean => {
       return true;
     }).catch((e: Error): boolean => {
-      hilog.error(DOMAIN, TAG, 'pushUrl CategoryGallery: %{public}s', String(e));
+      hilog.error(DOMAIN, TAG, 'open CategoryGallery: %{public}s', String(e));
       CategoryGalleryNavStore.restoreSession(backup);
       return false;
     });
@@ -178,6 +191,19 @@ export class CategoryGalleryNavStore {
 
   static currentToken(): number {
     return CategoryGalleryNavStore.sessionToken;
+  }
+
+  static isCurrentFolderPath(folderPath: string): boolean {
+    const normalized = CategoryGalleryNavStore.normalizeFolderPath(folderPath);
+    return normalized.length > 0 && normalized === CategoryGalleryNavStore.folderPath;
+  }
+
+  private static normalizeFolderPath(folderPath: string): string {
+    let normalized = folderPath.trim().replace(/\\/g, '/');
+    while (normalized.length > 1 && normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
   }
 
   static hasPrefetchedRemainder(): boolean {
@@ -287,6 +313,7 @@ export class CategoryGalleryNavStore {
     CategoryGalleryNavStore.sourceKind = '';
     CategoryGalleryNavStore.personId = '';
     CategoryGalleryNavStore.smartCategoryKeyword = '';
+    CategoryGalleryNavStore.folderPath = '';
     CategoryGalleryNavStore.prefetchedRemainder = [];
     CategoryGalleryNavStore.searchFetchedCount = 0;
     CategoryGalleryNavStore.version++;

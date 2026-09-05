@@ -13,8 +13,8 @@ import {
 } from './GalleryPreviewDetailsLogic';
 
 /**
- * 照片详情半屏内容区。
- * 标题与关闭按钮由 bindSheet 的 title / showClose 官方能力提供。
+ * 照片详情内容区。
+ * 外层标题、拖动条和进退场由预览页内联面板负责，本组件只维护可滚动详情内容。
  */
 @Component
 export struct GalleryPreviewDetailsSheet {

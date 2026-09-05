@@ -86,6 +86,10 @@ export class GalleryGridSlideTouchSession {
   touchStartY: number = 0;
   touchLastX: number = 0;
   touchLastY: number = 0;
+  /** 统一诊断序号：每次新 Down 清零，用于确认 Move 是否持续到达以及由 Row/List/Pan 哪条链驱动。 */
+  traceMoveCount: number = 0;
+  /** 同一轮手势的 secondary update 跳过原因只记一次，避免并行识别器逐帧刷屏。 */
+  traceSecondarySkipLogged: boolean = false;
 }
 
 export interface GalleryGridSlideTouchHost {
@@ -209,13 +213,44 @@ function galleryGridEndStaleSlideOnDown(
   session: GalleryGridSlideTouchSession,
   host: GalleryGridSlideTouchHost
 ): void {
+  session.traceMoveCount = 0;
+  session.traceSecondarySkipLogged = false;
   if (!host.isSlideActive()) {
+    // 行节点刷新或手势竞争可能让上一轮只收到划选结束、却丢失 Sequence 的 End/Cancel。
+    // 此时 initialSlidePending 会残留，并在下一轮横向 Pan 开始时被当成“首轮仍待交接”，
+    // 从而拒绝第二次划选。新手指 Down 已明确开启新会话，可以安全清掉这两个旧 Pan 标志；
+    // 不重置 touchPendingLongPress，避免 List 与 Row 的 Down 冒泡顺序误取消本轮长按定时器。
+    galleryGridClearInitialSlide(session);
+    session.secondaryPanDriving = false;
     return;
   }
   galleryGridSlideLog('stale_down_end', galleryGridSlideSessionDetail('stale', session, host));
   galleryGridClearInitialSlide(session);
   host.endSlide();
   galleryGridResetTouchTracking(session);
+}
+
+/**
+ * 划选 Move 统一诊断。前 3 帧及之后每 8 帧记录一次，既能看出事件是否断流，
+ * 又避免真机 HiLog 被逐帧坐标完全淹没。所有页面统一使用 GridSlide TAG。
+ */
+function galleryGridTraceMove(
+  session: GalleryGridSlideTouchSession,
+  host: GalleryGridSlideTouchHost,
+  source: string,
+  point: GalleryGridTouchPoint | null,
+  following: boolean
+): void {
+  session.traceMoveCount++;
+  if (following && session.traceMoveCount > 3 && session.traceMoveCount % 8 !== 0) {
+    return;
+  }
+  const xy = point === null ? 'xy=null' : `xy=${Math.round(point.x)},${Math.round(point.y)}`;
+  galleryGridSlideLog(
+    `${source}_move`,
+    `${galleryGridSlideSessionDetail(source, session, host)} follow=${following ? '1' : '0'}` +
+      ` n=${session.traceMoveCount} ${xy}`
+  );
 }
 
 /** 行级 onTouch：未多选时武装触摸长按；划选中必须在 Up/Cancel 解锁滚动 */
@@ -251,7 +286,13 @@ export function galleryGridHandleRowTouch(
     return;
   }
   if (event.type === TouchType.Move) {
-    if (touchPt !== null && session.touchSlideDriving) {
+    // 选中锚点会刷新行节点，原 Pan 识别器可能随节点一起销毁。
+    // 无论首轮触摸长按、Sequence 交接还是已多选后的二次 Pan，
+    // 行级 Touch 仍收到 Move 时都要继续驱动选区，不能只停留在第一张。
+    const following = touchPt !== null &&
+      (session.touchSlideDriving || session.initialSlidePending || session.secondaryPanDriving);
+    galleryGridTraceMove(session, host, 'row', touchPt, following);
+    if (following && touchPt !== null) {
       host.followSlideAtWindowPx(touchPt.x, touchPt.y);
     }
     return;
@@ -282,8 +323,13 @@ export function galleryGridHandleListTouch(
   }
   if (host.isSlideActive()) {
     if (event.type === TouchType.Move) {
-      // 行节点被多选刷新拆掉时，List 仍能收到 Move；Sequence Pan 未接上也能跟手
-      if (pt !== null && (session.touchSlideDriving || session.initialSlidePending)) {
+      // 行节点被多选刷新拆掉时，List 仍能收到 Move；三种划选驱动都必须由列表继续接管。
+      // 尤其二次横向 Pan 在 begin 选中锚点后会触发行重建，漏掉 secondaryPanDriving
+      // 就会表现为“只选中手指接触的第一张，划过的图片均未选中”。
+      const following = pt !== null &&
+        (session.touchSlideDriving || session.initialSlidePending || session.secondaryPanDriving);
+      galleryGridTraceMove(session, host, 'list', pt, following);
+      if (following && pt !== null) {
         host.followSlideAtWindowPx(pt.x, pt.y);
       }
       return;
@@ -347,13 +393,29 @@ export function galleryGridCanStartSecondaryPan(
   host: GalleryGridSlideTouchHost,
   ev: GestureEvent
 ): boolean {
-  if (!host.isSelectionMode() || host.isSlideActive() || session.initialSlidePending) {
+  if (!host.isSelectionMode()) {
+    galleryGridSlideLog('sec_pan_reject',
+      `${galleryGridSlideSessionDetail('sec', session, host)} reason=not_selection`);
+    return false;
+  }
+  if (host.isSlideActive()) {
+    galleryGridSlideLog('sec_pan_reject',
+      `${galleryGridSlideSessionDetail('sec', session, host)} reason=slide_active`);
+    return false;
+  }
+  if (session.initialSlidePending) {
+    galleryGridSlideLog('sec_pan_reject',
+      `${galleryGridSlideSessionDetail('sec', session, host)} reason=initial_pending`);
     return false;
   }
   // 主时间线：左滑不划选，避免和系统返回手势抢
   if (Number.isFinite(ev.offsetX) && ev.offsetX < 0) {
+    galleryGridSlideLog('sec_pan_reject',
+      `${galleryGridSlideSessionDetail('sec', session, host)} reason=left dx=${Math.round(ev.offsetX)}`);
     return false;
   }
+  galleryGridSlideLog('sec_pan_accept',
+    `${galleryGridSlideSessionDetail('sec', session, host)} dx=${Math.round(ev.offsetX)} dy=${Math.round(ev.offsetY)}`);
   return true;
 }
 
@@ -367,8 +429,13 @@ export function galleryGridShouldUpdateSecondaryPan(
   session: GalleryGridSlideTouchSession,
   host: GalleryGridSlideTouchHost
 ): boolean {
-  return session.secondaryPanDriving && host.isSelectionMode() &&
+  const accepted = session.secondaryPanDriving && host.isSelectionMode() &&
     !session.initialSlidePending && host.isSlideActive();
+  if (!accepted && !session.traceSecondarySkipLogged) {
+    session.traceSecondarySkipLogged = true;
+    galleryGridSlideLog('sec_pan_update_skip', galleryGridSlideSessionDetail('sec', session, host));
+  }
+  return accepted;
 }
 
 export function galleryGridOnSecondaryPanFinish(

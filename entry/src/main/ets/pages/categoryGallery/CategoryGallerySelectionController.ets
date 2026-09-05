@@ -46,6 +46,9 @@ export interface CategoryGallerySelectionHost {
 }
 
 const cgSlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
+/** GridSlide 命中诊断节流状态；仅记录索引变化或每 120ms 的持续跟手心跳。 */
+let cgSlideTraceLastMs: number = 0;
+let cgSlideTraceLastFlat: number = -99999;
 
 export function categoryGalleryItemIdOf(it: GalleryListItem): string {
   if (it.id === undefined || it.id === null) {
@@ -172,6 +175,67 @@ export function categoryGalleryRecordThumbRect(host: CategoryGallerySelectionHos
     host.cgThumbHitBounds.set(`${flatIdx}`, { left: x, top: y, right: x + w, bottom: y + h });
   } catch (_e) {
   }
+}
+
+/**
+ * 根据分组偏移计算 flat 所在宫格行的有效范围。
+ * 分类页每个日期分组都会重新从第 1 列排布，不能直接用 flat / columnsPerRow。
+ */
+function categoryGalleryFlatRowRange(host: CategoryGallerySelectionHost, flatIdx: number): number[] {
+  if (flatIdx < 0 || flatIdx >= host.flatItems.length) {
+    return [-1, -1];
+  }
+  let groupStart = 0;
+  let groupEnd = host.flatItems.length;
+  for (let i = 0; i < host.groupOffsets.length; i++) {
+    const offset = host.groupOffsets[i];
+    if (offset <= flatIdx) {
+      groupStart = offset;
+      groupEnd = i + 1 < host.groupOffsets.length ? host.groupOffsets[i + 1] : host.flatItems.length;
+      continue;
+    }
+    break;
+  }
+  const columns = fnClampGridColumns(host.columnsPerRow);
+  const rowStart = groupStart + Math.floor((flatIdx - groupStart) / columns) * columns;
+  return [rowStart, Math.min(groupEnd - 1, rowStart + columns - 1)];
+}
+
+/** 二次划选会刷新行节点；刷新前缓存锚点整行，避免只剩锚点一个矩形。 */
+function categoryGalleryRecordAnchorRow(host: CategoryGallerySelectionHost, anchorFlat: number): void {
+  const range = categoryGalleryFlatRowRange(host, anchorFlat);
+  for (let fi = range[0]; fi >= 0 && fi <= range[1]; fi++) {
+    categoryGalleryRecordThumbRect(host, fi);
+  }
+}
+
+/**
+ * DOM 正在重建时，用锚点矩形宽度和列位置推算同一行目标。
+ * 二次手势本身限定为 Horizontal，这个兜底不跨日期标题，也不会误选相邻分组。
+ */
+function categoryGalleryEstimateFlatInAnchorRow(
+  host: CategoryGallerySelectionHost,
+  xPx: number,
+  yPx: number
+): number {
+  const anchor = host.cgSlideAnchorFlat;
+  const anchorRect = host.cgThumbHitBounds.get(`${anchor}`);
+  if (anchorRect === undefined) {
+    return -1;
+  }
+  const width = anchorRect.right - anchorRect.left;
+  const height = anchorRect.bottom - anchorRect.top;
+  if (width < 1 || height < 1 ||
+    yPx < anchorRect.top - height * 0.35 || yPx > anchorRect.bottom + height * 0.35) {
+    return -1;
+  }
+  const range = categoryGalleryFlatRowRange(host, anchor);
+  if (range[0] < 0) {
+    return -1;
+  }
+  const anchorCenterX = (anchorRect.left + anchorRect.right) * 0.5;
+  const estimated = anchor + Math.round((xPx - anchorCenterX) / width);
+  return Math.max(range[0], Math.min(range[1], estimated));
 }
 
 export function categoryGalleryHitThumbDomPx(
@@ -338,6 +402,8 @@ function categoryGalleryBeginSlideSelectGestureCore(
   refX: number | null,
   refY: number | null
 ): void {
+  cgSlideTraceLastMs = 0;
+  cgSlideTraceLastFlat = -99999;
   galleryGridSlideLog('cg_begin', `anchor=${anchorFlat} sel=${host.selectionMode ? '1' : '0'} scroll=${host.cgScrollEnabled ? '1' : '0'}`);
   host.cgSlideGestureActive = true;
   host.cgScrollEnabled = false;
@@ -345,7 +411,7 @@ function categoryGalleryBeginSlideSelectGestureCore(
   host.cgSlideUnionBase = host.selectedIds.slice();
   host.cgSlideLastEndFlat = host.cgSlideAnchorFlat;
   host.cgSlideLastAppliedEndFlat = -99999;
-  categoryGalleryRecordThumbRect(host, anchorFlat);
+  categoryGalleryRecordAnchorRow(host, anchorFlat);
   if (refX !== null && refY !== null) {
     host.cgSlideRefX = refX;
     host.cgSlideRefY = refY;
@@ -440,12 +506,21 @@ function categoryGalleryFollowSlidePointer(
   cacheOnly: boolean = false
 ): void {
   if (!host.cgSlideGestureActive) {
+    galleryGridSlideLog('cg_follow_skip', 'reason=inactive');
     return;
   }
-  let hitFlat = cacheOnly
+  const directHitFlat = cacheOnly
     ? categoryGalleryPickFlatUnderPoint(host, xPx, yPx)
     : categoryGalleryPickFlatForSlidePointer(host, xPx, yPx);
+  let hitFlat = directHitFlat;
+  let geometryHitFlat = -1;
+  let usedRowFallback = false;
+  if (hitFlat < 0 && !cacheOnly) {
+    geometryHitFlat = categoryGalleryEstimateFlatInAnchorRow(host, xPx, yPx);
+    hitFlat = geometryHitFlat;
+  }
   if (hitFlat < 0) {
+    usedRowFallback = true;
     hitFlat = pickSlideEndFlatFromRowBand(
       yPx,
       host.flatItems.length,
@@ -457,6 +532,18 @@ function categoryGalleryFollowSlidePointer(
     host.cgSlideLastEndFlat = hitFlat;
   }
   categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
+  const now = Date.now();
+  if (host.cgSlideLastEndFlat !== cgSlideTraceLastFlat || now - cgSlideTraceLastMs >= 120) {
+    cgSlideTraceLastMs = now;
+    cgSlideTraceLastFlat = host.cgSlideLastEndFlat;
+    galleryGridSlideLog(
+      'cg_follow',
+      `xy=${Math.round(xPx)},${Math.round(yPx)} direct=${directHitFlat} geom=${geometryHitFlat}` +
+        ` end=${host.cgSlideLastEndFlat}` +
+        ` anchor=${host.cgSlideAnchorFlat} fallback=${usedRowFallback ? '1' : '0'}` +
+        ` cache=${cacheOnly ? '1' : '0'} rects=${host.cgThumbHitBounds.size} selected=${host.selectedIds.length}`
+    );
+  }
 }
 
 function categoryGalleryUpdateSlideAutoScroll(
@@ -486,10 +573,13 @@ export function categoryGalleryResolveSlidePointerWindowPx(
 
 export function categoryGalleryOnSlidePanUpdate(host: CategoryGallerySelectionHost, ev: GestureEvent): void {
   if (!host.cgSlideGestureActive) {
+    galleryGridSlideLog('cg_pan_skip', 'reason=inactive');
     return;
   }
   const pt = categoryGalleryResolveSlidePointerWindowPx(host, ev);
   if (pt === null) {
+    galleryGridSlideLog('cg_pan_skip',
+      `reason=no_pointer ref=${host.cgSlideHasRef ? '1' : '0'} dx=${Math.round(ev.offsetX)} dy=${Math.round(ev.offsetY)}`);
     return;
   }
   categoryGalleryUpdateSlideAutoScroll(host, pt.x, pt.y);

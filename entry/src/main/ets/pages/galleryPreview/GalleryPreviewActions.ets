@@ -6,6 +6,7 @@ import { systemShare } from '@kit.ShareKit';
 import { CategoryGalleryNavStore } from '../../album/CategoryGalleryNavStore';
 import { GalleryDeleteSyncStore } from '../../album/GalleryDeleteSyncStore';
 import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
+import { GALLERY_PREVIEW_SOURCE_CATEGORY_ID } from '../../album/GallerySharedTransition';
 import { copyGalleryUriContentToAlbumUri } from '../../album/GalleryAlbumSaveToAlbum';
 import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshStore';
 import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../album/GalleryAlbumCommon';
@@ -392,21 +393,13 @@ export function galleryPreviewOpenDetailsPanel(host: GalleryPreviewActionsHost):
   if (host.detailsData !== undefined && host.detailsPhotoId === id) {
     return;
   }
-  // 详情请求晚一帧，避免和半模态拉起、媒体避让抢同一帧导致松手卡顿
-  setTimeout((): void => {
-    if (!host.detailsVisible || host.currentItemId() !== id) {
-      return;
-    }
-    if (host.detailsData !== undefined && host.detailsPhotoId === id) {
-      return;
-    }
-    host.detailsLoading = true;
-    host.detailsData = undefined;
-    host.personsInPhoto = [];
-    void galleryPreviewLoadPhotoDetails(host, id).finally((): void => {
-      host.detailsLoading = false;
-    });
-  }, 32);
+  // 页内详情不再等待系统半模态创建，数据请求可与渲染层动画并行启动。
+  host.detailsLoading = true;
+  host.detailsData = undefined;
+  host.personsInPhoto = [];
+  void galleryPreviewLoadPhotoDetails(host, id).finally((): void => {
+    host.detailsLoading = false;
+  });
 }
 
 export async function galleryPreviewLoadPhotoDetails(
@@ -459,6 +452,14 @@ export function galleryPreviewOpenFolderFromDetailPath(host: GalleryPreviewActio
     host.toast('文件路径不可用');
     return;
   }
+  // 预览本来就从同一文件夹打开时，不再创建重复目录页：
+  // 直接关闭当前 Router 预览即可回到下面已有的文件夹层，返回栈不会凭空多一层。
+  if (GalleryPreviewNavStore.sourceRootId === GALLERY_PREVIEW_SOURCE_CATEGORY_ID &&
+    CategoryGalleryNavStore.isCurrentFolderPath(folderPath)) {
+    host.detailsVisible = false;
+    host.routerBack();
+    return;
+  }
   host.folderOpening = true;
   void galleryPreviewFetchAndOpenFolderMedia(host, folderPath).finally((): void => {
     host.folderOpening = false;
@@ -502,12 +503,21 @@ export async function galleryPreviewFetchAndOpenFolderMedia(
     return;
   }
   host.detailsVisible = false;
-  CategoryGalleryNavStore.open(
+  const opened = await CategoryGalleryNavStore.open(
     host.baseUrl,
     galleryPreviewCompactFolderTitle(folderPath),
     all,
-    host.getUIContext()
+    host.getUIContext(),
+    false,
+    {
+      sourceKind: 'folder',
+      folderPath: folderPath
+    },
+    true
   );
+  if (!opened) {
+    host.toast('打开文件夹失败');
+  }
 }
 
 export async function galleryPreviewOnPersonInPhotoClick(

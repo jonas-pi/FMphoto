@@ -47,6 +47,7 @@ import {
   galleryGridOnSequenceLongPress,
   galleryGridOnSequencePanFinish,
   galleryGridResetTouchTracking,
+  galleryGridSlideLog,
   galleryGridShouldUpdateSecondaryPan,
   galleryGridShouldUpdateSequencePan,
   GalleryGridSlideTouchHost,
@@ -1408,14 +1409,20 @@ struct CategoryGallery {
             }
             const pt = this.readGestureFingerWindow(ev);
             if (pt === null) {
+              galleryGridSlideLog('cg_sec_start_skip', 'reason=no_pointer');
               return;
             }
             const xPx = this.vpToPx(pt.x);
             const yPx = this.vpToPx(pt.y);
             const fi = this.pickCgFlatForRow(this.rowGlobalStartFlat(groupIdx, row), xPx, yPx);
             if (fi < 0 || fi >= this.flatItems.length) {
+              galleryGridSlideLog('cg_sec_start_skip',
+                `reason=no_hit row=${this.rowGlobalStartFlat(groupIdx, row)} flat=${fi}` +
+                  ` xy=${Math.round(xPx)},${Math.round(yPx)} total=${this.flatItems.length}`);
               return;
             }
+            galleryGridSlideLog('cg_sec_start',
+              `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.selectedIds.length}`);
             galleryGridOnSecondaryPanStart(this.slideTouch);
             this.beginCgSlideSelectGesture(ev, fi);
           })

@@ -36,6 +36,8 @@ export class GalleryPreviewNavStore {
   static slideshow: GalleryPreviewSlideshowSession = new GalleryPreviewSlideshowSession();
   /** 与 items 对齐：每条在图库时间轴全局序列中的下标（0-based） */
   static slideshowGlobalIndices: number[] = [];
+  /** 打开预览的页面根节点，用于判断关闭预览后是否已有可复用的同层页面。 */
+  static sourceRootId: string = GALLERY_PREVIEW_SOURCE_HOME_ID;
   /** 预览下滑时显示的上一级页面快照；预览实例取得引用后由 clear 释放 Store 引用。 */
   static sourcePageSnapshot: PixelMap | undefined = undefined;
   /** 被点击缩略图相对快照根节点的像素矩形；预览页据此覆盖空白占位。 */
@@ -77,6 +79,7 @@ export class GalleryPreviewNavStore {
     GalleryPreviewNavStore.resetSlideshow();
     GalleryPreviewNavStore.baseUrl = baseUrl;
     GalleryPreviewNavStore.items = items.slice();
+    GalleryPreviewNavStore.sourceRootId = sourceRootId;
     const n = GalleryPreviewNavStore.items.length;
     GalleryPreviewNavStore.startIndex = n <= 0 ? 0 : Math.max(0, Math.min(startIndex, n - 1));
     if (n === 0) {
@@ -144,9 +147,11 @@ export class GalleryPreviewNavStore {
   ): void {
     GalleryPreviewNavStore.baseUrl = baseUrl;
     GalleryPreviewNavStore.items = items.slice();
+    GalleryPreviewNavStore.sourceRootId = GALLERY_PREVIEW_SOURCE_HOME_ID;
     GalleryPreviewNavStore.slideshowGlobalIndices = globalIndices.slice();
     const n = GalleryPreviewNavStore.items.length;
     GalleryPreviewNavStore.startIndex = 0;
+    GalleryPreviewNavStore.sourceRootId = GALLERY_PREVIEW_SOURCE_HOME_ID;
     GalleryPreviewNavStore.sourcePageSnapshot = undefined;
     GalleryPreviewNavStore.sourcePlaceholderX = 0;
     GalleryPreviewNavStore.sourcePlaceholderY = 0;

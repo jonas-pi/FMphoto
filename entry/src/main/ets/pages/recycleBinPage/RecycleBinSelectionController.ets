@@ -42,6 +42,9 @@ export interface RecycleBinSelectionHost {
 }
 
 const rbSlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
+/** GridSlide 命中诊断节流状态；仅记录索引变化或每 120ms 的持续跟手心跳。 */
+let rbSlideTraceLastMs: number = 0;
+let rbSlideTraceLastFlat: number = -99999;
 
 export function recycleBinDomId(flatIdx: number): string {
   return `rbcell_${flatIdx}`;
@@ -224,6 +227,50 @@ export function recycleBinRecordThumbRect(host: RecycleBinSelectionHost, flatIdx
   }
 }
 
+/** 回收站没有日期分组，按固定列数计算锚点所在宫格行。 */
+function recycleBinFlatRowRange(host: RecycleBinSelectionHost, flatIdx: number): number[] {
+  if (flatIdx < 0 || flatIdx >= host.items.length) {
+    return [-1, -1];
+  }
+  const columns = fnClampGridColumns(host.columnsPerRow);
+  const rowStart = Math.floor(flatIdx / columns) * columns;
+  return [rowStart, Math.min(host.items.length - 1, rowStart + columns - 1)];
+}
+
+/** 二次划选触发行刷新前，主动保留锚点整行矩形。 */
+function recycleBinRecordAnchorRow(host: RecycleBinSelectionHost, anchorFlat: number): void {
+  const range = recycleBinFlatRowRange(host, anchorFlat);
+  for (let fi = range[0]; fi >= 0 && fi <= range[1]; fi++) {
+    recycleBinRecordThumbRect(host, fi);
+  }
+}
+
+/** DOM 重建窗口内，根据锚点尺寸推算横向划过的同一行目标。 */
+function recycleBinEstimateFlatInAnchorRow(
+  host: RecycleBinSelectionHost,
+  xPx: number,
+  yPx: number
+): number {
+  const anchor = host.rbSlideAnchorFlat;
+  const anchorRect = host.rbThumbHitBounds.get(`${anchor}`);
+  if (anchorRect === undefined) {
+    return -1;
+  }
+  const width = anchorRect.right - anchorRect.left;
+  const height = anchorRect.bottom - anchorRect.top;
+  if (width < 1 || height < 1 ||
+    yPx < anchorRect.top - height * 0.35 || yPx > anchorRect.bottom + height * 0.35) {
+    return -1;
+  }
+  const range = recycleBinFlatRowRange(host, anchor);
+  if (range[0] < 0) {
+    return -1;
+  }
+  const anchorCenterX = (anchorRect.left + anchorRect.right) * 0.5;
+  const estimated = anchor + Math.round((xPx - anchorCenterX) / width);
+  return Math.max(range[0], Math.min(range[1], estimated));
+}
+
 export function recycleBinHitThumbDomPx(
   host: RecycleBinSelectionHost,
   flatIdx: number,
@@ -382,6 +429,8 @@ function recycleBinBeginSlideSelectGestureCore(
   refX: number | null,
   refY: number | null
 ): void {
+  rbSlideTraceLastMs = 0;
+  rbSlideTraceLastFlat = -99999;
   galleryGridSlideLog('rb_begin', `anchor=${anchorFlat} sel=${host.selectionMode ? '1' : '0'} scroll=${host.rbScrollEnabled ? '1' : '0'}`);
   host.rbSlideGestureActive = true;
   host.rbScrollEnabled = false;
@@ -389,7 +438,7 @@ function recycleBinBeginSlideSelectGestureCore(
   host.rbSlideUnionBase = host.selectedIds.slice();
   host.rbSlideLastEndFlat = host.rbSlideAnchorFlat;
   host.rbSlideLastAppliedEndFlat = -99999;
-  recycleBinRecordThumbRect(host, anchorFlat);
+  recycleBinRecordAnchorRow(host, anchorFlat);
   if (refX !== null && refY !== null) {
     host.rbSlideRefX = refX;
     host.rbSlideRefY = refY;
@@ -484,12 +533,21 @@ function recycleBinFollowSlidePointer(
   cacheOnly: boolean = false
 ): void {
   if (!host.rbSlideGestureActive) {
+    galleryGridSlideLog('rb_follow_skip', 'reason=inactive');
     return;
   }
-  let hitFlat = cacheOnly
+  const directHitFlat = cacheOnly
     ? recycleBinPickThumbFlatUnderPoint(host, xPx, yPx)
     : recycleBinPickThumbFlatForSlidePointer(host, xPx, yPx);
+  let hitFlat = directHitFlat;
+  let geometryHitFlat = -1;
+  let usedRowFallback = false;
+  if (hitFlat < 0 && !cacheOnly) {
+    geometryHitFlat = recycleBinEstimateFlatInAnchorRow(host, xPx, yPx);
+    hitFlat = geometryHitFlat;
+  }
   if (hitFlat < 0) {
+    usedRowFallback = true;
     hitFlat = pickSlideEndFlatFromRowBand(
       yPx,
       host.items.length,
@@ -501,6 +559,18 @@ function recycleBinFollowSlidePointer(
     host.rbSlideLastEndFlat = hitFlat;
   }
   recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
+  const now = Date.now();
+  if (host.rbSlideLastEndFlat !== rbSlideTraceLastFlat || now - rbSlideTraceLastMs >= 120) {
+    rbSlideTraceLastMs = now;
+    rbSlideTraceLastFlat = host.rbSlideLastEndFlat;
+    galleryGridSlideLog(
+      'rb_follow',
+      `xy=${Math.round(xPx)},${Math.round(yPx)} direct=${directHitFlat} geom=${geometryHitFlat}` +
+        ` end=${host.rbSlideLastEndFlat}` +
+        ` anchor=${host.rbSlideAnchorFlat} fallback=${usedRowFallback ? '1' : '0'}` +
+        ` cache=${cacheOnly ? '1' : '0'} rects=${host.rbThumbHitBounds.size} selected=${host.selectedIds.length}`
+    );
+  }
 }
 
 function recycleBinUpdateSlideAutoScroll(host: RecycleBinSelectionHost, xPx: number, yPx: number): void {
@@ -526,10 +596,13 @@ export function recycleBinResolveSlidePointerWindowPx(
 
 export function recycleBinOnSlidePanUpdate(host: RecycleBinSelectionHost, ev: GestureEvent): void {
   if (!host.rbSlideGestureActive) {
+    galleryGridSlideLog('rb_pan_skip', 'reason=inactive');
     return;
   }
   const pt = recycleBinResolveSlidePointerWindowPx(host, ev);
   if (pt === null) {
+    galleryGridSlideLog('rb_pan_skip',
+      `reason=no_pointer ref=${host.rbSlideHasRef ? '1' : '0'} dx=${Math.round(ev.offsetX)} dy=${Math.round(ev.offsetY)}`);
     return;
   }
   recycleBinUpdateSlideAutoScroll(host, pt.x, pt.y);

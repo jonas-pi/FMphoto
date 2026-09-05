@@ -42,9 +42,12 @@ import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../commo
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
 import { GALLERY_PREVIEW_DETAILS_COVER_KEY, GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
 import {
+  addGalleryPreviewDetailsFitListener,
   addGalleryPreviewDismissListener,
   GalleryPreviewOpacityUpdater,
+  getGalleryPreviewDetailsSheetHeight,
   getGalleryPreviewDismissProgress,
+  removeGalleryPreviewDetailsFitListener,
   removeGalleryPreviewDismissListener
 } from '../../album/GalleryPreviewVerticalGesture';
 import {
@@ -101,15 +104,20 @@ export struct GalleryPreviewChrome {
   private readonly onDismissProgress = (_progress: number): void => {
     this.syncChromeOpacity();
   };
+  private readonly onDetailsProgress = (): void => {
+    this.syncChromeOpacity();
+  };
 
   aboutToAppear(): void {
     addGalleryPreviewDismissListener(this.onDismissProgress);
+    addGalleryPreviewDetailsFitListener(this.onDetailsProgress);
     this.syncChromeOpacity();
     this.notifyBottomDockHeight();
   }
 
   aboutToDisappear(): void {
     removeGalleryPreviewDismissListener(this.onDismissProgress);
+    removeGalleryPreviewDetailsFitListener(this.onDetailsProgress);
   }
 
   onChromeFadeInputsChanged(): void {
@@ -121,14 +129,15 @@ export struct GalleryPreviewChrome {
   }
 
   private chromeInteractive(): boolean {
-    return this.toolbarVisible && !this.detailsCover;
+    return this.toolbarVisible && !this.detailsCover && getGalleryPreviewDetailsSheetHeight() < 4;
   }
 
   private chromeOpacity(): number {
-    if (!this.chromeInteractive()) {
+    if (!this.toolbarVisible || this.detailsCover) {
       return 0;
     }
-    return galleryPreviewToolbarAlpha(getGalleryPreviewDismissProgress());
+    const detailsAlpha = 1 - Math.max(0, Math.min(1, getGalleryPreviewDetailsSheetHeight() / 72));
+    return galleryPreviewToolbarAlpha(getGalleryPreviewDismissProgress()) * detailsAlpha;
   }
 
   private syncChromeOpacity(): void {

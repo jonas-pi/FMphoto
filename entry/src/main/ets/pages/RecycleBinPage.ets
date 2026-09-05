@@ -67,6 +67,7 @@ import {
   galleryGridOnSequenceLongPress,
   galleryGridOnSequencePanFinish,
   galleryGridResetTouchTracking,
+  galleryGridSlideLog,
   galleryGridShouldUpdateSecondaryPan,
   galleryGridShouldUpdateSequencePan,
   GalleryGridSlideTouchHost,
@@ -860,14 +861,20 @@ struct RecycleBinPage {
                         }
                         const pt = this.readGestureFingerWindow(ev);
                         if (pt === null) {
+                          galleryGridSlideLog('rb_sec_start_skip', 'reason=no_pointer');
                           return;
                         }
                         const xPx = this.vpToPx(pt.x);
                         const yPx = this.vpToPx(pt.y);
                         const fi = this.pickRbThumbFlatForRow(block.rowStart, xPx, yPx);
                         if (fi < 0 || fi >= this.items.length) {
+                          galleryGridSlideLog('rb_sec_start_skip',
+                            `reason=no_hit row=${block.rowStart} flat=${fi}` +
+                              ` xy=${Math.round(xPx)},${Math.round(yPx)} total=${this.items.length}`);
                           return;
                         }
+                        galleryGridSlideLog('rb_sec_start',
+                          `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.selectedIds.length}`);
                         galleryGridOnSecondaryPanStart(this.slideTouch);
                         this.beginRbSlideSelectGesture(ev, fi);
                       })

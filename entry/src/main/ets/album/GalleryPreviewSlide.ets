@@ -7,7 +7,7 @@
  *
  * 平移限位：基于视口尺寸精确计算，超界 50% 阻力，松手 EaseOut 弹回。
  * 未放大时纵向手势对齐系统图库：下滑跟手退出（sharedTransition 收回），
- * 上滑打开官方 bindSheet 详情（MEDIUM/LARGE 档位跟手）。
+ * 上滑打开与照片同层的页内详情面板。
  */
 import {
   itemFileExt,
@@ -67,6 +67,7 @@ import {
   GALLERY_VERTICAL_ANIMATOR_EASING,
   GALLERY_VERTICAL_PAN_DISTANCE,
   addGalleryPreviewDetailsFitListener,
+  galleryDetailsMediumHeightVp,
   galleryDetailsFit,
   galleryDismissProgress,
   galleryDismissScale,
@@ -84,6 +85,7 @@ import {
   removeGalleryPreviewDetailsFitListener,
   setGalleryPreviewDetailsAvoidAnimating,
   setGalleryPreviewDetailsAvoidVelocity,
+  setGalleryPreviewDetailsFitNormVel,
   setGalleryPreviewDetailsSheetHeight,
   setGalleryPreviewDismissProgress
 } from './GalleryPreviewVerticalGesture';
@@ -113,7 +115,7 @@ export struct GalleryPreviewSlide {
   @Prop videoBottomPadding: number = 0;
   /** 幻灯片进页即播；普通预览只展示封面 */
   @Prop autoStartVideo: boolean = false;
-  /** 详情半模态已展开时，下滑改为收起面板而不是退出预览 */
+  /** 页内详情已展开时，下滑改为收起详情而不是退出预览。 */
   @Prop detailsShowing: boolean = false;
   /** 幻灯片关闭上下滑，避免和自动切页抢手势 */
   @Prop allowVerticalGesture: boolean = true;
@@ -1030,7 +1032,7 @@ export struct GalleryPreviewSlide {
   }
 
   private applyComposedTransform(): void {
-    // 上滑跟手与半模态避让共用同一套 translate，避免松手换公式时停一拍。
+    // 上滑跟手与页内详情让位共用同一套 translate，避免松手换公式时停一拍。
     const dragH = gallerySheetHeightFromAvoidY(this.panY);
     const sheetH = getGalleryPreviewDetailsSheetHeight();
     const fit = galleryDetailsFit(
@@ -1046,7 +1048,7 @@ export struct GalleryPreviewSlide {
   }
 
   /**
-   * 官方：弹出/收回避让用 animateTo + 与 bindSheet 同一套弹簧插值 translate。
+   * 页内详情弹出/收回使用 animateTo 弹簧插值 translate。
    * 不要在 onFinish 里切换 translate 绑定来源（会闪一帧）；结束回调尽量不用。
    * 文档：arkts-attribute-animation-apis、bpta-fair-use-animation、arkts-spring-curve
    */
@@ -1065,7 +1067,7 @@ export struct GalleryPreviewSlide {
     );
     const toY = (this.panY > 0 ? this.panY : 0) + fit.translateY;
     if (!isGalleryPreviewDetailsAvoidAnimating()) {
-      // 半模态已落下：继续停在避让位移上，不要把 translate 清 0（会跳回全屏中心）
+      // 详情已展开：继续停在让位位置，不要把 translate 清 0（会跳回全屏中心）。
       if (this.avoidAnimOn) {
         this.avoidAnimY = toY;
         this.transformUpdater.apply(this.panScale * fit.scale, 0, toY);
@@ -1144,12 +1146,23 @@ export struct GalleryPreviewSlide {
     this.verticalOffsetY = offsetY;
     this.noteVerticalVelocity(offsetY);
     if (this.detailsShowing) {
+      // 详情已展开时，下滑先收详情，不进入预览页退出缩放。
+      const expandedH = galleryDetailsMediumHeightVp(this.viewH);
+      const nextH = Math.max(0, Math.min(expandedH, expandedH - Math.max(0, offsetY)));
+      setGalleryPreviewDetailsAvoidAnimating(false);
+      setGalleryPreviewDetailsSheetHeight(nextH);
       this.panScale = 1;
+      this.panX = 0;
       this.panY = 0;
       this.applyComposedTransform();
+      setGalleryPreviewDismissProgress(0);
       return;
     }
     if (offsetY >= 0) {
+      if (getGalleryPreviewDetailsSheetHeight() > 0) {
+        setGalleryPreviewDetailsAvoidAnimating(false);
+        setGalleryPreviewDetailsSheetHeight(0);
+      }
       const progress = galleryDismissProgress(offsetY, this.viewH);
       // 起手已锁定为纵向退出后，横向分量继续跟手，不再交给 Swiper 切图。
       this.panX = offsetX;
@@ -1163,6 +1176,9 @@ export struct GalleryPreviewSlide {
     this.panX = 0;
     this.panY = capped * GALLERY_DETAILS_DRAG_GAIN;
     this.panScale = 1;
+    // 面板与照片一起从底部跟手出现，松手后再吸附到展开或关闭终点。
+    setGalleryPreviewDetailsAvoidAnimating(false);
+    setGalleryPreviewDetailsSheetHeight(gallerySheetHeightFromAvoidY(this.panY));
     this.applyComposedTransform();
     // 上滑只用于详情页，保持预览背景完全遮挡上一级页面。
     setGalleryPreviewDismissProgress(0);
@@ -1175,6 +1191,10 @@ export struct GalleryPreviewSlide {
     const fromScale = this.panScale;
     const fromX = this.panX;
     const fromY = this.panY;
+    if (!this.detailsShowing && getGalleryPreviewDetailsSheetHeight() > 0) {
+      setGalleryPreviewDetailsAvoidAnimating(true);
+      setGalleryPreviewDetailsSheetHeight(0);
+    }
     if (Math.abs(fromScale - 1) < 0.002 && Math.abs(fromY) < 0.5) {
       this.panScale = 1;
       this.panX = 0;
@@ -1231,17 +1251,27 @@ export struct GalleryPreviewSlide {
     this.verticalPanActive = false;
     if (cancelled) {
       this.lockParentForVertical(false);
+      if (this.detailsShowing) {
+        setGalleryPreviewDetailsAvoidAnimating(true);
+        setGalleryPreviewDetailsSheetHeight(galleryDetailsMediumHeightVp(this.viewH));
+        return;
+      }
       this.springVerticalHome();
       return;
     }
     if (this.detailsShowing) {
       this.lockParentForVertical(false);
       if (galleryShouldCloseDetails(this.verticalOffsetY, this.verticalVelocityY)) {
-        this.springVerticalHome();
         this.onVerticalDismiss();
         return;
       }
-      this.springVerticalHome();
+      // 未越过关闭阈值时吸附回完全展开位置，图片和页内详情使用同一弹簧。
+      const expandedH = galleryDetailsMediumHeightVp(this.viewH);
+      const delta = expandedH - getGalleryPreviewDetailsSheetHeight();
+      const panelVelocity = -this.verticalVelocityY;
+      setGalleryPreviewDetailsFitNormVel(Math.abs(delta) > 1 ? panelVelocity / delta : 0);
+      setGalleryPreviewDetailsAvoidAnimating(true);
+      setGalleryPreviewDetailsSheetHeight(expandedH);
       return;
     }
     if (galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH)) {
