@@ -1,6 +1,7 @@
 /**
  * 回收站顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
- * 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
+ * 多选走 titleBar.menu / backIcon。
+ * 顶栏与列表拆开，进多选立刻改顶栏，不拆宫格 List。
  */
 import {
   HdsNavigation,
@@ -12,16 +13,11 @@ import {
   TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
-import { fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
+import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
-
-/** pageContent 默认占位：未传入真实内容时渲染空视图。 */
-@Builder
-function recycleBinChromeEmptyPageContent() {
-}
 
 @Component
 export struct RecycleBinChrome {
@@ -30,8 +26,6 @@ export struct RecycleBinChrome {
   @Prop topSafeInsetVp: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
-  /** 真实可滚动内容：回收站列表 Stack，由页面通过尾随闭包传入。 */
-  @BuilderParam pageContent: () => void = recycleBinChromeEmptyPageContent;
   /** 联动沉浸滚动光感的 Scroller 列表。 */
   scrollerList: Scroller[] = [];
 
@@ -106,21 +100,35 @@ export struct RecycleBinChrome {
   }
 
   private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), true);
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false);
+  }
+
+  /** Navigation 内容槽必须有子节点；高度 0，真正列表在浮层下面 */
+  @Builder
+  private titleBarNavigationBody() {
+    Column()
+      .width('100%')
+      .height(0)
   }
 
   build() {
-    HdsNavigation() {
-      this.pageContent()
+    Column() {
+      HdsNavigation() {
+        this.titleBarNavigationBody()
+      }
+      .width('100%')
+      .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .hideBackButton(false)
+      .bindToScrollable(this.scrollerList)
+      .titleBar(this.titleBarOptions())
+      .hitTestBehavior(HitTestMode.Default)
     }
     .width('100%')
-    .height('100%')
-    // 整页壳禁用 Auto 分栏，避免平板上内容只显示在左半屏
-    .mode(NavigationMode.Stack)
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .hideBackButton(this.selectionMode)
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-    .bindToScrollable(this.scrollerList)
-    .titleBar(this.titleBarOptions())
+    .height(this.topSafeInsetVp + FN_HDS_NAV_CHROME_HEIGHT_VP)
+    .padding({ top: this.topSafeInsetVp })
+    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 }

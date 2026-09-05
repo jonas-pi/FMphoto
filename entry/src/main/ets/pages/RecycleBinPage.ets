@@ -25,6 +25,7 @@ import {
   FnInlineLoading,
   FnStateText
 } from '../common/FnUiCommon';
+import { GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP } from '../common/GalleryButtonStyles';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -55,6 +56,24 @@ import {
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
+import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../album/GallerySlidePick';
+import {
+  galleryGridArmInitialSlide,
+  galleryGridCanStartSecondaryPan,
+  galleryGridClearInitialSlide,
+  galleryGridHandleListTouch,
+  galleryGridHandleRowTouch,
+  galleryGridOnSecondaryPanFinish,
+  galleryGridOnSecondaryPanStart,
+  galleryGridOnSequenceLongPress,
+  galleryGridOnSequencePanFinish,
+  galleryGridResetTouchTracking,
+  galleryGridShouldUpdateSecondaryPan,
+  galleryGridShouldUpdateSequencePan,
+  GalleryGridSlideTouchHost,
+  GalleryGridSlideTouchSession,
+  GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
+} from '../album/GalleryGridSlideTouch';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
 import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
 import {
@@ -65,6 +84,7 @@ import {
 import {
   recycleBinGalleryListForSelection,
   recycleBinBeginSlideSelectGesture,
+  recycleBinBeginSlideSelectGestureAtWindowPx,
   recycleBinDomId,
   recycleBinEndSlideSelectGesture,
   recycleBinExitSelection,
@@ -77,15 +97,13 @@ import {
   recycleBinReadGestureFingerWindow,
   recycleBinRecordThumbRect,
   recycleBinSelectedIdStrings,
-  recycleBinSlidePanDistance,
   recycleBinThumbRelOf,
   recycleBinToggleToolbarMode,
   RECYCLE_BIN_LIST_DOM_ID,
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
-import { RbFingerWindowPoint, RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
+import { RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
 
-const RECYCLE_BIN_CONTENT_INSET_TOP_VP: number = 68;
 const RECYCLE_BIN_BASE_COLUMNS: number = 4;
 
 interface RecycleBinRowBlockCell {
@@ -143,7 +161,7 @@ struct RecycleBinPage {
   private rbThumbResumeTimer: number = -1;
   private rbRowBlocks: RecycleBinRowBlock[] = [];
   private rbRowSource: FnListDataSource<RecycleBinRowBlock> = new FnListDataSource<RecycleBinRowBlock>();
-  private rbInitialSlidePending: boolean = false;
+  private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
   /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
   private listScroller: Scroller = new Scroller();
 
@@ -170,19 +188,6 @@ struct RecycleBinPage {
     } catch (_e) {
       return value;
     }
-  }
-
-  private armInitialRbSlideGesture(ev: GestureEvent, anchorFlat: number): void {
-    this.rbInitialSlidePending = true;
-    this.beginRbSlideSelectGesture(ev, anchorFlat);
-  }
-
-  private clearInitialRbSlideGesture(): void {
-    this.rbInitialSlidePending = false;
-  }
-
-  private contentInsetTopVp(): number {
-    return this.systemTopInsetVp + RECYCLE_BIN_CONTENT_INSET_TOP_VP;
   }
 
   private applySystemBar(relayout: boolean): void {
@@ -218,6 +223,7 @@ struct RecycleBinPage {
   aboutToDisappear(): void {
     this.clearRbThumbResumeTimer();
     recycleBinEndSlideSelectGesture(this.asSelectionHost());
+    galleryGridResetTouchTracking(this.slideTouch);
     galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_RECYCLE);
     this.recycleThumbCache(true);
     this.rbRowBlocks = [];
@@ -309,17 +315,29 @@ struct RecycleBinPage {
     return recycleBinReadGestureFingerWindow(ev);
   }
 
-  private readTouchFingerWindow(ev: TouchEvent): RbFingerWindowPoint | null {
-    if (ev.touches === undefined || ev.touches.length < 1) {
-      return null;
+  private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    const self = this;
+    class RecycleBinSlideTouchHostBridge implements GalleryGridSlideTouchHost {
+      getUIContext(): UIContext { return self.getUIContext(); }
+      isSelectionMode(): boolean { return self.selectionMode; }
+      isSlideActive(): boolean { return self.rbSlideGestureActive; }
+      endSlide(): void { self.endRbSlideSelectGesture(); }
+      followSlideAtWindowPx(xPx: number, yPx: number): void { self.onRbSlideTouchMoveWindow(xPx, yPx); }
     }
-    const f0 = ev.touches[0];
-    const x = f0.windowX ?? f0.displayX ?? f0.x;
-    const y = f0.windowY ?? f0.displayY ?? f0.y;
-    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
-      return null;
+    return new RecycleBinSlideTouchHostBridge();
+  }
+
+  private beginRbFirstSlideAtRow(rowStart: number, xPx: number, yPx: number): boolean {
+    const fi = this.pickRbThumbFlatForRow(rowStart, xPx, yPx);
+    if (fi < 0 || fi >= this.items.length) {
+      return false;
     }
-    return { x, y };
+    const item = this.items[fi];
+    if (!this.selectionMode) {
+      this.onRbThumbLongPress(item, fi);
+    }
+    this.beginRbSlideSelectGestureAtWindowPx(fi, xPx, yPx);
+    return true;
   }
 
   private pickRbThumbFlatForRow(rowStart: number, xPx: number, yPx: number): number {
@@ -328,6 +346,10 @@ struct RecycleBinPage {
 
   private beginRbSlideSelectGesture(ev: GestureEvent, anchorFlat: number): void {
     recycleBinBeginSlideSelectGesture(this.asSelectionHost(), ev, anchorFlat);
+  }
+
+  private beginRbSlideSelectGestureAtWindowPx(anchorFlat: number, xPx: number, yPx: number): void {
+    recycleBinBeginSlideSelectGestureAtWindowPx(this.asSelectionHost(), anchorFlat, xPx, yPx);
   }
 
   private endRbSlideSelectGesture(): void {
@@ -711,6 +733,7 @@ struct RecycleBinPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
       RecycleBinChrome({
         selectionMode: this.selectionMode,
         selectedCount: this.selectedCount,
@@ -725,14 +748,14 @@ struct RecycleBinPage {
         onToggleMode: (): void => {
           this.toggleToolbarMode();
         }
-      }) {
-      Column() {
+      })
+        .width('100%')
 
       if (this.loading) {
-        FnInlineLoading({ text: '加载回收站…', topOffsetVp: this.contentInsetTopVp() }).layoutWeight(1)
+        FnInlineLoading({ text: '加载回收站…', topOffsetVp: 24 }).layoutWeight(1)
       } else if (this.error.length > 0) {
         Column({ space: 12 }) {
-          FnStateText({ text: this.error, topOffsetVp: this.contentInsetTopVp() })
+          FnStateText({ text: this.error, topOffsetVp: 24 })
           FnHdsPillButton({
             text: '刷新',
             widthValue: 104,
@@ -750,10 +773,10 @@ struct RecycleBinPage {
       } else if (this.items.length === 0) {
         FnStateText({
           text: '回收站为空',
-          topOffsetVp: this.contentInsetTopVp()
+          topOffsetVp: 24
         }).layoutWeight(1)
       } else {
-        Stack() {
+        Stack({ alignContent: Alignment.Bottom }) {
           Column() {
             List({ scroller: this.listScroller }) {
               LazyForEach(this.rbRowSource, (block: RecycleBinRowBlock) => {
@@ -766,73 +789,57 @@ struct RecycleBinPage {
                   .width('100%')
                   .padding({ left: 2, right: 2, top: 1, bottom: 1 })
                   .onTouch((event: TouchEvent): void => {
-                    if (!this.rbSlideGestureActive) {
-                      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                        this.clearInitialRbSlideGesture();
-                      }
-                      return;
-                    }
-                    if (event.type === TouchType.Move) {
-                      const pt = this.readTouchFingerWindow(event);
-                      if (pt === null) {
-                        return;
-                      }
-                      this.onRbSlideTouchMoveWindow(pt.x, pt.y);
-                    }
+                    galleryGridHandleRowTouch(
+                      this.slideTouch,
+                      this.asSlideTouchHost(),
+                      event,
+                      (xPx: number, yPx: number): boolean => this.beginRbFirstSlideAtRow(block.rowStart, xPx, yPx)
+                    );
                   })
                   .parallelGesture(GestureGroup(GestureMode.Parallel,
                     GestureGroup(GestureMode.Sequence,
-                      LongPressGesture({ repeat: false, duration: 420 })
+                      LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
                         .onAction((ev: GestureEvent): void => {
-                          this.clearInitialRbSlideGesture();
+                          if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
+                            return;
+                          }
+                          galleryGridClearInitialSlide(this.slideTouch);
                           this.endRbSlideSelectGesture();
                           const pt = this.readGestureFingerWindow(ev);
                           if (pt === null) {
                             return;
                           }
-                          const xPx = this.vpToPx(pt.x);
-                          const yPx = this.vpToPx(pt.y);
-                          const fi = this.pickRbThumbFlatForRow(block.rowStart, xPx, yPx);
-                          if (fi < 0 || fi >= this.items.length) {
+                          if (!this.beginRbFirstSlideAtRow(block.rowStart, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
                             return;
                           }
-                          const longPressItem = this.items[fi];
-                          const wasSelectionMode = this.selectionMode;
-                          this.onRbThumbLongPress(longPressItem, fi);
-                          if (!wasSelectionMode) {
-                            this.armInitialRbSlideGesture(ev, fi);
-                          }
+                          galleryGridArmInitialSlide(this.slideTouch);
                         }),
                       PanGesture({
                         fingers: 1,
                         direction: PanDirection.All,
-                        distance: recycleBinSlidePanDistance(true)
+                        distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
                       })
                         .onActionUpdate((ev: GestureEvent): void => {
-                          if (!this.rbInitialSlidePending || !this.rbSlideGestureActive) {
+                          if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
                             return;
                           }
                           this.onRbSlidePanUpdate(ev);
                         })
                         .onActionEnd((): void => {
-                          this.clearInitialRbSlideGesture();
-                          this.endRbSlideSelectGesture();
+                          galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
                         })
                         .onActionCancel((): void => {
-                          this.clearInitialRbSlideGesture();
-                          this.endRbSlideSelectGesture();
+                          galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
                         })
                     ),
                     PanGesture({
                       fingers: 1,
                       direction: PanDirection.Horizontal,
-                      distance: recycleBinSlidePanDistance(this.selectionMode)
+                      distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
                     })
                       .onActionStart((ev: GestureEvent): void => {
-                        if (!this.selectionMode) {
-                          return;
-                        }
-                        if (this.rbSlideGestureActive || this.rbInitialSlidePending) {
+                        this.slideTouch.secondaryPanDriving = false;
+                        if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
                           return;
                         }
                         const pt = this.readGestureFingerWindow(ev);
@@ -845,18 +852,20 @@ struct RecycleBinPage {
                         if (fi < 0 || fi >= this.items.length) {
                           return;
                         }
+                        galleryGridOnSecondaryPanStart(this.slideTouch);
                         this.beginRbSlideSelectGesture(ev, fi);
                       })
                       .onActionUpdate((ev: GestureEvent): void => {
+                        if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
+                          return;
+                        }
                         this.onRbSlidePanUpdate(ev);
                       })
                       .onActionEnd((): void => {
-                        this.clearInitialRbSlideGesture();
-                        this.endRbSlideSelectGesture();
+                        galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
                       })
                       .onActionCancel((): void => {
-                        this.clearInitialRbSlideGesture();
-                        this.endRbSlideSelectGesture();
+                        galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
                       })
                   ))
                 }
@@ -875,30 +884,12 @@ struct RecycleBinPage {
             .layoutWeight(1)
             .id(RECYCLE_BIN_LIST_DOM_ID)
             .cachedCount(this.columnsPerRow >= 4 ? 2 : 3)
-            .margin({ top: this.contentInsetTopVp() })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.rbScrollEnabled)
             .onTouch((event: TouchEvent): void => {
-              if (!this.rbSlideGestureActive) {
-                if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                  this.clearInitialRbSlideGesture();
-                }
-                return;
-              }
-              if (event.type === TouchType.Move) {
-                const pt = this.readTouchFingerWindow(event);
-                if (pt === null) {
-                  return;
-                }
-                this.onRbSlideTouchMoveWindow(pt.x, pt.y);
-                return;
-              }
-              if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                this.clearInitialRbSlideGesture();
-                this.endRbSlideSelectGesture();
-              }
+              galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
             })
             .onDidScroll((offset: number, scrollState: ScrollState): void => {
               gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
@@ -934,17 +925,18 @@ struct RecycleBinPage {
               }
             })
               .width('100%')
-              .height('100%')
+              // HdsTabs 即使透明仍会参与命中，只保留底部按钮所需高度。
+              .height(GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP)
           }
 
           if (this.restoring || this.rbBatchDownloading) {
             FnFullLoadingMask({
               text: this.restoring ? '正在还原…' : '下载中…',
-              topOffsetVp: this.contentInsetTopVp()
+              topOffsetVp: 0
             })
           }
           if (this.previewOpening) {
-            GalleryPreviewOpeningMask({ topOffsetVp: this.contentInsetTopVp() })
+            GalleryPreviewOpeningMask({ topOffsetVp: 0 })
           }
         }
         .layoutWeight(1)
@@ -954,7 +946,7 @@ struct RecycleBinPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.page_background'))
-      }
+
       Column()
         .width(1)
         .height(1)

@@ -36,6 +36,24 @@ import {
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
+import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../album/GallerySlidePick';
+import {
+  galleryGridArmInitialSlide,
+  galleryGridCanStartSecondaryPan,
+  galleryGridClearInitialSlide,
+  galleryGridHandleListTouch,
+  galleryGridHandleRowTouch,
+  galleryGridOnSecondaryPanFinish,
+  galleryGridOnSecondaryPanStart,
+  galleryGridOnSequenceLongPress,
+  galleryGridOnSequencePanFinish,
+  galleryGridResetTouchTracking,
+  galleryGridShouldUpdateSecondaryPan,
+  galleryGridShouldUpdateSequencePan,
+  GalleryGridSlideTouchHost,
+  GalleryGridSlideTouchSession,
+  GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
+} from '../album/GalleryGridSlideTouch';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { FnListDataSource } from '../common/FnListDataSource';
 import {
@@ -47,6 +65,7 @@ import {
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnStateText } from '../common/FnUiCommon';
+import { GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP } from '../common/GalleryButtonStyles';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -81,6 +100,7 @@ import {
 import { GallerySlideshowSettingsSheet } from '../album/slideshow/GallerySlideshowSettingsSheet';
 import {
   categoryGalleryBeginSlideSelectGesture,
+  categoryGalleryBeginSlideSelectGestureAtWindowPx,
   CATEGORY_GALLERY_LIST_DOM_ID,
   categoryGalleryDomId,
   categoryGalleryEndSlideSelectGesture,
@@ -95,13 +115,11 @@ import {
   categoryGalleryReadGestureFingerWindow,
   categoryGalleryRecordThumbRect,
   categoryGalleryRowGlobalStartFlat,
-  categoryGallerySlidePanDistance,
   categoryGalleryToggleToolbarMode,
   CategoryGallerySelectionHost
 } from './categoryGallery/CategoryGallerySelectionController';
 import {
   buildCategoryGalleryViewData,
-  CgFingerWindowPoint,
   CgThumbHitRect,
   DayGroup,
   RowModel
@@ -115,8 +133,7 @@ interface CategoryGalleryListBlock {
   row?: RowModel;
 }
 
-const CATEGORY_GALLERY_CONTENT_INSET_TOP_NORMAL_VP: number = 68;
-const CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP: number = 68;
+const CATEGORY_GALLERY_CONTENT_INSET_TOP_VP: number = 68;
 const CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS: number = 240;
 const CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS: number = 96;
 const CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS: number = 160;
@@ -186,7 +203,8 @@ struct CategoryGallery {
   private cgDeferredBackgroundLoadTimer: number = -1;
   private cgDeferredSnapshotApplyTimer: number = -1;
   private cgLastSnapshotApplyAtMs: number = 0;
-  private cgInitialSlidePending: boolean = false;
+  /** 与主时间线共用的划选触摸会话，首次长按松手也必须能解锁滚动 */
+  private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
   /** 本页打开时的会话 token，仅同步属于自己的 NavStore 更新。 */
   private pageSessionToken: number = -1;
   private pageSourceKind: string = '';
@@ -413,9 +431,8 @@ struct CategoryGallery {
   }
 
   private contentInsetTopVp(): number {
-    return this.systemTopInsetVp + (this.selectionMode
-      ? CATEGORY_GALLERY_CONTENT_INSET_TOP_SELECTION_VP
-      : CATEGORY_GALLERY_CONTENT_INSET_TOP_NORMAL_VP);
+    // 顶栏高度与多选无关；不要绑 selectionMode，避免进多选时改 List.margin 把触摸掐断
+    return this.systemTopInsetVp + CATEGORY_GALLERY_CONTENT_INSET_TOP_VP;
   }
 
   private isRecentAddedStreamingMode(): boolean {
@@ -474,6 +491,7 @@ struct CategoryGallery {
     this.clearCgDeferredBackgroundLoadTimer();
     this.clearCgDeferredSnapshotApplyTimer();
     categoryGalleryEndSlideSelectGesture(this.asSelectionHost());
+    galleryGridResetTouchTracking(this.slideTouch);
     galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_CATEGORY);
     this.recycleThumbCache(true);
     this.listBlocks = [];
@@ -539,17 +557,31 @@ struct CategoryGallery {
     return categoryGalleryReadGestureFingerWindow(ev);
   }
 
-  private readTouchFingerWindow(ev: TouchEvent): CgFingerWindowPoint | null {
-    if (ev.touches === undefined || ev.touches.length < 1) {
-      return null;
+  private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    const self = this;
+    class CategoryGallerySlideTouchHostBridge implements GalleryGridSlideTouchHost {
+      getUIContext(): UIContext { return self.getUIContext(); }
+      isSelectionMode(): boolean { return self.selectionMode; }
+      isSlideActive(): boolean { return self.cgSlideGestureActive; }
+      endSlide(): void { self.endCgSlideSelectGesture(); }
+      followSlideAtWindowPx(xPx: number, yPx: number): void { self.onCgSlideTouchMoveWindow(xPx, yPx); }
     }
-    const f0 = ev.touches[0];
-    const x = f0.windowX ?? f0.displayX ?? f0.x;
-    const y = f0.windowY ?? f0.displayY ?? f0.y;
-    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
-      return null;
+    return new CategoryGallerySlideTouchHostBridge();
+  }
+
+  /** 未进多选的触摸/Sequence 长按：进入多选并按窗口坐标起划选 */
+  private beginCgFirstSlideAtRow(groupIdx: number, row: RowModel, xPx: number, yPx: number): boolean {
+    const rowStart = this.rowGlobalStartFlat(groupIdx, row);
+    const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
+    if (fi < 0 || fi >= this.flatItems.length) {
+      return false;
     }
-    return { x, y };
+    const item = this.flatItems[fi];
+    if (!this.selectionMode) {
+      this.onCgThumbLongPress(item, fi);
+    }
+    this.beginCgSlideSelectGestureAtWindowPx(fi, xPx, yPx);
+    return true;
   }
 
   private pickCgFlatForRow(rowStart: number, xPx: number, yPx: number): number {
@@ -558,6 +590,10 @@ struct CategoryGallery {
 
   private beginCgSlideSelectGesture(ev: GestureEvent, anchorFlat: number): void {
     categoryGalleryBeginSlideSelectGesture(this.asSelectionHost(), ev, anchorFlat);
+  }
+
+  private beginCgSlideSelectGestureAtWindowPx(anchorFlat: number, xPx: number, yPx: number): void {
+    categoryGalleryBeginSlideSelectGestureAtWindowPx(this.asSelectionHost(), anchorFlat, xPx, yPx);
   }
 
   private endCgSlideSelectGesture(): void {
@@ -1257,99 +1293,83 @@ struct CategoryGallery {
       .width('100%')
       .padding({ left: 2, right: 2, top: 1, bottom: 1 })
       .onTouch((event: TouchEvent): void => {
-        if (!this.cgSlideGestureActive) {
-          if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            this.clearInitialCgSlideGesture();
-          }
-          return;
-        }
-        if (event.type === TouchType.Move) {
-          const pt = this.readTouchFingerWindow(event);
-          if (pt === null) {
-            return;
-          }
-          this.onCgSlideTouchMoveWindow(pt.x, pt.y);
-        }
+        galleryGridHandleRowTouch(
+          this.slideTouch,
+          this.asSlideTouchHost(),
+          event,
+          (xPx: number, yPx: number): boolean => this.beginCgFirstSlideAtRow(groupIdx, row, xPx, yPx)
+        );
       })
       .parallelGesture(GestureGroup(GestureMode.Parallel,
         GestureGroup(GestureMode.Sequence,
-          LongPressGesture({ repeat: false, duration: 420 })
+          LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
             .onAction((ev: GestureEvent): void => {
-              this.clearInitialCgSlideGesture();
+              if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
+                return;
+              }
+              galleryGridClearInitialSlide(this.slideTouch);
               this.endCgSlideSelectGesture();
-              const rowStart = this.rowGlobalStartFlat(groupIdx, row);
               const pt = this.readGestureFingerWindow(ev);
               if (pt === null) {
                 return;
               }
-              const xPx = this.vpToPx(pt.x);
-              const yPx = this.vpToPx(pt.y);
-              const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
-              if (fi < 0 || fi >= this.flatItems.length) {
+              if (!this.beginCgFirstSlideAtRow(groupIdx, row, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
                 return;
               }
-              const longPressItem = this.flatItems[fi];
-              const wasSelectionMode = this.selectionMode;
-              this.onCgThumbLongPress(longPressItem, fi);
-              if (!wasSelectionMode) {
-                this.armInitialCgSlideGesture(ev, fi);
-              }
+              galleryGridArmInitialSlide(this.slideTouch);
             }),
           PanGesture({
             fingers: 1,
             direction: PanDirection.All,
-            distance: categoryGallerySlidePanDistance(true)
+            distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
           })
             .onActionUpdate((ev: GestureEvent): void => {
-              if (!this.cgInitialSlidePending || !this.cgSlideGestureActive) {
+              if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
                 return;
               }
               this.onCgSlidePanUpdate(ev);
             })
             .onActionEnd((): void => {
-              this.clearInitialCgSlideGesture();
-              this.endCgSlideSelectGesture();
+              galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
             })
             .onActionCancel((): void => {
-              this.clearInitialCgSlideGesture();
-              this.endCgSlideSelectGesture();
+              galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
             })
         ),
         PanGesture({
           fingers: 1,
           direction: PanDirection.Horizontal,
-          distance: categoryGallerySlidePanDistance(this.selectionMode)
+          distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
         })
           .onActionStart((ev: GestureEvent): void => {
-            if (!this.selectionMode) {
+            this.slideTouch.secondaryPanDriving = false;
+            if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
               return;
             }
-            if (this.cgSlideGestureActive || this.cgInitialSlidePending) {
-              return;
-            }
-            const rowStart = this.rowGlobalStartFlat(groupIdx, row);
             const pt = this.readGestureFingerWindow(ev);
             if (pt === null) {
               return;
             }
             const xPx = this.vpToPx(pt.x);
             const yPx = this.vpToPx(pt.y);
-            const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
+            const fi = this.pickCgFlatForRow(this.rowGlobalStartFlat(groupIdx, row), xPx, yPx);
             if (fi < 0 || fi >= this.flatItems.length) {
               return;
             }
+            galleryGridOnSecondaryPanStart(this.slideTouch);
             this.beginCgSlideSelectGesture(ev, fi);
           })
           .onActionUpdate((ev: GestureEvent): void => {
+            if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
+              return;
+            }
             this.onCgSlidePanUpdate(ev);
           })
           .onActionEnd((): void => {
-            this.clearInitialCgSlideGesture();
-            this.endCgSlideSelectGesture();
+            galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
           })
           .onActionCancel((): void => {
-            this.clearInitialCgSlideGesture();
-            this.endCgSlideSelectGesture();
+            galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
           })
       ))
     }
@@ -1380,15 +1400,6 @@ struct CategoryGallery {
     return col >= 0 && col < row.cells.length ? row.cells[col] : undefined;
   }
 
-  private armInitialCgSlideGesture(ev: GestureEvent, anchorFlat: number): void {
-    this.cgInitialSlidePending = true;
-    this.beginCgSlideSelectGesture(ev, anchorFlat);
-  }
-
-  private clearInitialCgSlideGesture(): void {
-    this.cgInitialSlidePending = false;
-  }
-
   private rowCellStableKey(groupIdx: number, row: RowModel, col: number): string {
     const item = this.rowCellAt(row, col);
     if (item === undefined) {
@@ -1415,45 +1426,48 @@ struct CategoryGallery {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      CategoryGalleryChrome({
-        selectionMode: this.selectionMode,
-        selectedCount: this.selectedCount,
-        title: this.title,
-        totalCount: this.totalCount,
-        topSafeInsetVp: this.systemTopInsetVp,
-        personAlbumMode: this.usesMoreMenuMode(),
-        moreMenuExpanded: this.moreMenuExpanded,
-        scrollerList: [this.listScroller],
-        onCancelSelection: (): void => {
-          this.exitCgSelection();
-        },
-        onBack: (): void => {
-          this.navigateBack();
-        },
-        onToggleMode: (): void => {
-          this.toggleToolbarMode();
-        },
-        onShowMoreMenu: (): void => {
-          this.toggleMoreMenu();
-        },
-        onDismissMoreMenu: (): void => {
-          this.dismissMoreMenu();
-        },
-        onEnterMultiselectFromMore: (): void => {
-          this.enterMultiselectFromMoreMenu();
-        },
-        onOpenSlideshowFromMore: (): void => {
-          this.openSlideshowSettings();
-        }
-      }) {
-        Column() {
+      Column() {
+          // 顶栏走文档流，不要 Stack 浮层。HdsNavigation 叠在全屏上会把宫格命中区盖住，松手后滑不动、点不动。
+          CategoryGalleryChrome({
+            selectionMode: this.selectionMode,
+            selectedCount: this.selectedCount,
+            title: this.title,
+            totalCount: this.totalCount,
+            topSafeInsetVp: this.systemTopInsetVp,
+            personAlbumMode: this.usesMoreMenuMode(),
+            moreMenuExpanded: this.moreMenuExpanded,
+            scrollerList: [this.listScroller],
+            onCancelSelection: (): void => {
+              this.exitCgSelection();
+            },
+            onBack: (): void => {
+              this.navigateBack();
+            },
+            onToggleMode: (): void => {
+              this.toggleToolbarMode();
+            },
+            onShowMoreMenu: (): void => {
+              this.toggleMoreMenu();
+            },
+            onDismissMoreMenu: (): void => {
+              this.dismissMoreMenu();
+            },
+            onEnterMultiselectFromMore: (): void => {
+              this.enterMultiselectFromMoreMenu();
+            },
+            onOpenSlideshowFromMore: (): void => {
+              this.openSlideshowSettings();
+            }
+          })
+            .width('100%')
+
           if (this.groups.length === 0) {
             FnStateText({
               text: this.emptyStateText(),
-              topOffsetVp: this.contentInsetTopVp()
+              topOffsetVp: 24
             }).layoutWeight(1)
           } else {
-            Stack() {
+            Stack({ alignContent: Alignment.Bottom }) {
               Column() {
                 List({ scroller: this.listScroller }) {
                   LazyForEach(this.listBlockSource, (block: CategoryGalleryListBlock) => {
@@ -1491,31 +1505,13 @@ struct CategoryGallery {
                 .layoutWeight(1)
                 .id(CATEGORY_GALLERY_LIST_DOM_ID)
                 .cachedCount(this.isRecentAddedStreamingMode() ? 1 : (this.columnsPerRow >= 4 ? 2 : 3))
-                .margin({ top: this.contentInsetTopVp() })
                 .scrollBar(BarState.Auto)
                 .backgroundColor(Color.Transparent)
                 .edgeEffect(EdgeEffect.Spring)
                 .divider({ strokeWidth: 0 })
                 .enableScrollInteraction(this.cgScrollEnabled)
                 .onTouch((event: TouchEvent): void => {
-                  if (!this.cgSlideGestureActive) {
-                    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                      this.clearInitialCgSlideGesture();
-                    }
-                    return;
-                  }
-                  if (event.type === TouchType.Move) {
-                    const pt = this.readTouchFingerWindow(event);
-                    if (pt === null) {
-                      return;
-                    }
-                    this.onCgSlideTouchMoveWindow(pt.x, pt.y);
-                    return;
-                  }
-                  if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                    this.clearInitialCgSlideGesture();
-                    this.endCgSlideSelectGesture();
-                  }
+                  galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
                 })
                 .onDidScroll((offset: number, scrollState: ScrollState): void => {
                   gallerySlideAutoScrollOnListDidScroll(offset, scrollState);
@@ -1551,13 +1547,14 @@ struct CategoryGallery {
                   }
                 })
                   .width('100%')
-                  .height('100%')
+                  // 只让底部按钮区域参与命中；全屏 HdsTabs 会吞掉列表后续所有触摸。
+                  .height(GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP)
               }
 
               if (this.cgBatchDeleting || this.cgBatchDownloading) {
                 FnFullLoadingMask({
                   text: this.cgBatchDeleting ? '移入回收站中…' : '下载中…',
-                  topOffsetVp: this.contentInsetTopVp()
+                  topOffsetVp: 0
                 })
               }
             }
@@ -1568,7 +1565,6 @@ struct CategoryGallery {
         .width('100%')
         .height('100%')
         .backgroundColor($r('app.color.page_background'))
-      }
 
       if (this.slideshowPreparing) {
         FnFullLoadingMask({

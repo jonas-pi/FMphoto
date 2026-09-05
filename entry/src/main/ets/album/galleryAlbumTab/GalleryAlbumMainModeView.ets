@@ -1,3 +1,4 @@
+import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
@@ -17,6 +18,23 @@ import {
 import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
 import { gallerySharedTransitionId } from '../GallerySharedTransition';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
+import {
+  galleryGridArmInitialSlide,
+  galleryGridCanStartSecondaryPan,
+  galleryGridClearInitialSlide,
+  galleryGridHandleListTouch,
+  galleryGridHandleRowTouch,
+  galleryGridOnSecondaryPanFinish,
+  galleryGridOnSecondaryPanStart,
+  galleryGridOnSequenceLongPress,
+  galleryGridOnSequencePanFinish,
+  galleryGridResetTouchTracking,
+  galleryGridShouldUpdateSecondaryPan,
+  galleryGridShouldUpdateSequencePan,
+  GalleryGridSlideTouchHost,
+  GalleryGridSlideTouchSession,
+  GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
+} from '../GalleryGridSlideTouch';
 import { gallerySlideAutoScrollOnListDidScroll } from '../GallerySlideAutoScroll';
 import {
   GALLERY_TIMELINE_REFRESH_PULL_RATIO,
@@ -29,8 +47,6 @@ import { GalleryViewGranularity, galleryViewGranularityAfterPinch } from './Gall
 import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
 import { GalleryPinchScaleUpdater } from './GalleryAlbumPinchScale';
 
-const GALLERY_MAIN_TOUCH_LONG_PRESS_MS: number = 380;
-const GALLERY_MAIN_TOUCH_SLOP_VP: number = 10;
 const GALLERY_THUMB_THROUGHPUT_DROP_COOLDOWN_MS: number = 900;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_MONTH: number = 360;
@@ -81,17 +97,7 @@ export struct GalleryAlbumMainModeView {
 
   scrollerRef: Scroller = new Scroller();
   flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
-  private galleryInitialSlidePending: boolean = false;
-  private galleryTouchDownActive: boolean = false;
-  private galleryTouchPendingLongPress: boolean = false;
-  private galleryTouchLongPressTimer: number = -1;
-  private galleryTouchStartX: number = 0;
-  private galleryTouchStartY: number = 0;
-  private galleryTouchLastX: number = 0;
-  private galleryTouchLastY: number = 0;
-  private galleryTouchRowNode: GalleryFlowNode | null = null;
-  private galleryTouchSlideDriving: boolean = false;
-  private gallerySecondaryPanDriving: boolean = false;
+  private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
   private thumbThroughputLevel: number = 0;
   private thumbLastAdaptiveDropAtMs: number = 0;
   @State private granularityOpacity: number = 1;
@@ -132,7 +138,6 @@ export struct GalleryAlbumMainModeView {
   getFlatItems: () => GalleryListItem[] = () => [];
   endGallerySlideSelectGesture: () => void = () => {};
   readGestureFingerWindow: (ev: GestureEvent) => GalleryFingerWindowPoint | null = (_: GestureEvent) => null;
-  pickGalleryThumbFlatUnderPoint: (xPx: number, yPx: number) => number = (_: number, __: number) => -1;
   pickGalleryThumbFlatForRowOrCache: (node: GalleryFlowNode, xPx: number, yPx: number) => number =
     (_: GalleryFlowNode, __: number, ___: number) => -1;
   onGalleryThumbLongPress: (item: GalleryListItem) => void = (_: GalleryListItem) => {};
@@ -226,7 +231,7 @@ export struct GalleryAlbumMainModeView {
     // 第二指落下时 Refresh 可能已处于 Drag/Refresh；立刻关动画并禁止再触发
     this.pinchRefreshLocked = true;
     this.refreshOffsetArmed = false;
-    this.resetGalleryTouchTracking();
+    galleryGridResetTouchTracking(this.slideTouch);
     this.onGranularityPinchActiveChange(true);
     this.onAbortTimelineRefreshing();
   }
@@ -311,7 +316,7 @@ export struct GalleryAlbumMainModeView {
       return;
     }
     this.lockTwoFingerScroll();
-    this.resetGalleryTouchTracking();
+    galleryGridResetTouchTracking(this.slideTouch);
     this.granularityPinchActive = true;
     this.pinchCenterX = event.pinchCenterX;
     this.pinchCenterY = event.pinchCenterY;
@@ -486,6 +491,7 @@ export struct GalleryAlbumMainModeView {
     this.pinchScaleUpdater.resetScale();
     this.onGranularityPinchActiveChange(false);
     this.onAbortTimelineRefreshing();
+    galleryGridResetTouchTracking(this.slideTouch);
     setThumbHighThroughputLevel(0);
   }
 
@@ -587,7 +593,7 @@ export struct GalleryAlbumMainModeView {
   }
 
   private shouldTrackGalleryThumbRect(): boolean {
-    return this.gallerySelectionMode || this.gallerySlideGestureActive || this.galleryInitialSlidePending;
+    return this.gallerySelectionMode || this.gallerySlideGestureActive || this.slideTouch.initialSlidePending;
   }
 
   private vpToPx(value: number): number {
@@ -598,81 +604,30 @@ export struct GalleryAlbumMainModeView {
     }
   }
 
-  private readTouchFingerWindow(ev: TouchEvent): GalleryFingerWindowPoint | null {
-    if (ev.touches === undefined || ev.touches.length < 1) {
-      return null;
+  private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    const self = this;
+    class MainSlideTouchHostBridge implements GalleryGridSlideTouchHost {
+      getUIContext(): UIContext { return self.getUIContext(); }
+      isSelectionMode(): boolean { return self.gallerySelectionMode; }
+      isSlideActive(): boolean { return self.gallerySlideGestureActive; }
+      endSlide(): void { self.endGallerySlideSelectGesture(); }
+      followSlideAtWindowPx(xPx: number, yPx: number): void { self.onGallerySlideTouchMoveWindow(xPx, yPx); }
     }
-    const f0 = ev.touches[0];
-    const x = f0.windowX ?? f0.displayX ?? f0.x;
-    const y = f0.windowY ?? f0.displayY ?? f0.y;
-    if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
-      return null;
+    return new MainSlideTouchHostBridge();
+  }
+
+  private beginMainFirstSlideAtNode(node: GalleryFlowNode, xPx: number, yPx: number): boolean {
+    const all = this.getFlatItems();
+    const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
+    if (fi < 0 || fi >= all.length) {
+      return false;
     }
-    return { x, y };
-  }
-
-  private armInitialGallerySlideGesture(ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void {
-    this.galleryTouchSlideDriving = false;
-    this.gallerySecondaryPanDriving = false;
-    this.galleryInitialSlidePending = true;
-    this.beginGallerySlideSelectGesture(ev, item, anchorFlat);
-  }
-
-  private clearInitialGallerySlideGesture(): void {
-    this.galleryInitialSlidePending = false;
-  }
-
-  private clearGalleryTouchLongPressTimer(): void {
-    if (this.galleryTouchLongPressTimer >= 0) {
-      clearTimeout(this.galleryTouchLongPressTimer);
-      this.galleryTouchLongPressTimer = -1;
+    const item = all[fi];
+    if (!this.gallerySelectionMode) {
+      this.onGalleryThumbLongPress(item);
     }
-  }
-
-  private resetGalleryTouchTracking(): void {
-    this.clearGalleryTouchLongPressTimer();
-    this.galleryTouchDownActive = false;
-    this.galleryTouchPendingLongPress = false;
-    this.galleryTouchRowNode = null;
-    this.galleryTouchSlideDriving = false;
-    this.gallerySecondaryPanDriving = false;
-  }
-
-  private startGalleryTouchLongPress(pt: GalleryFingerWindowPoint, node: GalleryFlowNode | null = null): void {
-    if (this.gallerySelectionMode || this.gallerySlideGestureActive) {
-      return;
-    }
-    this.clearGalleryTouchLongPressTimer();
-    this.galleryTouchDownActive = true;
-    this.galleryTouchPendingLongPress = true;
-    this.galleryTouchRowNode = node;
-    this.galleryTouchStartX = pt.x;
-    this.galleryTouchStartY = pt.y;
-    this.galleryTouchLastX = pt.x;
-    this.galleryTouchLastY = pt.y;
-    this.galleryTouchSlideDriving = false;
-    this.galleryTouchLongPressTimer = setTimeout((): void => {
-      this.galleryTouchLongPressTimer = -1;
-      if (!this.galleryTouchDownActive || !this.galleryTouchPendingLongPress ||
-        this.gallerySelectionMode || this.gallerySlideGestureActive) {
-        return;
-      }
-      const all = this.getFlatItems();
-      const fi = this.galleryTouchRowNode !== null ?
-        this.pickGalleryThumbFlatForRowOrCache(this.galleryTouchRowNode, this.galleryTouchLastX, this.galleryTouchLastY) :
-        this.pickGalleryThumbFlatUnderPoint(this.galleryTouchLastX, this.galleryTouchLastY);
-      if (fi < 0 || fi >= all.length) {
-        this.galleryTouchPendingLongPress = false;
-        return;
-      }
-      const item = all[fi];
-      if (!this.gallerySelectionMode) {
-        this.onGalleryThumbLongPress(item);
-      }
-      this.beginGallerySlideSelectGestureAtWindowPx(item, fi, this.galleryTouchLastX, this.galleryTouchLastY);
-      this.galleryTouchSlideDriving = true;
-      this.galleryTouchPendingLongPress = false;
-    }, GALLERY_MAIN_TOUCH_LONG_PRESS_MS);
+    this.beginGallerySlideSelectGestureAtWindowPx(item, fi, xPx, yPx);
+    return true;
   }
 
   private onMainListTouchEvent(event: TouchEvent): void {
@@ -685,36 +640,7 @@ export struct GalleryAlbumMainModeView {
         this.unlockTwoFingerScrollIfIdle();
       }
     }
-    const pt = this.readTouchFingerWindow(event);
-    if (event.type === TouchType.Down) {
-      return;
-    }
-    if (this.gallerySlideGestureActive) {
-      if (event.type === TouchType.Move) {
-        return;
-      }
-      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-        this.clearInitialGallerySlideGesture();
-        this.endGallerySlideSelectGesture();
-        this.resetGalleryTouchTracking();
-      }
-      return;
-    }
-    if (this.galleryTouchPendingLongPress && pt !== null && event.type === TouchType.Move) {
-      this.galleryTouchLastX = pt.x;
-      this.galleryTouchLastY = pt.y;
-      const dx = pt.x - this.galleryTouchStartX;
-      const dy = pt.y - this.galleryTouchStartY;
-      const slopPx = this.vpToPx(GALLERY_MAIN_TOUCH_SLOP_VP);
-      if ((dx * dx + dy * dy) > (slopPx * slopPx)) {
-        this.resetGalleryTouchTracking();
-      }
-      return;
-    }
-    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.clearInitialGallerySlideGesture();
-      this.resetGalleryTouchTracking();
-    }
+    galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
   }
 
   @Builder
@@ -827,73 +753,30 @@ export struct GalleryAlbumMainModeView {
         .width('100%')
         .padding({ left: 2, right: 2, top: 1, bottom: 1 })
         .onTouch((event: TouchEvent): void => {
-          const touchPt = this.readTouchFingerWindow(event);
-          if (!this.gallerySlideGestureActive) {
-            if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-              this.clearInitialGallerySlideGesture();
-              this.resetGalleryTouchTracking();
-              return;
-            }
-            if (event.type === TouchType.Down) {
-              if (touchPt !== null) {
-                if (!this.gallerySelectionMode) {
-                  this.startGalleryTouchLongPress(touchPt, node);
-                }
-              }
-              return;
-            }
-            if (this.galleryTouchPendingLongPress && touchPt !== null && event.type === TouchType.Move) {
-              this.galleryTouchLastX = touchPt.x;
-              this.galleryTouchLastY = touchPt.y;
-              const dx = touchPt.x - this.galleryTouchStartX;
-              const dy = touchPt.y - this.galleryTouchStartY;
-              const slopPx = this.vpToPx(GALLERY_MAIN_TOUCH_SLOP_VP);
-              if ((dx * dx + dy * dy) > (slopPx * slopPx)) {
-                this.resetGalleryTouchTracking();
-              }
-            }
-            return;
-          }
-          if (event.type === TouchType.Move) {
-            if (touchPt !== null && this.galleryTouchSlideDriving) {
-              this.onGallerySlideTouchMoveWindow(touchPt.x, touchPt.y);
-            }
-            return;
-          }
-          if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            this.clearInitialGallerySlideGesture();
-            this.endGallerySlideSelectGesture();
-            this.resetGalleryTouchTracking();
-          }
+          galleryGridHandleRowTouch(
+            this.slideTouch,
+            this.asSlideTouchHost(),
+            event,
+            (xPx: number, yPx: number): boolean => this.beginMainFirstSlideAtNode(node, xPx, yPx)
+          );
         })
         .parallelGesture(GestureGroup(GestureMode.Parallel,
           GestureGroup(GestureMode.Sequence,
-            LongPressGesture({ repeat: false, duration: 420 })
+            LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
               .onAction((ev: GestureEvent): void => {
-                if (this.gallerySelectionMode || this.gallerySlideGestureActive) {
+                if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
                   return;
                 }
-                this.clearInitialGallerySlideGesture();
+                galleryGridClearInitialSlide(this.slideTouch);
                 this.endGallerySlideSelectGesture();
                 const pt = this.readGestureFingerWindow(ev);
                 if (pt === null) {
                   return;
                 }
-                const xPx = this.vpToPx(pt.x);
-                const yPx = this.vpToPx(pt.y);
-                const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
-                if (fi < 0) {
+                if (!this.beginMainFirstSlideAtNode(node, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
                   return;
                 }
-                const all = this.getFlatItems();
-                if (fi >= all.length) {
-                  return;
-                }
-                const longPressItem = all[fi];
-                if (!this.gallerySelectionMode) {
-                  this.onGalleryThumbLongPress(longPressItem);
-                }
-                this.armInitialGallerySlideGesture(ev, longPressItem, fi);
+                galleryGridArmInitialSlide(this.slideTouch);
               }),
             PanGesture({
               fingers: 1,
@@ -901,18 +784,16 @@ export struct GalleryAlbumMainModeView {
               distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
             })
               .onActionUpdate((ev: GestureEvent): void => {
-                if (!this.galleryInitialSlidePending || !this.gallerySlideGestureActive) {
+                if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
                   return;
                 }
                 this.onGallerySlidePanUpdate(ev);
               })
               .onActionEnd((): void => {
-                this.clearInitialGallerySlideGesture();
-                this.endGallerySlideSelectGesture();
+                galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
               })
               .onActionCancel((): void => {
-                this.clearInitialGallerySlideGesture();
-                this.endGallerySlideSelectGesture();
+                galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
               })
           ),
           PanGesture({
@@ -921,11 +802,8 @@ export struct GalleryAlbumMainModeView {
             distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
           })
             .onActionStart((ev: GestureEvent): void => {
-              this.gallerySecondaryPanDriving = false;
-              if (!this.gallerySelectionMode || this.gallerySlideGestureActive || this.galleryInitialSlidePending) {
-                return;
-              }
-              if (Number.isFinite(ev.offsetX) && ev.offsetX < 0) {
+              this.slideTouch.secondaryPanDriving = false;
+              if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
                 return;
               }
               const pt = this.readGestureFingerWindow(ev);
@@ -942,28 +820,20 @@ export struct GalleryAlbumMainModeView {
               if (fi >= all.length) {
                 return;
               }
-              this.galleryTouchSlideDriving = false;
-              this.gallerySecondaryPanDriving = true;
+              galleryGridOnSecondaryPanStart(this.slideTouch);
               this.beginGallerySlideSelectGesture(ev, all[fi], fi);
             })
             .onActionUpdate((ev: GestureEvent): void => {
-              if (!this.gallerySecondaryPanDriving || !this.gallerySelectionMode ||
-                this.galleryInitialSlidePending || !this.gallerySlideGestureActive) {
+              if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
                 return;
               }
               this.onGallerySlidePanUpdate(ev);
             })
             .onActionEnd((): void => {
-              if (this.gallerySecondaryPanDriving && !this.galleryInitialSlidePending && this.gallerySlideGestureActive) {
-                this.endGallerySlideSelectGesture();
-              }
-              this.gallerySecondaryPanDriving = false;
+              galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
             })
             .onActionCancel((): void => {
-              if (this.gallerySecondaryPanDriving && !this.galleryInitialSlidePending && this.gallerySlideGestureActive) {
-                this.endGallerySlideSelectGesture();
-              }
-              this.gallerySecondaryPanDriving = false;
+              galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
             })
         ))
       }

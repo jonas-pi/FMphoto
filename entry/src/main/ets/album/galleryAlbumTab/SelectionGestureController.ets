@@ -14,6 +14,7 @@ import {
 } from '../GallerySlidePick';
 import { GalleryPreviewNavStore } from '../GalleryPreviewNavStore';
 import { playGalleryEnterSelectionHaptic } from '../GallerySelectionHaptic';
+import { galleryGridSlideLog } from '../GalleryGridSlideTouch';
 import {
   GalleryFingerCoordCompat,
   GalleryFingerWindowPoint,
@@ -204,6 +205,10 @@ function selectionBeginGallerySlideSelectGestureCore(
   refX: number | null,
   refY: number | null
 ): void {
+  galleryGridSlideLog(
+    host.inSearchMode ? 'search_begin' : 'main_begin',
+    `anchor=${anchorFlat} sel=${host.gallerySelectionMode ? '1' : '0'} scroll=${host.galleryMainListScrollEnabled ? '1' : '0'}`
+  );
   host.gallerySlideGestureActive = true;
   host.galleryMainListScrollEnabled = false;
   host.gallerySlideAnchorFlat = anchorFlat >= 0 ? anchorFlat : -1;
@@ -283,8 +288,12 @@ export function selectionEndGallerySlideSelectGesture(host: SelectionGestureCont
     selectionApplyGallerySlideRowRangeSelection(host, pendingEndFlat);
   }
   if (!host.gallerySlideGestureActive && host.galleryMainListScrollEnabled) {
+    galleryGridSlideLog(host.inSearchMode ? 'search_end_skip' : 'main_end_skip',
+      `slide=${host.gallerySlideGestureActive ? '1' : '0'} scroll=${host.galleryMainListScrollEnabled ? '1' : '0'}`);
     return;
   }
+  galleryGridSlideLog(host.inSearchMode ? 'search_end' : 'main_end',
+    `slide=${host.gallerySlideGestureActive ? '1' : '0'} scroll=${host.galleryMainListScrollEnabled ? '1' : '0'}`);
   host.gallerySlideGestureActive = false;
   host.gallerySlideHasRef = false;
   host.gallerySlideAnchorFlat = -1;

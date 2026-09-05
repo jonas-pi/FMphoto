@@ -1,6 +1,9 @@
 /**
  * 媒体分类顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
- * 多选 / 更多走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
+ * 多选 / 更多走 titleBar.menu / backIcon。
+ *
+ * 顶栏与宫格列表拆开（对齐预览页）。进多选立刻改取消 / 已选择 / 完成，
+ * 但不会重建列表，长按划选的 Up 还能解锁滚动。
  */
 import {
   HdsNavigation,
@@ -14,16 +17,11 @@ import {
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
-import { fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
+import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
-
-/** pageContent 默认占位：未传入真实内容时渲染空视图。 */
-@Builder
-function categoryGalleryChromeEmptyPageContent() {
-}
 
 @Component
 export struct CategoryGalleryChrome {
@@ -37,8 +35,6 @@ export struct CategoryGalleryChrome {
   @Prop moreMenuExpanded: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
-  /** 真实可滚动内容：媒体分类列表 Stack，由页面通过尾随闭包传入。 */
-  @BuilderParam pageContent: () => void = categoryGalleryChromeEmptyPageContent;
   /** 联动沉浸滚动光感的 Scroller 列表。 */
   scrollerList: Scroller[] = [];
 
@@ -140,7 +136,16 @@ export struct CategoryGalleryChrome {
   }
 
   private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), true);
+    // 顶栏与列表拆开：不要 avoidLayoutSafeArea，由外层 padding 吃状态栏
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false);
+  }
+
+  /** Navigation 内容槽必须有子节点；高度 0，真正列表在浮层下面，进多选改顶栏不会拆 List */
+  @Builder
+  private titleBarNavigationBody() {
+    Column()
+      .width('100%')
+      .height(0)
   }
 
   @Builder
@@ -158,19 +163,25 @@ export struct CategoryGalleryChrome {
   }
 
   build() {
+    // 高度只包顶栏，禁止 100% 铺满，否则 HdsNavigation 会把宫格命中区盖住，松手后点不动。
     Stack({ alignContent: Alignment.TopEnd }) {
-      HdsNavigation() {
-        this.pageContent()
+      Column() {
+        HdsNavigation() {
+          this.titleBarNavigationBody()
+        }
+        .width('100%')
+        .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+        .mode(NavigationMode.Stack)
+        .titleMode(HdsNavigationTitleMode.MINI)
+        .hideBackButton(false)
+        .bindToScrollable(this.scrollerList)
+        .titleBar(this.titleBarOptions())
+        .hitTestBehavior(HitTestMode.Default)
       }
       .width('100%')
-      .height('100%')
-      // 整页壳禁用 Auto 分栏，避免平板上内容只显示在左半屏
-      .mode(NavigationMode.Stack)
-      .titleMode(HdsNavigationTitleMode.MINI)
-      .hideBackButton(this.selectionMode)
-      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-      .bindToScrollable(this.scrollerList)
-      .titleBar(this.titleBarOptions())
+      .padding({ top: this.topSafeInsetVp })
+      .clip(true)
+      .hitTestBehavior(HitTestMode.Default)
 
       Row()
         .width(40)
@@ -185,6 +196,9 @@ export struct CategoryGalleryChrome {
         ))
     }
     .width('100%')
-    .height('100%')
+    // 作为全屏 Stack 子节点会被拉高；写死高度，空白区 Transparent 把点击还给宫格
+    .height(this.topSafeInsetVp + FN_HDS_NAV_CHROME_HEIGHT_VP)
+    .clip(true)
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 }

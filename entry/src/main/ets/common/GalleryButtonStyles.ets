@@ -15,6 +15,9 @@ export const GALLERY_BATCH_BAR_PAD_LEFT_VP: number = 16;
 export const GALLERY_BATCH_BAR_PAD_RIGHT_VP: number = 16;
 export const GALLERY_BATCH_BAR_PAD_TOP_VP: number = 8;
 export const GALLERY_BATCH_BAR_PAD_BOTTOM_VP: number = 16;
+/** 底部批量操作栏的实际占位高度；浮层只能命中这段区域，不能用 100% 覆盖列表。 */
+export const GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP: number =
+  GALLERY_BATCH_ACTION_HEIGHT_VP + GALLERY_BATCH_BAR_PAD_TOP_VP + GALLERY_BATCH_BAR_PAD_BOTTOM_VP;
 /** 批量删除等危险操作背景 */
 export const GALLERY_BATCH_DESTRUCTIVE_BG: string = '#E11D48';
 

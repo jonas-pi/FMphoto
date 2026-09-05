@@ -7,12 +7,11 @@ import {
   GallerySlideAutoScrollSession
 } from '../../album/GallerySlideAutoScroll';
 import {
-  GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
-  GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
   pickIndexedFlatForSlidePointer,
   pickSlideEndFlatFromRowBand
 } from '../../album/GallerySlidePick';
 import { fnClampGridColumns } from '../../common/FnWindowBreakpoint';
+import { galleryGridSlideLog } from '../../album/GalleryGridSlideTouch';
 import {
   CgFingerCoordCompat,
   CgFingerWindowPoint,
@@ -76,9 +75,6 @@ export function categoryGalleryRowGlobalStartFlat(
   return categoryGalleryFlatPos(host, groupIdx, row.startIdx);
 }
 
-export function categoryGallerySlidePanDistance(active: boolean): number {
-  return active ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE : GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE;
-}
 
 export function categoryGalleryExitSelection(host: CategoryGallerySelectionHost): void {
   host.selectionMode = false;
@@ -336,11 +332,13 @@ export function categoryGalleryApplySlideRowRangeSelection(
   host.selectedIds = next;
 }
 
-export function categoryGalleryBeginSlideSelectGesture(
+function categoryGalleryBeginSlideSelectGestureCore(
   host: CategoryGallerySelectionHost,
-  ev: GestureEvent,
-  anchorFlat: number
+  anchorFlat: number,
+  refX: number | null,
+  refY: number | null
 ): void {
+  galleryGridSlideLog('cg_begin', `anchor=${anchorFlat} sel=${host.selectionMode ? '1' : '0'} scroll=${host.cgScrollEnabled ? '1' : '0'}`);
   host.cgSlideGestureActive = true;
   host.cgScrollEnabled = false;
   host.cgSlideAnchorFlat = anchorFlat >= 0 ? anchorFlat : -1;
@@ -348,10 +346,9 @@ export function categoryGalleryBeginSlideSelectGesture(
   host.cgSlideLastEndFlat = host.cgSlideAnchorFlat;
   host.cgSlideLastAppliedEndFlat = -99999;
   categoryGalleryRecordThumbRect(host, anchorFlat);
-  const win = categoryGalleryReadGestureFingerWindow(ev);
-  if (win !== null) {
-    host.cgSlideRefX = categoryGalleryVpToPx(host, win.x);
-    host.cgSlideRefY = categoryGalleryVpToPx(host, win.y);
+  if (refX !== null && refY !== null) {
+    host.cgSlideRefX = refX;
+    host.cgSlideRefY = refY;
     host.cgSlideHasRef = true;
   } else {
     const cached = host.cgThumbHitBounds.get(`${anchorFlat}`);
@@ -366,11 +363,41 @@ export function categoryGalleryBeginSlideSelectGesture(
   categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
 }
 
+export function categoryGalleryBeginSlideSelectGesture(
+  host: CategoryGallerySelectionHost,
+  ev: GestureEvent,
+  anchorFlat: number
+): void {
+  const win = categoryGalleryReadGestureFingerWindow(ev);
+  if (win !== null) {
+    categoryGalleryBeginSlideSelectGestureCore(
+      host,
+      anchorFlat,
+      categoryGalleryVpToPx(host, win.x),
+      categoryGalleryVpToPx(host, win.y)
+    );
+    return;
+  }
+  categoryGalleryBeginSlideSelectGestureCore(host, anchorFlat, null, null);
+}
+
+/** 触摸长按兜底：按窗口像素坐标起划选，不依赖 Sequence 仍活着 */
+export function categoryGalleryBeginSlideSelectGestureAtWindowPx(
+  host: CategoryGallerySelectionHost,
+  anchorFlat: number,
+  xPx: number,
+  yPx: number
+): void {
+  categoryGalleryBeginSlideSelectGestureCore(host, anchorFlat, xPx, yPx);
+}
+
 export function categoryGalleryEndSlideSelectGesture(host: CategoryGallerySelectionHost): void {
   gallerySlideAutoScrollStop();
   if (!host.cgSlideGestureActive && host.cgScrollEnabled) {
+    galleryGridSlideLog('cg_end_skip', `slide=${host.cgSlideGestureActive ? '1' : '0'} scroll=${host.cgScrollEnabled ? '1' : '0'}`);
     return;
   }
+  galleryGridSlideLog('cg_end', `slide=${host.cgSlideGestureActive ? '1' : '0'} scroll=${host.cgScrollEnabled ? '1' : '0'}`);
   host.cgSlideGestureActive = false;
   host.cgSlideHasRef = false;
   host.cgSlideAnchorFlat = -1;

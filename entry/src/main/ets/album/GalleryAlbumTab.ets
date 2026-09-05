@@ -269,8 +269,6 @@ import {
   selectionOnSearchThumbTap,
   selectionPanOffsetVpToPx,
   selectionPickGalleryThumbFlatForRowOrCache,
-  selectionPickGalleryThumbFlatUnderPoint,
-  selectionPickGalleryThumbFlatUnderPointForSlide,
   selectionPickSearchThumbFlatForRow,
   selectionPickSearchThumbFlatUnderPoint,
   selectionReadGestureFingerWindow,
@@ -2805,6 +2803,15 @@ export struct GalleryAlbumTab {
             selectionOnGalleryThumbLongPress(this.asSelectionGestureHost(), item),
           beginGallerySlideSelectGesture: (ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void =>
             selectionBeginGallerySlideSelectGesture(this.asSelectionGestureHost(), ev, item, anchorFlat),
+          beginGallerySlideSelectGestureAtWindowPx:
+            (item: GalleryListItem, anchorFlat: number, xPx: number, yPx: number): void =>
+              selectionBeginGallerySlideSelectGestureAtWindowPx(
+                this.asSelectionGestureHost(),
+                item,
+                anchorFlat,
+                xPx,
+                yPx
+              ),
           endGallerySlideSelectGesture: (): void => selectionEndGallerySlideSelectGesture(this.asSelectionGestureHost()),
           onGallerySlidePanUpdate: (ev: GestureEvent): void =>
             selectionOnGallerySlidePanUpdate(this.asSelectionGestureHost(), ev),
@@ -3011,8 +3018,6 @@ export struct GalleryAlbumTab {
           endGallerySlideSelectGesture: (): void => selectionEndGallerySlideSelectGesture(this.asSelectionGestureHost()),
           readGestureFingerWindow: (ev: GestureEvent): GalleryFingerWindowPoint | null =>
             selectionReadGestureFingerWindow(this.asSelectionGestureHost(), ev),
-          pickGalleryThumbFlatUnderPoint: (xPx: number, yPx: number): number =>
-            selectionPickGalleryThumbFlatUnderPoint(this.asSelectionGestureHost(), xPx, yPx),
           pickGalleryThumbFlatForRowOrCache: (node: GalleryFlowNode, xPx: number, yPx: number): number =>
             selectionPickGalleryThumbFlatForRowOrCache(this.asSelectionGestureHost(), node, xPx, yPx),
           onGalleryThumbLongPress: (item: GalleryListItem): void =>

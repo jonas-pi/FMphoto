@@ -193,6 +193,12 @@ export struct GalleryPreviewSlide {
   private frozenHeroShareId: string = '';
   private heroIdFrozen: boolean = false;
   private heroFreezeTimer: number = 0;
+  /** 转场窗口内锁住 contain 框，避免中档图比例刷新把共享元素撑飞 */
+  private heroFrameFrozen: boolean = false;
+  private frozenHeroFrameW: number = 0;
+  private frozenHeroFrameH: number = 0;
+  /** 转场结束后再升中档图，避免解码/换图打断一镜到底 */
+  private pendingMidUpgrade: boolean = false;
   private pinchParticipationActive: boolean = false;
   private pinchGestureRecognizing: boolean = false;
   private deferredParentGestureResetTimer: number = 0;
@@ -336,6 +342,10 @@ export struct GalleryPreviewSlide {
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
     this.initViewportFromDisplay();
+    // 先锁转场窗口，避免 prepare 里升中档图把 contain 框在动画中途改掉
+    if (this.enableSharedTransition && this.active) {
+      this.heroIdFrozen = true;
+    }
     this.syncBoundItemAndPrepare();
     this.armVideoOverlayReveal();
     this.armHeroIdFreeze(this.active);
@@ -367,6 +377,7 @@ export struct GalleryPreviewSlide {
 
   private prepareContent(): void {
     if (this.item === null) { return; }
+    this.seedContentAspectFromItemMeta();
     if (this.isVideo()) {
       this.videoSrc = nasUrl(this.baseUrl, pickVideo(this.item as GalleryListItem));
       this.prepareStillThumb();
@@ -423,6 +434,11 @@ export struct GalleryPreviewSlide {
   /** 阶梯第二档：宫格小图上屏后再拉 m 档、1600px 解码，不请求原图 */
   private upgradeToPreviewMid(token?: number): void {
     if (this.isGif()) {
+      return;
+    }
+    // 转场窗口内不换清晰度，避免宽高跳变把一镜到底撑飞
+    if (this.heroIdFrozen && this.enableSharedTransition && this.active) {
+      this.pendingMidUpgrade = true;
       return;
     }
     const loadToken = token !== undefined ? token : this.thumbLoadToken;
@@ -494,11 +510,65 @@ export struct GalleryPreviewSlide {
       this.frozenHeroShareId = nextId;
     }
     this.heroIdFrozen = true;
+    this.lockHeroFrameIfPossible();
     this.clearHeroFreezeTimer();
     this.heroFreezeTimer = setTimeout((): void => {
       this.heroFreezeTimer = 0;
-      this.heroIdFrozen = false;
+      this.finishHeroFreeze();
     }, GALLERY_SHARED_TRANSITION_DURATION + 80);
+  }
+
+  private lockHeroFrameIfPossible(): void {
+    const frame = galleryContainFrame(this.heroAspectForFrame(), this.viewW, this.viewH);
+    if (frame.w > 0 && frame.h > 0) {
+      this.frozenHeroFrameW = frame.w;
+      this.frozenHeroFrameH = frame.h;
+      this.heroFrameFrozen = true;
+    }
+  }
+
+  private finishHeroFreeze(): void {
+    this.heroIdFrozen = false;
+    this.heroFrameFrozen = false;
+    if (this.pendingMidUpgrade) {
+      this.pendingMidUpgrade = false;
+      this.upgradeToPreviewMid();
+    }
+  }
+
+  private seedContentAspectFromItemMeta(): void {
+    if (this.contentAspect > 0) {
+      return;
+    }
+    const meta = this.itemMetaAspect();
+    if (meta > 0) {
+      this.contentAspect = meta;
+    }
+  }
+
+  private itemMetaAspect(): number {
+    if (this.item === null) {
+      return 0;
+    }
+    const raw = this.item as Record<string, string | number | Object | undefined>;
+    const w = Number(raw['width']);
+    const h = Number(raw['height']);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      return w / h;
+    }
+    return 0;
+  }
+
+  /** 宫格源是 1:1；未知比例按正方形 contain，不要先铺满再收缩（那就是动画逃逸） */
+  private heroAspectForFrame(): number {
+    if (this.contentAspect > 0) {
+      return this.contentAspect;
+    }
+    const meta = this.itemMetaAspect();
+    if (meta > 0) {
+      return meta;
+    }
+    return 1;
   }
 
   private initViewportFromDisplay(): void {
@@ -524,25 +594,25 @@ export struct GalleryPreviewSlide {
     }
   }
 
-  /** 全屏预览默认 Contain 框；未知比例时图片可铺满，视频不能铺满以免一镜到底被全屏封面打断 */
+  /** 全屏预览默认 Contain 框；转场中锁框，未知比例按 1:1 对齐宫格 */
   private heroFrameW(): Length {
-    const frame = galleryContainFrame(this.contentAspect, this.viewW, this.viewH);
+    if (this.heroFrameFrozen && this.frozenHeroFrameW > 0) {
+      return this.frozenHeroFrameW;
+    }
+    const frame = galleryContainFrame(this.heroAspectForFrame(), this.viewW, this.viewH);
     if (frame.w <= 0) {
-      if (this.isVideo() && this.enableSharedTransition) {
-        return 1;
-      }
-      return '100%';
+      return 1;
     }
     return frame.w;
   }
 
   private heroFrameH(): Length {
-    const frame = galleryContainFrame(this.contentAspect, this.viewW, this.viewH);
+    if (this.heroFrameFrozen && this.frozenHeroFrameH > 0) {
+      return this.frozenHeroFrameH;
+    }
+    const frame = galleryContainFrame(this.heroAspectForFrame(), this.viewW, this.viewH);
     if (frame.h <= 0) {
-      if (this.isVideo() && this.enableSharedTransition) {
-        return 1;
-      }
-      return '100%';
+      return 1;
     }
     return frame.h;
   }
@@ -566,6 +636,8 @@ export struct GalleryPreviewSlide {
       this.pinchGestureRecognizing = false;
       this.pinchParticipationActive = false;
       this.scheduleDeferredParentGestureReset();
+      this.heroFrameFrozen = false;
+      this.pendingMidUpgrade = false;
     }
     this.boundItemKey = key;
     this.prepareContent();

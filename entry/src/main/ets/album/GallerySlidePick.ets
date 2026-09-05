@@ -22,10 +22,8 @@ export const GALLERY_SLIDE_FLOW_ROW_RADIUS = 6;
 /** 主时间线尾部兜底 row 数 */
 export const GALLERY_SLIDE_TAIL_FLOW_ROWS = 8;
 
-/** 划选进行中 Pan 更易触发 */
+/** 划选进行中 Pan 更易触发；各宫格页统一用此阈值 */
 export const GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE = 5;
-/** 多选未划选时横向 Pan，略提高阈值减少误触 */
-export const GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE = 8;
 
 export function gallerySlideRectContainsPx(
   rect: GallerySlideThumbRectPx,

@@ -7,13 +7,12 @@ import {
   GallerySlideAutoScrollSession
 } from '../../album/GallerySlideAutoScroll';
 import {
-  GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE,
-  GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE,
   pickIndexedFlatForSlidePointer,
   pickSlideEndFlatFromRowBand
 } from '../../album/GallerySlidePick';
 import { GalleryListItem, RecycleBinListItem } from '../../model/FnApiTypes';
 import { fnClampGridColumns } from '../../common/FnWindowBreakpoint';
+import { galleryGridSlideLog } from '../../album/GalleryGridSlideTouch';
 import { RbFingerCoordCompat, RbFingerWindowPoint, RbThumbHitRect } from './RecycleBinTypes';
 
 export const RECYCLE_BIN_LIST_DOM_ID: string = 'recycle_bin_main_list';
@@ -127,10 +126,6 @@ export function recycleBinSelectedIdStrings(ids: number[]): string[] {
     }
   }
   return out;
-}
-
-export function recycleBinSlidePanDistance(active: boolean): number {
-  return active ? GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE : GALLERY_SLIDE_PAN_DISTANCE_VP_IDLE;
 }
 
 export function recycleBinExitSelection(host: RecycleBinSelectionHost): void {
@@ -380,11 +375,13 @@ export function recycleBinApplySlideRowRangeSelection(host: RecycleBinSelectionH
   host.selectedIds = next;
 }
 
-export function recycleBinBeginSlideSelectGesture(
+function recycleBinBeginSlideSelectGestureCore(
   host: RecycleBinSelectionHost,
-  ev: GestureEvent,
-  anchorFlat: number
+  anchorFlat: number,
+  refX: number | null,
+  refY: number | null
 ): void {
+  galleryGridSlideLog('rb_begin', `anchor=${anchorFlat} sel=${host.selectionMode ? '1' : '0'} scroll=${host.rbScrollEnabled ? '1' : '0'}`);
   host.rbSlideGestureActive = true;
   host.rbScrollEnabled = false;
   host.rbSlideAnchorFlat = anchorFlat >= 0 ? anchorFlat : -1;
@@ -392,10 +389,9 @@ export function recycleBinBeginSlideSelectGesture(
   host.rbSlideLastEndFlat = host.rbSlideAnchorFlat;
   host.rbSlideLastAppliedEndFlat = -99999;
   recycleBinRecordThumbRect(host, anchorFlat);
-  const win = recycleBinReadGestureFingerWindow(ev);
-  if (win !== null) {
-    host.rbSlideRefX = recycleBinVpToPx(host, win.x);
-    host.rbSlideRefY = recycleBinVpToPx(host, win.y);
+  if (refX !== null && refY !== null) {
+    host.rbSlideRefX = refX;
+    host.rbSlideRefY = refY;
     host.rbSlideHasRef = true;
   } else {
     const cached = host.rbThumbHitBounds.get(`${anchorFlat}`);
@@ -410,11 +406,41 @@ export function recycleBinBeginSlideSelectGesture(
   recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
 }
 
+export function recycleBinBeginSlideSelectGesture(
+  host: RecycleBinSelectionHost,
+  ev: GestureEvent,
+  anchorFlat: number
+): void {
+  const win = recycleBinReadGestureFingerWindow(ev);
+  if (win !== null) {
+    recycleBinBeginSlideSelectGestureCore(
+      host,
+      anchorFlat,
+      recycleBinVpToPx(host, win.x),
+      recycleBinVpToPx(host, win.y)
+    );
+    return;
+  }
+  recycleBinBeginSlideSelectGestureCore(host, anchorFlat, null, null);
+}
+
+/** 触摸长按兜底：按窗口像素坐标起划选，不依赖 Sequence 仍活着 */
+export function recycleBinBeginSlideSelectGestureAtWindowPx(
+  host: RecycleBinSelectionHost,
+  anchorFlat: number,
+  xPx: number,
+  yPx: number
+): void {
+  recycleBinBeginSlideSelectGestureCore(host, anchorFlat, xPx, yPx);
+}
+
 export function recycleBinEndSlideSelectGesture(host: RecycleBinSelectionHost): void {
   gallerySlideAutoScrollStop();
   if (!host.rbSlideGestureActive && host.rbScrollEnabled) {
+    galleryGridSlideLog('rb_end_skip', `slide=${host.rbSlideGestureActive ? '1' : '0'} scroll=${host.rbScrollEnabled ? '1' : '0'}`);
     return;
   }
+  galleryGridSlideLog('rb_end', `slide=${host.rbSlideGestureActive ? '1' : '0'} scroll=${host.rbScrollEnabled ? '1' : '0'}`);
   host.rbSlideGestureActive = false;
   host.rbSlideHasRef = false;
   host.rbSlideAnchorFlat = -1;

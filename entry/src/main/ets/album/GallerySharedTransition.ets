@@ -11,9 +11,9 @@
  */
 export const GALLERY_PREVIEW_HERO_ACTIVE_KEY: string = 'galleryPreviewHeroActive';
 
-/** 与系统图库接近的展开/收回时长 */
-export const GALLERY_SHARED_TRANSITION_DURATION: number = 220;
-export const GALLERY_SHARED_TRANSITION_CURVE: Curve = Curve.EaseInOut;
+/** 官方一镜到底示例多用 Friction；过短的 EaseInOut 容易在宽高跳变时显得卡、像逃逸 */
+export const GALLERY_SHARED_TRANSITION_DURATION: number = 260;
+export const GALLERY_SHARED_TRANSITION_CURVE: Curve = Curve.Friction;
 /**
  * 官方自定义导航一镜到底：背景在共享元素到位后再淡入/淡出（delay 后再动透明度）。
  * 文档：开发指南「共享元素转场」自定义 Navigation 示例
