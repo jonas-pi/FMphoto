@@ -6,6 +6,31 @@
 
 ---
 
+## [1.3.4-beta.4] - 2026-09-05
+
+在 [1.3.4-beta.3] 上合并顶栏重构与登录页沉浸改版，并完善多用户凭据管理。
+
+### 新增
+
+- **多用户登录**：用户名旁下拉切换已保存账号；支持「保存密码」开关，凭据写入本机 Preferences 并纳入配置同步信封。
+- **HDS 迷你顶栏**：抽取 `fnHdsMiniTitleBarOptions`，图库、设置、配置同步、回收站、分类图库等页统一 titleBar 配置。
+
+### 改进
+
+- **登录页沉浸改版**：玻璃面板、选路条跟手、输入框材质与圆角随屏幕圆角自适应。
+- **登录表单回填**：退出后保留共用栏与用户名；切换账号时用户名/密码输入框即时刷新。
+- **配置同步**：登录区块支持多用户列表与记住密码字段导出/导入。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.3.4-beta.3` 的设备可直接覆盖升级（`versionCode` 1003014）。
+
+---
+
 ## [1.3.4-beta.3] - 2026-09-05
 
 在 [1.3.4-beta.2] 上新增配置同步与媒体分类拖拽排序，并优化宫格列数自适应与缩略图加载。
@@ -479,6 +504,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.4-beta.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4-beta.3...v1.3.4-beta.4
 [1.3.4-beta.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4-beta.2...v1.3.4-beta.3
 [1.3.4-beta.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4...v1.3.4-beta.2
 [1.3.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4-beta.1...v1.3.4
