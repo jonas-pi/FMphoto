@@ -1,9 +1,17 @@
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
+import {
+  isVideoItem,
+  nasUrl,
+  pickThumb,
+  prefetchThumbPix
+} from '../../album/GalleryAlbumCommon';
 import { playGalleryEnterSelectionHaptic } from '../../album/GallerySelectionHaptic';
 import {
+  gallerySlideAutoScrollDirection,
   gallerySlideAutoScrollStop,
   gallerySlideAutoScrollUpdate,
+  gallerySlideAutoScrollVelocityVpS,
   GallerySlideAutoScrollSession
 } from '../../album/GallerySlideAutoScroll';
 import {
@@ -23,6 +31,7 @@ export const CATEGORY_GALLERY_LIST_DOM_ID: string = 'category_gallery_main_list'
 
 export interface CategoryGallerySelectionHost {
   getUIContext(): UIContext;
+  baseUrl: string;
   flatItems: GalleryListItem[];
   groupOffsets: number[];
   columnsPerRow: number;
@@ -49,6 +58,31 @@ const cgSlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlide
 /** GridSlide 命中诊断节流状态；仅记录索引变化或每 120ms 的持续跟手心跳。 */
 let cgSlideTraceLastMs: number = 0;
 let cgSlideTraceLastFlat: number = -99999;
+let cgSlideLastPrefetchFlat: number = -1;
+let cgSlideLastPrefetchDirection: number = 0;
+
+/** 按贴边滚方向预取前方少量行；只填公共缓存，不触发页面状态刷新。 */
+function categoryGalleryPrefetchSlideDirection(host: CategoryGallerySelectionHost, anchorFlat: number): void {
+  const direction = gallerySlideAutoScrollDirection();
+  const columns = Math.max(1, host.columnsPerRow);
+  if (direction === 0 || anchorFlat < 0 ||
+    (direction === cgSlideLastPrefetchDirection &&
+      Math.abs(anchorFlat - cgSlideLastPrefetchFlat) < columns)) {
+    return;
+  }
+  cgSlideLastPrefetchFlat = anchorFlat;
+  cgSlideLastPrefetchDirection = direction;
+  const rows = Math.max(2, Math.min(6, Math.ceil(Math.abs(gallerySlideAutoScrollVelocityVpS()) / 200)));
+  const count = columns * rows;
+  for (let step = 1; step <= count; step++) {
+    const index = anchorFlat + direction * step;
+    if (index < 0 || index >= host.flatItems.length) {
+      break;
+    }
+    const item = host.flatItems[index];
+    prefetchThumbPix(nasUrl(host.baseUrl, pickThumb(item)), isVideoItem(item));
+  }
+}
 
 export function categoryGalleryItemIdOf(it: GalleryListItem): string {
   if (it.id === undefined || it.id === null) {
@@ -531,6 +565,7 @@ function categoryGalleryFollowSlidePointer(
   if (hitFlat >= 0) {
     host.cgSlideLastEndFlat = hitFlat;
   }
+  categoryGalleryPrefetchSlideDirection(host, host.cgSlideLastEndFlat);
   categoryGalleryApplySlideRowRangeSelection(host, host.cgSlideLastEndFlat);
   const now = Date.now();
   if (host.cgSlideLastEndFlat !== cgSlideTraceLastFlat || now - cgSlideTraceLastMs >= 120) {

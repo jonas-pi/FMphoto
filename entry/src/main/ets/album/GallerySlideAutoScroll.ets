@@ -216,6 +216,23 @@ export function gallerySlideAutoScrollIsRunning(): boolean {
   return autoScrollRunning;
 }
 
+/** 当前贴边自动滚的有符号速度：正数向列表尾部，负数向列表头部。 */
+export function gallerySlideAutoScrollVelocityVpS(): number {
+  return autoScrollRunning ? lastScrollToVel : 0;
+}
+
+/** 当前贴边滚方向：1 向后、-1 向前、0 未滚动。 */
+export function gallerySlideAutoScrollDirection(): number {
+  const velocity = gallerySlideAutoScrollVelocityVpS();
+  if (velocity > 0) {
+    return 1;
+  }
+  if (velocity < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 export function gallerySlideAutoScrollStop(): void {
   const session = autoScrollSession;
   resetAutoScrollState();

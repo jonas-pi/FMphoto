@@ -21,6 +21,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { isHttpUnauthorizedMessage, tryRecoverSessionAfterAuthFailure } from '../auth/SessionReauth';
 import { SessionPreferences } from '../auth/SessionPreferences';
+import { gallerySlideAutoScrollIsRunning } from './GallerySlideAutoScroll';
 import {
   AiPersonItem,
   GalleryGetListData,
@@ -1036,6 +1037,8 @@ export struct GalleryAlbumTab {
       set searchResults(value: GalleryListItem[]) { self.searchResults = value; }
       get searchGridColumns(): number { return fnAdaptiveGridColumns(3, self.windowWidthBp); }
       set searchGridColumns(_value: number) {}
+      get galleryGridColumns(): number { return self.currentGalleryGridColumns(); }
+      set galleryGridColumns(_value: number) {}
       get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
       set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
       get scrollerRef(): Scroller { return self.scrollerRef; }
@@ -3064,8 +3067,15 @@ export struct GalleryAlbumTab {
             timelineGestureMaybeLogMainScrollTick(this.asTimelineGestureHost(), _offset, _scrollState);
             this.updateVisibleLoadPriorityFromScrollOffset(_offset);
             const draggingOrFling = _scrollState === ScrollState.Scroll || _scrollState === ScrollState.Fling;
+            /*
+             * 贴边划选是受控的匀速滚动，不等同于用户快速甩动：
+             * 保留 GalleryNetworkThumb 和可见带数据泵，LazyForEach 才能持续挂载
+             * 滚动方向前方的 cachedCount 节点；真实下载仍受全局并发槽和批量上屏限制。
+             */
+            const slideAutoScrolling = gallerySlideAutoScrollIsRunning();
             const shouldFreezeByListScroll =
-              draggingOrFling && !this.timelineSeekInProgress && !this.granularityPinchActive &&
+              draggingOrFling && !slideAutoScrolling &&
+              !this.timelineSeekInProgress && !this.granularityPinchActive &&
               Date.now() >= this.ignoreListFreezeUntilMs;
             const wasDraggingOrFling = this.isDraggingOrFling;
             let refreshedVisibleRangeWhileInteracting = false;
@@ -3179,6 +3189,7 @@ export struct GalleryAlbumTab {
               !this.timelineSidebarDragging &&
               !this.timelineSeekInProgress &&
               Date.now() < this.ignoreListFreezeUntilMs;
+            const slideAutoScrolling = gallerySlideAutoScrollIsRunning();
             if (this.timelineReleaseAwaitVisibleCallback) {
               timelineGestureLogScrollDebug(
                 this.asTimelineGestureHost(),
@@ -3188,7 +3199,7 @@ export struct GalleryAlbumTab {
               this.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
             } else {
-              if (this.isDraggingOrFling || releaseFreezeActive) {
+              if (this.isDraggingOrFling || releaseFreezeActive || slideAutoScrolling) {
                 if (releaseFreezeActive) {
                   timelineGestureLogScrollDebug(
                     this.asTimelineGestureHost(),
@@ -3196,6 +3207,11 @@ export struct GalleryAlbumTab {
                     + `raw=${start.index}~${end.index}, flow=${flowStartIdx}~${flowEndIdx}`
                   );
                 }
+                /*
+                 * 自动划选以最高 1200vp/s 匀速前进，普通 300ms 可视带节流会让
+                 * 元数据骨架落后于手指；改走 96ms 的交互优先泵，但 loadingMore
+                 * 仍保持串行，因此不会并发轰炸列表接口。
+                 */
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, true, true);
               } else {
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, false);

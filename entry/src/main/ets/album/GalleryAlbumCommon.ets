@@ -36,6 +36,8 @@ const thumbPixIdentityCache = new Map<string, ThumbIdentityCacheEntry>();
 const previewMidPixCache = new Map<string, PixelMap>();
 const previewMidInflight: Map<string, Promise<PixelMap | undefined>> = new Map();
 const thumbLoadFailAt = new Map<string, number>();
+/** 方向性预取去重；只约束预取任务，不改变可见缩略图的正常加载优先级。 */
+const thumbPrefetchInflight: Set<string> = new Set();
 const THUMB_FAIL_RETRY_COOLDOWN_MS = 1500;
 /** 原图下载智能超时：先短后长，兼顾小图响应与大图成功率 */
 const FULL_IMAGE_TIMEOUT_STEPS_MS: number[] = [12000, 25000, 45000];
@@ -1207,6 +1209,33 @@ export async function loadThumbPix(
     noteThumbLoadSample(slotAcquiredAt - queueWaitStartedAt, Date.now() - slotAcquiredAt);
     releaseThumbSlot();
   }
+}
+
+/**
+ * 将即将进入视口的单张缩略图送入现有下载/解码队列。
+ *
+ * 本函数不写响应式状态，也不直接更新 Image；完成后只进入 PixelMap LRU。
+ * 当 LazyForEach 真正挂载该格子时会同步命中缓存，因此滚动帧不会承担解码和批量上屏。
+ */
+export function prefetchThumbPix(
+  fullUrl: string,
+  autoCropBlack: boolean = false,
+  cacheIdentity: string = '',
+  cacheRank: number = 0
+): void {
+  if (fullUrl.length === 0) {
+    return;
+  }
+  const key = thumbCacheKey(fullUrl, autoCropBlack);
+  if (thumbPixCache.has(key) || thumbPrefetchInflight.has(key)) {
+    return;
+  }
+  thumbPrefetchInflight.add(key);
+  void loadThumbPix(fullUrl, autoCropBlack, cacheIdentity, cacheRank).then((): void => {
+    thumbPrefetchInflight.delete(key);
+  }).catch((): void => {
+    thumbPrefetchInflight.delete(key);
+  });
 }
 
 export async function loadFullPix(

@@ -2,8 +2,16 @@ import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
 import {
+  isVideoItem,
+  nasUrl,
+  pickThumb,
+  prefetchThumbPix
+} from '../GalleryAlbumCommon';
+import {
+  gallerySlideAutoScrollDirection,
   gallerySlideAutoScrollStop,
   gallerySlideAutoScrollUpdate,
+  gallerySlideAutoScrollVelocityVpS,
   GallerySlideAutoScrollSession
 } from '../GallerySlideAutoScroll';
 import {
@@ -48,6 +56,7 @@ export interface SelectionGestureControllerHost {
   gallerySlideHasRef: boolean;
   searchResults: GalleryListItem[];
   searchGridColumns: number;
+  galleryGridColumns: number;
   scrollerRef: Scroller;
   searchScroller: Scroller;
   searchListDomId: string;
@@ -68,6 +77,37 @@ export interface SelectionGestureControllerHost {
 }
 
 const gallerySlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
+let gallerySlideLastPrefetchFlat: number = -1;
+let gallerySlideLastPrefetchDirection: number = 0;
+
+/**
+ * 只预取手指前方 2～6 行，窗口随贴边速度增大。
+ * 请求进入公共限并发队列，结果只写 PixelMap LRU，不在滚动回调里改 UI。
+ */
+function selectionPrefetchSlideDirection(host: SelectionGestureControllerHost, anchorFlat: number): void {
+  const direction = gallerySlideAutoScrollDirection();
+  if (direction === 0 || anchorFlat < 0) {
+    return;
+  }
+  const columns = Math.max(1, host.inSearchMode ? host.searchGridColumns : host.galleryGridColumns);
+  if (direction === gallerySlideLastPrefetchDirection &&
+    Math.abs(anchorFlat - gallerySlideLastPrefetchFlat) < columns) {
+    return;
+  }
+  gallerySlideLastPrefetchFlat = anchorFlat;
+  gallerySlideLastPrefetchDirection = direction;
+  const rows = Math.max(2, Math.min(6, Math.ceil(Math.abs(gallerySlideAutoScrollVelocityVpS()) / 200)));
+  const items = host.inSearchMode ? host.searchResults : host.flatItems();
+  const count = columns * rows;
+  for (let step = 1; step <= count; step++) {
+    const index = anchorFlat + direction * step;
+    if (index < 0 || index >= items.length) {
+      break;
+    }
+    const item = items[index];
+    prefetchThumbPix(nasUrl(host.baseUrl, pickThumb(item)), isVideoItem(item));
+  }
+}
 
 interface SelectionGalleryFlowSlot {
   flowIndex: number;
@@ -366,6 +406,7 @@ function selectionFollowSlidePointer(
   if (targetEndFlat < 0) {
     return;
   }
+  selectionPrefetchSlideDirection(host, targetEndFlat);
   host.gallerySlidePendingEndFlat = targetEndFlat;
   selectionApplyGallerySlideRowRangeSelection(host, targetEndFlat);
 }

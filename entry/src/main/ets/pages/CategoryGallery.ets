@@ -34,7 +34,10 @@ import {
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
-import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
+import {
+  gallerySlideAutoScrollIsRunning,
+  gallerySlideAutoScrollOnListDidScroll
+} from '../album/GallerySlideAutoScroll';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../album/GallerySlidePick';
 import {
   galleryGridArmInitialSlide,
@@ -1082,6 +1085,15 @@ struct CategoryGallery {
     }
     if (scrollState !== ScrollState.Idle) {
       this.clearCgThumbResumeTimer();
+      /*
+       * 普通拖动/惯性滚动仍用骨架占位；贴边划选是速度受控的连续滚动，
+       * 不暂停 GalleryNetworkThumb，让 LazyForEach 按滚动方向自然创建前方缓存行。
+       * 下载、解码和 PixelMap 上屏分别已有并发限制与批处理，避免逐帧触发重绘。
+       */
+      if (gallerySlideAutoScrollIsRunning()) {
+        this.cgThumbLoadingPaused = false;
+        return;
+      }
       if (!this.cgThumbLoadingPaused) {
         this.cgThumbLoadingPaused = true;
       }
@@ -1113,6 +1125,9 @@ struct CategoryGallery {
     const self = this;
     class CategoryGallerySelectionHostBridge implements CategoryGallerySelectionHost {
       getUIContext(): UIContext { return self.getUIContext(); }
+
+      get baseUrl(): string { return self.baseUrl; }
+      set baseUrl(v: string) { self.baseUrl = v; }
 
       get flatItems(): GalleryListItem[] { return self.flatItems; }
       set flatItems(v: GalleryListItem[]) { self.flatItems = v; }

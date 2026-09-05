@@ -54,7 +54,10 @@ import {
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
-import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
+import {
+  gallerySlideAutoScrollIsRunning,
+  gallerySlideAutoScrollOnListDidScroll
+} from '../album/GallerySlideAutoScroll';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../album/GallerySlidePick';
 import {
   galleryGridArmInitialSlide,
@@ -508,6 +511,14 @@ struct RecycleBinPage {
     }
     if (scrollState !== ScrollState.Idle) {
       this.clearRbThumbResumeTimer();
+      /*
+       * 贴边划选期间保持缩略图管线开启，依靠 LazyForEach 的前方缓存行持续预取；
+       * 普通快速滚动仍暂停，避免网络解码任务和滚动布局同时制造主线程压力。
+       */
+      if (gallerySlideAutoScrollIsRunning()) {
+        this.rbThumbLoadingPaused = false;
+        return;
+      }
       if (!this.rbThumbLoadingPaused) {
         this.rbThumbLoadingPaused = true;
       }

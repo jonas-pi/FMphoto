@@ -23,7 +23,10 @@ import {
   GalleryGridSlideTouchSession,
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../GalleryGridSlideTouch';
-import { gallerySlideAutoScrollOnListDidScroll } from '../GallerySlideAutoScroll';
+import {
+  gallerySlideAutoScrollIsRunning,
+  gallerySlideAutoScrollOnListDidScroll
+} from '../GallerySlideAutoScroll';
 import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
@@ -368,6 +371,15 @@ export struct GalleryAlbumSearchModeView {
     }
     if (scrollState !== ScrollState.Idle) {
       this.clearSearchThumbResumeTimer();
+      /*
+       * 普通拖动/甩动继续暂停图片请求，避免解码与 List 布局争抢 UI；
+       * 贴边划选则必须持续加载。此时 LazyForEach 只挂载可视区和 cachedCount，
+       * 实际请求仍由全局缩略图并发队列限流，不会随 onDidScroll 逐帧发请求。
+       */
+      if (gallerySlideAutoScrollIsRunning()) {
+        this.searchThumbLoadingPaused = false;
+        return;
+      }
       this.searchThumbLoadingPaused = true;
       this.recycleThumbCache(false);
       return;

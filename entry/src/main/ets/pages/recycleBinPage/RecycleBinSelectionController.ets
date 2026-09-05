@@ -1,10 +1,18 @@
 import { UIContext } from '@kit.ArkUI';
 import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_SOURCE_RECYCLE_ID } from '../../album/GallerySharedTransition';
+import {
+  isVideoItem,
+  nasUrl,
+  pickThumb,
+  prefetchThumbPix
+} from '../../album/GalleryAlbumCommon';
 import { playGalleryEnterSelectionHaptic } from '../../album/GallerySelectionHaptic';
 import {
+  gallerySlideAutoScrollDirection,
   gallerySlideAutoScrollStop,
   gallerySlideAutoScrollUpdate,
+  gallerySlideAutoScrollVelocityVpS,
   GallerySlideAutoScrollSession
 } from '../../album/GallerySlideAutoScroll';
 import {
@@ -45,6 +53,33 @@ const rbSlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlide
 /** GridSlide 命中诊断节流状态；仅记录索引变化或每 120ms 的持续跟手心跳。 */
 let rbSlideTraceLastMs: number = 0;
 let rbSlideTraceLastFlat: number = -99999;
+let rbSlideLastPrefetchFlat: number = -1;
+let rbSlideLastPrefetchDirection: number = 0;
+
+/** 回收站条目已全量在内存，只需按滚动方向提前填充 PixelMap 缓存。 */
+function recycleBinPrefetchSlideDirection(host: RecycleBinSelectionHost, anchorFlat: number): void {
+  const direction = gallerySlideAutoScrollDirection();
+  const columns = Math.max(1, host.columnsPerRow);
+  if (direction === 0 || anchorFlat < 0 ||
+    (direction === rbSlideLastPrefetchDirection &&
+      Math.abs(anchorFlat - rbSlideLastPrefetchFlat) < columns)) {
+    return;
+  }
+  rbSlideLastPrefetchFlat = anchorFlat;
+  rbSlideLastPrefetchDirection = direction;
+  const rows = Math.max(2, Math.min(6, Math.ceil(Math.abs(gallerySlideAutoScrollVelocityVpS()) / 200)));
+  const count = columns * rows;
+  for (let step = 1; step <= count; step++) {
+    const index = anchorFlat + direction * step;
+    if (index < 0 || index >= host.items.length) {
+      break;
+    }
+    const item = recycleBinToGalleryItem(host.items[index]);
+    if (item !== undefined) {
+      prefetchThumbPix(nasUrl(host.baseUrl, pickThumb(item)), isVideoItem(item));
+    }
+  }
+}
 
 export function recycleBinDomId(flatIdx: number): string {
   return `rbcell_${flatIdx}`;
@@ -558,6 +593,7 @@ function recycleBinFollowSlidePointer(
   if (hitFlat >= 0) {
     host.rbSlideLastEndFlat = hitFlat;
   }
+  recycleBinPrefetchSlideDirection(host, host.rbSlideLastEndFlat);
   recycleBinApplySlideRowRangeSelection(host, host.rbSlideLastEndFlat);
   const now = Date.now();
   if (host.rbSlideLastEndFlat !== rbSlideTraceLastFlat || now - rbSlideTraceLastMs >= 120) {
