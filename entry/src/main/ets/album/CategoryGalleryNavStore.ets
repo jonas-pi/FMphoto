@@ -7,6 +7,7 @@ import { router, UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './GalleryAlbumEntityData';
 import { fnClampGridColumns } from '../common/FnWindowBreakpoint';
+import { GalleryAlbumNavigation, GALLERY_ALBUM_ROUTE_CATEGORY } from './GalleryAlbumNavigation';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
@@ -160,6 +161,9 @@ export class CategoryGalleryNavStore {
       CategoryGalleryNavStore.columnsPerRow
     );
     CategoryGalleryNavStore.version++;
+    if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_CATEGORY)) {
+      return Promise.resolve(true);
+    }
     return uiCtx.getRouter().pushUrl(
       { url: 'pages/CategoryGallery' },
       router.RouterMode.Standard

@@ -3,6 +3,20 @@ import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import { DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { retargetGalleryAfterEndpointSwitch } from '../album/GalleryEndpointRetarget';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
+import {
+  GalleryAlbumNavigation,
+  GALLERY_ALBUM_NAV_DEPTH_KEY,
+  GALLERY_ALBUM_ROUTE_CATEGORY,
+  GALLERY_ALBUM_ROUTE_MAP,
+  GALLERY_ALBUM_ROUTE_PERSON,
+  GALLERY_ALBUM_ROUTE_RECYCLE,
+  GALLERY_ALBUM_ROUTE_SMART
+} from '../album/GalleryAlbumNavigation';
+import { CategoryGalleryNavigationContent } from './CategoryGallery';
+import { MapPageNavigationContent } from './MapPage';
+import { PersonPageNavigationContent } from './PersonPage';
+import { RecycleBinPageNavigationContent } from './RecycleBinPage';
+import { SmartCategoryPageNavigationContent } from './SmartCategoryPage';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
 import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
@@ -946,6 +960,7 @@ struct Home {
   @State private sessionOk: boolean = false;
   /** 非一级页（搜索/相册子页/全屏加载）时隐藏底栏；我的页始终显示。 */
   @State private hideHomeBottomDock: boolean = false;
+  @StorageProp(GALLERY_ALBUM_NAV_DEPTH_KEY) private albumNavDepth: number = 0;
   @State private bottomNavIndex: number = 0;
   @State private gallerySurfaceIndex: number = 0;
   @State private galleryViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
@@ -969,8 +984,12 @@ struct Home {
   private gallerySelectionDockDeleteAction: () => void = () => {};
   private gallerySelectionDockTimer: number = -1;
   private bottomTabsController: HdsTabsController | null = null;
+  private albumNavPathStack: NavPathStack = new NavPathStack();
 
   onBackPress(): boolean {
+    if (GalleryAlbumNavigation.handleBack()) {
+      return true;
+    }
     if (this.bottomNavIndex !== 2 && galleryTryConsumeAlbumBack()) {
       return true;
     }
@@ -1053,7 +1072,7 @@ struct Home {
     if (this.bottomNavIndex === 2) {
       return true;
     }
-    return !this.hideHomeBottomDock;
+    return this.albumNavDepth <= 0 && !this.hideHomeBottomDock;
   }
 
   private isGalleryShellVisible(): boolean {
@@ -1262,6 +1281,7 @@ struct Home {
   }
 
   aboutToAppear(): void {
+    GalleryAlbumNavigation.attach(this.albumNavPathStack);
     this.isDarkTheme = this.colorMode === 1;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void fnLoadImmersiveLightPreference(ctx);
@@ -1298,7 +1318,30 @@ struct Home {
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.detach(this.albumNavPathStack);
     this.clearGallerySelectionDockTimer();
+  }
+
+  /** 相册子页统一由 NavDestination 承载，使用系统默认弹簧转场。 */
+  @Builder
+  private galleryAlbumDestination(name: string, _param: Object | undefined) {
+    NavDestination() {
+      if (name === GALLERY_ALBUM_ROUTE_CATEGORY) {
+        CategoryGalleryNavigationContent()
+      } else if (name === GALLERY_ALBUM_ROUTE_PERSON) {
+        PersonPageNavigationContent()
+      } else if (name === GALLERY_ALBUM_ROUTE_SMART) {
+        SmartCategoryPageNavigationContent()
+      } else if (name === GALLERY_ALBUM_ROUTE_MAP) {
+        MapPageNavigationContent()
+      } else if (name === GALLERY_ALBUM_ROUTE_RECYCLE) {
+        RecycleBinPageNavigationContent()
+      }
+    }
+    .hideTitleBar(true)
+    .onBackPressed((): boolean => {
+      return GalleryAlbumNavigation.handleBack();
+    })
   }
 
   @Builder
@@ -1691,31 +1734,40 @@ struct Home {
       } else {
         Column() {
           Stack() {
-            GalleryAlbumTab({
-              baseUrl: this.galleryBaseUrl,
-              albumReloadEpoch: this.albumReloadEpoch,
-              pageShowSignal: this.pageShowSignal,
-              topSafeInsetVp: this.systemTopInsetVp,
-              bottomSafeInsetVp: this.systemBottomInsetVp,
-              floatingDockInsetBottomVp: this.dockReserveHeight(),
-              homeSurface: this.currentHomeSurface(),
-              viewGranularity: this.galleryViewGranularity,
-              onViewGranularityChange: (mode: GalleryViewGranularity): void => {
-                this.galleryViewGranularity = mode;
-              },
-              onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
-                this.hideHomeBottomDock = hiddenBottomNav;
-              },
-              onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void, privilegeDownload: boolean): void => {
-                this.onGallerySelectionDockStateChange(active, onDownload, onDelete, privilegeDownload);
-              }
-            })
-              .width('100%')
-              .height('100%')
-              .translate({ x: this.galleryShellTranslateX, y: 0 })
-              .opacity(this.galleryShellOpacity)
-              .enabled(this.bottomNavIndex !== 2)
-              .hitTestBehavior(this.bottomNavIndex !== 2 ? HitTestMode.Default : HitTestMode.None)
+            Navigation(this.albumNavPathStack) {
+              GalleryAlbumTab({
+                baseUrl: this.galleryBaseUrl,
+                albumReloadEpoch: this.albumReloadEpoch,
+                pageShowSignal: this.pageShowSignal,
+                topSafeInsetVp: this.systemTopInsetVp,
+                bottomSafeInsetVp: this.systemBottomInsetVp,
+                floatingDockInsetBottomVp: this.dockReserveHeight(),
+                homeSurface: this.currentHomeSurface(),
+                viewGranularity: this.galleryViewGranularity,
+                onViewGranularityChange: (mode: GalleryViewGranularity): void => {
+                  this.galleryViewGranularity = mode;
+                },
+                onSearchModeVisibilityChange: (hiddenBottomNav: boolean): void => {
+                  this.hideHomeBottomDock = hiddenBottomNav;
+                },
+                onSelectionDockStateChange: (active: boolean, onDownload: () => void, onDelete: () => void,
+                  privilegeDownload: boolean): void => {
+                  this.onGallerySelectionDockStateChange(active, onDownload, onDelete, privilegeDownload);
+                }
+              })
+                .width('100%')
+                .height('100%')
+            }
+            .width('100%')
+            .height('100%')
+            .mode(NavigationMode.Stack)
+            // hideNavBar 会隐藏根内容并造成图库/相册白屏；这里只隐藏 Navigation 自带标题栏。
+            .hideTitleBar(true)
+            .navDestination(this.galleryAlbumDestination)
+            .translate({ x: this.galleryShellTranslateX, y: 0 })
+            .opacity(this.galleryShellOpacity)
+            .enabled(this.bottomNavIndex !== 2)
+            .hitTestBehavior(this.bottomNavIndex !== 2 ? HitTestMode.Default : HitTestMode.None)
 
             MePanel({
               topSafeInsetVp: this.systemTopInsetVp,

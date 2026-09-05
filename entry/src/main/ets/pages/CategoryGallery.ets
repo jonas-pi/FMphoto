@@ -35,6 +35,7 @@ import {
   GALLERY_SHARED_TRANSITION_CURVE
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
+import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../album/GallerySlidePick';
 import {
@@ -146,6 +147,8 @@ const TAG = 'GalleryDiag';
 @Entry
 @Component
 struct CategoryGallery {
+  /** aboutToAppear 时根据 Home 的 NavPathStack 是否挂载自动判断，避免 @Entry 使用 @Prop。 */
+  private albumNavigationMode: boolean = false;
   @State private groups: DayGroup[] = [];
   @State private title: string = '';
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
@@ -211,6 +214,7 @@ struct CategoryGallery {
   private pageCategoryKey: string = '';
   private pageUseCreatedAtGrouping: boolean = false;
   private slideshowRequestSeq: number = 0;
+  private albumBackHandlerToken: number = 0;
 
   private recycleThumbCache(aggressive: boolean = false): void {
     const recentAddedAggressive = this.isRecentAddedStreamingMode() &&
@@ -248,7 +252,9 @@ struct CategoryGallery {
       this.exitCgSelection();
       return;
     }
-    this.getUIContext().getRouter().back();
+    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+      this.getUIContext().getRouter().back();
+    }
   }
 
   private usesMoreMenuMode(): boolean {
@@ -477,14 +483,28 @@ struct CategoryGallery {
   }
 
   aboutToAppear(): void {
+    this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
     this.isDarkTheme = this.colorMode === 1;
     this.cgThumbLoadingPaused = false;
     this.applyNavStoreSnapshot();
     this.startStoreObserver();
     this.scheduleCategoryBackgroundLoad();
+    // 自定义组件进入 NavDestination 时不会触发 Router 页级 onPageShow，需在这里补齐。
+    if (this.albumNavigationMode) {
+      this.applyDeleteSyncIfNeeded();
+      this.syncFromNavStore();
+      this.applySystemBar(true);
+    }
+    if (this.albumNavigationMode) {
+      this.albumBackHandlerToken = GalleryAlbumNavigation.registerBackHandler((): boolean => {
+        this.navigateBack();
+        return true;
+      });
+    }
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     this.slideshowRequestSeq++;
     this.stopStoreObserver();
     this.clearCgThumbResumeTimer();
@@ -1631,4 +1651,10 @@ struct CategoryGallery {
         .translate({ x: -8, y: 0 });
     }
   }
+}
+
+/** Home 的 NavDestination 复用页面内容；独立 Router 入口仍由 @Entry 保留。 */
+@Builder
+export function CategoryGalleryNavigationContent() {
+  CategoryGallery()
 }

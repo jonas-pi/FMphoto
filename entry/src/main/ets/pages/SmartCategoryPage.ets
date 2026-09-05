@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
+import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { SmartCategoryItem } from '../model/FnApiTypes';
 import {
   loadSmartCategoryGalleryItems,
@@ -45,6 +46,7 @@ const SMART_CAT_LOG_TAG: string = 'SmartCategory';
 @Entry
 @Component
 struct SmartCategoryPage {
+  private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   @State private loading: boolean = false;
@@ -63,25 +65,28 @@ struct SmartCategoryPage {
   private persistSeq: number = 0;
   private coverEnrichGen: number = 0;
   private countEnrichGen: number = 0;
+  private albumBackHandlerToken: number = 0;
 
   onBackPress(): boolean {
-    if (this.addSheetVisible) {
-      this.addSheetVisible = false;
-      return true;
-    }
-    if (this.editing) {
-      this.editing = false;
-      return true;
-    }
-    this.getUIContext().getRouter().back();
+    this.handleBack();
     return true;
   }
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
-    const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
-    if (rp !== undefined && rp['baseUrl'] !== undefined) {
-      this.baseUrl = String(rp['baseUrl']);
+    this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
+    this.opening = false;
+    this.countVersion = SmartCategoryCountStore.version;
+    if (this.albumNavigationMode) {
+      this.albumBackHandlerToken = GalleryAlbumNavigation.registerBackHandler((): boolean => {
+        this.handleBack();
+        return true;
+      });
+    } else {
+      const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
+      if (rp !== undefined && rp['baseUrl'] !== undefined) {
+        this.baseUrl = String(rp['baseUrl']);
+      }
     }
     void this.loadData();
   }
@@ -92,6 +97,7 @@ struct SmartCategoryPage {
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     void SmartCategoryCountStore.flush();
     if (!this.opening) {
       this.countEnrichGen++;
@@ -291,7 +297,9 @@ struct SmartCategoryPage {
       this.editing = false;
       return;
     }
-    this.getUIContext().getRouter().back();
+    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+      this.getUIContext().getRouter().back();
+    }
   }
 
   private toggleEditing(): void {
@@ -795,4 +803,9 @@ struct SmartCategoryPage {
       .opacity(0)
       .translate({ x: -8, y: 0 });
   }
+}
+
+@Builder
+export function SmartCategoryPageNavigationContent() {
+  SmartCategoryPage()
 }

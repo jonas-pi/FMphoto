@@ -55,6 +55,7 @@ import {
   GALLERY_SHARED_TRANSITION_CURVE
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
+import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { gallerySlideAutoScrollOnListDidScroll } from '../album/GallerySlideAutoScroll';
 import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../album/GallerySlidePick';
 import {
@@ -123,6 +124,7 @@ interface RecycleBinRowBlock {
 @Entry
 @Component
 struct RecycleBinPage {
+  private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private loading: boolean = false;
   @State private restoring: boolean = false;
@@ -164,6 +166,7 @@ struct RecycleBinPage {
   private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
   /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
   private listScroller: Scroller = new Scroller();
+  private albumBackHandlerToken: number = 0;
 
   onBackPress(): boolean {
     if (this.choiceSheetVisible) {
@@ -178,8 +181,14 @@ struct RecycleBinPage {
       this.exitSelection();
       return true;
     }
-    this.getUIContext().getRouter().back();
+    this.navigateBack();
     return true;
+  }
+
+  private navigateBack(): void {
+    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+      this.getUIContext().getRouter().back();
+    }
   }
 
   private vpToPx(value: number): number {
@@ -209,18 +218,27 @@ struct RecycleBinPage {
   }
 
   aboutToAppear(): void {
+    this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
     this.columnsPerRow = fnAdaptiveGridColumns(RECYCLE_BIN_BASE_COLUMNS, this.windowWidthBp);
     this.applySystemBar(true);
     this.rbThumbLoadingPaused = false;
     this.rebuildRowBlocks();
-    const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
-    if (rp !== undefined && rp['baseUrl'] !== undefined) {
-      this.baseUrl = String(rp['baseUrl']);
+    if (this.albumNavigationMode) {
+      this.albumBackHandlerToken = GalleryAlbumNavigation.registerBackHandler((): boolean => {
+        this.onBackPress();
+        return true;
+      });
+    } else {
+      const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
+      if (rp !== undefined && rp['baseUrl'] !== undefined) {
+        this.baseUrl = String(rp['baseUrl']);
+      }
     }
     void this.loadAll();
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     this.clearRbThumbResumeTimer();
     recycleBinEndSlideSelectGesture(this.asSelectionHost());
     galleryGridResetTouchTracking(this.slideTouch);
@@ -743,7 +761,7 @@ struct RecycleBinPage {
           this.exitSelection();
         },
         onBack: (): void => {
-          this.getUIContext().getRouter().back();
+          this.onBackPress();
         },
         onToggleMode: (): void => {
           this.toggleToolbarMode();
@@ -987,4 +1005,9 @@ struct RecycleBinPage {
         .translate({ x: -8, y: 0 });
     }
   }
+}
+
+@Builder
+export function RecycleBinPageNavigationContent() {
+  RecycleBinPage()
 }

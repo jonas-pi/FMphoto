@@ -3,6 +3,7 @@ import { AiPersonItem } from '../model/FnApiTypes';
 import { openPersonAlbumById } from '../album/PersonAlbumOpenHelper';
 import { GalleryNetworkThumb, nasUrl, trimThumbPixCacheForList } from '../album/GalleryAlbumCommon';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
+import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { FnListDataSource } from '../common/FnListDataSource';
 import { personCacheIdentity, personFace as resolvePersonFace } from '../album/GalleryAlbumEntityData';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
@@ -16,6 +17,7 @@ import {
 @Entry
 @Component
 struct PersonPage {
+  private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   @State private loading: boolean = false;
@@ -23,23 +25,39 @@ struct PersonPage {
   @State private error: string = '';
   @State private items: AiPersonItem[] = [];
   private readonly personSource: FnListDataSource<AiPersonItem> = new FnListDataSource<AiPersonItem>();
+  private albumBackHandlerToken: number = 0;
 
   onBackPress(): boolean {
-    this.getUIContext().getRouter().back();
+    this.navigateBack();
     return true;
+  }
+
+  private navigateBack(): void {
+    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+      this.getUIContext().getRouter().back();
+    }
   }
 
   aboutToAppear(): void {
     // 返回到该页时确保遮罩状态被清理
     this.opening = false;
-    const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
-    if (rp !== undefined && rp['baseUrl'] !== undefined) {
-      this.baseUrl = String(rp['baseUrl']);
+    this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
+    if (this.albumNavigationMode) {
+      this.albumBackHandlerToken = GalleryAlbumNavigation.registerBackHandler((): boolean => {
+        this.navigateBack();
+        return true;
+      });
+    } else {
+      const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
+      if (rp !== undefined && rp['baseUrl'] !== undefined) {
+        this.baseUrl = String(rp['baseUrl']);
+      }
     }
     void this.loadData();
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     trimThumbPixCacheForList(this.items.length, false);
   }
 
@@ -150,7 +168,10 @@ struct PersonPage {
   build() {
     Column() {
       FnTopBar({
-        title: '人物'
+        title: '人物',
+        onBack: (): void => {
+          this.navigateBack();
+        }
       })
 
       if (this.loading) {
@@ -222,4 +243,9 @@ struct PersonPage {
       .opacity(0)
       .translate({ x: -8, y: 0 });
   }
+}
+
+@Builder
+export function PersonPageNavigationContent() {
+  PersonPage()
 }

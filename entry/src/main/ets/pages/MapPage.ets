@@ -1,5 +1,6 @@
 import { webview } from '@kit.ArkWeb';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
+import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryNetworkThumb, nasUrl, pickThumb } from '../album/GalleryAlbumCommon';
 import { FnFullLoadingMask, FnInlineLoading, FnTopBar } from '../common/FnUiCommon';
@@ -248,6 +249,7 @@ function escapeRegexLiteral(value: string): string {
 @Entry
 @Component
 struct MapPage {
+  private albumNavigationMode: boolean = false;
   private webController: webview.WebviewController = new webview.WebviewController();
 
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
@@ -279,29 +281,44 @@ struct MapPage {
   private webToken: string = '';
   private webLongToken: string = '';
   private webSecretB64: string = '';
+  private albumBackHandlerToken: number = 0;
 
   onBackPress(): boolean {
+    this.handleBack();
+    return true;
+  }
+
+  private handleBack(): void {
     if (this.shouldShowOfficialWebMap()) {
       try {
         if (this.webController.accessBackward()) {
           this.webController.backward();
-          return true;
+          return;
         }
       } catch (_e) {
       }
     }
-    this.getUIContext().getRouter().back();
-    return true;
+    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+      this.getUIContext().getRouter().back();
+    }
   }
 
   aboutToAppear(): void {
+    this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
     try {
       webview.WebviewController.setWebDebuggingAccess(true);
     } catch (_e) {
     }
-    const rp = this.getUIContext().getRouter().getParams() as Record<string, Object | string> | undefined;
-    if (rp !== undefined && rp['baseUrl'] !== undefined) {
-      this.baseUrl = String(rp['baseUrl']);
+    if (this.albumNavigationMode) {
+      this.albumBackHandlerToken = GalleryAlbumNavigation.registerBackHandler((): boolean => {
+        this.handleBack();
+        return true;
+      });
+    } else {
+      const rp = this.getUIContext().getRouter().getParams() as Record<string, Object | string> | undefined;
+      if (rp !== undefined && rp['baseUrl'] !== undefined) {
+        this.baseUrl = String(rp['baseUrl']);
+      }
     }
     if (!this.prepareOfficialWebMap()) {
       void this.loadInitialData();
@@ -309,6 +326,7 @@ struct MapPage {
   }
 
   aboutToDisappear(): void {
+    GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -1311,7 +1329,10 @@ struct MapPage {
     Column() {
       FnTopBar({
         title: '地图',
-        subtitle: this.mapPageSubtitle()
+        subtitle: this.mapPageSubtitle(),
+        onBack: (): void => {
+          this.handleBack();
+        }
       })
 
       Stack({ alignContent: Alignment.Center }) {
@@ -1341,4 +1362,9 @@ struct MapPage {
       .opacity(0)
       .translate({ x: -8, y: 0 });
   }
+}
+
+@Builder
+export function MapPageNavigationContent() {
+  MapPage()
 }

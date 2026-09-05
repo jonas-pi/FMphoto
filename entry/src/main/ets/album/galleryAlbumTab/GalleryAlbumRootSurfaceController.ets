@@ -7,6 +7,14 @@ import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { galleryAlbumTopBarChromeHeightVp } from './GalleryAlbumTopBar';
 import { loadMediaCategories as requestMediaCategories, loadPersons as requestPersons, loadSmartCategories as requestSmartCategories } from './GalleryAlbumModeLoaders';
 import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
+import {
+  GalleryAlbumNavigation,
+  GalleryAlbumNavigationParam,
+  GALLERY_ALBUM_ROUTE_MAP,
+  GALLERY_ALBUM_ROUTE_PERSON,
+  GALLERY_ALBUM_ROUTE_RECYCLE,
+  GALLERY_ALBUM_ROUTE_SMART
+} from '../GalleryAlbumNavigation';
 
 export interface GalleryAlbumRootSurfaceHost {
   getUIContext(): UIContext;
@@ -143,6 +151,10 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
 }
 
 export function galleryAlbumOpenRecycleBinPage(host: GalleryAlbumRootSurfaceHost): void {
+  const param: GalleryAlbumNavigationParam = { baseUrl: host.baseUrl };
+  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_RECYCLE, param)) {
+    return;
+  }
   host.getUIContext().getRouter().pushUrl({
     url: 'pages/RecycleBinPage',
     params: { baseUrl: host.baseUrl }
@@ -152,6 +164,10 @@ export function galleryAlbumOpenRecycleBinPage(host: GalleryAlbumRootSurfaceHost
 }
 
 export function galleryAlbumOpenPersonPage(host: GalleryAlbumRootSurfaceHost): void {
+  const param: GalleryAlbumNavigationParam = { baseUrl: host.baseUrl };
+  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_PERSON, param)) {
+    return;
+  }
   host.getUIContext().getRouter().pushUrl({
     url: 'pages/PersonPage',
     params: { baseUrl: host.baseUrl }
@@ -161,6 +177,10 @@ export function galleryAlbumOpenPersonPage(host: GalleryAlbumRootSurfaceHost): v
 }
 
 export function galleryAlbumOpenMapPage(host: GalleryAlbumRootSurfaceHost): void {
+  const param: GalleryAlbumNavigationParam = { baseUrl: host.baseUrl };
+  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_MAP, param)) {
+    return;
+  }
   host.getUIContext().getRouter().pushUrl({
     url: 'pages/MapPage',
     params: { baseUrl: host.baseUrl }
@@ -170,6 +190,10 @@ export function galleryAlbumOpenMapPage(host: GalleryAlbumRootSurfaceHost): void
 }
 
 export function galleryAlbumOpenSmartCategoryPage(host: GalleryAlbumRootSurfaceHost): void {
+  const param: GalleryAlbumNavigationParam = { baseUrl: host.baseUrl };
+  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_SMART, param)) {
+    return;
+  }
   host.getUIContext().getRouter().pushUrl({
     url: 'pages/SmartCategoryPage',
     params: { baseUrl: host.baseUrl }
