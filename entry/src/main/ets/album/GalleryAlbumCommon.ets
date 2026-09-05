@@ -224,6 +224,8 @@ async function decodeFullPixFromTempFile(
   }
   let fd = -1;
   try {
+    // 下载接口返回成功后仍可能被并发清理；先确认临时文件存在，避免直接 open 产生 file_api -2。
+    await fileIo.access(tempPath);
     const f = await fileIo.open(tempPath, fileIo.OpenMode.READ_ONLY);
     fd = f.fd;
     const src = image.createImageSource(fd);
@@ -1153,6 +1155,8 @@ export async function loadThumbPix(
       }
     } catch (_e) {
     }
+    // 缓存内容无法解码时立即丢弃，防止每次进入视区都重复触发 JPEG 解码失败。
+    GalleryThumbDiskCache.discard(key);
   }
 
   // 等待并发槽位，避免大量同时下载解码导致卡顿
@@ -1180,9 +1184,6 @@ export async function loadThumbPix(
     if (genAtStart !== GalleryThumbDiskCache.generation) {
       return undefined;
     }
-    if (persistKind !== THUMB_DISK_NONE) {
-      GalleryThumbDiskCache.put(key, buf, persistKind);
-    }
     // 网格缩略图用 SDR 解码，显著低于 HDR/F16 的内存占用，降低大图库滑动崩溃风险；预览大图仍走 loadFullPix(HDR)
     const pix = await decodeThumbPixFromBuffer(buf, autoCropBlack);
     if (pix === undefined) {
@@ -1192,6 +1193,10 @@ export async function loadThumbPix(
     if (genAtStart !== GalleryThumbDiskCache.generation) {
       releaseThumbPix(pix);
       return undefined;
+    }
+    // 只有确认数据可以解码后才落盘，避免把截断响应或错误页持久化为损坏 JPEG。
+    if (persistKind !== THUMB_DISK_NONE) {
+      GalleryThumbDiskCache.put(key, buf, persistKind);
     }
     rememberDecodedThumbPix(key, pix, cacheIdentity, cacheRank);
     return pix;

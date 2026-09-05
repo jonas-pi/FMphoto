@@ -174,6 +174,22 @@ export class GalleryThumbDiskCache {
     );
   }
 
+  /**
+   * 解码失败时同时删除两类缓存中的同名文件。
+   * 文件删除是尽力而为的异步清理；下一次加载会直接回源，不再反复解码同一损坏文件。
+   */
+  static discard(cacheKey: string): void {
+    if (cacheKey.length <= 0 || GalleryThumbDiskCache.cacheDir.length <= 0) {
+      return;
+    }
+    void GalleryThumbDiskCache.unlinkQuiet(
+      GalleryThumbDiskCache.filePath(THUMB_DISK_ALBUM_COVER, cacheKey)
+    );
+    void GalleryThumbDiskCache.unlinkQuiet(
+      GalleryThumbDiskCache.filePath(THUMB_DISK_FIRST_SCREEN, cacheKey)
+    );
+  }
+
   static put(cacheKey: string, data: ArrayBuffer, kind: number): void {
     if (kind === THUMB_DISK_NONE || cacheKey.length <= 0 || data.byteLength <= 0) {
       return;
@@ -492,10 +508,13 @@ export class GalleryThumbDiskCache {
       item.name = name;
       item.path = path;
       try {
+        // listFile 与并发淘汰之间存在竞态；文件已删除时不要继续调用 stat 触发系统 -2 日志。
+        await fileIo.access(path);
         const st = await fileIo.stat(path);
         item.mtimeMs = st.mtime;
       } catch (_e) {
-        item.mtimeMs = 0;
+        // 已被并发删除的条目不应再进入淘汰列表。
+        continue;
       }
       out.push(item);
     }

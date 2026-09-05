@@ -203,6 +203,11 @@ struct CategoryGallery {
   private cgDeferredBackgroundLoadTimer: number = -1;
   private cgDeferredSnapshotApplyTimer: number = -1;
   private cgLastSnapshotApplyAtMs: number = 0;
+  /**
+   * 页面活动标记必须使用普通字段，不能使用 @State。
+   * 它只用于阻止已排入事件队列的定时器/网络回调在组件销毁后继续修改响应式状态。
+   */
+  private cgPageActive: boolean = false;
   /** 与主时间线共用的划选触摸会话，首次长按松手也必须能解锁滚动 */
   private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
   /** 本页打开时的会话 token，仅同步属于自己的 NavStore 更新。 */
@@ -225,7 +230,11 @@ struct CategoryGallery {
   }
 
   onPageHide(): void {
+    this.cgPageActive = false;
     this.stopStoreObserver();
+    this.clearCgThumbResumeTimer();
+    this.clearCgDeferredBackgroundLoadTimer();
+    this.clearCgDeferredSnapshotApplyTimer();
   }
 
   private navigateBack(): void {
@@ -467,6 +476,7 @@ struct CategoryGallery {
   }
 
   onPageShow(): void {
+    this.cgPageActive = true;
     this.startStoreObserver();
     this.applyDeleteSyncIfNeeded();
     this.syncFromNavStore();
@@ -480,6 +490,8 @@ struct CategoryGallery {
   }
 
   aboutToAppear(): void {
+    // 必须先恢复活动状态，后续快照应用和后台加载才允许更新页面。
+    this.cgPageActive = true;
     this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
     this.isDarkTheme = this.colorMode === 1;
     this.cgThumbLoadingPaused = false;
@@ -501,6 +513,8 @@ struct CategoryGallery {
   }
 
   aboutToDisappear(): void {
+    // 必须作为退出清理的第一步，封住已经进入事件队列、无法再由 clearTimeout 取消的回调。
+    this.cgPageActive = false;
     GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     this.slideshowRequestSeq++;
     this.stopStoreObserver();
@@ -511,8 +525,6 @@ struct CategoryGallery {
     galleryGridResetTouchTracking(this.slideTouch);
     galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_CATEGORY);
     this.recycleThumbCache(true);
-    this.listBlocks = [];
-    this.listBlockSource.reloadAll([]);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -688,12 +700,15 @@ struct CategoryGallery {
   }
 
   private scheduleCgDeferredSnapshotApply(delayMs: number = CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS): void {
-    if (!this.isRecentAddedStreamingMode()) {
+    if (!this.cgPageActive || !this.isRecentAddedStreamingMode()) {
       return;
     }
     this.clearCgDeferredSnapshotApplyTimer();
     this.cgDeferredSnapshotApplyTimer = setTimeout((): void => {
       this.cgDeferredSnapshotApplyTimer = -1;
+      if (!this.cgPageActive) {
+        return;
+      }
       if (this.cgSlideGestureActive || this.cgThumbLoadingPaused) {
         this.cgPendingStoreSync = true;
         this.scheduleCgDeferredSnapshotApply(CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS);
@@ -756,6 +771,9 @@ struct CategoryGallery {
   }
 
   private applyNavStoreSnapshot(): void {
+    if (!this.cgPageActive) {
+      return;
+    }
     this.clearCgDeferredSnapshotApplyTimer();
     this.pageSessionToken = CategoryGalleryNavStore.sessionToken;
     this.pageSourceKind = CategoryGalleryNavStore.sourceKind;
@@ -817,7 +835,7 @@ struct CategoryGallery {
   }
 
   private async loadRemainingCategoryItems(token: number): Promise<void> {
-    if (token !== this.pageSessionToken) {
+    if (!this.cgPageActive || token !== this.pageSessionToken) {
       return;
     }
     const categoryKey = this.pageCategoryKey;
@@ -837,7 +855,7 @@ struct CategoryGallery {
     const pageSize = 200;
     let pendingAppendItems: GalleryListItem[] = [];
     const flushPendingAppendItems = (): void => {
-      if (pendingAppendItems.length <= 0) {
+      if (!this.cgPageActive || pendingAppendItems.length <= 0) {
         return;
       }
       CategoryGalleryNavStore.appendItems(token, pendingAppendItems);
@@ -855,7 +873,8 @@ struct CategoryGallery {
       CategoryGalleryNavStore.expectedTotalCount
     );
     try {
-      while (token === CategoryGalleryNavStore.currentToken() &&
+      while (this.cgPageActive &&
+        token === CategoryGalleryNavStore.currentToken() &&
         CategoryGalleryNavStore.hasPrefetchedRemainder()) {
         const batch = CategoryGalleryNavStore.takePrefetchedBatch(CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS);
         if (batch.length <= 0) {
@@ -871,8 +890,11 @@ struct CategoryGallery {
         return;
       }
       let offset = Math.max(CategoryGalleryNavStore.searchFetchedCount, CategoryGalleryNavStore.items.length);
-      while (token === CategoryGalleryNavStore.currentToken()) {
+      while (this.cgPageActive && token === CategoryGalleryNavStore.currentToken()) {
         const res = await client.getCategoryPhotos(categoryKey, pageSize, offset);
+        if (!this.cgPageActive || token !== CategoryGalleryNavStore.currentToken()) {
+          break;
+        }
         if (!res.success || res.data === undefined || res.data.length === 0) {
           hilog.warn(
             DOMAIN,
@@ -912,7 +934,7 @@ struct CategoryGallery {
 
   private ensureCategoryBackgroundLoad(): void {
     const token = this.pageSessionToken;
-    if (token < 0 || token !== CategoryGalleryNavStore.currentToken()) {
+    if (!this.cgPageActive || token < 0 || token !== CategoryGalleryNavStore.currentToken()) {
       return;
     }
     if (CategoryGalleryNavStore.backgroundLoading) {
@@ -926,12 +948,16 @@ struct CategoryGallery {
 
   private scheduleCategoryBackgroundLoad(): void {
     this.clearCgDeferredBackgroundLoadTimer();
-    if (this.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
+    if (!this.cgPageActive ||
+      (this.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder())) {
       return;
     }
     const delayMs = this.pageCategoryKey === 'photo' ? 240 : 96;
     this.cgDeferredBackgroundLoadTimer = setTimeout((): void => {
       this.cgDeferredBackgroundLoadTimer = -1;
+      if (!this.cgPageActive) {
+        return;
+      }
       this.ensureCategoryBackgroundLoad();
     }, delayMs);
   }
@@ -941,17 +967,24 @@ struct CategoryGallery {
       clearInterval(this.cgStorePollTimer);
       this.cgStorePollTimer = -1;
     }
+    this.cgPendingStoreSync = false;
   }
 
   private startStoreObserver(): void {
+    if (!this.cgPageActive) {
+      return;
+    }
     this.stopStoreObserver();
     this.cgStorePollTimer = setInterval((): void => {
+      if (!this.cgPageActive) {
+        return;
+      }
       this.syncFromNavStore();
     }, CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS);
   }
 
   private syncFromNavStore(): void {
-    if (this.pageSessionToken !== CategoryGalleryNavStore.sessionToken) {
+    if (!this.cgPageActive || this.pageSessionToken !== CategoryGalleryNavStore.sessionToken) {
       return;
     }
     if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
@@ -1053,6 +1086,9 @@ struct CategoryGallery {
       : CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS;
     this.cgThumbResumeTimer = setTimeout((): void => {
       this.cgThumbResumeTimer = -1;
+      if (!this.cgPageActive) {
+        return;
+      }
       this.cgThumbLoadingPaused = false;
       this.recycleThumbCache(this.isRecentAddedStreamingMode() && this.flatItems.length > 720);
       if (this.cgPendingStoreSync) {
