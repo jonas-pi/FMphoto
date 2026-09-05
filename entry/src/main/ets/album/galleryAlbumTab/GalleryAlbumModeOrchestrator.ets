@@ -1,7 +1,6 @@
 import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   AiPersonItem,
   GalleryListItem,
@@ -16,14 +15,10 @@ import { CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
 import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
-import { AutoSyncRunnerCallbacks, runAutoSyncInBackground } from '../GalleryAutoSyncSheet';
-import { LocalPhotoEntry } from '../GalleryAutoSyncService';
 import {
-  filterUnsyncedPickerUrisWithIndex,
   fileNameFromPickerUri,
   localPhotoEntryFromPickerUri
 } from '../GalleryAutoSyncPicker';
-import { fnEnsureReadImageVideoGranted } from '../../common/FnMediaPermission';
 import { FnTransferDirection, fnTransferDirectionLabel } from '../../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
 import { GalleryAutoSyncLedger } from '../GalleryAutoSyncLedger';
@@ -51,7 +46,7 @@ import {
 import { GALLERY_UPLOAD_RECHECK_MS } from './GalleryAlbumTabConstants';
 
 /** 相册模式编排宿主 */
-export interface GalleryAlbumModeOrchestratorHost extends AutoSyncRunnerCallbacks {
+export interface GalleryAlbumModeOrchestratorHost {
   getUIContext(): UIContext;
   baseUrl: string;
   modeSwitchOpacity: number;
@@ -85,6 +80,7 @@ export interface GalleryAlbumModeOrchestratorHost extends AutoSyncRunnerCallback
   collectOpening: boolean;
   syncBadgeCount: number;
   lastBootstrapSatisfiedRefreshVersion: number;
+  toast(msg: string): void;
   exitGallerySelection(): void;
   requestBootstrap(debounced: boolean): void;
   bootstrap(showFullBleedSkeleton?: boolean): Promise<void>;
@@ -256,88 +252,6 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
 }
 
 /**
- * 从「更多」菜单启动本地同步。
- * 优先全量扫描（READ_IMAGEVIDEO ACL）；无权限时回退 Picker 选图。
- */
-export function galleryAlbumStartAutoSync(
-  host: GalleryAlbumModeOrchestratorHost,
-  timelineItems: GalleryListItem[]
-): void {
-  if (FnTransferQueueStore.hasRunning()) {
-    host.toast('已有传输任务进行中');
-    return;
-  }
-  host.exitGallerySelection();
-  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  void (async (): Promise<void> => {
-    try {
-      const client = AppSession.getClient();
-      if (client === null) {
-        host.toast('未登录');
-        return;
-      }
-      const granted = await fnEnsureReadImageVideoGranted(ctx);
-      if (granted) {
-        const checkId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, '检查待同步照片', 0);
-        const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
-        FnTransferQueueStore.finish(
-          checkId,
-          true,
-          result.unsynced.length === 0
-            ? `均已同步（跳过 NAS ${result.skippedOnNas} / 账本 ${result.skippedInLedger}）`
-            : `发现 ${result.unsynced.length} 张待同步`
-        );
-        host.syncBadgeCount = result.unsynced.length;
-        if (result.unsynced.length === 0) {
-          host.toast('没有需要同步的照片');
-          return;
-        }
-        galleryAlbumRunAutoSync(host, result.unsynced);
-        return;
-      }
-      host.toast('未获得相册读取权限，请手动选择照片');
-      await galleryAlbumPickAndSync(host);
-    } catch (e) {
-      hilog.warn(0xFF00, 'AutoSync', 'galleryAlbumStartAutoSync failed: %{public}s', String(e));
-      host.toast('同步失败，请稍后重试');
-    }
-  })();
-}
-
-async function galleryAlbumPickAndSync(host: GalleryAlbumModeOrchestratorHost): Promise<void> {
-  const client = AppSession.getClient();
-  if (client === null) {
-    host.toast('未登录');
-    return;
-  }
-  let uris: string[] = [];
-  try {
-    const opt = new photoAccessHelper.PhotoSelectOptions();
-    opt.maxSelectNumber = 500;
-    opt.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_VIDEO_TYPE;
-    const out = await new photoAccessHelper.PhotoViewPicker().select(opt);
-    uris = out.photoUris ?? [];
-  } catch (_e) {
-    return;
-  }
-  if (uris.length === 0) {
-    return;
-  }
-  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  const nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false);
-  const ledger = await GalleryAutoSyncLedger.load(ctx);
-  const toUpload = filterUnsyncedPickerUrisWithIndex(uris, nasIndex, ledger);
-  if (toUpload.length === 0) {
-    host.toast('所选照片已在 NAS 中');
-    return;
-  }
-  if (toUpload.length < uris.length) {
-    host.toast(`已跳过 ${uris.length - toUpload.length} 张已同步照片`);
-  }
-  galleryAlbumUploadUriListInBackground(host, toUpload, FnTransferDirection.SYNC, 'auto-sync', '同步');
-}
-
-/**
  * Bootstrap 后后台检测未同步数量（非阻塞）。
  */
 export function galleryAlbumTriggerAutoSync(
@@ -348,15 +262,6 @@ export function galleryAlbumTriggerAutoSync(
   triggerAutoSyncDetection(ctx, timelineItems, (unsyncedCount: number): void => {
     host.syncBadgeCount = unsyncedCount;
   });
-}
-
-export function galleryAlbumRunAutoSync(
-  host: GalleryAlbumModeOrchestratorHost,
-  photos: LocalPhotoEntry[]
-): void {
-  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  runAutoSyncInBackground(ctx, photos, host);
-  host.syncBadgeCount = GalleryAutoSyncStore.getUnsyncedCount();
 }
 
 function galleryAlbumUploadUriListInBackground(

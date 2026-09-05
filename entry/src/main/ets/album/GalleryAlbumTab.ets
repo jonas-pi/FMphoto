@@ -212,7 +212,6 @@ import {
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
   galleryAlbumStartUpload,
-  galleryAlbumStartAutoSync,
   galleryAlbumTriggerAutoSync,
 } from './galleryAlbumTab/GalleryAlbumModeOrchestrator';
 import {
@@ -2591,17 +2590,15 @@ export struct GalleryAlbumTab {
     galleryAlbumEnterGallerySelectionModeFromToolbar(this.asLifecycleHost());
   }
 
-  private shouldShowAutoSyncInMoreMenu(): boolean {
+  private shouldShowUploadInMoreMenu(): boolean {
     return this.homeSurface === 'photos' && !this.inSearchMode && !this.inCategoryMode &&
       !this.inSmartCategoryMode && !this.inPersonMode;
   }
 
-  private startAutoSyncFromMoreMenu(): void {
+  private startUploadFromMoreMenu(): void {
     this.dismissMoreMenu();
-    galleryAlbumStartAutoSync(
-      this.asModeOrchestratorHost(),
-      galleryAlbumCollectListedTimelineItems(this.sections)
-    );
+    // 与相册页面加号按钮保持完全相同的手动选择上传行为。
+    galleryAlbumStartUpload(this.asModeOrchestratorHost());
   }
 
   private async startGallerySlideshow(config: GallerySlideshowConfig): Promise<void> {
@@ -3325,8 +3322,7 @@ export struct GalleryAlbumTab {
           expanded: this.moreMenuExpanded,
           topSafeInsetVp: this.topSafeInsetVp,
           showMoreMultiselect: this.inSearchMode,
-          showMoreAutoSync: this.shouldShowAutoSyncInMoreMenu(),
-          moreAutoSyncBadgeCount: this.autoSyncBadgeCount,
+          showMoreUpload: this.shouldShowUploadInMoreMenu(),
           onDismiss: (): void => {
             this.dismissMoreMenu();
           },
@@ -3336,8 +3332,8 @@ export struct GalleryAlbumTab {
           onOpenSlideshow: (): void => {
             this.openSlideshowSettings();
           },
-          onStartAutoSync: (): void => {
-            this.startAutoSyncFromMoreMenu();
+          onStartUpload: (): void => {
+            this.startUploadFromMoreMenu();
           }
         })
       }

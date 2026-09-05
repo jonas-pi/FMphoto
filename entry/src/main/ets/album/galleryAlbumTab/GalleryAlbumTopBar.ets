@@ -125,19 +125,11 @@ export struct GalleryAlbumMoreMenuLayer {
   @Prop expanded: boolean = false;
   @Prop topSafeInsetVp: number = 0;
   @Prop showMoreMultiselect: boolean = false;
-  @Prop showMoreAutoSync: boolean = false;
-  @Prop moreAutoSyncBadgeCount: number = 0;
+  @Prop showMoreUpload: boolean = false;
   onDismiss: () => void = () => {};
   onEnterMultiselect: () => void = () => {};
   onOpenSlideshow: () => void = () => {};
-  onStartAutoSync: () => void = () => {};
-
-  private autoSyncMenuLabel(): string {
-    if (this.moreAutoSyncBadgeCount > 0) {
-      return `同步本地照片 (${this.moreAutoSyncBadgeCount})`;
-    }
-    return '同步本地照片';
-  }
+  onStartUpload: () => void = () => {};
 
   @Builder
   private moreMenuBuilder() {
@@ -148,10 +140,12 @@ export struct GalleryAlbumMoreMenuLayer {
             this.onEnterMultiselect();
           })
       }
-      if (this.showMoreAutoSync) {
-        MenuItem({ content: this.autoSyncMenuLabel() })
+      if (this.showMoreUpload) {
+        // 与相册页“+”按钮复用同一手动 Picker 上传流程；
+        // NAS 去重规则明确前，不从更多菜单触发自动扫描与同步。
+        MenuItem({ content: '上传' })
           .onClick((): void => {
-            this.onStartAutoSync();
+            this.onStartUpload();
           })
       }
       MenuItem({ content: '幻灯片' })
