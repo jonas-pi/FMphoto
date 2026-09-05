@@ -3,29 +3,18 @@
  * 多选 / 更多走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
  */
 import {
-  BlurStrategy,
   HdsNavigation,
   HdsNavigationBackButtonItemOptions,
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleBarOptions,
-  HdsNavigationTitleBarStyle,
   HdsNavigationTitleMode,
   IconStyleMode,
   TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
-import {
-  fnHdsImmersiveSystemMaterialEffect,
-  fnHdsChromeButtonBackgroundColor,
-  fnHdsChromeButtonFallbackBackgroundColor,
-  fnHdsChromeButtonForegroundColor,
-  fnHdsNavChromeBackgroundStyle,
-  fnHdsNavChromeScrolledBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts,
-  fnHdsNavTitleBarPadding
-} from '../../common/FnUiCommon';
+import { fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
@@ -118,36 +107,6 @@ export struct CategoryGalleryChrome {
     return [this.menuItem(multiContent)];
   }
 
-  private titleBarOriginalStyle(): HdsNavigationTitleBarStyle {
-    const buttonBg: ResourceColor = this.canUseHds()
-      ? fnHdsChromeButtonBackgroundColor()
-      : fnHdsChromeButtonFallbackBackgroundColor();
-    const buttonFg: ResourceColor = this.canUseHds()
-      ? fnHdsChromeButtonForegroundColor()
-      : $r('app.color.icon_primary');
-    const textFg: ResourceColor = this.canUseHds()
-      ? $r('app.color.text_primary')
-      : $r('app.color.button_secondary_fg');
-    return {
-      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-      contentStyle: {
-        titleStyle: {
-          mainTitleColor: $r('app.color.text_primary'),
-          subTitleColor: $r('app.color.text_secondary')
-        },
-        menuStyle: {
-          backgroundColor: buttonBg,
-          iconColor: buttonFg,
-          textColor: textFg
-        },
-        backIconStyle: {
-          backgroundColor: buttonBg,
-          iconColor: buttonFg
-        }
-      }
-    };
-  }
-
   private backIconOptions(): HdsNavigationBackButtonItemOptions {
     if (this.selectionMode) {
       const cancelIcon: HdsNavigationBackButtonItemOptions = {
@@ -181,35 +140,7 @@ export struct CategoryGalleryChrome {
   }
 
   private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return this.canUseHds() ? {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        // @SuppressWarnings compatibility
-        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-        originalStyle: this.titleBarOriginalStyle(),
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-        }
-      },
-      content: this.titleBarContent()
-    } : {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        originalStyle: this.titleBarOriginalStyle(),
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-        }
-      },
-      content: this.titleBarContent()
-    };
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), true);
   }
 
   @Builder

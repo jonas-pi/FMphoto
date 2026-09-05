@@ -7,10 +7,8 @@ import { scanBarcode, scanCore } from '@kit.ScanKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import {
-  BlurStrategy,
   HdsNavigation,
   HdsNavigationBackButtonItemOptions,
-  HdsNavigationTitleBarStyle,
   HdsNavigationTitleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
@@ -23,14 +21,7 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
-  fnHdsImmersiveSystemMaterialEffect,
-  fnHdsChromeButtonBackgroundColor,
-  fnHdsChromeButtonFallbackBackgroundColor,
-  fnHdsChromeButtonForegroundColor,
-  fnHdsNavChromeBackgroundStyle,
-  fnHdsNavChromeScrolledBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts,
-  fnHdsNavTitleBarPadding,
+  fnHdsMiniTitleBarOptions,
   FnPrimaryButton,
   FnSecondaryButton,
   FN_HDS_NAV_CHROME_HEIGHT_VP
@@ -320,36 +311,6 @@ struct ConfigSyncPage {
     }
   }
 
-  private titleBarOriginalStyle(): HdsNavigationTitleBarStyle {
-    const buttonBg: ResourceColor = this.canUseHds()
-      ? fnHdsChromeButtonBackgroundColor()
-      : fnHdsChromeButtonFallbackBackgroundColor();
-    const buttonFg: ResourceColor = this.canUseHds()
-      ? fnHdsChromeButtonForegroundColor()
-      : $r('app.color.icon_primary');
-    const textFg: ResourceColor = this.canUseHds()
-      ? $r('app.color.text_primary')
-      : $r('app.color.button_secondary_fg');
-    return {
-      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-      contentStyle: {
-        titleStyle: {
-          mainTitleColor: $r('app.color.text_primary'),
-          subTitleColor: $r('app.color.text_secondary')
-        },
-        menuStyle: {
-          backgroundColor: buttonBg,
-          iconColor: buttonFg,
-          textColor: textFg
-        },
-        backIconStyle: {
-          backgroundColor: buttonBg,
-          iconColor: buttonFg
-        }
-      }
-    };
-  }
-
   private titleBarContent(): TitleBarContentOptions {
     const backIcon: HdsNavigationBackButtonItemOptions = {
       label: $r('app.string.cancel'),
@@ -362,6 +323,20 @@ struct ConfigSyncPage {
       title: { mainTitle: $r('app.string.config_sync_title') },
       backIcon: backIcon
     };
+  }
+
+  @Builder
+  private davField(text: string, placeholder: Resource, inputType: InputType, onChange: (value: string) => void) {
+    TextInput({ text: text, placeholder: placeholder })
+      .type(inputType)
+      .enableAutoFill(false)
+      .enableKeyboardOnFocus(false)
+      .onChange(onChange)
+      .width('100%')
+      .height(44)
+      .backgroundColor($r('app.color.page_background'))
+      .borderRadius($r('app.float.radius_small'))
+      .padding({ left: 12, right: 12 })
   }
 
   @Builder
@@ -382,35 +357,7 @@ struct ConfigSyncPage {
         .mode(NavigationMode.Stack)
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(false)
-        .titleBar(this.canUseHds() ? {
-          padding: fnHdsNavTitleBarPadding(),
-          avoidLayoutSafeArea: false,
-          enableComponentSafeArea: false,
-          style: {
-            blurStrategy: BlurStrategy.ADAPTIVE,
-            scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-            // @SuppressWarnings compatibility
-            systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-            originalStyle: this.titleBarOriginalStyle(),
-            scrollEffectStyle: {
-              backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-            }
-          },
-          content: this.titleBarContent()
-        } : {
-          padding: fnHdsNavTitleBarPadding(),
-          avoidLayoutSafeArea: false,
-          enableComponentSafeArea: false,
-          style: {
-            blurStrategy: BlurStrategy.ADAPTIVE,
-            scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-            originalStyle: this.titleBarOriginalStyle(),
-            scrollEffectStyle: {
-              backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-            }
-          },
-          content: this.titleBarContent()
-        })
+        .titleBar(fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false))
       }
       .width('100%')
       .padding({ top: this.systemTopInsetVp })
@@ -460,55 +407,18 @@ struct ConfigSyncPage {
             .width('100%')
 
           Column({ space: 12 }) {
-            TextInput({ text: this.davUrl, placeholder: $r('app.string.config_sync_webdav_url_hint') })
-              .enableAutoFill(false)
-              .enableKeyboardOnFocus(false)
-              .onChange((v: string) => {
-                this.davUrl = v;
-              })
-              .width('100%')
-              .height(44)
-              .backgroundColor($r('app.color.page_background'))
-              .borderRadius($r('app.float.radius_small'))
-              .padding({ left: 12, right: 12 })
-
-            TextInput({ text: this.davUser, placeholder: $r('app.string.config_sync_webdav_user') })
-              .type(InputType.USER_NAME)
-              .enableAutoFill(false)
-              .enableKeyboardOnFocus(false)
-              .onChange((v: string) => {
-                this.davUser = v;
-              })
-              .width('100%')
-              .height(44)
-              .backgroundColor($r('app.color.page_background'))
-              .borderRadius($r('app.float.radius_small'))
-              .padding({ left: 12, right: 12 })
-
-            TextInput({ text: this.davPassword, placeholder: $r('app.string.config_sync_webdav_password') })
-              .type(InputType.Password)
-              .enableAutoFill(false)
-              .enableKeyboardOnFocus(false)
-              .onChange((v: string) => {
-                this.davPassword = v;
-              })
-              .width('100%')
-              .height(44)
-              .backgroundColor($r('app.color.page_background'))
-              .borderRadius($r('app.float.radius_small'))
-              .padding({ left: 12, right: 12 })
-
-            TextInput({ text: this.davPath, placeholder: $r('app.string.config_sync_webdav_path_hint') })
-              .enableAutoFill(false)
-              .enableKeyboardOnFocus(false)
-              .onChange((v: string) => {
-                this.davPath = v;
-              })
-              .width('100%')
-              .height(44)
-              .backgroundColor($r('app.color.page_background'))
-              .borderRadius($r('app.float.radius_small'))
-              .padding({ left: 12, right: 12 })
+            this.davField(this.davUrl, $r('app.string.config_sync_webdav_url_hint'), InputType.Normal, (v: string) => {
+              this.davUrl = v;
+            })
+            this.davField(this.davUser, $r('app.string.config_sync_webdav_user'), InputType.USER_NAME, (v: string) => {
+              this.davUser = v;
+            })
+            this.davField(this.davPassword, $r('app.string.config_sync_webdav_password'), InputType.Password, (v: string) => {
+              this.davPassword = v;
+            })
+            this.davField(this.davPath, $r('app.string.config_sync_webdav_path_hint'), InputType.Normal, (v: string) => {
+              this.davPath = v;
+            })
 
             Row() {
               Text($r('app.string.config_sync_skip_cert'))

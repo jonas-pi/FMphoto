@@ -3,16 +3,21 @@
  * - FnTopBar: 统一子页面顶栏，与图库首页 1-2-1 布局和 36vp 按钮对齐
  * - FnPrimaryButton/FnSecondaryButton: 统一主次按钮样式
  * - FnFullLoadingMask: 统一全屏阻断式加载遮罩
+ * - fnHdsMiniTitleBarOptions: 迷你 HdsNavigation 顶栏组装（列表页 / 设置子页共用）
  */
 
 import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI';
 import {
+  BlurStrategy,
   hdsEffect,
   HdsNavigationBackgroundStyle,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleBarStyle,
   HdsTabsFloatingStyle,
   PaddingOptions,
   ScrollEffectOptions,
-  ScrollEffectType
+  ScrollEffectType,
+  TitleBarContentOptions
 } from '@kit.UIDesignKit';
 // @SuppressWarnings compatibility
 import { hdsMaterial, SystemMaterialParams } from '@kit.UIDesignKit';
@@ -106,6 +111,81 @@ export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
     enableScrollEffect: true,
     // @SuppressWarnings compatibility
     scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
+  };
+}
+
+/** 迷你顶栏 originalStyle：沉浸开则透明按钮背板，关则浅灰玻璃。 */
+export function fnHdsMiniTitleBarOriginalStyle(canUseHds: boolean): HdsNavigationTitleBarStyle {
+  const buttonBg: ResourceColor = canUseHds
+    ? fnHdsChromeButtonBackgroundColor()
+    : fnHdsChromeButtonFallbackBackgroundColor();
+  const buttonFg: ResourceColor = canUseHds
+    ? fnHdsChromeButtonForegroundColor()
+    : $r('app.color.icon_primary');
+  const textFg: ResourceColor = canUseHds
+    ? $r('app.color.text_primary')
+    : $r('app.color.button_secondary_fg');
+  return {
+    backgroundStyle: fnHdsNavChromeBackgroundStyle(),
+    contentStyle: {
+      titleStyle: {
+        mainTitleColor: $r('app.color.text_primary'),
+        subTitleColor: $r('app.color.text_secondary')
+      },
+      menuStyle: {
+        backgroundColor: buttonBg,
+        iconColor: buttonFg,
+        textColor: textFg
+      },
+      backIconStyle: {
+        backgroundColor: buttonBg,
+        iconColor: buttonFg
+      }
+    }
+  };
+}
+
+/**
+ * 迷你顶栏 titleBar 配置。
+ * avoidLayoutSafeArea：整页 HdsNavigation 绑滚动时为 true；顶栏与内容拆开的子页为 false。
+ */
+export function fnHdsMiniTitleBarOptions(
+  canUseHds: boolean,
+  content: TitleBarContentOptions,
+  avoidLayoutSafeArea: boolean
+): HdsNavigationTitleBarOptions {
+  const originalStyle = fnHdsMiniTitleBarOriginalStyle(canUseHds);
+  if (canUseHds) {
+    return {
+      padding: fnHdsNavTitleBarPadding(),
+      avoidLayoutSafeArea: avoidLayoutSafeArea,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+        // @SuppressWarnings compatibility
+        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        originalStyle: originalStyle,
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
+        }
+      },
+      content: content
+    };
+  }
+  return {
+    padding: fnHdsNavTitleBarPadding(),
+    avoidLayoutSafeArea: avoidLayoutSafeArea,
+    enableComponentSafeArea: false,
+    style: {
+      blurStrategy: BlurStrategy.ADAPTIVE,
+      scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
+      originalStyle: originalStyle,
+      scrollEffectStyle: {
+        backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
+      }
+    },
+    content: content
   };
 }
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;

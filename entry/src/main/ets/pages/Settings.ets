@@ -4,12 +4,10 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import {
-  BlurStrategy,
   HdsNavigation,
   HdsNavigationBackButtonItemOptions,
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
-  HdsNavigationTitleBarStyle,
   HdsNavigationTitleMode,
   TextStyleMode,
   TitleBarContentOptions
@@ -24,14 +22,7 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
-  fnHdsImmersiveSystemMaterialEffect,
-  fnHdsChromeButtonBackgroundColor,
-  fnHdsChromeButtonFallbackBackgroundColor,
-  fnHdsChromeButtonForegroundColor,
-  fnHdsNavChromeBackgroundStyle,
-  fnHdsNavChromeScrolledBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts,
-  fnHdsNavTitleBarPadding,
+  fnHdsMiniTitleBarOptions,
   FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../common/FnUiCommon';
 import {
@@ -89,36 +80,6 @@ struct Settings {
     });
   }
 
-  private titleBarOriginalStyle(): HdsNavigationTitleBarStyle {
-    const buttonBg: ResourceColor = this.canUseHds()
-      ? fnHdsChromeButtonBackgroundColor()
-      : fnHdsChromeButtonFallbackBackgroundColor();
-    const buttonFg: ResourceColor = this.canUseHds()
-      ? fnHdsChromeButtonForegroundColor()
-      : $r('app.color.icon_primary');
-    const textFg: ResourceColor = this.canUseHds()
-      ? $r('app.color.text_primary')
-      : $r('app.color.button_secondary_fg');
-    return {
-      backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-      contentStyle: {
-        titleStyle: {
-          mainTitleColor: $r('app.color.text_primary'),
-          subTitleColor: $r('app.color.text_secondary')
-        },
-        menuStyle: {
-          backgroundColor: buttonBg,
-          iconColor: buttonFg,
-          textColor: textFg
-        },
-        backIconStyle: {
-          backgroundColor: buttonBg,
-          iconColor: buttonFg
-        }
-      }
-    };
-  }
-
   private titleBarContent(): TitleBarContentOptions {
     const saveContent: HdsNavigationIconOptions = {
       label: $r('app.string.save'),
@@ -161,35 +122,7 @@ struct Settings {
         .mode(NavigationMode.Stack)
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(false)
-        .titleBar(this.canUseHds() ? {
-          padding: fnHdsNavTitleBarPadding(),
-          avoidLayoutSafeArea: false,
-          enableComponentSafeArea: false,
-          style: {
-            blurStrategy: BlurStrategy.ADAPTIVE,
-            scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-            // @SuppressWarnings compatibility
-            systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-            originalStyle: this.titleBarOriginalStyle(),
-            scrollEffectStyle: {
-              backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-            }
-          },
-          content: this.titleBarContent()
-        } : {
-          padding: fnHdsNavTitleBarPadding(),
-          avoidLayoutSafeArea: false,
-          enableComponentSafeArea: false,
-          style: {
-            blurStrategy: BlurStrategy.ADAPTIVE,
-            scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-            originalStyle: this.titleBarOriginalStyle(),
-            scrollEffectStyle: {
-              backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-            }
-          },
-          content: this.titleBarContent()
-        })
+        .titleBar(fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false))
       }
       .width('100%')
       .padding({ top: this.systemTopInsetVp })

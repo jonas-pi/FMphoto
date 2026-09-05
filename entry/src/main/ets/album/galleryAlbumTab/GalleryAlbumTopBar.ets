@@ -3,7 +3,6 @@
  * 搜索 / 更多 / 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
  */
 import {
-  BlurStrategy,
   HdsNavigation,
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
@@ -14,14 +13,7 @@ import {
 } from '@kit.UIDesignKit';
 import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
 import {
-  fnHdsImmersiveSystemMaterialEffect,
-  fnHdsChromeButtonBackgroundColor,
-  fnHdsChromeButtonFallbackBackgroundColor,
-  fnHdsChromeButtonForegroundColor,
-  fnHdsNavChromeBackgroundStyle,
-  fnHdsNavChromeScrolledBackgroundStyle,
-  fnHdsNavChromeScrollEffectOpts,
-  fnHdsNavTitleBarPadding,
+  fnHdsMiniTitleBarOptions,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 import {
@@ -454,188 +446,38 @@ export struct GalleryAlbumTopBar {
 
   /** 根态 / 子模式 / 多选：官方 titleBar.menu */
   private defaultTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return this.canUseHds() ? {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        // @SuppressWarnings compatibility
-        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-        originalStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: $r('app.color.text_primary'),
-              subTitleColor: $r('app.color.text_secondary')
-            },
-            menuStyle: {
-              backgroundColor: fnHdsChromeButtonBackgroundColor(),
-              iconColor: fnHdsChromeButtonForegroundColor(),
-              textColor: $r('app.color.text_primary')
-            },
-            backIconStyle: {
-              backgroundColor: fnHdsChromeButtonBackgroundColor(),
-              iconColor: fnHdsChromeButtonForegroundColor()
-            }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-        }
-      },
-      content: {
-        title: { mainTitle: this.mainTitleText() },
-        menu: { value: this.buildDefaultMenuItems() },
-        backIcon: {
-          label: '返回',
-          isEnabled: this.shouldShowBack(),
-          action: (): void => {
-            this.leaveSearchOrBack();
-          }
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), {
+      title: { mainTitle: this.mainTitleText() },
+      menu: { value: this.buildDefaultMenuItems() },
+      backIcon: {
+        label: '返回',
+        isEnabled: this.shouldShowBack(),
+        action: (): void => {
+          this.leaveSearchOrBack();
         }
       }
-    } : {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        originalStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: $r('app.color.text_primary'),
-              subTitleColor: $r('app.color.text_secondary')
-            },
-            menuStyle: {
-              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
-              iconColor: $r('app.color.icon_primary'),
-              textColor: $r('app.color.button_secondary_fg')
-            },
-            backIconStyle: {
-              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
-              iconColor: $r('app.color.icon_primary')
-            }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-        }
-      },
-      content: {
-        title: { mainTitle: this.mainTitleText() },
-        menu: { value: this.buildDefaultMenuItems() },
-        backIcon: {
-          label: '返回',
-          isEnabled: this.shouldShowBack(),
-          action: (): void => {
-            this.leaveSearchOrBack();
-          }
-        }
-      }
-    };
+    }, true);
   }
 
   /** 搜索态：bottomBuilder 放输入框，menu 放更多/完成 */
   private searchTitleBarOptions(): HdsNavigationTitleBarOptions {
-    return this.canUseHds() ? {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        // @SuppressWarnings compatibility
-        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-        originalStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: $r('app.color.text_primary'),
-              subTitleColor: $r('app.color.text_secondary')
-            },
-            menuStyle: {
-              backgroundColor: fnHdsChromeButtonBackgroundColor(),
-              iconColor: fnHdsChromeButtonForegroundColor(),
-              textColor: $r('app.color.text_primary')
-            },
-            backIconStyle: {
-              backgroundColor: fnHdsChromeButtonBackgroundColor(),
-              iconColor: fnHdsChromeButtonForegroundColor()
-            }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), {
+      title: { mainTitle: this.mainTitleText() },
+      menu: { value: this.buildSearchMenuItems() },
+      backIcon: {
+        label: '返回',
+        isEnabled: true,
+        action: (): void => {
+          this.leaveSearchOrBack();
         }
       },
-      content: {
-        title: { mainTitle: this.mainTitleText() },
-        menu: { value: this.buildSearchMenuItems() },
-        backIcon: {
-          label: '返回',
-          isEnabled: true,
-          action: (): void => {
-            this.leaveSearchOrBack();
-          }
+      bottomBuilder: {
+        builder: (): void => {
+          this.searchBottomBuilder();
         },
-        bottomBuilder: {
-          builder: (): void => {
-            this.searchBottomBuilder();
-          },
-          height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
-        }
+        height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
       }
-    } : {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
-        originalStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle(),
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: $r('app.color.text_primary'),
-              subTitleColor: $r('app.color.text_secondary')
-            },
-            menuStyle: {
-              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
-              iconColor: $r('app.color.icon_primary'),
-              textColor: $r('app.color.button_secondary_fg')
-            },
-            backIconStyle: {
-              backgroundColor: fnHdsChromeButtonFallbackBackgroundColor(),
-              iconColor: $r('app.color.icon_primary')
-            }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
-        }
-      },
-      content: {
-        title: { mainTitle: this.mainTitleText() },
-        menu: { value: this.buildSearchMenuItems() },
-        backIcon: {
-          label: '返回',
-          isEnabled: true,
-          action: (): void => {
-            this.leaveSearchOrBack();
-          }
-        },
-        bottomBuilder: {
-          builder: (): void => {
-            this.searchBottomBuilder();
-          },
-          height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
-        }
-      }
-    };
+    }, true);
   }
 
   private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
