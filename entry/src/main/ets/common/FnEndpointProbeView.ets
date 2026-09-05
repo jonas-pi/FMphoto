@@ -100,6 +100,10 @@ export struct FnEndpointProbeView {
   /** 半模态内铺满并滚动；登录页卡片内按内容撑开 */
   @Prop fillSheet: boolean = false;
 
+  private hasProbeContent(): boolean {
+    return this.probing || this.selectedLabel.length > 0;
+  }
+
   @Builder
   private selectedBlock() {
     Column({ space: 6 }) {
@@ -170,57 +174,57 @@ export struct FnEndpointProbeView {
   }
 
   build() {
-    Column({ space: 0 }) {
-      if (this.probing) {
-        Text($r('app.string.login_probe_status'))
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
-          .padding({ top: 8, bottom: 4 })
-      }
-
-      if (this.selectedLabel.length > 0) {
-        List() {
-          ListItem() {
-            this.selectedBlock()
-          }
-
-          ForEach(this.otherItems, (item: FnEndpointProbeLineItem) => {
-            ListItem() {
-              this.otherRow(item)
-            }
-          }, (item: FnEndpointProbeLineItem) => item.key)
-        }
+    if (!this.hasProbeContent()) {
+      Column()
         .width('100%')
-        .layoutWeight(this.fillSheet ? 1 : 0)
-        .alignListItem(ListItemAlign.Start)
-        .divider({
-          strokeWidth: 0.5,
-          color: $r('app.color.immersive_panel_border'),
-          startMargin: 0,
-          endMargin: 0
-        })
-        .scrollBar(this.fillSheet ? BarState.Auto : BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .nestedScroll({
-          scrollForward: NestedScrollMode.PARENT_FIRST,
-          scrollBackward: NestedScrollMode.SELF_FIRST
-        })
-      } else if (!this.probing) {
-        Text('暂无探测结果')
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+        .height(0)
+    } else {
+      Column({ space: 0 }) {
+        if (this.probing) {
+          Text($r('app.string.login_probe_status'))
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+            .padding({ top: 8, bottom: 4 })
+        }
+
+        if (this.selectedLabel.length > 0) {
+          List() {
+            ListItem() {
+              this.selectedBlock()
+            }
+
+            ForEach(this.otherItems, (item: FnEndpointProbeLineItem) => {
+              ListItem() {
+                this.otherRow(item)
+              }
+            }, (item: FnEndpointProbeLineItem) => item.key)
+          }
           .width('100%')
-          .padding({ top: 12, bottom: 12 })
+          .layoutWeight(this.fillSheet ? 1 : 0)
+          .alignListItem(ListItemAlign.Start)
+          .divider({
+            strokeWidth: 0.5,
+            color: $r('app.color.immersive_panel_border'),
+            startMargin: 0,
+            endMargin: 0
+          })
+          .scrollBar(this.fillSheet ? BarState.Auto : BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .nestedScroll({
+            scrollForward: NestedScrollMode.PARENT_FIRST,
+            scrollBackward: NestedScrollMode.SELF_FIRST
+          })
+        }
       }
+      .width('100%')
+      .layoutWeight(this.fillSheet ? 1 : 0)
+      .padding(this.useCardStyle ?
+        { left: 12, right: 12, top: 12, bottom: 12 } :
+        { left: 16, right: 16, top: 4, bottom: 12 })
+      .borderRadius(this.useCardStyle ? $r('app.float.radius_medium') : 0)
+      .backgroundColor(this.useCardStyle ? $r('app.color.card_background') : Color.Transparent)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .layoutWeight(this.fillSheet ? 1 : 0)
-    .padding(this.useCardStyle ?
-      { left: 12, right: 12, top: 12, bottom: 12 } :
-      { left: 16, right: 16, top: 4, bottom: 12 })
-    .borderRadius(this.useCardStyle ? $r('app.float.radius_medium') : 0)
-    .backgroundColor(this.useCardStyle ? $r('app.color.card_background') : Color.Transparent)
-    .alignItems(HorizontalAlign.Start)
   }
 }

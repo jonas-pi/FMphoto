@@ -129,6 +129,34 @@
       "value": "#7A5B6675"
     },
     {
+      "name": "login_backdrop_veil",
+      "value": "#99F4F7FB"
+    },
+    {
+      "name": "login_foreground_fill",
+      "value": "#80FFFFFF"
+    },
+    {
+      "name": "login_card_fill",
+      "value": "#59FFFFFF"
+    },
+    {
+      "name": "login_input_fill",
+      "value": "#66FFFFFF"
+    },
+    {
+      "name": "login_input_border",
+      "value": "#4D143D66"
+    },
+    {
+      "name": "login_glow_blue_soft",
+      "value": "#4D6BA3FF"
+    },
+    {
+      "name": "login_glow_blue_core",
+      "value": "#664A8BFF"
+    },
+    {
       "name": "immersive_glow_primary",
       "value": "#66A7C7FF"
     },

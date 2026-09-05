@@ -24,14 +24,20 @@ import { isIpLiteralHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
 import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
-import { FnPrimaryButton } from '../common/FnUiCommon';
+import { FnLoginPrimaryButton, FnLoginSecondaryButton } from '../common/FnLoginButtons';
+import { FnLoginRoutePrefSegment } from '../common/FnLoginRoutePrefSegment';
+import { FnLoginTextField } from '../common/FnLoginTextField';
+import {
+  fnArkUiSupportsSystemMaterial,
+  fnHdsLoginCardSystemMaterial
+} from '../common/FnHdsOverlay';
 import {
   buildEndpointProbeDisplay,
   FnEndpointProbeLineItem,
   FnEndpointProbeView
 } from '../common/FnEndpointProbeView';
-import { fnRestoreAppSystemBars } from '../common/FnSplashTheme';
-import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
+import { fnApplyImmersiveSystemBarColors, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
+import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -41,6 +47,9 @@ import {
 
 const LOGIN_DOMAIN = 0xFF00;
 const LOGIN_TAG = 'Login';
+const LOGIN_CARD_RADIUS_VP: number = 24;
+const LOGIN_FIELD_HEIGHT_VP: number = 44;
+const LOGIN_HERO_ICON_VP: number = 72;
 
 @Entry
 @Component
@@ -77,6 +86,7 @@ struct Login {
   private pendingEndpointPublicIpv6Url: string = '';
   private pendingEndpointRelayUrl: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
 
   onPageShow(): void {
     this.applySystemBarTheme();
@@ -89,16 +99,11 @@ struct Login {
   private applySystemBarTheme(): void {
     try {
       const dark = this.colorMode === 1;
-      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
-      const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win: window.Window): void => {
         fnRestoreAppSystemBars(win);
         fnPublishSystemAvoidArea(win, this.getUIContext());
-        win.setWindowSystemBarProperties({
-          statusBarColor: bg, navigationBarColor: bg,
-          statusBarContentColor: content, navigationBarContentColor: content
-        }).catch((_e: Error): void => {});
+        fnApplyImmersiveSystemBarColors(win, dark);
       }).catch((_e: Error): void => {});
     } catch (_e) {}
   }
@@ -547,240 +552,296 @@ struct Login {
     this.errorText = '';
   }
 
-  private endpointPreferenceLabel(value: string): string {
-    if (value === LOGIN_ENDPOINT_PREF_PUBLIC) {
-      return '公网';
+  @Builder
+  private loginBackdrop() {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.page_background'))
+
+      this.loginAmbientBackground()
+
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.login_backdrop_veil'))
     }
-    if (value === LOGIN_ENDPOINT_PREF_LAN) {
-      return '内网';
-    }
-    if (value === LOGIN_ENDPOINT_PREF_BANDWIDTH) {
-      return '带宽';
-    }
-    if (value === LOGIN_ENDPOINT_PREF_LATENCY) {
-      return '延迟';
-    }
-    return '自动';
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
-  private endpointPreferenceTab(value: string) {
-    Column() {
-      Text(this.endpointPreferenceLabel(value))
-        .fontSize(13)
-        .fontWeight(this.endpointPreference === value ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.endpointPreference === value ? Color.White : $r('app.color.text_secondary'))
+  private loginAmbientBackground() {
+    Stack() {
+      Column()
+        .width(300)
+        .height(300)
+        .borderRadius(150)
+        .backgroundColor($r('app.color.login_glow_blue_core'))
+        .blur(80)
+        .opacity(0.42)
+        .position({ x: '-20%', y: '-8%' })
+
+      Column()
+        .width(240)
+        .height(240)
+        .borderRadius(120)
+        .backgroundColor($r('app.color.login_glow_blue_soft'))
+        .blur(64)
+        .opacity(0.36)
+        .position({ x: '58%', y: '12%' })
+
+      Column()
+        .width(200)
+        .height(200)
+        .borderRadius(100)
+        .backgroundColor($r('app.color.brand_primary'))
+        .blur(56)
+        .opacity(0.22)
+        .position({ x: '10%', y: '62%' })
     }
-    .layoutWeight(1)
-    .height(34)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .borderRadius(17)
-    .backgroundColor(this.endpointPreference === value ? $r('app.color.brand_primary') : Color.Transparent)
-    .enabled(!this.show2faStep && !this.loading)
-    .onClick((): void => {
-      this.endpointPreference = value;
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private loginField(
+    text: string,
+    placeholder: Resource,
+    inputType: InputType,
+    enabled: boolean,
+    onChange: (value: string) => void,
+    maxLength: number = -1
+  ) {
+    FnLoginTextField({
+      seedText: text,
+      placeholder: placeholder,
+      inputType: inputType,
+      fieldEnabled: enabled,
+      maxLength: maxLength,
+      onChange: onChange
     })
   }
 
-  build() {
-    Scroll() {
-      Column({ space: 16 }) {
-        Text($r('app.string.login_title'))
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .width('100%')
-          .margin({ top: 48, bottom: 8 })
+  @Builder
+  private loginFormCardImmersive() {
+    Column() {
+      this.loginFormBody()
+    }
+    .width('100%')
+    .padding(20)
+    .borderRadius(LOGIN_CARD_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.login_input_border'))
+    .backgroundColor(Color.Transparent)
+    .systemMaterial(fnHdsLoginCardSystemMaterial())
+  }
 
-        TextInput({ placeholder: $r('app.string.hint_fnid'), text: this.fnIdInput })
-          .enableAutoFill(false)
-          .enableKeyboardOnFocus(false)
-          .onChange((v: string) => {
-            this.fnIdInput = v;
+  @Builder
+  private loginFormCardFallback() {
+    Column() {
+      this.loginFormBody()
+    }
+    .width('100%')
+    .padding(20)
+    .borderRadius(LOGIN_CARD_RADIUS_VP)
+    .clip(true)
+    .backgroundColor($r('app.color.login_card_fill'))
+    .borderWidth(1)
+    .borderColor($r('app.color.login_input_border'))
+  }
+
+  @Builder
+  private loginFormCard() {
+    if (fnArkUiSupportsSystemMaterial()) {
+      this.loginFormCardImmersive()
+    } else {
+      this.loginFormCardFallback()
+    }
+  }
+
+  @Builder
+  private loginFormBody() {
+    Column({ space: 14 }) {
+      this.loginField(this.fnIdInput, $r('app.string.hint_fnid'), InputType.Normal, !this.show2faStep, (v: string) => {
+        this.fnIdInput = v;
+      })
+
+      Text($r('app.string.fnid_hint'))
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      this.loginField(this.domainInput, $r('app.string.hint_public_domain'), InputType.Normal, !this.show2faStep,
+        (v: string) => {
+          this.domainInput = v;
+        })
+
+      Text($r('app.string.public_domain_hint'))
+        .fontSize(12)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      Row() {
+        Text($r('app.string.use_https'))
+          .fontSize(16)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.useHttps })
+          .selectedColor($r('app.color.brand_primary'))
+          .onChange((on: boolean) => {
+            this.useHttps = on;
           })
-          .width('100%')
-          .height(44)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.radius_medium'))
-          .padding({ left: 12, right: 12 })
-          .enabled(!this.show2faStep)
+      }
+      .width('100%')
+      .height(LOGIN_FIELD_HEIGHT_VP)
+      .padding({ left: 4, right: 4 })
 
-        Text($r('app.string.fnid_hint'))
-          .fontSize(12)
+      FnLoginRoutePrefSegment({
+        selectedValue: this.endpointPreference,
+        disabled: this.show2faStep || this.loading,
+        onValueChange: (value: string): void => {
+          this.endpointPreference = value;
+        }
+      })
+
+      /**
+       * 用户名与密码须同时关闭自动填充，否则系统仍把二者识别为「可接入密码保险箱」的登录表单，
+       * 在 replaceUrl 跳转后易误判为凭据变更而弹「更新密码保险箱」。
+       * 本应用凭据由 SessionPreferences 自行持久化，不依赖系统保险箱填充。
+       */
+      this.loginField(this.username, $r('app.string.hint_username'), InputType.USER_NAME, true, (v: string) => {
+        this.username = v;
+      })
+
+      this.loginField(this.password, $r('app.string.hint_password'), InputType.Password, !this.show2faStep,
+        (v: string) => {
+          this.password = v;
+        })
+
+      if (this.show2faStep) {
+        Text($r('app.string.twofa_step_hint'))
+          .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
 
-        TextInput({ placeholder: $r('app.string.hint_public_domain'), text: this.domainInput })
-          .enableAutoFill(false)
-          .enableKeyboardOnFocus(false)
-          .onChange((v: string) => {
-            this.domainInput = v;
-          })
-          .width('100%')
-          .height(44)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.radius_medium'))
-          .padding({ left: 12, right: 12 })
-          .enabled(!this.show2faStep)
-
-        Text($r('app.string.public_domain_hint'))
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .width('100%')
+        this.loginField(this.otpCode, $r('app.string.hint_otp'), InputType.Number, true, (v: string) => {
+          this.otpCode = v.replace(/[^\d]/g, '').substring(0, 6);
+        }, 6)
 
         Row() {
-          Text($r('app.string.use_https'))
-            .fontSize(16)
-          Blank()
-          Toggle({ type: ToggleType.Switch, isOn: this.useHttps })
+          Text($r('app.string.trust_device'))
+            .fontSize(15)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.trustDevice })
             .selectedColor($r('app.color.brand_primary'))
             .onChange((on: boolean) => {
-              this.useHttps = on;
+              this.trustDevice = on;
             })
         }
         .width('100%')
-
-        Column({ space: 10 }) {
-          Text($r('app.string.login_route_pref_title'))
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-            .textAlign(TextAlign.Center)
-
-          Row({ space: 2 }) {
-            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_AUTO)
-            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_LAN)
-            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_PUBLIC)
-            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_LATENCY)
-            this.endpointPreferenceTab(LOGIN_ENDPOINT_PREF_BANDWIDTH)
-          }
-          .width('100%')
-          .padding(3)
-          .borderRadius(20)
-          .backgroundColor($r('app.color.card_background'))
-        }
-        .width('100%')
-
-        /**
-         * 用户名与密码须同时关闭自动填充，否则系统仍把二者识别为「可接入密码保险箱」的登录表单，
-         * 在 replaceUrl 跳转后易误判为凭据变更而弹「更新密码保险箱」（见官方说明：
-         * https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/passwordvault-save-acc-password ）。
-         * 本应用凭据由 SessionPreferences 自行持久化，不依赖系统保险箱填充。
-         */
-        TextInput({ placeholder: $r('app.string.hint_username'), text: this.username })
-          .type(InputType.USER_NAME)
-          .enableAutoFill(false)
-          .enableKeyboardOnFocus(false)
-          .onChange((v: string) => {
-            this.username = v;
-          })
-          .width('100%')
-          .height(44)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.radius_medium'))
-          .padding({ left: 12, right: 12 })
-
-        TextInput({ placeholder: $r('app.string.hint_password'), text: this.password })
-          .type(InputType.Password)
-          .enableAutoFill(false)
-          .enableKeyboardOnFocus(false)
-          .onChange((v: string) => {
-            this.password = v;
-          })
-          .width('100%')
-          .height(44)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.radius_medium'))
-          .padding({ left: 12, right: 12 })
-          .enabled(!this.show2faStep)
-
-        if (this.show2faStep) {
-          Text($r('app.string.twofa_step_hint'))
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-
-          TextInput({ placeholder: $r('app.string.hint_otp'), text: this.otpCode })
-            .type(InputType.Number)
-            .maxLength(6)
-            .enableAutoFill(false)
-            .enableKeyboardOnFocus(false)
-            .onChange((v: string) => {
-              this.otpCode = v.replace(/[^\d]/g, '').substring(0, 6);
-            })
-            .width('100%')
-            .height(44)
-            .backgroundColor($r('app.color.card_background'))
-            .borderRadius($r('app.float.radius_medium'))
-            .padding({ left: 12, right: 12 })
-
-          Row() {
-            Text($r('app.string.trust_device'))
-              .fontSize(15)
-              .layoutWeight(1)
-            Toggle({ type: ToggleType.Switch, isOn: this.trustDevice })
-              .selectedColor($r('app.color.brand_primary'))
-              .onChange((on: boolean) => {
-                this.trustDevice = on;
-              })
-          }
-          .width('100%')
-        }
-
-        if (this.errorText.length > 0) {
-          Text(this.errorText)
-            .fontColor(Color.Red)
-            .fontSize(14)
-            .width('100%')
-        }
-
-        if (this.probeStatus.length > 0 || this.probeSelectedLabel.length > 0) {
-          FnEndpointProbeView({
-            probing: this.probeStatus.length > 0,
-            hintText: this.probeFnHint,
-            selectedTitle: $r('app.string.login_probe_selected'),
-            selectedLabel: this.probeSelectedLabel,
-            selectedAddress: this.probeSelectedAddress,
-            selectedLatencyText: this.probeSelectedLatencyText,
-            otherItems: this.probeOtherItems,
-            useCardStyle: true
-          })
-        }
-
-        if (this.show2faStep) {
-          FnPrimaryButton({
-            text: this.loading ? $r('app.string.verifying_2fa') : $r('app.string.verify_2fa'),
-            action: (): void => {
-              void this.on2faVerifyClick();
-            }
-          })
-            .width('100%')
-            .enabled(!this.loading)
-
-          Button($r('app.string.back_to_password_step'))
-            .type(ButtonType.Normal)
-            .width('100%')
-            .height(44)
-            .backgroundColor($r('app.color.card_background'))
-            .fontColor($r('app.color.text_secondary'))
-            .enabled(!this.loading)
-            .onClick((): void => {
-              this.onBackFrom2fa();
-            })
-        } else {
-          FnPrimaryButton({
-            text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action'),
-            action: (): void => {
-              void this.onLoginClick();
-            }
-          })
-            .width('100%')
-            .enabled(!this.loading)
-        }
+        .height(LOGIN_FIELD_HEIGHT_VP)
+        .padding({ left: 4, right: 4 })
       }
-      .padding({ left: 24, right: 24, bottom: 32 })
-      .constraintSize({ minHeight: '100%' })
-      .backgroundColor($r('app.color.page_background'))
+
+      if (this.errorText.length > 0) {
+        Text(this.errorText)
+          .fontColor(Color.Red)
+          .fontSize(14)
+          .width('100%')
+      }
+
+      if (this.probeStatus.length > 0 || this.probeSelectedLabel.length > 0) {
+        FnEndpointProbeView({
+          probing: this.probeStatus.length > 0,
+          hintText: this.probeFnHint,
+          selectedTitle: $r('app.string.login_probe_selected'),
+          selectedLabel: this.probeSelectedLabel,
+          selectedAddress: this.probeSelectedAddress,
+          selectedLatencyText: this.probeSelectedLatencyText,
+          otherItems: this.probeOtherItems,
+          useCardStyle: true
+        })
+      }
+
+      if (this.show2faStep) {
+        FnLoginPrimaryButton({
+          text: this.loading ? $r('app.string.verifying_2fa') : $r('app.string.verify_2fa'),
+          buttonEnabled: !this.loading,
+          action: (): void => {
+            void this.on2faVerifyClick();
+          }
+        })
+
+        FnLoginSecondaryButton({
+          text: $r('app.string.back_to_password_step'),
+          buttonEnabled: !this.loading,
+          action: (): void => {
+            this.onBackFrom2fa();
+          }
+        })
+      } else {
+        FnLoginPrimaryButton({
+          text: this.loading ? $r('app.string.logging_in') : $r('app.string.login_action'),
+          buttonEnabled: !this.loading,
+          action: (): void => {
+            void this.onLoginClick();
+          }
+        })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private loginHeroSection() {
+    Column({ space: 10 }) {
+      Image($r('app.media.app_icon'))
+        .width(LOGIN_HERO_ICON_VP)
+        .height(LOGIN_HERO_ICON_VP)
+        .borderRadius(18)
+
+      Text($r('app.string.login_title'))
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+
+      Text($r('app.string.EntryAbility_label'))
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 8, bottom: 8 })
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.loginBackdrop()
+
+      Scroll() {
+        Column({ space: 20 }) {
+          Blank().height(this.systemTopInsetVp + 12)
+
+          this.loginHeroSection()
+
+          this.loginFormCard()
+        }
+        .padding({ left: 20, right: 20, bottom: 24 })
+        .width('100%')
+      }
+      .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
     }
     .width('100%')
     .height('100%')

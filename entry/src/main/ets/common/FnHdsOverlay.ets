@@ -12,9 +12,34 @@ const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
 
 let cachedSheetMaterial: uiMaterial.Material | undefined = undefined;
 let cachedMenuMaterial: uiMaterial.Material | undefined = undefined;
+let cachedInputMaterial: uiMaterial.Material | undefined = undefined;
+let cachedLoginCardMaterial: uiMaterial.Material | undefined = undefined;
+let cachedLoginInputMaterial: uiMaterial.Material | undefined = undefined;
+let cachedLoginSecondaryButtonMaterial: uiMaterial.Material | undefined = undefined;
+let cachedSegmentMaterial: uiMaterial.Material | undefined = undefined;
 
 function fnCanUseArkUiSystemMaterial(): boolean {
   return fnCurrentSdkApiVersion() >= FN_ARKUI_SYSTEM_MATERIAL_API;
+}
+
+export function fnArkUiSupportsSystemMaterial(): boolean {
+  return fnCanUseArkUiSystemMaterial();
+}
+
+function fnCreateInteractiveImmersiveMaterial(
+  style: uiMaterial.ImmersiveStyle,
+  materialColor?: ResourceColor
+): uiMaterial.Material {
+  // @SuppressWarnings compatibility
+  const options: uiMaterial.ImmersiveOptions = {
+    style: style,
+    interactive: true,
+    lightEffect: { color: undefined }
+  };
+  if (materialColor !== undefined) {
+    options.materialColor = materialColor;
+  }
+  return new uiMaterial.ImmersiveMaterial(options);
 }
 
 export function fnHdsSheetBackgroundColor(_canUseHds: boolean): ResourceColor {
@@ -44,6 +69,73 @@ export function fnHdsSheetSystemMaterial(): uiMaterial.Material | undefined {
     });
   }
   return cachedSheetMaterial;
+}
+
+/** 官方沉浸光感文档：搜索框 / 输入框适用 THIN + 按压光效 */
+export function fnHdsInputSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedInputMaterial === undefined) {
+    cachedInputMaterial = fnCreateInteractiveImmersiveMaterial(uiMaterial.ImmersiveStyle.THIN);
+  }
+  return cachedInputMaterial;
+}
+
+/** 登录输入框：THIN + 实色底，官方搜索/输入框推荐样式 */
+export function fnHdsLoginInputSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedLoginInputMaterial === undefined) {
+    cachedLoginInputMaterial = fnCreateInteractiveImmersiveMaterial(
+      uiMaterial.ImmersiveStyle.THIN,
+      $r('app.color.login_input_fill')
+    );
+  }
+  return cachedLoginInputMaterial;
+}
+
+/** 登录表单卡片：ULTRA_THICK + 较高不透明底色 */
+export function fnHdsLoginCardSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedLoginCardMaterial === undefined) {
+    cachedLoginCardMaterial = fnCreateInteractiveImmersiveMaterial(
+      uiMaterial.ImmersiveStyle.ULTRA_THICK,
+      $r('app.color.login_card_fill')
+    );
+  }
+  return cachedLoginCardMaterial;
+}
+
+/** 登录次按钮：与输入框同系实底 + 按压形变/光感 */
+export function fnHdsLoginSecondaryButtonSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedLoginSecondaryButtonMaterial === undefined) {
+    cachedLoginSecondaryButtonMaterial = fnCreateInteractiveImmersiveMaterial(
+      uiMaterial.ImmersiveStyle.REGULAR,
+      $r('app.color.login_input_fill')
+    );
+  }
+  return cachedLoginSecondaryButtonMaterial;
+}
+
+/** 分段选择容器：REGULAR + 与输入框同系实色底 */
+export function fnHdsSegmentSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedSegmentMaterial === undefined) {
+    cachedSegmentMaterial = fnCreateInteractiveImmersiveMaterial(
+      uiMaterial.ImmersiveStyle.REGULAR,
+      $r('app.color.login_input_fill')
+    );
+  }
+  return cachedSegmentMaterial;
 }
 
 /** 官方 bindMenu 示例：THICK */
