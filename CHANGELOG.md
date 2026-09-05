@@ -6,6 +6,31 @@
 
 ---
 
+## [1.3.4-beta.3] - 2026-09-05
+
+在 [1.3.4-beta.2] 上新增配置同步与媒体分类拖拽排序，并优化宫格列数自适应与缩略图加载。
+
+### 新增
+
+- **配置同步**：「我的」页入口；支持二维码导出/扫一扫导入，以及 WebDAV 上传/下载智能分类布局（自定义关键词与排序，不含封面与计数）。
+- **媒体分类拖拽排序**：相册首页媒体分类宫格支持长按拖动重排，顺序按账号持久化到本机 Preferences。
+
+### 改进
+
+- **宫格列数自适应**：引入 `FnWindowBreakpoint`，随窗口宽度动态计算列数；分类、智能分类、人物、回收站等列表统一跟手。
+- **缩略图加载**：优化解码与磁盘缓存策略，减少滚动时重复解码与闪烁。
+- **搜索模式视图**：搜索页布局与列数逻辑对齐主时间线自适应规则。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.3.4-beta.2` 的设备可直接覆盖升级（`versionCode` 1003013）。
+
+---
+
 ## [1.3.4-beta.2] - 2026-09-03
 
 在 [1.3.4] 上增强智能分类与划选手势，并优化预览详情路径展示。
@@ -454,6 +479,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.3.4-beta.3]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4-beta.2...v1.3.4-beta.3
 [1.3.4-beta.2]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4...v1.3.4-beta.2
 [1.3.4]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4-beta.1...v1.3.4
 [1.3.4-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.3.3...v1.3.4-beta.1
