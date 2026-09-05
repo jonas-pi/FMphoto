@@ -32,6 +32,9 @@ const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
 /** 飞牛 WS 登录 did，用于 2FA 信任设备识别（退出登录不清理） */
 const K_WS_DEVICE_ID = 'ws_device_id';
+const K_REMEMBER_PASSWORD = 'remember_password';
+const K_LOGIN_SAVED_USERS = 'login_saved_users';
+const LOGIN_SAVED_USERS_MAX: number = 20;
 
 export interface StoredSession {
   baseUrl: string;
@@ -68,6 +71,12 @@ export interface StoredSession {
   openApiAuthxSecret: string;
 }
 
+export interface LoginSavedUser {
+  username: string;
+  password: string;
+  rememberPassword: boolean;
+}
+
 export interface LoginFormDefaults {
   fnIdInput: string;
   domainInput: string;
@@ -76,6 +85,103 @@ export interface LoginFormDefaults {
   username: string;
   password: string;
   useHttps: boolean;
+  rememberPassword: boolean;
+  savedUsers: LoginSavedUser[];
+}
+
+export function findSavedUser(list: LoginSavedUser[], username: string): LoginSavedUser | null {
+  const name = username.trim();
+  if (name.length === 0) {
+    return null;
+  }
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].username === name) {
+      return list[i];
+    }
+  }
+  return null;
+}
+
+export function upsertSavedUser(
+  list: LoginSavedUser[],
+  username: string,
+  password: string,
+  rememberPassword: boolean
+): LoginSavedUser[] {
+  const name = username.trim();
+  if (name.length === 0) {
+    return list.slice();
+  }
+  const next: LoginSavedUser[] = [];
+  const row: LoginSavedUser = {
+    username: name,
+    password: rememberPassword ? password : '',
+    rememberPassword: rememberPassword
+  };
+  next.push(row);
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].username === name) {
+      continue;
+    }
+    next.push(list[i]);
+    if (next.length >= LOGIN_SAVED_USERS_MAX) {
+      break;
+    }
+  }
+  return next;
+}
+
+function parseSavedUsersJson(raw: string): LoginSavedUser[] {
+  if (raw.length === 0) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as Object[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const out: LoginSavedUser[] = [];
+    const seen: Set<string> = new Set<string>();
+    for (let i = 0; i < parsed.length; i++) {
+      const el = parsed[i] as Object | string | number | boolean | undefined | null;
+      let username = '';
+      let password = '';
+      let remember = false;
+      if (Array.isArray(el)) {
+        const pair = el as Object[];
+        username = pair.length > 0 ? String(pair[0]).trim() : '';
+        password = pair.length > 1 ? String(pair[1]) : '';
+        remember = pair.length > 2 && (String(pair[2]) === '1' || String(pair[2]) === 'true');
+      } else if (typeof el === 'object' && el !== null) {
+        const rec = el as Record<string, Object | string | number | boolean | undefined | null>;
+        username = rec['username'] !== undefined ? String(rec['username']).trim() :
+          (rec['u'] !== undefined ? String(rec['u']).trim() : '');
+        password = rec['password'] !== undefined ? String(rec['password']) :
+          (rec['p'] !== undefined ? String(rec['p']) : '');
+        const r = rec['rememberPassword'] !== undefined ? rec['rememberPassword'] : rec['r'];
+        remember = r === true || r === 1 || r === '1' || r === 'true';
+      }
+      if (username.length === 0 || seen.has(username)) {
+        continue;
+      }
+      seen.add(username);
+      if (!remember) {
+        password = '';
+      }
+      const item: LoginSavedUser = {
+        username: username,
+        password: password,
+        rememberPassword: remember
+      };
+      out.push(item);
+      if (out.length >= LOGIN_SAVED_USERS_MAX) {
+        break;
+      }
+    }
+    return out;
+  } catch (_e) {
+    return [];
+  }
 }
 
 async function openPrefs(ctx: common.UIAbilityContext): Promise<preferences.Preferences> {
@@ -245,6 +351,17 @@ export class SessionPreferences {
     await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, d.loginEndpointPreference.length > 0 ? d.loginEndpointPreference : 'auto');
     await prefsPutString(p, K_ACCOUNT, d.username);
     await prefsPutString(p, K_USE_HTTPS, d.useHttps ? '1' : '0');
+    await prefsPutString(p, K_REMEMBER_PASSWORD, d.rememberPassword ? '1' : '0');
+    const users = upsertSavedUser(d.savedUsers, d.username, d.rememberPassword ? d.password : '', d.rememberPassword);
+    const rows: Record<string, string | boolean>[] = [];
+    for (let i = 0; i < users.length; i++) {
+      const rec: Record<string, string | boolean> = {};
+      rec['username'] = users[i].username;
+      rec['password'] = users[i].rememberPassword ? users[i].password : '';
+      rec['rememberPassword'] = users[i].rememberPassword;
+      rows.push(rec);
+    }
+    await prefsPutString(p, K_LOGIN_SAVED_USERS, JSON.stringify(rows));
     await prefsDelete(p, K_LAST_PASSWORD);
     await prefsFlush(p);
   }
@@ -258,7 +375,9 @@ export class SessionPreferences {
       loginEndpointPreference: s.loginEndpointPreference,
       username: s.account,
       password: '',
-      useHttps: s.useHttps
+      useHttps: s.useHttps,
+      rememberPassword: false,
+      savedUsers: []
     };
   }
 
@@ -289,10 +408,20 @@ export class SessionPreferences {
       }
     }
     const leftoverPassword = await prefsGetString(p, K_LAST_PASSWORD, '');
+    const rememberFlag = (await prefsGetString(p, K_REMEMBER_PASSWORD, '0')) === '1';
+    const username = await prefsGetString(p, K_ACCOUNT, '');
+    let users = parseSavedUsersJson(await prefsGetString(p, K_LOGIN_SAVED_USERS, '[]'));
     if (leftoverPassword.length > 0) {
+      if (rememberFlag && username.length > 0) {
+        users = upsertSavedUser(users, username, leftoverPassword, true);
+        await prefsPutString(p, K_LOGIN_SAVED_USERS, JSON.stringify(users));
+      }
       await prefsDelete(p, K_LAST_PASSWORD);
       await prefsFlush(p);
     }
+    const current = findSavedUser(users, username);
+    const rememberPassword = current !== null ? current.rememberPassword : rememberFlag;
+    const password = rememberPassword && current !== null ? current.password : '';
     const shared = await prefsGetString(p, K_LOGIN_SHARED_INPUT, '');
     const fnIdPref = fnId;
     const lanPref = await prefsGetString(p, K_LAN_INPUT, '');
@@ -302,9 +431,11 @@ export class SessionPreferences {
       domainInput: domain,
       lanInput: lanPref,
       loginEndpointPreference: await prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
-      username: await prefsGetString(p, K_ACCOUNT, ''),
-      password: '',
-      useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1'
+      username: username,
+      password: password,
+      useHttps: (await prefsGetString(p, K_USE_HTTPS, '1')) === '1',
+      rememberPassword: rememberPassword,
+      savedUsers: users
     };
   }
 

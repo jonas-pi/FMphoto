@@ -30,7 +30,7 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
-import { SessionPreferences, LoginFormDefaults } from '../auth/SessionPreferences';
+import { SessionPreferences, LoginFormDefaults, upsertSavedUser } from '../auth/SessionPreferences';
 import {
   smartCategoryCurrentAccount,
   smartCategoryEmptyLayout,
@@ -172,17 +172,43 @@ struct ConfigSyncPage {
 
   private async loadLoginConfig(): Promise<AppSettingsLogin> {
     const ctx = this.hostContext();
+    const d: LoginFormDefaults = await SessionPreferences.loadLoginFormDefaults(ctx);
     const stored = await SessionPreferences.load(ctx);
-    const d: LoginFormDefaults = stored !== null ?
-      SessionPreferences.loginFormFromStored(stored) :
-      await SessionPreferences.loadLoginFormDefaults(ctx);
+    let fnId = d.fnIdInput.trim();
+    let domain = d.domainInput.trim();
+    let lan = d.lanInput.trim();
+    let username = d.username.trim();
+    let endpointPref = d.loginEndpointPreference.trim().length > 0 ? d.loginEndpointPreference : 'auto';
+    let useHttps = d.useHttps;
+    if (stored !== null) {
+      const shared = stored.fnIdInput.trim().length > 0 ? stored.fnIdInput.trim() : stored.lanInput.trim();
+      if (shared.length > 0) {
+        fnId = shared;
+      }
+      if (stored.domainInput.trim().length > 0) {
+        domain = stored.domainInput.trim();
+      }
+      if (stored.lanInput.trim().length > 0) {
+        lan = stored.lanInput.trim();
+      }
+      if (stored.account.trim().length > 0) {
+        username = stored.account.trim();
+      }
+      if (stored.loginEndpointPreference.trim().length > 0) {
+        endpointPref = stored.loginEndpointPreference.trim();
+      }
+      useHttps = stored.useHttps;
+    }
     return {
-      fnId: d.fnIdInput.trim(),
-      domain: d.domainInput.trim(),
-      lan: d.lanInput.trim(),
-      username: d.username.trim(),
-      endpointPref: d.loginEndpointPreference.trim().length > 0 ? d.loginEndpointPreference : 'auto',
-      useHttps: d.useHttps
+      fnId: fnId,
+      domain: domain,
+      lan: lan,
+      username: username,
+      endpointPref: endpointPref,
+      useHttps: useHttps,
+      rememberPassword: d.rememberPassword,
+      password: d.rememberPassword ? d.password : '',
+      users: d.savedUsers
     };
   }
 
@@ -190,14 +216,21 @@ struct ConfigSyncPage {
     if (!loginConfigHasContent(login)) {
       return false;
     }
+    const existing = await SessionPreferences.loadLoginFormDefaults(this.hostContext());
+    let users = login.users.length > 0 ? login.users : existing.savedUsers;
+    if (login.username.length > 0) {
+      users = upsertSavedUser(users, login.username, login.rememberPassword ? login.password : '', login.rememberPassword);
+    }
     await SessionPreferences.saveLoginFormDefaults(this.hostContext(), {
       fnIdInput: login.fnId,
       domainInput: login.domain,
       lanInput: login.lan,
       loginEndpointPreference: login.endpointPref.length > 0 ? login.endpointPref : 'auto',
       username: login.username,
-      password: '',
-      useHttps: login.useHttps
+      password: login.rememberPassword ? login.password : '',
+      useHttps: login.useHttps,
+      rememberPassword: login.rememberPassword,
+      savedUsers: users
     });
     return true;
   }

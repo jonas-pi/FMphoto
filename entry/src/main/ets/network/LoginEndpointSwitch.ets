@@ -494,7 +494,10 @@ export async function switchStoredLoginEndpointToUrl(
     };
   }
   const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
-  const pass = AppSession.getLoginPassword();
+  let pass = AppSession.getLoginPassword();
+  if (pass.length === 0 && defaults.rememberPassword) {
+    pass = defaults.password;
+  }
   const user = stored.account.length > 0 ? stored.account : defaults.username;
   if (pass.length === 0 || user.length === 0) {
     return { ok: false, message: '缺少保存的登录凭据，请重新登录' };

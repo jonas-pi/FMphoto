@@ -19,17 +19,19 @@ import { preferPublicEndpointUrl, resolvePublicDomainToIpBaseUrl } from '../netw
 import { isIpLiteralHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
 import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
-import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
+import { LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
 import { FnLoginPrimaryButton, FnLoginSecondaryButton } from '../common/FnLoginButtons';
 import { FnLoginRoutePrefSegment } from '../common/FnLoginRoutePrefSegment';
 import { FnLoginTextField } from '../common/FnLoginTextField';
 import { fnApplyImmersiveSystemBarColors, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import {
+  FN_LOGIN_PANEL_RADIUS_VP_KEY,
   FN_NAV_INDICATOR_INSET_VP_KEY,
   FN_SYSTEM_BOTTOM_INSET_VP_KEY,
   FN_SYSTEM_TOP_INSET_VP_KEY,
   fnPublishSystemAvoidArea
 } from '../common/FnSystemAvoidArea';
+import { fnHdsBindMenuOptions } from '../common/FnHdsOverlay';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -39,7 +41,7 @@ import {
 
 const LOGIN_DOMAIN = 0xFF00;
 const LOGIN_TAG = 'Login';
-const LOGIN_CARD_RADIUS_VP: number = 24;
+const LOGIN_CARD_RADIUS_FALLBACK_VP: number = 24;
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 const LOGIN_HERO_ICON_VP: number = 72;
 /** 前景卡片相对状态栏 / 小白条的额外留白，上下共用 */
@@ -54,6 +56,12 @@ struct Login {
   @State private username: string = '';
   @State private password: string = '';
   @State private useHttps: boolean = true;
+  @State private rememberPassword: boolean = false;
+  @State private savedUsers: LoginSavedUser[] = [];
+  @State private savedUserNames: string[] = [];
+  @State private userMenuVisible: boolean = false;
+  @State private rememberToggleGen: number = 0;
+  @State private credentialGen: number = 0;
   @State private loading: boolean = false;
   @State private errorText: string = '';
   /** 表单默认值读完再挂输入框，避免 TextInput 先以空 seed 建好后回填不刷新 */
@@ -79,6 +87,7 @@ struct Login {
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
+  @StorageProp(FN_LOGIN_PANEL_RADIUS_VP_KEY) private panelRadiusVp: number = LOGIN_CARD_RADIUS_FALLBACK_VP;
 
   onPageShow(): void {
     this.applySystemBarTheme();
@@ -109,11 +118,56 @@ struct Login {
         this.endpointPreference = d.loginEndpointPreference;
       }
       this.username = d.username;
+      this.password = d.rememberPassword ? d.password : '';
       this.useHttps = d.useHttps;
+      this.rememberPassword = d.rememberPassword;
+      this.savedUsers = d.savedUsers;
+      this.savedUserNames = this.namesFromUsers(d.savedUsers);
       this.formReady = true;
     }).catch((_e: Error) => {
       this.formReady = true;
     });
+  }
+
+  private loginPanelRadiusVp(): number {
+    return this.panelRadiusVp > 0 ? this.panelRadiusVp : LOGIN_CARD_RADIUS_FALLBACK_VP;
+  }
+
+  private namesFromUsers(users: LoginSavedUser[]): string[] {
+    const names: string[] = [];
+    for (let i = 0; i < users.length; i++) {
+      names.push(users[i].username);
+    }
+    return names;
+  }
+
+  private applySavedUserByIndex(idx: number): void {
+    if (idx < 0 || idx >= this.savedUsers.length) {
+      return;
+    }
+    const row = this.savedUsers[idx];
+    this.userMenuVisible = false;
+    try {
+      this.getUIContext().getFocusController().clearFocus();
+    } catch (_e) {
+    }
+    this.username = row.username;
+    this.rememberPassword = row.rememberPassword;
+    this.password = row.rememberPassword ? row.password : '';
+    this.rememberToggleGen = this.rememberToggleGen + 1;
+    this.credentialGen = this.credentialGen + 1;
+  }
+
+  @Builder
+  private savedUserMenuBuilder() {
+    Menu() {
+      ForEach(this.savedUserNames, (name: string, idx: number) => {
+        MenuItem({ content: name })
+          .onClick((): void => {
+            this.applySavedUserByIndex(idx);
+          })
+      }, (name: string, idx: number) => `saved-user-${idx}-${name}`)
+    }
   }
 
   private loginBottomChromeInsetVp(): number {
@@ -210,8 +264,11 @@ struct Login {
         lanInput: stored.lanInput,
         loginEndpointPreference: stored.loginEndpointPreference,
         username: stored.account,
-        password: '',
-        useHttps: stored.useHttps
+        password: this.rememberPassword ? pass : '',
+        useHttps: stored.useHttps,
+        rememberPassword: this.rememberPassword,
+        savedUsers: upsertSavedUser(this.savedUsers, stored.account, this.rememberPassword ? pass : '',
+          this.rememberPassword)
       });
       await SessionPreferences.save(ctx, stored);
     } catch (e) {
@@ -589,7 +646,7 @@ struct Login {
     }
     .width('100%')
     .height('100%')
-    .borderRadius(LOGIN_CARD_RADIUS_VP)
+    .borderRadius(this.loginPanelRadiusVp())
     .clip(true)
     .hitTestBehavior(HitTestMode.None)
   }
@@ -613,6 +670,104 @@ struct Login {
     })
   }
 
+  @Builder
+  private usernamePasswordFieldsEven() {
+    Column({ space: 14 }) {
+      Row({ space: 8 }) {
+        Column() {
+          FnLoginTextField({
+            seedText: this.username,
+            placeholder: $r('app.string.hint_username'),
+            inputType: InputType.USER_NAME,
+            fieldEnabled: true,
+            onChange: (v: string): void => {
+              this.username = v;
+            }
+          })
+        }
+        .layoutWeight(1)
+        this.savedUserMenuButton()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      FnLoginTextField({
+        seedText: this.password,
+        placeholder: $r('app.string.hint_password'),
+        inputType: InputType.Password,
+        fieldEnabled: !this.show2faStep,
+        onChange: (v: string): void => {
+          this.password = v;
+        }
+      })
+    }
+    .width('100%')
+    .id('fn_login_creds_even')
+  }
+
+  @Builder
+  private usernamePasswordFieldsOdd() {
+    Column({ space: 14 }) {
+      Row({ space: 8 }) {
+        Column() {
+          FnLoginTextField({
+            seedText: this.username,
+            placeholder: $r('app.string.hint_username'),
+            inputType: InputType.USER_NAME,
+            fieldEnabled: true,
+            onChange: (v: string): void => {
+              this.username = v;
+            }
+          })
+        }
+        .layoutWeight(1)
+        this.savedUserMenuButton()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      FnLoginTextField({
+        seedText: this.password,
+        placeholder: $r('app.string.hint_password'),
+        inputType: InputType.Password,
+        fieldEnabled: !this.show2faStep,
+        onChange: (v: string): void => {
+          this.password = v;
+        }
+      })
+    }
+    .width('100%')
+    .id('fn_login_creds_odd')
+  }
+
+  @Builder
+  private savedUserMenuButton() {
+    if (this.savedUserNames.length > 0) {
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(18)
+          .fontColor([$r('app.color.text_secondary')])
+      }
+      .width(LOGIN_FIELD_HEIGHT_VP)
+      .height(LOGIN_FIELD_HEIGHT_VP)
+      .borderRadius($r('app.float.radius_medium'))
+      .borderWidth(1)
+      .borderColor($r('app.color.login_input_border'))
+      .backgroundColor(Color.Transparent)
+      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
+      .enabled(!this.show2faStep)
+      .bindMenu(this.userMenuVisible, this.savedUserMenuBuilder, fnHdsBindMenuOptions(
+        Placement.BottomRight,
+        (): void => {
+          this.userMenuVisible = false;
+        }
+      ))
+      .onClick((): void => {
+        this.userMenuVisible = true;
+      })
+    }
+  }
+
   private loginPanelBackgroundEffect(): BackgroundEffectOptions {
     return {
       radius: 80,
@@ -631,7 +786,7 @@ struct Login {
       Column()
         .width('100%')
         .height('100%')
-        .borderRadius(LOGIN_CARD_RADIUS_VP)
+        .borderRadius(this.loginPanelRadiusVp())
         .clip(true)
         .backgroundColor(Color.Transparent)
         .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
@@ -639,25 +794,36 @@ struct Login {
         .visualEffect(this.loginForegroundIllumination())
         .hitTestBehavior(HitTestMode.None)
 
-      Scroll() {
-        Column({ space: 12 }) {
-          this.loginHeroSection()
-          this.loginFormBody()
+      Column() {
+        Scroll() {
+          Column({ space: 12 }) {
+            this.loginHeroSection()
+            this.loginFormBody()
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 16, bottom: 8 })
         }
         .width('100%')
-        .padding({ left: 20, right: 20, top: 16, bottom: 20 })
+        .layoutWeight(1)
+        .constraintSize({ minHeight: 0 })
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.None)
+        .nestedScroll({
+          scrollForward: NestedScrollMode.SELF_ONLY,
+          scrollBackward: NestedScrollMode.SELF_ONLY
+        })
+        .align(Alignment.TopStart)
+        .clip(true)
+
+        this.loginFormFooter()
       }
       .width('100%')
       .height('100%')
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.None)
-      .align(Alignment.TopStart)
-      .clip(false)
     }
     .width('100%')
     .height('100%')
-    .borderRadius(LOGIN_CARD_RADIUS_VP)
-    .clip(false)
+    .borderRadius(this.loginPanelRadiusVp())
+    .clip(true)
   }
 
   @Builder
@@ -716,14 +882,36 @@ struct Login {
        * 在 replaceUrl 跳转后易误判为凭据变更而弹「更新密码保险箱」。
        * 本应用凭据由 SessionPreferences 自行持久化，不依赖系统保险箱填充。
        */
-      this.loginField(this.username, $r('app.string.hint_username'), InputType.USER_NAME, true, (v: string) => {
-        this.username = v;
-      })
+      if ((this.credentialGen & 1) === 0) {
+        this.usernamePasswordFieldsEven()
+      } else {
+        this.usernamePasswordFieldsOdd()
+      }
 
-      this.loginField(this.password, $r('app.string.hint_password'), InputType.Password, !this.show2faStep,
-        (v: string) => {
-          this.password = v;
-        })
+      if (!this.show2faStep) {
+        Row() {
+          Text($r('app.string.save_password'))
+            .fontSize(16)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          if ((this.rememberToggleGen & 1) === 0) {
+            Toggle({ type: ToggleType.Switch, isOn: this.rememberPassword })
+              .selectedColor($r('app.color.brand_primary'))
+              .onChange((on: boolean) => {
+                this.rememberPassword = on;
+              })
+          } else {
+            Toggle({ type: ToggleType.Switch, isOn: this.rememberPassword })
+              .selectedColor($r('app.color.brand_primary'))
+              .onChange((on: boolean) => {
+                this.rememberPassword = on;
+              })
+          }
+        }
+        .width('100%')
+        .height(LOGIN_FIELD_HEIGHT_VP)
+        .padding({ left: 4, right: 4 })
+      }
 
       if (this.show2faStep) {
         Text($r('app.string.twofa_step_hint'))
@@ -750,12 +938,24 @@ struct Login {
         .height(LOGIN_FIELD_HEIGHT_VP)
         .padding({ left: 4, right: 4 })
       }
+      }
+      .width('100%')
+      }
+    }
+    .width('100%')
+  }
 
+  @Builder
+  private loginFormFooter() {
+    Column({ space: 10 }) {
       if (this.errorText.length > 0) {
         Text(this.errorText)
           .fontColor(Color.Red)
-          .fontSize(14)
+          .fontSize(13)
+          .lineHeight(18)
           .width('100%')
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
 
       if (this.show2faStep) {
@@ -783,11 +983,9 @@ struct Login {
           }
         })
       }
-      }
-      .width('100%')
-      }
     }
     .width('100%')
+    .padding({ left: 20, right: 20, top: 4, bottom: 20 })
   }
 
   @Builder

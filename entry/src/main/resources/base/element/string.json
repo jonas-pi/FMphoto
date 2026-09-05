@@ -45,6 +45,10 @@
       "value": "用户名"
     },
     {
+      "name": "save_password",
+      "value": "保存密码"
+    },
+    {
       "name": "hint_password",
       "value": "密码"
     },

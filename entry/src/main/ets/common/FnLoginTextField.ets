@@ -1,6 +1,6 @@
 /**
  * 登录页输入框：透明底 + 组件模糊。
- * 回填用单向 text + 换代 key，避免 $$ 双向绑定把异步 seed 吃掉。
+ * TextInput.text 只在创建时生效，后续要用本地 @State + $$；父级改 seedText 时靠 @Watch 写进本地态。
  */
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 
@@ -13,18 +13,15 @@ export struct FnLoginTextField {
   @Prop maxLength: number = -1;
   onChange: (value: string) => void = (_: string) => {};
   @State private inputText: string = '';
-  @State private bindGen: number = 0;
 
   aboutToAppear(): void {
     this.inputText = this.seedText;
   }
 
   private onSeedTextChanged(): void {
-    if (this.inputText === this.seedText) {
-      return;
+    if (this.inputText !== this.seedText) {
+      this.inputText = this.seedText;
     }
-    this.inputText = this.seedText;
-    this.bindGen = this.bindGen + 1;
   }
 
   private fieldGlassEffect(): BackgroundEffectOptions {
@@ -38,7 +35,7 @@ export struct FnLoginTextField {
   }
 
   build() {
-    TextInput({ text: this.inputText, placeholder: this.placeholder })
+    TextInput({ text: $$this.inputText, placeholder: this.placeholder })
       .type(this.inputType)
       .maxLength(this.maxLength >= 0 ? this.maxLength : 512)
       .enableAutoFill(false)
@@ -60,6 +57,5 @@ export struct FnLoginTextField {
       .backgroundColor(Color.Transparent)
       .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
       .backgroundEffect(this.fieldGlassEffect())
-      .key(`login-field-${this.bindGen}`)
   }
 }

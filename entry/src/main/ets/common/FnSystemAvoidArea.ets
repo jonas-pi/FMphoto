@@ -10,6 +10,12 @@ export const FN_NAV_INDICATOR_INSET_VP_KEY: string = 'fnNavIndicatorInsetVp';
 export const FN_SYSTEM_LEFT_INSET_VP_KEY: string = 'fnSystemLeftInsetVp';
 /** 横屏时右侧系统栏/挖孔宽度（vp） */
 export const FN_SYSTEM_RIGHT_INSET_VP_KEY: string = 'fnSystemRightInsetVp';
+/** 物理屏圆角半径（vp），取四角最大值 */
+export const FN_SCREEN_CORNER_RADIUS_VP_KEY: string = 'fnScreenCornerRadiusVp';
+/** 登录前景面板圆角（vp）：与屏幕圆角同心，减去左右留白 */
+export const FN_LOGIN_PANEL_RADIUS_VP_KEY: string = 'fnLoginPanelRadiusVp';
+const LOGIN_PANEL_H_INSET_VP: number = 20;
+const LOGIN_PANEL_RADIUS_FALLBACK_VP: number = 24;
 
 interface FnAvoidAreaChangeInfo {
   type: window.AvoidAreaType;
@@ -76,6 +82,26 @@ function fnPublishTopBottomInsets(uiContext: UIContext | undefined): void {
   );
 }
 
+function fnPublishScreenCornerRadius(uiContext: UIContext | undefined): void {
+  let radiusPx: number = 0;
+  try {
+    const corners = display.getDefaultDisplaySync().getRoundedCorner();
+    for (let i = 0; i < corners.length; i++) {
+      if (corners[i].radius > radiusPx) {
+        radiusPx = corners[i].radius;
+      }
+    }
+  } catch (_e) {
+  }
+  const screenVp = fnPxToVp(radiusPx, uiContext);
+  AppStorage.setOrCreate<number>(FN_SCREEN_CORNER_RADIUS_VP_KEY, Math.max(0, screenVp));
+  let panelVp = LOGIN_PANEL_RADIUS_FALLBACK_VP;
+  if (screenVp > 0) {
+    panelVp = Math.max(8, screenVp - LOGIN_PANEL_H_INSET_VP);
+  }
+  AppStorage.setOrCreate<number>(FN_LOGIN_PANEL_RADIUS_VP_KEY, panelVp);
+}
+
 function fnPublishSideInsets(uiContext: UIContext | undefined): void {
   // 横屏旋转后左右必须允许写回 0，不能沿用竖屏残留
   AppStorage.setOrCreate<number>(
@@ -128,6 +154,7 @@ export function fnPublishSystemAvoidArea(win: window.Window, uiContext: UIContex
     fnApplyNavigationIndicatorAvoidArea(navArea, uiContext);
   } catch (_e) {
   }
+  fnPublishScreenCornerRadius(uiContext);
 }
 
 /** 主窗口创建后订阅避让区变化，主题重绘后也能收回真实 inset。 */
@@ -146,6 +173,12 @@ export function fnBindSystemAvoidArea(win: window.Window): void {
   }
   if (AppStorage.get<number>(FN_SYSTEM_RIGHT_INSET_VP_KEY) === undefined) {
     AppStorage.setOrCreate<number>(FN_SYSTEM_RIGHT_INSET_VP_KEY, 0);
+  }
+  if (AppStorage.get<number>(FN_SCREEN_CORNER_RADIUS_VP_KEY) === undefined) {
+    AppStorage.setOrCreate<number>(FN_SCREEN_CORNER_RADIUS_VP_KEY, 0);
+  }
+  if (AppStorage.get<number>(FN_LOGIN_PANEL_RADIUS_VP_KEY) === undefined) {
+    AppStorage.setOrCreate<number>(FN_LOGIN_PANEL_RADIUS_VP_KEY, LOGIN_PANEL_RADIUS_FALLBACK_VP);
   }
   fnUnbindSystemAvoidArea();
   fnPublishSystemAvoidArea(win);

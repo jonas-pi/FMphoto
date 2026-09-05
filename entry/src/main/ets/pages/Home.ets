@@ -907,8 +907,11 @@ struct MePanel {
                 loginEndpointPreference: fromSnap.loginEndpointPreference.length > 0 ?
                   fromSnap.loginEndpointPreference : existing.loginEndpointPreference,
                 username: fromSnap.username.length > 0 ? fromSnap.username : existing.username,
-                password: '',
-                useHttps: fromSnap.username.length > 0 || fromSnap.fnIdInput.length > 0 ? fromSnap.useHttps : existing.useHttps
+                password: existing.rememberPassword ?
+                  (AppSession.getLoginPassword().length > 0 ? AppSession.getLoginPassword() : existing.password) : '',
+                useHttps: fromSnap.username.length > 0 || fromSnap.fnIdInput.length > 0 ? fromSnap.useHttps : existing.useHttps,
+                rememberPassword: existing.rememberPassword,
+                savedUsers: existing.savedUsers
               });
               await SessionPreferences.clearSession(ctx);
               invalidateAutoSync();

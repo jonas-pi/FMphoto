@@ -49,7 +49,10 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
   // WebSocket 登录会话：用本地保存的密码静默重登（最有效应对「很久未用 token 过期」）
   if (stored.loginViaWebSocket === true) {
     const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
-    const pass = AppSession.getLoginPassword();
+    let pass = AppSession.getLoginPassword();
+    if (pass.length === 0 && defaults.rememberPassword) {
+      pass = defaults.password;
+    }
     const user = stored.account.length > 0 ? stored.account : defaults.username;
     if (pass.length > 0 && user.length > 0) {
       const trusted = CertPolicy.isTrusted(stored.baseUrl);

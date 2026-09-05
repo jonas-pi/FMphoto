@@ -84,6 +84,13 @@ export class AppSession {
     }
     CertPolicy.loadAll(s.trustedHosts);
     AppSession.apply(s);
+    try {
+      const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
+      if (defaults.rememberPassword && defaults.password.length > 0) {
+        AppSession.setLoginPassword(defaults.password);
+      }
+    } catch (_e) {
+    }
     return s;
   }
 

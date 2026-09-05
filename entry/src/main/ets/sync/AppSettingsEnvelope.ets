@@ -7,6 +7,7 @@ import {
   SmartCategoryCustomKeyword,
   SmartCategoryLayout
 } from '../album/SmartCategoryLayoutPreferences';
+import { LoginSavedUser, upsertSavedUser } from '../auth/SessionPreferences';
 
 export const APP_SETTINGS_SCHEMA: number = 1;
 export const APP_SETTINGS_QR_PREFIX: string = 'FMPHOTOCFG1:';
@@ -29,7 +30,7 @@ export interface AppSettingsSmartCategory {
   customOrder: string[];
 }
 
-/** 登录页可同步字段，不含密码。 */
+/** 登录页可同步字段；勾选保存密码时才带口令。 */
 export interface AppSettingsLogin {
   fnId: string;
   domain: string;
@@ -37,6 +38,9 @@ export interface AppSettingsLogin {
   username: string;
   endpointPref: string;
   useHttps: boolean;
+  rememberPassword: boolean;
+  password: string;
+  users: LoginSavedUser[];
 }
 
 export interface AppSettingsEnvelope {
@@ -115,7 +119,10 @@ export function emptyLoginConfig(): AppSettingsLogin {
     lan: '',
     username: '',
     endpointPref: 'auto',
-    useHttps: true
+    useHttps: true,
+    rememberPassword: false,
+    password: '',
+    users: []
   };
 }
 
@@ -138,6 +145,96 @@ function parseBoolFlag(raw: Object | string | number | boolean | undefined | nul
   return fallback;
 }
 
+export function parseLoginUsers(raw: Object | string | number | boolean | undefined | null): LoginSavedUser[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const arr = raw as Object[];
+  const out: LoginSavedUser[] = [];
+  const seen: Set<string> = new Set<string>();
+  for (let i = 0; i < arr.length; i++) {
+    const el = arr[i] as Object | string | number | boolean | undefined | null;
+    let username = '';
+    let password = '';
+    let remember = false;
+    if (Array.isArray(el)) {
+      const pair = el as Object[];
+      username = pair.length > 0 ? asString(pair[0] as Object | string | number | boolean | undefined | null, '').trim() : '';
+      password = pair.length > 1 ? asString(pair[1] as Object | string | number | boolean | undefined | null, '') : '';
+      remember = pair.length > 2 ? parseBoolFlag(pair[2] as Object | string | number | boolean | undefined | null, false) : password.length > 0;
+    } else if (typeof el === 'object' && el !== null) {
+      const rec = el as LooseJson;
+      username = asString(rec['username'] !== undefined ? rec['username'] : rec['u'], '').trim();
+      password = asString(rec['password'] !== undefined ? rec['password'] : rec['p'], '');
+      remember = parseBoolFlag(rec['rememberPassword'] !== undefined ? rec['rememberPassword'] : rec['r'], password.length > 0);
+    }
+    if (username.length === 0 || seen.has(username)) {
+      continue;
+    }
+    seen.add(username);
+    const item: LoginSavedUser = {
+      username: username,
+      password: remember ? password : '',
+      rememberPassword: remember
+    };
+    out.push(item);
+  }
+  return out;
+}
+
+function mergeLoginUsersFromEnvelope(login: AppSettingsLogin, extra: LoginSavedUser[]): AppSettingsLogin {
+  if (extra.length === 0) {
+    return login;
+  }
+  let users = extra;
+  if (login.users.length > 0) {
+    users = login.users;
+    for (let i = 0; i < extra.length; i++) {
+      users = upsertSavedUser(users, extra[i].username, extra[i].password, extra[i].rememberPassword);
+    }
+  }
+  return hydrateLoginFromUsers({
+    fnId: login.fnId,
+    domain: login.domain,
+    lan: login.lan,
+    username: login.username,
+    endpointPref: login.endpointPref,
+    useHttps: login.useHttps,
+    rememberPassword: login.rememberPassword,
+    password: login.password,
+    users: users
+  });
+}
+
+function hydrateLoginFromUsers(login: AppSettingsLogin): AppSettingsLogin {
+  let users = login.users;
+  if (login.username.length > 0) {
+    users = upsertSavedUser(users, login.username, login.rememberPassword ? login.password : '', login.rememberPassword);
+  }
+  let password = login.password;
+  let remember = login.rememberPassword;
+  if (password.length === 0 && login.username.length > 0) {
+    for (let i = 0; i < users.length; i++) {
+      if (users[i].username === login.username && users[i].rememberPassword && users[i].password.length > 0) {
+        password = users[i].password;
+        remember = true;
+        break;
+      }
+    }
+  }
+  return {
+    fnId: login.fnId,
+    domain: login.domain,
+    lan: login.lan,
+    username: login.username,
+    endpointPref: login.endpointPref,
+    useHttps: login.useHttps,
+    rememberPassword: remember,
+    password: remember ? password : '',
+    users: users
+  };
+}
+
 export function parseLoginConfig(raw: Object | string | number | boolean | undefined | null): AppSettingsLogin {
   const empty = emptyLoginConfig();
   if (raw === undefined || raw === null) {
@@ -145,33 +242,45 @@ export function parseLoginConfig(raw: Object | string | number | boolean | undef
   }
   if (Array.isArray(raw)) {
     const arr = raw as Object[];
-    return {
+    const username = arr.length > 3 ? asString(arr[3] as Object | string | number | boolean | undefined | null, '').trim() : '';
+    const remember = arr.length > 6 ? parseBoolFlag(arr[6] as Object | string | number | boolean | undefined | null, false) : false;
+    const password = arr.length > 7 ? asString(arr[7] as Object | string | number | boolean | undefined | null, '') : '';
+    return hydrateLoginFromUsers({
       fnId: arr.length > 0 ? asString(arr[0] as Object | string | number | boolean | undefined | null, '').trim() : '',
       domain: arr.length > 1 ? asString(arr[1] as Object | string | number | boolean | undefined | null, '').trim() : '',
       lan: arr.length > 2 ? asString(arr[2] as Object | string | number | boolean | undefined | null, '').trim() : '',
-      username: arr.length > 3 ? asString(arr[3] as Object | string | number | boolean | undefined | null, '').trim() : '',
+      username: username,
       endpointPref: arr.length > 4 ? asString(arr[4] as Object | string | number | boolean | undefined | null, 'auto').trim() : 'auto',
-      useHttps: arr.length > 5 ? parseBoolFlag(arr[5] as Object | string | number | boolean | undefined | null, true) : true
-    };
+      useHttps: arr.length > 5 ? parseBoolFlag(arr[5] as Object | string | number | boolean | undefined | null, true) : true,
+      rememberPassword: remember,
+      password: remember ? password : '',
+      users: []
+    });
   }
   if (typeof raw !== 'object') {
     return empty;
   }
   const rec = raw as LooseJson;
   const pref = asString(rec['endpointPref'] !== undefined ? rec['endpointPref'] : rec['p'], 'auto').trim();
-  return {
+  const remember = parseBoolFlag(rec['rememberPassword'] !== undefined ? rec['rememberPassword'] : rec['r'], false);
+  const password = asString(rec['password'] !== undefined ? rec['password'] : rec['pw'], '');
+  return hydrateLoginFromUsers({
     fnId: asString(rec['fnId'] !== undefined ? rec['fnId'] : rec['f'], '').trim(),
     domain: asString(rec['domain'] !== undefined ? rec['domain'] : rec['d'], '').trim(),
     lan: asString(rec['lan'] !== undefined ? rec['lan'] : rec['n'], '').trim(),
     username: asString(rec['username'] !== undefined ? rec['username'] : rec['u'], '').trim(),
     endpointPref: pref.length > 0 ? pref : 'auto',
-    useHttps: parseBoolFlag(rec['useHttps'] !== undefined ? rec['useHttps'] : rec['h'], true)
-  };
+    useHttps: parseBoolFlag(rec['useHttps'] !== undefined ? rec['useHttps'] : rec['h'], true),
+    rememberPassword: remember,
+    password: remember ? password : '',
+    users: parseLoginUsers(rec['users'] !== undefined ? rec['users'] : rec['us'])
+  });
 }
 
 export function loginConfigHasContent(login: AppSettingsLogin): boolean {
   return login.fnId.length > 0 || login.domain.length > 0 || login.lan.length > 0 ||
-    login.username.length > 0 || (login.endpointPref.length > 0 && login.endpointPref !== 'auto');
+    login.username.length > 0 || login.users.length > 0 ||
+    (login.endpointPref.length > 0 && login.endpointPref !== 'auto');
 }
 
 function parseCustomItems(raw: Object | string | number | boolean | undefined | null): AppSettingsCustomItem[] {
@@ -306,6 +415,18 @@ export function serializeEnvelope(envelope: AppSettingsEnvelope): string {
   loginRec['username'] = envelope.login.username;
   loginRec['endpointPref'] = envelope.login.endpointPref;
   loginRec['useHttps'] = envelope.login.useHttps;
+  loginRec['rememberPassword'] = envelope.login.rememberPassword;
+  loginRec['password'] = envelope.login.rememberPassword ? envelope.login.password : '';
+  const userObjs: Record<string, string | boolean>[] = [];
+  for (let i = 0; i < envelope.login.users.length; i++) {
+    const u = envelope.login.users[i];
+    const rec: Record<string, string | boolean> = {};
+    rec['username'] = u.username;
+    rec['password'] = u.rememberPassword ? u.password : '';
+    rec['rememberPassword'] = u.rememberPassword;
+    userObjs.push(rec);
+  }
+  loginRec['users'] = userObjs;
   root['login'] = loginRec;
   return JSON.stringify(root);
 }
@@ -365,7 +486,19 @@ function compactRootObject(
   loginRow.push(envelope.login.username);
   loginRow.push(envelope.login.endpointPref);
   loginRow.push(envelope.login.useHttps ? '1' : '0');
+  loginRow.push(envelope.login.rememberPassword ? '1' : '0');
+  loginRow.push(envelope.login.rememberPassword ? envelope.login.password : '');
   root['l'] = loginRow;
+  const userRows: string[][] = [];
+  for (let i = 0; i < envelope.login.users.length; i++) {
+    const u = envelope.login.users[i];
+    const row: string[] = [];
+    row.push(u.username);
+    row.push(u.rememberPassword ? u.password : '');
+    row.push(u.rememberPassword ? '1' : '0');
+    userRows.push(row);
+  }
+  root['lu'] = userRows;
   if (includeOrders) {
     root['so'] = envelope.smartCategory.sceneOrder;
     root['io'] = envelope.smartCategory.infoOrder;
@@ -450,7 +583,10 @@ export function parseEnvelopeJson(rawText: string): ParseEnvelopeResult {
       deviceId: asString(parsed['deviceId'] !== undefined ? parsed['deviceId'] : parsed['d'], '').trim(),
       account: asString(parsed['account'] !== undefined ? parsed['account'] : parsed['a'], '').trim(),
       smartCategory: smart,
-      login: parseLoginConfig(parsed['login'] !== undefined ? parsed['login'] : parsed['l'])
+      login: mergeLoginUsersFromEnvelope(
+        parseLoginConfig(parsed['login'] !== undefined ? parsed['login'] : parsed['l']),
+        parseLoginUsers(parsed['lu'] !== undefined ? parsed['lu'] : parsed['users'])
+      )
     };
     return { ok: true, message: '', envelope: envelope };
   } catch (_e) {
