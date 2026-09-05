@@ -206,11 +206,13 @@ export struct GalleryPreviewSlide {
   private singleFingerPanLastX: number = 0;
   private singleFingerPanLastY: number = 0;
   private verticalPanActive: boolean = false;
+  private verticalOffsetX: number = 0;
   private verticalOffsetY: number = 0;
   private verticalLastOffsetY: number = 0;
   private verticalLastTs: number = 0;
   private verticalVelocityY: number = 0;
   private panScale: number = 1;
+  private panX: number = 0;
   private panY: number = 0;
   private transformUpdater: GalleryPreviewSlideTransformUpdater = new GalleryPreviewSlideTransformUpdater();
   private transformAnimator: AnimatorResult | undefined = undefined;
@@ -1010,11 +1012,13 @@ export struct GalleryPreviewSlide {
   private resetVerticalDragInstant(): void {
     this.cancelTransformAnimator();
     this.verticalPanActive = false;
+    this.verticalOffsetX = 0;
     this.verticalOffsetY = 0;
     this.verticalLastOffsetY = 0;
     this.verticalLastTs = 0;
     this.verticalVelocityY = 0;
     this.panScale = 1;
+    this.panX = 0;
     this.panY = 0;
     this.applyComposedTransform();
     setGalleryPreviewDismissProgress(0);
@@ -1035,8 +1039,10 @@ export struct GalleryPreviewSlide {
       this.viewH,
       this.contentAspect
     );
-    const extraY = this.panY > 0 ? this.panY : 0;
-    this.transformUpdater.apply(this.panScale * fit.scale, extraY + fit.translateY);
+    const dismissing = this.panY > 0;
+    const extraX = dismissing ? this.panX : 0;
+    const extraY = dismissing ? this.panY : 0;
+    this.transformUpdater.apply(this.panScale * fit.scale, extraX, extraY + fit.translateY);
   }
 
   /**
@@ -1062,7 +1068,7 @@ export struct GalleryPreviewSlide {
       // 半模态已落下：继续停在避让位移上，不要把 translate 清 0（会跳回全屏中心）
       if (this.avoidAnimOn) {
         this.avoidAnimY = toY;
-        this.transformUpdater.apply(this.panScale * fit.scale, toY);
+        this.transformUpdater.apply(this.panScale * fit.scale, 0, toY);
         return;
       }
       this.applyComposedTransform();
@@ -1102,7 +1108,7 @@ export struct GalleryPreviewSlide {
   private settleAvoidPropertyAnim(toY: number): void {
     setGalleryPreviewDetailsAvoidAnimating(false);
     this.avoidAnimY = toY;
-    this.transformUpdater.apply(this.panScale, toY);
+    this.transformUpdater.apply(this.panScale, 0, toY);
     if (Math.abs(toY) >= 0.5) {
       this.transformUpdater.lockTranslate(true);
       this.avoidAnimOn = true;
@@ -1125,15 +1131,16 @@ export struct GalleryPreviewSlide {
     // 跟手改走 AttributeUpdater；先对齐再关 avoidAnimOn，避免 translate 换绑闪一帧
     if (this.avoidAnimOn) {
       this.transformUpdater.lockTranslate(false);
-      this.transformUpdater.apply(this.panScale, this.avoidAnimY);
+      this.transformUpdater.apply(this.panScale, 0, this.avoidAnimY);
       this.avoidAnimOn = false;
     }
   }
 
-  private applyVerticalOffset(offsetY: number): void {
+  private applyVerticalOffset(offsetX: number, offsetY: number): void {
     if (!this.allowVerticalGesture) {
       return;
     }
+    this.verticalOffsetX = offsetX;
     this.verticalOffsetY = offsetY;
     this.noteVerticalVelocity(offsetY);
     if (this.detailsShowing) {
@@ -1144,6 +1151,8 @@ export struct GalleryPreviewSlide {
     }
     if (offsetY >= 0) {
       const progress = galleryDismissProgress(offsetY, this.viewH);
+      // 起手已锁定为纵向退出后，横向分量继续跟手，不再交给 Swiper 切图。
+      this.panX = offsetX;
       this.panY = offsetY;
       this.panScale = galleryDismissScale(progress);
       this.applyComposedTransform();
@@ -1151,10 +1160,12 @@ export struct GalleryPreviewSlide {
       return;
     }
     const capped = Math.max(offsetY, -this.viewH * 0.36);
+    this.panX = 0;
     this.panY = capped * GALLERY_DETAILS_DRAG_GAIN;
     this.panScale = 1;
     this.applyComposedTransform();
-    setGalleryPreviewDismissProgress(Math.min(1, -offsetY / (GALLERY_DETAILS_DISTANCE_VP * 1.6)));
+    // 上滑只用于详情页，保持预览背景完全遮挡上一级页面。
+    setGalleryPreviewDismissProgress(0);
   }
 
   private springVerticalHome(): void {
@@ -1162,9 +1173,11 @@ export struct GalleryPreviewSlide {
     this.verticalLastTs = 0;
     this.verticalVelocityY = 0;
     const fromScale = this.panScale;
+    const fromX = this.panX;
     const fromY = this.panY;
     if (Math.abs(fromScale - 1) < 0.002 && Math.abs(fromY) < 0.5) {
       this.panScale = 1;
+      this.panX = 0;
       this.panY = 0;
       this.applyComposedTransform();
       setGalleryPreviewDismissProgress(0);
@@ -1185,23 +1198,29 @@ export struct GalleryPreviewSlide {
       animator.setExpectedFrameRateRange(GALLERY_ANIMATOR_FRAME_RATE);
       animator.onFrame = (t: number): void => {
         this.panScale = fromScale + (1 - fromScale) * t;
+        this.panX = fromX * (1 - t);
         this.panY = fromY * (1 - t);
         this.applyComposedTransform();
+        // 遮罩与图片使用同一弹簧进度回弹，避免松手取消时背景先瞬间恢复。
+        setGalleryPreviewDismissProgress(galleryDismissProgress(this.panY, this.viewH));
       };
       animator.onFinish = (): void => {
         this.transformAnimator = undefined;
         this.panScale = 1;
+        this.panX = 0;
         this.panY = 0;
         this.applyComposedTransform();
+        setGalleryPreviewDismissProgress(0);
       };
       this.transformAnimator = animator;
       animator.play();
     } catch (_e) {
       this.panScale = 1;
+      this.panX = 0;
       this.panY = 0;
       this.applyComposedTransform();
+      setGalleryPreviewDismissProgress(0);
     }
-    setGalleryPreviewDismissProgress(0);
   }
 
   private finishVerticalPan(cancelled: boolean): void {
@@ -1242,11 +1261,11 @@ export struct GalleryPreviewSlide {
       this.verticalVelocityY = 0;
       const startH = gallerySheetHeightFromAvoidY(this.panY);
       this.panScale = 1;
+      this.panX = 0;
       this.panY = 0;
       setGalleryPreviewDetailsSheetHeight(startH);
       this.applyComposedTransform();
-      // 工具栏保持收起，避免 dismissProgress 归零又闪出来
-      setGalleryPreviewDismissProgress(1);
+      setGalleryPreviewDismissProgress(0);
       this.onVerticalDetails();
       this.lockParentForVertical(false);
       return;
@@ -1575,14 +1594,14 @@ export struct GalleryPreviewSlide {
         .priorityGesture(
           PanGesture({
             fingers: 1,
-            direction: PanDirection.Vertical,
+            direction: PanDirection.All,
             distance: GALLERY_VERTICAL_PAN_DISTANCE
           })
             .onActionStart((): void => {
               this.beginVerticalPan();
             })
             .onActionUpdate((event: GestureEvent): void => {
-              this.applyVerticalOffset(event.offsetY);
+              this.applyVerticalOffset(event.offsetX, event.offsetY);
             })
             .onActionEnd((): void => {
               this.finishVerticalPan(false);
@@ -1637,11 +1656,11 @@ export struct GalleryPreviewSlide {
                 return;
               }
               this.beginVerticalPan();
-              this.applyVerticalOffset(event.offsetY);
+              this.applyVerticalOffset(event.offsetX, event.offsetY);
             })
             .onActionUpdate((event: GestureEvent): void => {
               if (!this.isImageZoomed()) {
-                this.applyVerticalOffset(event.offsetY);
+                this.applyVerticalOffset(event.offsetX, event.offsetY);
                 return;
               }
               const now = Date.now();

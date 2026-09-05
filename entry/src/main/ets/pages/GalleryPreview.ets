@@ -148,6 +148,13 @@ struct GalleryPreview {
 
   private itemSource: PreviewItemsDataSource = new PreviewItemsDataSource();
   private previewItems: GalleryListItem[] = [];
+  /** Router 下层可能停止绘制，使用进入预览前的页面快照稳定呈现“浮在图库上方”的效果。 */
+  private sourcePageSnapshot: PixelMap | undefined = undefined;
+  /** 快照中源缩略图的占位矩形（vp），只覆盖快照副本，不触碰真实图库节点。 */
+  private sourcePlaceholderX: number = 0;
+  private sourcePlaceholderY: number = 0;
+  private sourcePlaceholderW: number = 0;
+  private sourcePlaceholderH: number = 0;
   private swiperCtrl: SwiperController = new SwiperController();
   private collectSyncGen: number = 0;
   private slideshowEnabled: boolean = false;
@@ -221,6 +228,12 @@ struct GalleryPreview {
   }
 
   aboutToAppear(): void {
+    this.sourcePageSnapshot = GalleryPreviewNavStore.sourcePageSnapshot;
+    const uiCtx = this.getUIContext();
+    this.sourcePlaceholderX = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderX);
+    this.sourcePlaceholderY = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderY);
+    this.sourcePlaceholderW = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderW);
+    this.sourcePlaceholderH = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderH);
     this.baseUrl = GalleryPreviewNavStore.baseUrl;
     this.previewItems = GalleryPreviewNavStore.items.slice();
     this.itemSource.reloadAll(this.previewItems);
@@ -807,7 +820,8 @@ struct GalleryPreview {
 
   private openDetailsPanel(): void {
     setGalleryPreviewDetailsCover(true);
-    setGalleryPreviewDismissProgress(1);
+    // 详情不是退出手势，遮罩必须保持完全不透明，否则半模态上方会露出图库快照。
+    setGalleryPreviewDismissProgress(0);
     galleryPreviewOpenDetailsPanel(this.asActionsHost());
   }
 
@@ -1045,6 +1059,35 @@ struct GalleryPreview {
 
   build() {
     Stack() {
+      // 上滑详情或静止预览时的稳定底色，确保上一级页面绝不会穿透。
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.pageBg())
+        .hitTestBehavior(HitTestMode.None)
+
+      if (!this.slideshowEnabled && this.sourcePageSnapshot !== undefined) {
+        // 快照始终保留在遮罩下方；下滑只降低遮罩透明度即可稳定露出原页面。
+        // 上滑时 dismissProgress 固定为 0，完全不透明的遮罩会继续盖住快照。
+        Image(this.sourcePageSnapshot)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .syncLoad(true)
+          .draggable(false)
+          .hitTestBehavior(HitTestMode.None)
+
+        if (this.sourcePlaceholderW > 0 && this.sourcePlaceholderH > 0) {
+          // 官方一镜到底：底图中的源位置为空，只保留上层共享元素这一张图片。
+          Column()
+            .width(this.sourcePlaceholderW)
+            .height(this.sourcePlaceholderH)
+            .position({ x: this.sourcePlaceholderX, y: this.sourcePlaceholderY })
+            .backgroundColor(this.pageBg())
+            .hitTestBehavior(HitTestMode.None)
+        }
+      }
+
       GalleryPreviewScrim({
         color: this.pageBg(),
         baseOpacity: this.scrimOpacity
@@ -1323,15 +1366,16 @@ struct GalleryPreviewScrim {
   }
 
   private applyScrimOpacity(): void {
-    this.opacityUpdater.apply(this.baseOpacity * (1 - getGalleryPreviewDismissProgress()));
+    const opacity = this.baseOpacity * (1 - getGalleryPreviewDismissProgress());
+    this.opacityUpdater.apply(opacity);
   }
 
   build() {
     Column()
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.color)
-      .attributeModifier(this.opacityUpdater)
-      .hitTestBehavior(HitTestMode.None)
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.color)
+    .attributeModifier(this.opacityUpdater)
+    .hitTestBehavior(HitTestMode.None)
   }
 }

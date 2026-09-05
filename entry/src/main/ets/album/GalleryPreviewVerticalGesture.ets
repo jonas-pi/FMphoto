@@ -21,8 +21,15 @@ export const GALLERY_VERTICAL_VELOCITY_THRESHOLD: number = 1000;
 export const GALLERY_DISMISS_DISTANCE_RATIO: number = 0.22;
 /** 上滑打开详情的位移阈值（vp） */
 export const GALLERY_DETAILS_DISTANCE_VP: number = 72;
-/** 下滑跟手时最小缩放，接近系统图库收起 */
-export const GALLERY_DISMISS_SCALE_MIN: number = 0.86;
+/**
+ * 下滑跟手的最小缩放。
+ *
+ * 旧值 0.86 最多只缩小 14%，与系统相册差异明显；官方大图下拉示例强调位移与缩放
+ * 同进度跟手，这里允许缩至 0.62，并通过非线性曲线让前半段更快显露下层图库。
+ */
+export const GALLERY_DISMISS_SCALE_MIN: number = 0.62;
+/** 小于 1 的指数增强前段响应，避免必须拖到屏幕底部才看出缩小。 */
+const GALLERY_DISMISS_SCALE_PROGRESS_EXPONENT: number = 0.72;
 /** 上滑预览详情时照片跟手增益，避免先把画面拖出太多 */
 export const GALLERY_DETAILS_DRAG_GAIN: number = 0.28;
 /** 左亮度 / 右音量热区宽度占屏比 */
@@ -216,6 +223,7 @@ export function resetGalleryPreviewDetailsFit(): void {
 /** 跟手 scale/translate 直通渲染层；弹出避让改走 animateTo，不裁切。 */
 export class GalleryPreviewSlideTransformUpdater extends AttributeUpdater<StackAttribute> {
   private lastScale: number = 1;
+  private lastX: number = 0;
   private lastY: number = 0;
   /** 属性动画占用 translate 时不再直通，避免和 animateTo 抢同一属性 */
   private translateLocked: boolean = false;
@@ -231,31 +239,32 @@ export class GalleryPreviewSlideTransformUpdater extends AttributeUpdater<StackA
   initializeModifier(instance: StackAttribute): void {
     instance.scale({ x: this.lastScale, y: this.lastScale, centerX: '50%', centerY: '50%' });
     if (!this.translateLocked) {
-      instance.translate({ x: 0, y: this.lastY });
+      instance.translate({ x: this.lastX, y: this.lastY });
     }
   }
 
   onComponentChanged(component: StackAttribute): void {
     component.scale({ x: this.lastScale, y: this.lastScale, centerX: '50%', centerY: '50%' });
     if (!this.translateLocked) {
-      component.translate({ x: 0, y: this.lastY });
+      component.translate({ x: this.lastX, y: this.lastY });
     }
   }
 
-  apply(scale: number, translateY: number): void {
+  apply(scale: number, translateX: number, translateY: number): void {
     this.lastScale = scale;
     if (!this.translateLocked) {
+      this.lastX = translateX;
       this.lastY = translateY;
     }
     this.attribute?.scale({ x: scale, y: scale, centerX: '50%', centerY: '50%' });
     if (!this.translateLocked) {
-      this.attribute?.translate({ x: 0, y: this.lastY });
+      this.attribute?.translate({ x: this.lastX, y: this.lastY });
     }
   }
 
   reset(): void {
     this.translateLocked = false;
-    this.apply(1, 0);
+    this.apply(1, 0, 0);
   }
 }
 
@@ -308,7 +317,9 @@ export function galleryDismissProgress(offsetY: number, viewH: number): number {
 }
 
 export function galleryDismissScale(progress: number): number {
-  return 1 - progress * (1 - GALLERY_DISMISS_SCALE_MIN);
+  const easedProgress = Math.pow(Math.max(0, Math.min(1, progress)),
+    GALLERY_DISMISS_SCALE_PROGRESS_EXPONENT);
+  return 1 - easedProgress * (1 - GALLERY_DISMISS_SCALE_MIN);
 }
 
 export function galleryShouldDismissPage(offsetY: number, velocityY: number, viewH: number): boolean {

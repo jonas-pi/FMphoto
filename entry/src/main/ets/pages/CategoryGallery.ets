@@ -29,6 +29,7 @@ import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
 import {
   GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  GALLERY_PREVIEW_SOURCE_CATEGORY_ID,
   gallerySharedTransitionId
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
@@ -645,7 +646,13 @@ struct CategoryGallery {
     if (flatIdx < 0 || flatIdx >= this.flatItems.length) {
       return;
     }
-    GalleryPreviewNavStore.openPreview(this.getUIContext(), this.baseUrl, this.flatItems, flatIdx);
+    GalleryPreviewNavStore.openPreview(
+      this.getUIContext(),
+      this.baseUrl,
+      this.flatItems,
+      flatIdx,
+      GALLERY_PREVIEW_SOURCE_CATEGORY_ID
+    );
   }
 
   private onCgCellClick(item: GalleryListItem, flatIdx: number): void {
@@ -1656,6 +1663,7 @@ struct CategoryGallery {
     }
     .width('100%')
     .height('100%')
+    .id(GALLERY_PREVIEW_SOURCE_CATEGORY_ID)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
       this.choiceSheetTitle,

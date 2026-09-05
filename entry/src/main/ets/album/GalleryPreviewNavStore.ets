@@ -11,7 +11,11 @@ import {
   setGalleryPreviewOpening,
   warmupPreviewStartItem
 } from './GalleryPreviewEntryGate';
-import { setGalleryPreviewHeroActive } from './GallerySharedTransition';
+import {
+  GALLERY_PREVIEW_SOURCE_HOME_ID,
+  gallerySharedSourceDomId,
+  setGalleryPreviewHeroActive
+} from './GallerySharedTransition';
 import { GallerySlideshowStreamStore } from './slideshow/GallerySlideshowStreamStore';
 
 const DOMAIN = 0xFF00;
@@ -32,6 +36,13 @@ export class GalleryPreviewNavStore {
   static slideshow: GalleryPreviewSlideshowSession = new GalleryPreviewSlideshowSession();
   /** 与 items 对齐：每条在图库时间轴全局序列中的下标（0-based） */
   static slideshowGlobalIndices: number[] = [];
+  /** 预览下滑时显示的上一级页面快照；预览实例取得引用后由 clear 释放 Store 引用。 */
+  static sourcePageSnapshot: PixelMap | undefined = undefined;
+  /** 被点击缩略图相对快照根节点的像素矩形；预览页据此覆盖空白占位。 */
+  static sourcePlaceholderX: number = 0;
+  static sourcePlaceholderY: number = 0;
+  static sourcePlaceholderW: number = 0;
+  static sourcePlaceholderH: number = 0;
   private static opening: boolean = false;
   private static openGen: number = 0;
   private static lastEnterTs: number = 0;
@@ -42,21 +53,23 @@ export class GalleryPreviewNavStore {
     uiCtx: UIContext,
     baseUrl: string,
     items: GalleryListItem[],
-    startIndex: number
+    startIndex: number,
+    sourceRootId: string = GALLERY_PREVIEW_SOURCE_HOME_ID
   ): void {
     const now = Date.now();
     if (now - GalleryPreviewNavStore.lastEnterTs < GalleryPreviewNavStore.ENTER_DEBOUNCE_MS) {
       return;
     }
     GalleryPreviewNavStore.lastEnterTs = now;
-    void GalleryPreviewNavStore.openPreviewWhenReady(uiCtx, baseUrl, items, startIndex);
+    void GalleryPreviewNavStore.openPreviewWhenReady(uiCtx, baseUrl, items, startIndex, sourceRootId);
   }
 
   private static async openPreviewWhenReady(
     uiCtx: UIContext,
     baseUrl: string,
     items: GalleryListItem[],
-    startIndex: number
+    startIndex: number,
+    sourceRootId: string
   ): Promise<void> {
     if (GalleryPreviewNavStore.opening) {
       return;
@@ -72,8 +85,33 @@ export class GalleryPreviewNavStore {
     }
     const gen = ++GalleryPreviewNavStore.openGen;
     GalleryPreviewNavStore.opening = true;
-    setGalleryPreviewHeroActive(true);
     const startItem = GalleryPreviewNavStore.items[GalleryPreviewNavStore.startIndex];
+    const startItemId = startItem !== undefined && startItem.id !== undefined &&
+      startItem.id !== null ? String(startItem.id) : '';
+    GalleryPreviewNavStore.sourcePlaceholderX = 0;
+    GalleryPreviewNavStore.sourcePlaceholderY = 0;
+    GalleryPreviewNavStore.sourcePlaceholderW = 0;
+    GalleryPreviewNavStore.sourcePlaceholderH = 0;
+    try {
+      const rootRect = uiCtx.getComponentUtils().getRectangleById(sourceRootId);
+      const thumbRect = uiCtx.getComponentUtils().getRectangleById(gallerySharedSourceDomId(startItemId));
+      GalleryPreviewNavStore.sourcePlaceholderX =
+        (thumbRect.windowOffset.x as number) - (rootRect.windowOffset.x as number);
+      GalleryPreviewNavStore.sourcePlaceholderY =
+        (thumbRect.windowOffset.y as number) - (rootRect.windowOffset.y as number);
+      GalleryPreviewNavStore.sourcePlaceholderW = thumbRect.size.width as number;
+      GalleryPreviewNavStore.sourcePlaceholderH = thumbRect.size.height as number;
+    } catch (_e) {
+      // 找不到矩形时只是不覆盖占位，不影响正常预览和返回。
+    }
+    try {
+      // 不隐藏真实缩略图直接抓图，避免点击后出现一帧闪烁。
+      GalleryPreviewNavStore.sourcePageSnapshot =
+        uiCtx.getComponentSnapshot().getSync(sourceRootId);
+    } catch (_e) {
+      GalleryPreviewNavStore.sourcePageSnapshot = undefined;
+    }
+    setGalleryPreviewHeroActive(true);
     // 网格可见项缩略图已在缓存，先 push 开启动画；实况预热并行，不挡跟手。
     if (startItem !== undefined) {
       void warmupPreviewStartItem(uiCtx, baseUrl, startItem);
@@ -85,6 +123,7 @@ export class GalleryPreviewNavStore {
       });
     } catch (e) {
       GalleryPreviewEntryCache.discard();
+      GalleryPreviewNavStore.sourcePageSnapshot = undefined;
       setGalleryPreviewHeroActive(false);
       setGalleryPreviewOpening(false);
       hilog.error(DOMAIN, TAG, 'pushUrl GalleryPreview: %{public}s', String(e));
@@ -108,6 +147,11 @@ export class GalleryPreviewNavStore {
     GalleryPreviewNavStore.slideshowGlobalIndices = globalIndices.slice();
     const n = GalleryPreviewNavStore.items.length;
     GalleryPreviewNavStore.startIndex = 0;
+    GalleryPreviewNavStore.sourcePageSnapshot = undefined;
+    GalleryPreviewNavStore.sourcePlaceholderX = 0;
+    GalleryPreviewNavStore.sourcePlaceholderY = 0;
+    GalleryPreviewNavStore.sourcePlaceholderW = 0;
+    GalleryPreviewNavStore.sourcePlaceholderH = 0;
     GalleryPreviewNavStore.slideshow.enabled = true;
     GalleryPreviewNavStore.slideshow.intervalMs = Math.max(2000, Math.floor(intervalMs));
     GalleryPreviewNavStore.slideshow.libraryTotalCount = Math.max(0, Math.floor(libraryTotalCount));
@@ -136,6 +180,11 @@ export class GalleryPreviewNavStore {
     GalleryPreviewNavStore.items = [];
     GalleryPreviewNavStore.baseUrl = '';
     GalleryPreviewNavStore.startIndex = 0;
+    GalleryPreviewNavStore.sourcePageSnapshot = undefined;
+    GalleryPreviewNavStore.sourcePlaceholderX = 0;
+    GalleryPreviewNavStore.sourcePlaceholderY = 0;
+    GalleryPreviewNavStore.sourcePlaceholderW = 0;
+    GalleryPreviewNavStore.sourcePlaceholderH = 0;
     GalleryPreviewNavStore.slideshowGlobalIndices = [];
     GalleryPreviewNavStore.resetSlideshow();
     GalleryPreviewEntryCache.discard();

@@ -11,6 +11,9 @@ const GALLERY_TIMELINE_RING_HEIGHT_VP: number = 44;
 const GALLERY_TIMELINE_RING_ACTIVE_SCALE: number = 1.12;
 const GALLERY_TIMELINE_RING_RIGHT_MARGIN_VP: number = 4;
 const GALLERY_TIMELINE_RING_BORDER_WIDTH_VP: number = 2.4;
+/** 可拖区域只包住滑块本身，并留出适合手指操作的最小余量。 */
+const GALLERY_TIMELINE_THUMB_HIT_WIDTH_VP: number = 32;
+const GALLERY_TIMELINE_THUMB_HIT_HEIGHT_VP: number = 56;
 const GALLERY_TIMELINE_YEAR_BADGE_WIDTH_VP: number = 44;
 const GALLERY_TIMELINE_YEAR_BADGE_GAP_VP: number = 6;
 const GALLERY_TIMELINE_PILL_WIDTH_VP: number = 108;
@@ -64,6 +67,14 @@ export struct GalleryAlbumTimelineSidebar {
     return Math.max(GALLERY_TIMELINE_INDICATOR_PAD_VP, this.timelineIndicatorY - this.ringHeight() / 2);
   }
 
+  private thumbHitX(): number {
+    return GALLERY_TIMELINE_HIT_WIDTH_VP - GALLERY_TIMELINE_THUMB_HIT_WIDTH_VP;
+  }
+
+  private thumbHitY(): number {
+    return Math.max(0, this.timelineIndicatorY - GALLERY_TIMELINE_THUMB_HIT_HEIGHT_VP / 2);
+  }
+
   private yearBadgeX(): number {
     return this.ringX() - GALLERY_TIMELINE_YEAR_BADGE_WIDTH_VP - GALLERY_TIMELINE_YEAR_BADGE_GAP_VP;
   }
@@ -112,6 +123,25 @@ export struct GalleryAlbumTimelineSidebar {
           .position({ x: this.ringX(), y: this.ringY() })
           .animation({ duration: 180, curve: Curve.EaseOut })
 
+        // 仅滑块附近参与命中；轨道其余区域让事件落到右侧图片，避免误触快速滚动。
+        Column()
+          .width(GALLERY_TIMELINE_THUMB_HIT_WIDTH_VP)
+          .height(GALLERY_TIMELINE_THUMB_HIT_HEIGHT_VP)
+          .backgroundColor(Color.Transparent)
+          .position({ x: this.thumbHitX(), y: this.thumbHitY() })
+          .onTouch(this.onTouchStateChange)
+          .parallelGesture(
+            GestureGroup(GestureMode.Parallel,
+              LongPressGesture({ repeat: false, duration: GALLERY_TIMELINE_LONG_PRESS_EXPAND_MS })
+                .onAction(this.onLongPressExpand),
+              PanGesture({ direction: PanDirection.Vertical, distance: 2 })
+                .onActionStart(this.onPanStart)
+                .onActionUpdate(this.onPanUpdate)
+                .onActionEnd(this.onPanEnd)
+                .onActionCancel(this.onPanCancel)
+            )
+          )
+
         if (this.expandedChrome) {
           Text(this.pillLabel)
             .fontSize(14)
@@ -144,18 +174,6 @@ export struct GalleryAlbumTimelineSidebar {
           this.onTrackHeightChange(h);
         }
       })
-      .onTouch(this.onTouchStateChange)
-      .parallelGesture(
-        GestureGroup(GestureMode.Parallel,
-          LongPressGesture({ repeat: false, duration: GALLERY_TIMELINE_LONG_PRESS_EXPAND_MS })
-            .onAction(this.onLongPressExpand),
-          PanGesture({ direction: PanDirection.Vertical, distance: 2 })
-            .onActionStart(this.onPanStart)
-            .onActionUpdate(this.onPanUpdate)
-            .onActionEnd(this.onPanEnd)
-            .onActionCancel(this.onPanCancel)
-        )
-      )
       .opacity(
         this.timelineSidebarDragging || this.timelinePressing || this.timelineLongPressExpanded || this.timelineBarVisible ? 1 : 0
       )

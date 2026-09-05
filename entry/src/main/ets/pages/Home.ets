@@ -106,7 +106,8 @@ import {
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
 import {
-  GALLERY_PREVIEW_HERO_ACTIVE_KEY
+  GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  GALLERY_PREVIEW_SOURCE_HOME_ID
 } from '../album/GallerySharedTransition';
 import {
   GalleryViewGranularity,
@@ -1805,6 +1806,7 @@ struct Home {
     }
     .width('100%')
     .height('100%')
+    .id(GALLERY_PREVIEW_SOURCE_HOME_ID)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

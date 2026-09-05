@@ -49,6 +49,7 @@ import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOpti
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
 import {
   GALLERY_PREVIEW_HERO_ACTIVE_KEY,
+  GALLERY_PREVIEW_SOURCE_RECYCLE_ID,
   gallerySharedTransitionId
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
@@ -974,6 +975,7 @@ struct RecycleBinPage {
     }
     .width('100%')
     .height('100%')
+    .id(GALLERY_PREVIEW_SOURCE_RECYCLE_ID)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
       this.choiceSheetTitle,

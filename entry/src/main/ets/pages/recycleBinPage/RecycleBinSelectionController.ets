@@ -1,5 +1,6 @@
 import { UIContext } from '@kit.ArkUI';
 import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
+import { GALLERY_PREVIEW_SOURCE_RECYCLE_ID } from '../../album/GallerySharedTransition';
 import { playGalleryEnterSelectionHaptic } from '../../album/GallerySelectionHaptic';
 import {
   gallerySlideAutoScrollStop,
@@ -589,7 +590,13 @@ export function recycleBinOnCellClick(
   }
   const list = recycleBinGalleryListForPreview(host.items);
   const pIdx = recycleBinPreviewIndexForFlatIndex(host.items, flatIdx);
-  GalleryPreviewNavStore.openPreview(host.getUIContext(), host.baseUrl, list, pIdx);
+  GalleryPreviewNavStore.openPreview(
+    host.getUIContext(),
+    host.baseUrl,
+    list,
+    pIdx,
+    GALLERY_PREVIEW_SOURCE_RECYCLE_ID
+  );
 }
 
 export function recycleBinRowCount(items: RecycleBinListItem[], columnsPerRow: number = 4): number {

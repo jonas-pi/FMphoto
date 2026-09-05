@@ -1570,6 +1570,7 @@ export struct GalleryNetworkThumb {
     .borderRadius(0)
     .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
+    .id(this.sharedTransitionId.length > 0 ? `${this.sharedTransitionId}_source` : '')
     .sharedTransition(this.sharedTransitionId, gallerySharedTransitionOptions())
     // 防止子节点未覆盖区域仍响应系统拖拽
     .draggable(false)

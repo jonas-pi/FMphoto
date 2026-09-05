@@ -10,6 +10,10 @@
  * 最佳实践：https://developer.huawei.com/consumer/cn/doc/best-practices/bpta-one-shot-to-the-end
  */
 export const GALLERY_PREVIEW_HERO_ACTIVE_KEY: string = 'galleryPreviewHeroActive';
+/** Router 预览不能保证持续绘制下层页面，进入前抓取对应根节点作为透明预览的底图。 */
+export const GALLERY_PREVIEW_SOURCE_HOME_ID: string = 'gallery_preview_source_home';
+export const GALLERY_PREVIEW_SOURCE_CATEGORY_ID: string = 'gallery_preview_source_category';
+export const GALLERY_PREVIEW_SOURCE_RECYCLE_ID: string = 'gallery_preview_source_recycle';
 
 /** 官方一镜到底示例多用 Friction；过短的 EaseInOut 容易在宽高跳变时显得卡、像逃逸 */
 export const GALLERY_SHARED_TRANSITION_DURATION: number = 260;
@@ -53,6 +57,12 @@ export function gallerySharedTransitionId(itemId: string): string {
     return '';
   }
   return `gp_share_${itemId}`;
+}
+
+/** 源缩略图节点 ID：读取其位置后，仅在快照上覆盖占位，不改动真实缩略图。 */
+export function gallerySharedSourceDomId(itemId: string): string {
+  const shareId = gallerySharedTransitionId(itemId);
+  return shareId.length > 0 ? `${shareId}_source` : '';
 }
 
 export function gallerySharedTransitionOptions(): sharedTransitionOptions {
