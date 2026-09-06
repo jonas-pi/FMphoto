@@ -299,12 +299,13 @@ function dropThumbIdentityEntriesForCacheKey(cacheKey: string): void {
 }
 
 function evictThumbCacheEntry(cacheKey: string): void {
-  const old = thumbPixCache.get(cacheKey);
   thumbPixCache.delete(cacheKey);
   dropThumbIdentityEntriesForCacheKey(cacheKey);
-  if (old !== undefined) {
-    releaseThumbPix(old);
-  }
+  /*
+   * PixelMap 同时作为 Image 入参被页面组件持有。缓存淘汰只代表 Map 不再保留，
+   * 不能调用 release() 销毁共享实例；否则导航栈下仍存活的缩略图会立即变空。
+   * 移除 Map 强引用后，待 UI 也解除引用时由运行时回收底层资源。
+   */
 }
 
 /** NAS 变更后丢掉全部内存 PixelMap，避免同 URL 脏读。 */
@@ -448,7 +449,7 @@ export function setThumbHighThroughputLevel(level: number): void {
   pumpThumbWaiters();
 }
 
-/** 缓存淘汰或显式丢弃时释放原生像素缓冲，降低长列表滑动后的内存峰值 */
+/** 仅释放尚未交给缓存或 UI 的废弃 PixelMap。共享实例不得在缓存淘汰时调用。 */
 function releaseThumbPix(p: PixelMap): void {
   try {
     p.release();
@@ -1032,11 +1033,8 @@ function rememberPreviewMidPix(key: string, pix: PixelMap): void {
       break;
     }
     if (firstKey !== undefined) {
-      const old = previewMidPixCache.get(firstKey);
       previewMidPixCache.delete(firstKey);
-      if (old !== undefined) {
-        releaseThumbPix(old);
-      }
+      // 中清图也可能仍由预览页 Image 持有；只移除缓存引用，不主动销毁共享 PixelMap。
     }
   }
   previewMidPixCache.set(key, pix);
