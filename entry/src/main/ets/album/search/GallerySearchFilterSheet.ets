@@ -28,6 +28,17 @@ import {
   SEARCH_FILTER_FIELD_PERSON
 } from './GallerySearchFilterTypes';
 
+class GallerySearchAvatarSpec {
+  avatarUrl: string = '';
+  cacheKey: string = '';
+}
+
+class GallerySearchDropdownSpec {
+  field: string = '';
+  title: string = '';
+  placeholder: string = '';
+}
+
 @Component
 export struct GallerySearchFilterSheet {
   applied: GallerySearchFilterSnapshot = new GallerySearchFilterSnapshot();
@@ -72,12 +83,11 @@ export struct GallerySearchFilterSheet {
   private catalog: GallerySearchFilterCatalog = new GallerySearchFilterCatalog();
 
   aboutToAppear(): void {
-    this.hydrateFromApplied();
+    this.applySnapshotToDraft(this.applied);
     void this.loadCatalog();
   }
 
-  private hydrateFromApplied(): void {
-    const src = this.applied;
+  private applySnapshotToDraft(src: GallerySearchFilterSnapshot): void {
     this.isCollect = src.isCollect;
     this.notAlbum = src.notAlbum;
     this.notTag = src.notTag;
@@ -159,34 +169,7 @@ export struct GallerySearchFilterSheet {
   }
 
   private resetDraft(): void {
-    this.isCollect = false;
-    this.notAlbum = false;
-    this.notTag = false;
-    this.notGeo = false;
-    this.fileType = '';
-    this.fileTypeLabel = '';
-    this.personId = '';
-    this.personLabel = '';
-    this.personAvatar = '';
-    this.datePath = [];
-    this.dateLabel = '';
-    this.locationPath = [];
-    this.locationLabel = '';
-    this.albumPath = [];
-    this.albumLabel = '';
-    this.folderPath = [];
-    this.folderLabel = '';
-    this.showShootingInfo = false;
-    this.makeModelPath = [];
-    this.makeModelLabel = '';
-    this.focalLengthPath = [];
-    this.focalLengthLabel = '';
-    this.exposurePath = [];
-    this.exposureLabel = '';
-    this.aperturePath = [];
-    this.apertureLabel = '';
-    this.isoPath = [];
-    this.isoLabel = '';
+    this.applySnapshotToDraft(new GallerySearchFilterSnapshot());
     this.pickerField = '';
   }
 
@@ -200,7 +183,9 @@ export struct GallerySearchFilterSheet {
     }
     this.pickerTitle = title;
     this.pickerOptions = options;
-    this.pickerField = field;
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseInOut }, (): void => {
+      this.pickerField = field;
+    });
   }
 
   private openTreePicker(field: string, title: string, tree: GallerySearchFilterTreeNode[]): void {
@@ -208,7 +193,9 @@ export struct GallerySearchFilterSheet {
   }
 
   private closePicker(): void {
-    this.pickerField = '';
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseInOut }, (): void => {
+      this.pickerField = '';
+    });
   }
 
   private applyPicker(option: GallerySearchPickerOption): void {
@@ -288,11 +275,154 @@ export struct GallerySearchFilterSheet {
       this.isoPath = [];
       this.isoLabel = '';
     }
-    this.closePicker();
   }
 
   private displayOrPlaceholder(label: string, placeholder: string): string {
     return label.length > 0 ? label : placeholder;
+  }
+
+  private dropdownValue(field: string): string {
+    if (field === SEARCH_FILTER_FIELD_FILE_TYPE) {
+      return this.fileTypeLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_PERSON) {
+      return this.personLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_DATE) {
+      return this.dateLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_LOCATION) {
+      return this.locationLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_ALBUM) {
+      return this.albumLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_FOLDER) {
+      return this.folderLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_MAKE) {
+      return this.makeModelLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_FOCAL) {
+      return this.focalLengthLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_EXPOSURE) {
+      return this.exposureLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_APERTURE) {
+      return this.apertureLabel;
+    }
+    if (field === SEARCH_FILTER_FIELD_ISO) {
+      return this.isoLabel;
+    }
+    return '';
+  }
+
+  private dropdownAvatar(field: string): string {
+    return field === SEARCH_FILTER_FIELD_PERSON ? this.personAvatar : '';
+  }
+
+  private openDropdown(field: string): void {
+    if (field === SEARCH_FILTER_FIELD_FILE_TYPE) {
+      this.openSimplePicker(field, '媒体类型', this.catalog.fileTypes);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_PERSON) {
+      this.openSimplePicker(field, '人物', this.catalog.persons);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_DATE) {
+      this.openTreePicker(field, '拍摄时间', this.catalog.dates);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_LOCATION) {
+      this.openTreePicker(field, '地点', this.catalog.locations);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_ALBUM) {
+      this.openTreePicker(field, '相册', this.catalog.albums);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_FOLDER) {
+      this.openTreePicker(field, '文件夹', this.catalog.folders);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_MAKE) {
+      this.openTreePicker(field, '相机品牌', this.catalog.makeModels);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_FOCAL) {
+      this.openTreePicker(field, '焦距', this.catalog.focalLengths);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_EXPOSURE) {
+      this.openTreePicker(field, '曝光时间', this.catalog.exposures);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_APERTURE) {
+      this.openTreePicker(field, '光圈', this.catalog.apertures);
+      return;
+    }
+    if (field === SEARCH_FILTER_FIELD_ISO) {
+      this.openTreePicker(field, 'ISO', this.catalog.isos);
+    }
+  }
+
+  private pickerSelectedKey(): string {
+    if (this.pickerField === SEARCH_FILTER_FIELD_FILE_TYPE) {
+      return this.fileType;
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_PERSON) {
+      return this.personId;
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_DATE) {
+      return this.datePath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_LOCATION) {
+      return this.locationPath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_ALBUM) {
+      return this.albumPath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_FOLDER) {
+      return this.folderPath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_MAKE) {
+      return this.makeModelPath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_FOCAL) {
+      return this.focalLengthPath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_EXPOSURE) {
+      return this.exposurePath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_APERTURE) {
+      return this.aperturePath.join('/');
+    }
+    if (this.pickerField === SEARCH_FILTER_FIELD_ISO) {
+      return this.isoPath.join('/');
+    }
+    return '';
+  }
+
+  private optionKey(opt: GallerySearchPickerOption): string {
+    if (opt.path.length > 0) {
+      return opt.path.join('/');
+    }
+    return opt.value;
+  }
+
+  private isPickerOptionSelected(opt: GallerySearchPickerOption): boolean {
+    const selected = this.pickerSelectedKey();
+    return selected.length > 0 && this.optionKey(opt) === selected;
+  }
+
+  /** 官方 bindSheet 嵌套滚动：上滑先扩挡位，下滑先滚内容。 */
+  private sheetNestedScroll(): NestedScrollOptions {
+    return {
+      scrollForward: NestedScrollMode.PARENT_FIRST,
+      scrollBackward: NestedScrollMode.SELF_FIRST
+    };
   }
 
   private isPersonPicker(): boolean {
@@ -307,14 +437,14 @@ export struct GallerySearchFilterSheet {
     return nasUrl(this.baseUrl, avatarUrl);
   }
 
-  @Builder
-  private personAvatarView(avatarUrl: string, cacheKey: string) {
-    if (avatarUrl.length > 0) {
+  @LocalBuilder
+  private personAvatarView(spec: GallerySearchAvatarSpec) {
+    if (spec.avatarUrl.length > 0) {
       GalleryNetworkThumb({
-        uri: this.personFaceUri(avatarUrl),
+        uri: this.personFaceUri(spec.avatarUrl),
         paused: false,
         fadeInEnabled: false,
-        cacheIdentity: cacheKey,
+        cacheIdentity: spec.cacheKey,
         cacheRank: 3
       })
         .width('100%')
@@ -328,53 +458,30 @@ export struct GallerySearchFilterSheet {
     }
   }
 
-  @Builder
-  private organizeCheck(label: string, checked: boolean, onToggle: (v: boolean) => void) {
-    Row({ space: 6 }) {
-      Checkbox({ name: label })
-        .select(checked)
-        .selectedColor($r('sys.color.ohos_id_color_activated'))
-        .shape(CheckBoxShape.ROUNDED_SQUARE)
-        .width(20)
-        .height(20)
-        .onChange((v: boolean): void => {
-          onToggle(v);
-        })
-      Text(label)
-        .fontSize(14)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .onClick((): void => {
-          onToggle(!checked);
-        })
-    }
-    .width('100%')
-    .height(32)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private dropdownCell(title: string, valueText: string, placeholder: string, avatarUrl: string, onOpen: () => void) {
+  @LocalBuilder
+  private dropdownCell(spec: GallerySearchDropdownSpec) {
     Column({ space: 4 }) {
-      Text(title)
+      Text(spec.title)
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
       Row({ space: 8 }) {
-        if (avatarUrl.length > 0) {
+        if (this.dropdownAvatar(spec.field).length > 0) {
           Stack({ alignContent: Alignment.Center }) {
-            this.personAvatarView(avatarUrl, `filter_person_${valueText}`)
+            this.personAvatarView({
+              avatarUrl: this.dropdownAvatar(spec.field),
+              cacheKey: `filter_person_${this.dropdownValue(spec.field)}`
+            })
           }
           .width(24)
           .height(24)
           .borderRadius(12)
           .clip(true)
         }
-        Text(this.displayOrPlaceholder(valueText, placeholder))
+        Text(this.displayOrPlaceholder(this.dropdownValue(spec.field), spec.placeholder))
           .fontSize(14)
-          .fontColor(valueText.length > 0 ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+          .fontColor(this.dropdownValue(spec.field).length > 0 ?
+            $r('app.color.text_primary') : $r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -392,16 +499,17 @@ export struct GallerySearchFilterSheet {
     }
     .width('100%')
     .onClick((): void => {
-      onOpen();
+      this.openDropdown(spec.field);
     })
   }
 
-  @Builder
+  @LocalBuilder
   private pickerNavBar() {
     Row() {
       SymbolGlyph($r('sys.symbol.chevron_left'))
         .fontSize(20)
         .fontColor([$r('app.color.text_primary')])
+        .padding({ left: 4, right: 8, top: 10, bottom: 10 })
         .onClick((): void => {
           this.closePicker();
         })
@@ -414,28 +522,34 @@ export struct GallerySearchFilterSheet {
       Text('清除')
         .fontSize(14)
         .fontColor($r('sys.color.ohos_id_color_activated'))
+        .padding({ left: 8, top: 10, bottom: 10 })
         .onClick((): void => {
           this.clearCurrentPicker();
         })
     }
     .width('100%')
     .height(44)
-    .padding({ left: 16, right: 16 })
+    .padding({ left: 8, right: 8 })
   }
 
-  @Builder
+  @LocalBuilder
   private personPickerGrid() {
     Grid() {
       ForEach(this.pickerOptions, (opt: GallerySearchPickerOption) => {
         GridItem() {
           Column({ space: 6 }) {
             Stack({ alignContent: Alignment.Center }) {
-              this.personAvatarView(opt.avatarUrl, `filter_pick_${opt.value}`)
+              this.personAvatarView({
+                avatarUrl: opt.avatarUrl,
+                cacheKey: `filter_pick_${opt.value}`
+              })
             }
             .width('100%')
             .aspectRatio(1)
             .borderRadius(999)
             .clip(true)
+            .borderWidth(this.isPickerOptionSelected(opt) ? 2 : 0)
+            .borderColor($r('sys.color.ohos_id_color_activated'))
             .backgroundColor($r('app.color.immersive_panel_border'))
             Text(opt.label)
               .fontSize(12)
@@ -459,22 +573,29 @@ export struct GallerySearchFilterSheet {
     .layoutWeight(1)
     .padding({ left: 16, right: 16, top: 4, bottom: 12 })
     .scrollBar(BarState.Off)
-    .nestedScroll({
-      scrollForward: NestedScrollMode.SELF_FIRST,
-      scrollBackward: NestedScrollMode.SELF_FIRST
-    })
+    .nestedScroll(this.sheetNestedScroll())
   }
 
-  @Builder
+  @LocalBuilder
   private textPickerList() {
     List() {
       ForEach(this.pickerOptions, (opt: GallerySearchPickerOption) => {
         ListItem() {
-          Text(opt.label)
-            .fontSize(16)
-            .fontColor($r('app.color.text_primary'))
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          Row() {
+            Text(opt.label)
+              .fontSize(16)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            if (this.isPickerOptionSelected(opt)) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(18)
+                .fontColor([$r('sys.color.ohos_id_color_activated')])
+            }
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
         }
         .onClick((): void => {
           this.applyPicker(opt);
@@ -484,13 +605,10 @@ export struct GallerySearchFilterSheet {
     .width('100%')
     .height('100%')
     .layoutWeight(1)
-    .nestedScroll({
-      scrollForward: NestedScrollMode.SELF_FIRST,
-      scrollBackward: NestedScrollMode.SELF_FIRST
-    })
+    .nestedScroll(this.sheetNestedScroll())
   }
 
-  @Builder
+  @LocalBuilder
   private pickerPage() {
     Column() {
       this.pickerNavBar()
@@ -506,7 +624,7 @@ export struct GallerySearchFilterSheet {
     .alignItems(HorizontalAlign.Start)
   }
 
-  @Builder
+  @LocalBuilder
   private formPage() {
     Scroll() {
       Column({ space: 12 }) {
@@ -533,24 +651,92 @@ export struct GallerySearchFilterSheet {
           .width('100%')
         Grid() {
           GridItem() {
-            this.organizeCheck('已收藏', this.isCollect, (v: boolean): void => {
-              this.isCollect = v;
-            })
+            Row({ space: 6 }) {
+              Checkbox({ name: '已收藏' })
+                .select($$this.isCollect)
+                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .shape(CheckBoxShape.ROUNDED_SQUARE)
+                .width(20)
+                .height(20)
+              Text('已收藏')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .onClick((): void => {
+                  this.isCollect = !this.isCollect;
+                })
+            }
+            .width('100%')
+            .height(32)
+            .alignItems(VerticalAlign.Center)
           }
           GridItem() {
-            this.organizeCheck('不在相册内', this.notAlbum, (v: boolean): void => {
-              this.notAlbum = v;
-            })
+            Row({ space: 6 }) {
+              Checkbox({ name: '不在相册内' })
+                .select($$this.notAlbum)
+                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .shape(CheckBoxShape.ROUNDED_SQUARE)
+                .width(20)
+                .height(20)
+              Text('不在相册内')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .onClick((): void => {
+                  this.notAlbum = !this.notAlbum;
+                })
+            }
+            .width('100%')
+            .height(32)
+            .alignItems(VerticalAlign.Center)
           }
           GridItem() {
-            this.organizeCheck('无标签', this.notTag, (v: boolean): void => {
-              this.notTag = v;
-            })
+            Row({ space: 6 }) {
+              Checkbox({ name: '无标签' })
+                .select($$this.notTag)
+                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .shape(CheckBoxShape.ROUNDED_SQUARE)
+                .width(20)
+                .height(20)
+              Text('无标签')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .onClick((): void => {
+                  this.notTag = !this.notTag;
+                })
+            }
+            .width('100%')
+            .height(32)
+            .alignItems(VerticalAlign.Center)
           }
           GridItem() {
-            this.organizeCheck('无位置信息', this.notGeo, (v: boolean): void => {
-              this.notGeo = v;
-            })
+            Row({ space: 6 }) {
+              Checkbox({ name: '无位置信息' })
+                .select($$this.notGeo)
+                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .shape(CheckBoxShape.ROUNDED_SQUARE)
+                .width(20)
+                .height(20)
+              Text('无位置信息')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .onClick((): void => {
+                  this.notGeo = !this.notGeo;
+                })
+            }
+            .width('100%')
+            .height(32)
+            .alignItems(VerticalAlign.Center)
           }
         }
         .columnsTemplate('1fr 1fr')
@@ -562,34 +748,22 @@ export struct GallerySearchFilterSheet {
 
         Grid() {
           GridItem() {
-            this.dropdownCell('媒体类型', this.fileTypeLabel, '选择媒体类型', '', (): void => {
-              this.openSimplePicker(SEARCH_FILTER_FIELD_FILE_TYPE, '媒体类型', this.catalog.fileTypes);
-            })
+            this.dropdownCell({ field: SEARCH_FILTER_FIELD_FILE_TYPE, title: '媒体类型', placeholder: '选择媒体类型' })
           }
           GridItem() {
-            this.dropdownCell('拍摄时间', this.dateLabel, '选择拍摄时间', '', (): void => {
-              this.openTreePicker(SEARCH_FILTER_FIELD_DATE, '拍摄时间', this.catalog.dates);
-            })
+            this.dropdownCell({ field: SEARCH_FILTER_FIELD_DATE, title: '拍摄时间', placeholder: '选择拍摄时间' })
           }
           GridItem() {
-            this.dropdownCell('人物', this.personLabel, '选择人物', this.personAvatar, (): void => {
-              this.openSimplePicker(SEARCH_FILTER_FIELD_PERSON, '人物', this.catalog.persons);
-            })
+            this.dropdownCell({ field: SEARCH_FILTER_FIELD_PERSON, title: '人物', placeholder: '选择人物' })
           }
           GridItem() {
-            this.dropdownCell('地点', this.locationLabel, '选择国家城市', '', (): void => {
-              this.openTreePicker(SEARCH_FILTER_FIELD_LOCATION, '地点', this.catalog.locations);
-            })
+            this.dropdownCell({ field: SEARCH_FILTER_FIELD_LOCATION, title: '地点', placeholder: '选择国家城市' })
           }
           GridItem() {
-            this.dropdownCell('相册', this.albumLabel, '选择所在相册', '', (): void => {
-              this.openTreePicker(SEARCH_FILTER_FIELD_ALBUM, '相册', this.catalog.albums);
-            })
+            this.dropdownCell({ field: SEARCH_FILTER_FIELD_ALBUM, title: '相册', placeholder: '选择所在相册' })
           }
           GridItem() {
-            this.dropdownCell('文件夹', this.folderLabel, '选择文件夹', '', (): void => {
-              this.openTreePicker(SEARCH_FILTER_FIELD_FOLDER, '文件夹', this.catalog.folders);
-            })
+            this.dropdownCell({ field: SEARCH_FILTER_FIELD_FOLDER, title: '文件夹', placeholder: '选择文件夹' })
           }
         }
         .columnsTemplate('1fr 1fr')
@@ -602,29 +776,19 @@ export struct GallerySearchFilterSheet {
         if (this.showShootingInfo) {
           Grid() {
             GridItem() {
-              this.dropdownCell('相机品牌', this.makeModelLabel, '选择相机品牌', '', (): void => {
-                this.openTreePicker(SEARCH_FILTER_FIELD_MAKE, '相机品牌', this.catalog.makeModels);
-              })
+              this.dropdownCell({ field: SEARCH_FILTER_FIELD_MAKE, title: '相机品牌', placeholder: '选择相机品牌' })
             }
             GridItem() {
-              this.dropdownCell('焦距', this.focalLengthLabel, '选择焦距', '', (): void => {
-                this.openTreePicker(SEARCH_FILTER_FIELD_FOCAL, '焦距', this.catalog.focalLengths);
-              })
+              this.dropdownCell({ field: SEARCH_FILTER_FIELD_FOCAL, title: '焦距', placeholder: '选择焦距' })
             }
             GridItem() {
-              this.dropdownCell('曝光时间', this.exposureLabel, '选择曝光时间', '', (): void => {
-                this.openTreePicker(SEARCH_FILTER_FIELD_EXPOSURE, '曝光时间', this.catalog.exposures);
-              })
+              this.dropdownCell({ field: SEARCH_FILTER_FIELD_EXPOSURE, title: '曝光时间', placeholder: '选择曝光时间' })
             }
             GridItem() {
-              this.dropdownCell('光圈', this.apertureLabel, '选择光圈', '', (): void => {
-                this.openTreePicker(SEARCH_FILTER_FIELD_APERTURE, '光圈', this.catalog.apertures);
-              })
+              this.dropdownCell({ field: SEARCH_FILTER_FIELD_APERTURE, title: '光圈', placeholder: '选择光圈' })
             }
             GridItem() {
-              this.dropdownCell('ISO', this.isoLabel, '选择 ISO', '', (): void => {
-                this.openTreePicker(SEARCH_FILTER_FIELD_ISO, 'ISO', this.catalog.isos);
-              })
+              this.dropdownCell({ field: SEARCH_FILTER_FIELD_ISO, title: 'ISO', placeholder: '选择 ISO' })
             }
           }
           .columnsTemplate('1fr 1fr')
@@ -643,11 +807,8 @@ export struct GallerySearchFilterSheet {
             .fontSize(14)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
-          Toggle({ type: ToggleType.Switch, isOn: this.showShootingInfo })
+          Toggle({ type: ToggleType.Switch, isOn: $$this.showShootingInfo })
             .selectedColor($r('sys.color.ohos_id_color_activated'))
-            .onChange((v: boolean): void => {
-              this.showShootingInfo = v;
-            })
         }
         .width('100%')
         .height(40)
@@ -679,24 +840,30 @@ export struct GallerySearchFilterSheet {
     .align(Alignment.TopStart)
     .layoutWeight(1)
     .scrollBar(BarState.Off)
-    .nestedScroll({
-      scrollForward: NestedScrollMode.SELF_FIRST,
-      scrollBackward: NestedScrollMode.SELF_FIRST
-    })
+    .nestedScroll(this.sheetNestedScroll())
   }
 
   build() {
-    Column() {
+    Stack() {
       if (this.pickerField.length > 0) {
-        this.pickerPage()
+        Column() {
+          this.pickerPage()
+        }
+        .width('100%')
+        .height('100%')
+        .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: 280, curve: Curve.EaseInOut }))
       } else {
-        this.formPage()
+        Column() {
+          this.formPage()
+        }
+        .width('100%')
+        .height('100%')
+        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 280, curve: Curve.EaseInOut }))
       }
     }
     .width('100%')
     .height('100%')
-    .justifyContent(FlexAlign.Start)
-    .alignItems(HorizontalAlign.Start)
+    .clip(true)
     .backgroundColor(Color.Transparent)
   }
 }

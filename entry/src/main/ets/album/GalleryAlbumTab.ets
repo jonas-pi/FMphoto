@@ -2582,16 +2582,24 @@ export struct GalleryAlbumTab {
     this.searchFilterSheetVisible = false;
   }
 
+  private rememberSearchKeyword(keyword: string): void {
+    const kw = keyword.trim();
+    if (kw.length > 0) {
+      this.searchSeed = kw;
+    }
+  }
+
   private applySearchFilterAndRun(snapshot: GallerySearchFilterSnapshot): void {
+    const kw = this.searchQuery.trim();
+    this.rememberSearchKeyword(kw);
     gallerySearchSetApplied(snapshot);
     this.searchFilterActiveCount = gallerySearchFilterActiveCount(snapshot);
     this.dismissSearchFilterSheet();
-    const kw = this.searchQuery.trim();
     if (kw.length === 0 && this.searchFilterActiveCount === 0) {
       this.toast('请输入关键词或选择筛选条件');
       return;
     }
-    void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
+    void galleryAlbumRunSearch(this.asModeOrchestratorHost(), kw);
   }
 
   @Builder
@@ -2795,6 +2803,7 @@ export struct GalleryAlbumTab {
             this.searchQuery = value;
           },
           onSearchSubmit: (): void => {
+            this.rememberSearchKeyword(this.searchQuery);
             void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
           },
           onOpenSearch: (): void => {
@@ -3444,7 +3453,7 @@ export struct GalleryAlbumTab {
       Column()
         .width(1)
         .height(1)
-        .bindSheet(this.searchFilterSheetVisible, this.searchFilterSheetBuilder, fnHdsMediumDetentSheetOptions(
+        .bindSheet($$this.searchFilterSheetVisible, this.searchFilterSheetBuilder, fnHdsMediumDetentSheetOptions(
           '搜索选项',
           (): void => {
             this.dismissSearchFilterSheet();

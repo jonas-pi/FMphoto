@@ -55,14 +55,24 @@ function galleryAlbumTopBarEmptyPageContent() {
  */
 @Component
 struct GalleryAlbumSearchField {
-  @Prop seedQuery: string = '';
+  @Prop @Watch('onSeedQueryChanged') seedQuery: string = '';
   inputCtrl: TextInputController = new TextInputController();
   onTextChange: (value: string) => void = (_: string) => {};
   onSubmit: () => void = () => {};
   @State private inputText: string = '';
 
   aboutToAppear(): void {
-    this.inputText = this.seedQuery;
+    this.syncInputFromSeed();
+  }
+
+  private onSeedQueryChanged(): void {
+    this.syncInputFromSeed();
+  }
+
+  private syncInputFromSeed(): void {
+    if (this.seedQuery.length > 0 && this.inputText !== this.seedQuery) {
+      this.inputText = this.seedQuery;
+    }
   }
 
   build() {
@@ -187,7 +197,7 @@ export struct GalleryAlbumTopBar {
   @Prop gallerySelectionMode: boolean = false;
   @Prop gallerySelectedCount: number = 0;
   /** 外部写入的搜索词（智能分类点选等）；输入过程不要回写成会刷新本组件的 @Prop。 */
-  @Prop seedQuery: string = '';
+  @Prop @Watch('onExternalSeedQueryChanged') seedQuery: string = '';
   /** 系统状态栏高度：内容区顶部留白仍用此值；按钮避让靠 titleBar.avoidLayoutSafeArea。 */
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
@@ -333,6 +343,16 @@ export struct GalleryAlbumTopBar {
     this.onSearchQueryChange(value);
   }
 
+  private onExternalSeedQueryChanged(): void {
+    if (this.seedQuery.length > 0) {
+      this.searchDraft = this.seedQuery;
+    }
+  }
+
+  private searchFieldSeed(): string {
+    return this.searchDraft.length > 0 ? this.searchDraft : this.seedQuery;
+  }
+
   private suppressSearchRestoreTemporarily(): void {
     this.blurSearchInput();
     this.searchSubmitted = false;
@@ -436,7 +456,7 @@ export struct GalleryAlbumTopBar {
   @Builder
   private searchBottomBuilder() {
     GalleryAlbumSearchField({
-      seedQuery: this.seedQuery,
+      seedQuery: this.searchFieldSeed(),
       inputCtrl: this.searchInputCtrl,
       onTextChange: (value: string): void => {
         this.onSearchTextChange(value);

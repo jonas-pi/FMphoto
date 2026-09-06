@@ -468,6 +468,13 @@ export struct GalleryAlbumSearchModeView {
             Blank()
               .width('100%')
               .height(this.contentInsetTopVp)
+            if (this.searchResults.length > 0) {
+              Text(`共 ${this.searchResults.length} 项`)
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 4, bottom: 8 })
+            }
             List({ scroller: this.scroller }) {
             LazyForEach(this.searchRowSource, (block: GallerySearchRowBlock) => {
               ListItem() {
