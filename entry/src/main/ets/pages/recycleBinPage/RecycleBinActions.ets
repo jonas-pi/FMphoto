@@ -1,6 +1,6 @@
 import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { runBatchDownloadGalleryItems } from '../../album/GalleryBatchDownload';
+import { runBatchDownloadGalleryItemsInBackground } from '../../album/GalleryBatchDownload';
 import {
   LivePhotoSaveChoice,
   resolveLivePhotoWriteAuthorized
@@ -113,7 +113,7 @@ export async function recycleBinConfirmBatchDownload(host: RecycleBinActionsHost
   }
   host.rbBatchDownloading = true;
   try {
-    await runBatchDownloadGalleryItems(
+    runBatchDownloadGalleryItemsInBackground(
       host.baseUrl,
       items,
       host.getUIContext().getHostContext() as common.UIAbilityContext,
@@ -123,6 +123,7 @@ export async function recycleBinConfirmBatchDownload(host: RecycleBinActionsHost
       (): Promise<'original' | 'thumb' | 'cancel'> => recycleBinAskBatchDownloadQuality(host),
       authorized
     );
+    host.exitSelection();
   } finally {
     host.rbBatchDownloading = false;
   }

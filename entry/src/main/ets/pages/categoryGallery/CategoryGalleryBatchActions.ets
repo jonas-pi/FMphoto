@@ -6,7 +6,7 @@ import { GalleryDeleteSyncStore } from '../../album/GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshStore';
 import {
   galleryItemsMatchingSelectedIds,
-  runBatchDownloadGalleryItems
+  runBatchDownloadGalleryItemsInBackground
 } from '../../album/GalleryBatchDownload';
 import {
   LivePhotoSaveChoice,
@@ -68,7 +68,7 @@ export async function categoryGalleryConfirmBatchDownload(host: CategoryGalleryB
   }
   host.cgBatchDownloading = true;
   try {
-    await runBatchDownloadGalleryItems(
+    runBatchDownloadGalleryItemsInBackground(
       host.baseUrl,
       items,
       host.getUIContext().getHostContext() as common.UIAbilityContext,
@@ -78,6 +78,7 @@ export async function categoryGalleryConfirmBatchDownload(host: CategoryGalleryB
       (): Promise<'original' | 'thumb' | 'cancel'> => categoryGalleryAskBatchDownloadQuality(host),
       authorized
     );
+    host.exitSelection();
   } finally {
     host.cgBatchDownloading = false;
   }
@@ -132,6 +133,8 @@ export function categoryGalleryRebuildByFlatItems(host: CategoryGalleryBatchActi
   const viewData = CategoryGalleryNavStore.sourceKind === 'smart-category'
     ? buildCategoryGalleryInputOrderViewData(host.flatItems, host.columnsPerRow)
     : buildCategoryGalleryViewData(host.flatItems, useCreatedAt, host.columnsPerRow);
+  // UI 分组已按日期重排，预览/多选使用的扁平列表必须保持同一视觉顺序。
+  host.flatItems = viewData.flatItems;
   host.groups = viewData.groups;
   host.groupOffsets = viewData.groupOffsets;
 }

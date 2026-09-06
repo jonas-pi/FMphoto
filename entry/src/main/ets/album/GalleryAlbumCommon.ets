@@ -1439,24 +1439,30 @@ export struct GalleryNetworkThumb {
     this.retryCount = 0;
     this.needsUpgradeAfterResume = false;
     this.loading = false;
-    const cached = getThumbPixCached(this.uri) ?? getThumbPixCachedByIdentity(this.cacheIdentity);
-    if (cached !== undefined) {
-      this.pix = cached;
-      this.pixAlpha = 1;
-      return;
-    }
     this.pix = undefined;
     this.pixAlpha = 0;
-    void this.loadPix();
+    /*
+     * aboutToReuse 触发时 @Prop 可能仍是复用前的值，不能在这里按 this.uri
+     * 读取缓存，否则会先把上一列表项的 PixelMap 画到新卡片上。
+     * 下一事件轮次再加载，确保 uri/cacheIdentity 已完成父子同步。
+     */
+    const reuseVersion = this.loadVersion;
+    setTimeout((): void => {
+      if (reuseVersion === this.loadVersion) {
+        void this.loadPix();
+      }
+    }, 0);
   }
 
   aboutToDisappear(): void {
     // 组件离屏后提升版本号，阻止旧任务回写
     this.loadVersion++;
+    // 不能保留旧任务的 loading 状态，否则返回页面时 aboutToAppear 无法补拉已被淘汰的封面。
+    this.loading = false;
   }
 
-  private applyLoadedPix(pix: PixelMap, versionAtStart: number): void {
-    if (versionAtStart !== this.loadVersion) {
+  private applyLoadedPix(pix: PixelMap, versionAtStart: number, uriAtStart: string): void {
+    if (versionAtStart !== this.loadVersion || uriAtStart !== this.uri) {
       return;
     }
     this.pix = pix;
@@ -1507,15 +1513,16 @@ export struct GalleryNetworkThumb {
     }
     this.logDebug('load-start');
     const versionAtStart = this.loadVersion;
+    const uriAtStart = this.uri;
     this.loading = true;
     const pix = await loadThumbPix(
-      this.uri,
+      uriAtStart,
       this.isVideo,
       this.cacheIdentity,
       this.cacheRank,
       this.diskPersistKind
     );
-    if (versionAtStart !== this.loadVersion) {
+    if (versionAtStart !== this.loadVersion || uriAtStart !== this.uri) {
       this.loading = false;
       this.logDebug('load-stale');
       return;
@@ -1524,10 +1531,10 @@ export struct GalleryNetworkThumb {
     if (pix !== undefined) {
       if (!this.fadeInEnabled) {
         enqueueThumbPaintCommit((): void => {
-          this.applyLoadedPix(pix, versionAtStart);
+          this.applyLoadedPix(pix, versionAtStart, uriAtStart);
         });
       } else {
-        this.applyLoadedPix(pix, versionAtStart);
+        this.applyLoadedPix(pix, versionAtStart, uriAtStart);
       }
     } else if (this.retryCount < 2) {
       this.retryCount++;

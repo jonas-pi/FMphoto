@@ -210,8 +210,11 @@ export async function galleryAlbumRefreshPersonListInPlace(
   host.personStatVersion++;
   host.personStatGen++;
   const gen = host.personStatGen;
-  host.personLoading = true;
-  host.personError = '';
+  // 返回人物页后的刷新保留现有列表，避免全屏 loading 销毁并重建头像节点。
+  host.personLoading = host.personItems.length === 0;
+  if (host.personItems.length === 0) {
+    host.personError = '';
+  }
   const client = AppSession.getClient();
   if (client === null) {
     host.personLoading = false;
@@ -224,7 +227,10 @@ export async function galleryAlbumRefreshPersonListInPlace(
     galleryAlbumMarkTimelineRefreshCaughtUp(host);
     return;
   }
-  host.personItems = result.data.items;
+  if (result.data.items.length > 0 || host.personItems.length === 0) {
+    host.personItems = result.data.items;
+  }
+  host.personError = host.personItems.length === 0 ? result.error : '';
   if (result.data.items.length > 0) {
     void host.enrichPersonStats(result.data.items, gen);
   }

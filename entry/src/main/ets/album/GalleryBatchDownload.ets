@@ -21,6 +21,9 @@ import {
 } from './livephoto/LivePhotoSaveOps';
 import { materializeLivePhotoPair, unlinkLivePhotoPair } from './livephoto/LivePhotoSandbox';
 
+const BATCH_DOWNLOAD_CONCURRENCY = 4;
+const BATCH_DOWNLOAD_MAX_ATTEMPTS = 2;
+
 function itemHasOriginalPhoto(it: GalleryListItem): boolean {
   return !isVideoItem(it) && pickOriginal(it).trim().length > 0;
 }
@@ -200,10 +203,20 @@ export async function runBatchDownloadGalleryItems(
   let livePairCount = 0;
   let liveMovingCount = 0;
   let privilegeSavedCount = 0;
+  let failedCount = 0;
   try {
-  for (let i = 0; i < items.length; i++) {
+  let nextIndex = 0;
+  let startedCount = 0;
+  const downloadWorker = async (): Promise<void> => {
+  for (;;) {
+    const i = nextIndex;
+    nextIndex++;
+    if (i >= items.length) {
+      return;
+    }
     const it = items[i];
-    FnTransferQueueStore.update(taskId, i + 1, suggestedBaseName(it, i));
+    startedCount++;
+    FnTransferQueueStore.update(taskId, startedCount, suggestedBaseName(it, i));
     const isVideo = isVideoItem(it);
     if (!isVideo && isLivePhotoItem(it)) {
       const pair = await materializeLivePhotoPair(hostContext, baseUrl, it, useOriginalForImages);
@@ -251,6 +264,7 @@ export async function runBatchDownloadGalleryItems(
       url = nasUrl(baseUrl, pickThumb(it));
     }
     if (url.length === 0) {
+      failedCount++;
       continue;
     }
 
@@ -258,8 +272,12 @@ export async function runBatchDownloadGalleryItems(
     const tempPath = `${hostContext.cacheDir}/batch_download_${Date.now()}_${i}.${ext}`;
     const itemTitle = suggestedBaseName(it, i);
     if (isVideo) {
-      const downloaded = await client.downloadGalleryAssetToFile(url, tempPath, 600000);
+      let downloaded = false;
+      for (let attempt = 0; attempt < BATCH_DOWNLOAD_MAX_ATTEMPTS && !downloaded; attempt++) {
+        downloaded = await client.downloadGalleryAssetToFile(url, tempPath, 600000);
+      }
       if (!downloaded) {
+        failedCount++;
         continue;
       }
       const videoUri = fileUriUtil.getUriFromPath(tempPath);
@@ -282,52 +300,58 @@ export async function runBatchDownloadGalleryItems(
       continue;
     }
 
-    const timeoutMs = useOriginalForImages ? 60000 : 15000;
-    const buf = await client.fetchGalleryImageBuffer(url, timeoutMs);
-    if (buf === undefined || buf.byteLength === 0) {
+    /*
+     * 图片也使用流式文件下载。fetchGalleryImageBuffer 的单文件上限为 20MB，
+     * 大尺寸原图会返回空并被跳过；流式写入同时避免并发下载占用大量 JS 堆。
+     */
+    let downloaded = false;
+    for (let attempt = 0; attempt < BATCH_DOWNLOAD_MAX_ATTEMPTS && !downloaded; attempt++) {
+      downloaded = await client.downloadGalleryAssetToFile(url, tempPath, 600000);
+    }
+    if (!downloaded) {
+      failedCount++;
       continue;
     }
 
-    try {
-      const saveFile = await fileIo.open(
-        tempPath,
-        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
-      );
-      await fileIo.write(saveFile.fd, buf);
-      await fileIo.close(saveFile.fd);
-
-      const imageUri = fileUriUtil.getUriFromPath(tempPath);
-      if (writeAuthorized &&
-        await saveSandboxAssetWithPrivilege(hostContext, imageUri, itemTitle, ext, photoAccessHelper.PhotoType.IMAGE)) {
-        privilegeSavedCount++;
-        try {
-          await fileIo.unlink(tempPath);
-        } catch (_e) {
-        }
-        continue;
+    const imageUri = fileUriUtil.getUriFromPath(tempPath);
+    if (writeAuthorized &&
+      await saveSandboxAssetWithPrivilege(hostContext, imageUri, itemTitle, ext, photoAccessHelper.PhotoType.IMAGE)) {
+      privilegeSavedCount++;
+      try {
+        await fileIo.unlink(tempPath);
+      } catch (_e) {
       }
-      tempPaths.push(tempPath);
-      preparedFileUris.push(imageUri);
-      preparedConfigs.push({
-        title: itemTitle,
-        fileNameExtension: ext,
-        photoType: photoAccessHelper.PhotoType.IMAGE
-      });
-    } catch (_e) {
+      continue;
     }
+    tempPaths.push(tempPath);
+    preparedFileUris.push(imageUri);
+    preparedConfigs.push({
+      title: itemTitle,
+      fileNameExtension: ext,
+      photoType: photoAccessHelper.PhotoType.IMAGE
+    });
   }
+  };
+  const workerCount = Math.min(BATCH_DOWNLOAD_CONCURRENCY, items.length);
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < workerCount; i++) {
+    workers.push(downloadWorker());
+  }
+  await Promise.all(workers);
 
   const directCount = liveMovingCount + privilegeSavedCount;
   if (preparedFileUris.length === 0) {
     if (directCount > 0) {
       const liveText = liveSaveSummary(liveMovingCount, livePairCount);
       const liveHint = liveText.length > 0 ? `（含 ${liveText}）` : '';
-      FnTransferQueueStore.finish(taskId, true, `已保存 ${directCount}/${items.length} 项`);
-      toastMsg(`已保存 ${directCount}/${items.length} 项${liveHint}`);
+      const failHint = failedCount > 0 ? `，${failedCount} 项下载失败` : '';
+      FnTransferQueueStore.finish(taskId, failedCount === 0,
+        `已保存 ${directCount}/${items.length} 项${failHint}`);
+      toastMsg(`已保存 ${directCount}/${items.length} 项${liveHint}${failHint}`);
       return;
     }
-    FnTransferQueueStore.finish(taskId, false, '没有可下载的项目');
-    toastMsg('没有可下载的项目');
+    FnTransferQueueStore.finish(taskId, false, `${failedCount} 项下载失败`);
+    toastMsg(failedCount > 0 ? `${failedCount} 项下载失败，请重试` : '没有可下载的项目');
     return;
   }
 
@@ -346,8 +370,10 @@ export async function runBatchDownloadGalleryItems(
     const totalSaved = directCount + Math.max(0, savedCount);
     const liveText = liveSaveSummary(liveMovingCount, livePairCount);
     const liveHint = liveText.length > 0 ? `（含 ${liveText}）` : '';
-    FnTransferQueueStore.finish(taskId, true, `已保存 ${totalSaved}/${items.length} 项`);
-    toastMsg(`已保存 ${totalSaved}/${items.length} 项${liveHint}`);
+    const failHint = failedCount > 0 ? `，${failedCount} 项下载失败` : '';
+    FnTransferQueueStore.finish(taskId, failedCount === 0,
+      `已保存 ${totalSaved}/${items.length} 项${failHint}`);
+    toastMsg(`已保存 ${totalSaved}/${items.length} 项${liveHint}${failHint}`);
   } catch (_e) {
     toastMsg('保存失败，请重试');
   }
