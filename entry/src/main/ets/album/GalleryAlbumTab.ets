@@ -149,7 +149,7 @@ import {
   LivePhotoSaveChoice,
   LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
 } from './livephoto/LivePhotoSaveActionSheet';
-import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsMediumDetentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsFixedMediumSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
 import { GallerySearchFilterSheet } from './search/GallerySearchFilterSheet';
 import {
   gallerySearchFilterActiveCount,
@@ -3453,7 +3453,7 @@ export struct GalleryAlbumTab {
       Column()
         .width(1)
         .height(1)
-        .bindSheet($$this.searchFilterSheetVisible, this.searchFilterSheetBuilder, fnHdsMediumDetentSheetOptions(
+        .bindSheet($$this.searchFilterSheetVisible, this.searchFilterSheetBuilder, fnHdsFixedMediumSheetOptions(
           '搜索选项',
           (): void => {
             this.dismissSearchFilterSheet();

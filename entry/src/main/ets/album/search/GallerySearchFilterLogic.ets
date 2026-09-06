@@ -125,6 +125,68 @@ export function gallerySearchFlattenTree(nodes: GallerySearchFilterTreeNode[]): 
   return out;
 }
 
+function findChildNodes(nodes: GallerySearchFilterTreeNode[], value: string): GallerySearchFilterTreeNode[] {
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].value === value) {
+      return nodes[i].children;
+    }
+  }
+  const empty: GallerySearchFilterTreeNode[] = [];
+  return empty;
+}
+
+/** 沿 value 路径走到当前层的子节点列表。 */
+export function gallerySearchNodesAtPath(root: GallerySearchFilterTreeNode[],
+  walk: string[]): GallerySearchFilterTreeNode[] {
+  let cur: GallerySearchFilterTreeNode[] = root;
+  for (let i = 0; i < walk.length; i++) {
+    cur = findChildNodes(cur, walk[i]);
+  }
+  return cur;
+}
+
+/** 沿 value 路径收集每一层展示名。 */
+export function gallerySearchLabelsAtPath(root: GallerySearchFilterTreeNode[], walk: string[]): string[] {
+  const labels: string[] = [];
+  let cur: GallerySearchFilterTreeNode[] = root;
+  for (let i = 0; i < walk.length; i++) {
+    let found = false;
+    for (let j = 0; j < cur.length; j++) {
+      if (cur[j].value === walk[i]) {
+        labels.push(cur[j].label);
+        cur = cur[j].children;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      break;
+    }
+  }
+  return labels;
+}
+
+/** 只生成当前层选项，不把子孙拍扁。 */
+export function gallerySearchLevelToOptions(nodes: GallerySearchFilterTreeNode[],
+  walk: string[]): GallerySearchPickerOption[] {
+  const out: GallerySearchPickerOption[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const opt = new GallerySearchPickerOption();
+    opt.label = node.label;
+    opt.value = node.value;
+    const path: string[] = [];
+    for (let p = 0; p < walk.length; p++) {
+      path.push(walk[p]);
+    }
+    path.push(node.value);
+    opt.path = path;
+    opt.hasChildren = node.children.length > 0;
+    out.push(opt);
+  }
+  return out;
+}
+
 function copyStringArray(src: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < src.length; i++) {

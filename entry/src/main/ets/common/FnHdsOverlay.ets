@@ -181,6 +181,15 @@ export function fnHdsFitContentSheetOptions(title: ResourceStr, onDisappear: () 
 }
 
 /**
+ * 固定中等高度半模态：不上滑换挡，无拖拽条；内容区自行滚动。
+ */
+export function fnHdsFixedMediumSheetOptions(title: ResourceStr, onDisappear: () => void): SheetOptions {
+  const options = fnHdsSheetOptions(title, onDisappear, SheetSize.MEDIUM);
+  options.dragBar = false;
+  return options;
+}
+
+/**
  * 内容可滚动的底部半模态：官方 arkts-sheet-page 用 SheetSize 档位，不写百分比高度。
  * 默认 MEDIUM，可上滑 LARGE；List/Scroll 需配 nestedScroll PARENT_FIRST / SELF_FIRST。
  */

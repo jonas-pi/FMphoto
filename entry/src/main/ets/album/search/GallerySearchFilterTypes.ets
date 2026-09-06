@@ -17,6 +17,8 @@ export class GallerySearchPickerOption {
   path: string[] = [];
   /** 人物选项头像相对路径；其它字段为空 */
   avatarUrl: string = '';
+  /** 当前层是否还有子级，用于级联下钻 */
+  hasChildren: boolean = false;
 }
 
 /** 已选筛选快照：提交 search/results 或 magic-search 时使用 */
