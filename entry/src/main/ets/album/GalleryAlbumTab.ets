@@ -149,7 +149,14 @@ import {
   LivePhotoSaveChoice,
   LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
 } from './livephoto/LivePhotoSaveActionSheet';
-import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsMediumDetentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
+import { GallerySearchFilterSheet } from './search/GallerySearchFilterSheet';
+import {
+  gallerySearchFilterActiveCount,
+  gallerySearchGetApplied,
+  gallerySearchSetApplied
+} from './search/GallerySearchFilterLogic';
+import { GallerySearchFilterSnapshot } from './search/GallerySearchFilterTypes';
 import {
   galleryAlbumApplyDeleteSyncIfNeeded,
   galleryAlbumConfirmAndBatchDelete,
@@ -489,6 +496,8 @@ export struct GalleryAlbumTab {
   @State private searchResults: GalleryListItem[] = [];
   @State private searchLoading: boolean = false;
   @State private searchError: string = '';
+  @State private searchFilterSheetVisible: boolean = false;
+  @State private searchFilterActiveCount: number = 0;
   @State private moreMenuExpanded: boolean = false;
   @State private slideshowSettingsVisible: boolean = false;
   @State @Watch('onBottomDockVisibilityChanged') private slideshowPreparing: boolean = false;
@@ -2422,6 +2431,7 @@ export struct GalleryAlbumTab {
 
   private returnToHomeSurfaceRoot(animate: boolean): void {
     galleryAlbumReturnToHomeSurfaceRoot(this.asRootSurfaceHost(), animate);
+    this.searchFilterActiveCount = gallerySearchFilterActiveCount(gallerySearchGetApplied());
   }
 
   private syncHomeSurface(animate: boolean): void {
@@ -2433,6 +2443,10 @@ export struct GalleryAlbumTab {
   }
 
   private tryConsumeSurfaceBack(): boolean {
+    if (this.searchFilterSheetVisible) {
+      this.dismissSearchFilterSheet();
+      return true;
+    }
     if (this.choiceSheetVisible) {
       this.completeChoice(-1);
       return true;
@@ -2557,6 +2571,37 @@ export struct GalleryAlbumTab {
 
   private showMoreMenu(): void {
     galleryAlbumToggleMoreMenu(this.asRootSurfaceHost());
+  }
+
+  private openSearchFilterSheet(): void {
+    this.dismissMoreMenu();
+    this.searchFilterSheetVisible = true;
+  }
+
+  private dismissSearchFilterSheet(): void {
+    this.searchFilterSheetVisible = false;
+  }
+
+  private applySearchFilterAndRun(snapshot: GallerySearchFilterSnapshot): void {
+    gallerySearchSetApplied(snapshot);
+    this.searchFilterActiveCount = gallerySearchFilterActiveCount(snapshot);
+    this.dismissSearchFilterSheet();
+    const kw = this.searchQuery.trim();
+    if (kw.length === 0 && this.searchFilterActiveCount === 0) {
+      this.toast('请输入关键词或选择筛选条件');
+      return;
+    }
+    void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
+  }
+
+  @Builder
+  private searchFilterSheetBuilder() {
+    GallerySearchFilterSheet({
+      applied: gallerySearchGetApplied(),
+      onSearch: (snapshot: GallerySearchFilterSnapshot): void => {
+        this.applySearchFilterAndRun(snapshot);
+      }
+    })
   }
 
   private openSlideshowSettings(): void {
@@ -2769,7 +2814,11 @@ export struct GalleryAlbumTab {
           },
           onShowMoreMenu: (): void => {
             this.showMoreMenu();
-          }
+          },
+          onOpenSearchFilter: (): void => {
+            this.openSearchFilterSheet();
+          },
+          searchFilterActive: this.searchFilterActiveCount > 0
         }) {
         Stack({ alignContent: Alignment.TopStart }) {
       // ── 搜索结果视图 ──────────────────────────────────────────────────────
@@ -3390,6 +3439,15 @@ export struct GalleryAlbumTab {
           gallerySlideshowScopeLabel(this.gallerySlideshowScope()),
           (): void => {
             this.dismissSlideshowSettings();
+          }
+        ))
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.searchFilterSheetVisible, this.searchFilterSheetBuilder, fnHdsMediumDetentSheetOptions(
+          '搜索选项',
+          (): void => {
+            this.dismissSearchFilterSheet();
           }
         ))
     }

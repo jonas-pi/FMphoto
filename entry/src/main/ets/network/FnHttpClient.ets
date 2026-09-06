@@ -56,7 +56,9 @@ import {
   MediaCategoryData,
   MediaCategoryItem,
   PersonInPhotoData,
+  PhotoFolderListData,
   RecycleBinListData,
+  SearchFilterListData,
   SmartCategoryData,
   UserInfoData
 } from '../model/FnApiTypes';
@@ -1071,8 +1073,33 @@ export class FnHttpClient {
     return this.galleryOps.searchResultsByLocation(country, city, timeoutMs);
   }
 
-  async doMagicSearch(keyword: string, timeoutMs: number = 20000): Promise<FnClientResult<MagicSearchData>> {
-    return this.galleryOps.doMagicSearch(keyword, timeoutMs);
+  async doMagicSearch(
+    keyword: string,
+    timeoutMs: number = 20000,
+    antiFiltersJson: string = '[]',
+    filtersJson: string = '[]'
+  ): Promise<FnClientResult<MagicSearchData>> {
+    return this.galleryOps.doMagicSearch(keyword, timeoutMs, antiFiltersJson, filtersJson);
+  }
+
+  async getSearchFilterList(
+    showShootingInformation: boolean = true,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<SearchFilterListData>> {
+    return this.galleryOps.getSearchFilterList(showShootingInformation, timeoutMs);
+  }
+
+  async getPhotoFolderList(timeoutMs: number = 20000): Promise<FnClientResult<PhotoFolderListData>> {
+    return this.galleryOps.getPhotoFolderList(timeoutMs);
+  }
+
+  async searchResultsByFilters(
+    keyword: string,
+    filtersJson: string,
+    antiFiltersJson: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryListItem[]>> {
+    return this.galleryOps.searchResultsByFilters(keyword, filtersJson, antiFiltersJson, timeoutMs);
   }
 
   async getMediaCategoryList(timeoutMs: number = 20000): Promise<FnClientResult<MediaCategoryData>> {

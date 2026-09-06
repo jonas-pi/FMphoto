@@ -35,9 +35,13 @@ import {
   MAP_PREVIEW_CENTER_SIGN_PATH,
   MAP_TIMELINE_PATH_CANDIDATES,
   MAP_TIMELINE_SIGN_PATH,
+  PHOTO_FOLDER_LIST_PATH_CANDIDATES,
+  PHOTO_FOLDER_LIST_SIGN_PATH,
   PERSON_IN_PHOTO_PATH_CANDIDATES,
   PERSON_IN_PHOTO_SIGN_PATH,
   RECENT_PHOTOS_PATH_CANDIDATES,
+  SEARCH_FILTERLIST_PATH_CANDIDATES,
+  SEARCH_FILTERLIST_SIGN_PATH,
   RECENT_PHOTOS_SIGN_PATH,
   RECENT_TIMELINE_PATH_CANDIDATES,
   RECENT_TIMELINE_SIGN_PATH,
@@ -59,7 +63,6 @@ import {
   GalleryPhotoDetailData,
   GalleryTimelineData,
   MagicSearchData,
-  MagicSearchDoBody,
   MapPreviewAllPointData,
   MapPreviewAllPointItem,
   MapPreviewBoundaryData,
@@ -68,7 +71,11 @@ import {
   MediaCategoryData,
   MediaCategoryItem,
   PersonInPhotoData,
+  PhotoFolderListData,
+  PhotoFolderListItem,
   RecycleBinListData,
+  SearchFilterListData,
+  SearchFilterListNode,
   SmartCategoryData,
   SmartCategoryItem
 } from '../../model/FnApiTypes';
@@ -1148,10 +1155,15 @@ export class FnHttpClientGalleryOps {
    * 时间格式须为「年:月:日 时:分:秒」空格分隔（与前端 dayjs / Python _day_time_range_str 一致）。
    */
   /**
-   * AI 语义搜索（magic search）：POST /p/api/v1/magic-search/do
-   * 使用与图库 GET 相同的 Cookie + authx 认证体系。
+   * AI 语义搜索：POST /p/api/v1/magic-search/do
+   * 官方只认 keyword + antiFilters；人物/时间等正向条件请走 search/results。
    */
-  async doMagicSearch(keyword: string, timeoutMs: number = 20000): Promise<FnClientResult<MagicSearchData>> {
+  async doMagicSearch(
+    keyword: string,
+    timeoutMs: number = 20000,
+    antiFiltersJson: string = '[]',
+    filtersJson: string = '[]'
+  ): Promise<FnClientResult<MagicSearchData>> {
     try {
       const activeBase = fnWebViewBaseUrl(this.baseUrl);
       const path = `${FN_PHOTO_API_PREFIX}/magic-search/do`;
@@ -1159,14 +1171,16 @@ export class FnHttpClientGalleryOps {
         buildFnApiCookieHeader(this.token, this.longToken),
         activeBase
       );
-      const body: MagicSearchDoBody = { keyword: keyword };
-      // ArkTS 禁止无对应接口的对象字面量：先建空 Record 再逐字段赋值
-      const signBody: Record<string, FnJsonValue> = {};
-      signBody['keyword'] = keyword;
-      const authx = await genFnGalleryAuthxPost(path, signBody);
+      const antiJson = antiFiltersJson.trim().length > 0 ? antiFiltersJson.trim() : '[]';
+      const filters = filtersJson.trim().length > 0 ? filtersJson.trim() : '[]';
+      let bodyStr = `{"keyword":${JSON.stringify(keyword)},"antiFilters":${antiJson}}`;
+      if (filters !== '[]') {
+        bodyStr =
+          `{"keyword":${JSON.stringify(keyword)},"filters":${filters},"antiFilters":${antiJson}}`;
+      }
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
       const headers = this.buildGalleryFetchHeaders(authx, cookie);
       headers['Content-Type'] = 'application/json';
-      const bodyStr = JSON.stringify(body);
       const raw = await this.rawRequest(
         `${activeBase}${path}`,
         http.RequestMethod.POST,
@@ -1193,6 +1207,178 @@ export class FnHttpClientGalleryOps {
       return { success: true, data: parsed['data'] as MagicSearchData };
     } catch (e) {
       return { success: false, message: String(e) || '搜索请求异常' };
+    }
+  }
+
+  private static parseSearchFilterListData(payload: Object | undefined): SearchFilterListData {
+    const out: SearchFilterListData = { list: [] };
+    const nodes: SearchFilterListNode[] = [];
+    if (payload === undefined || payload === null) {
+      return out;
+    }
+    let rawList: Object[] = [];
+    if (Array.isArray(payload)) {
+      rawList = payload as Object[];
+    } else {
+      const rec = payload as Record<string, Object | undefined>;
+      const inner = rec['data'] ?? rec['result'];
+      if (inner !== undefined && typeof inner === 'object' && !Array.isArray(inner)) {
+        const innerRec = inner as Record<string, Object | undefined>;
+        const innerList = innerRec['list'] ?? innerRec['items'] ?? innerRec['filters'];
+        if (Array.isArray(innerList)) {
+          rawList = innerList as Object[];
+        }
+      }
+      if (rawList.length === 0) {
+        const cand = rec['list'] ?? rec['items'] ?? rec['filters'];
+        if (Array.isArray(cand)) {
+          rawList = cand as Object[];
+        }
+      }
+    }
+    for (let i = 0; i < rawList.length; i++) {
+      const el = rawList[i];
+      if (typeof el === 'object' && el !== null) {
+        nodes.push(el as SearchFilterListNode);
+      }
+    }
+    out.list = nodes;
+    return out;
+  }
+
+  /**
+   * 搜索选项目录：GET /p/api/v1/search/filterlist?show_shooting_information=1
+   */
+  async getSearchFilterList(
+    showShootingInformation: boolean = true,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<SearchFilterListData>> {
+    try {
+      const params: Record<string, string | number | boolean> = {};
+      params['show_shooting_information'] = showShootingInformation ? 1 : 0;
+      const qs = buildGallerySortedQuery(params);
+      const pathCandidates: string[] = [];
+      for (let i = 0; i < SEARCH_FILTERLIST_PATH_CANDIDATES.length; i++) {
+        pathCandidates.push(`${SEARCH_FILTERLIST_PATH_CANDIDATES[i]}?${qs}`);
+      }
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: SEARCH_FILTERLIST_SIGN_PATH,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<Object>(pathCandidates, gallerySign, timeoutMs, 3);
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '筛选项加载失败' };
+      }
+      return { success: true, data: FnHttpClientGalleryOps.parseSearchFilterListData(res.data) };
+    } catch (e) {
+      return { success: false, message: String(e) || '筛选项加载异常' };
+    }
+  }
+
+  /**
+   * 相册已选文件夹：GET /p/api/v1/photo/folder/list
+   */
+  async getPhotoFolderList(timeoutMs: number = 20000): Promise<FnClientResult<PhotoFolderListData>> {
+    try {
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: PHOTO_FOLDER_LIST_SIGN_PATH,
+        queryParams: GALLERY_QUERY_EMPTY
+      };
+      const res = await this.requestGalleryGetJson<Object>(
+        PHOTO_FOLDER_LIST_PATH_CANDIDATES,
+        gallerySign,
+        timeoutMs,
+        3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '文件夹列表加载失败' };
+      }
+      const payload = res.data;
+      const items: PhotoFolderListItem[] = [];
+      let rawList: Object[] = [];
+      if (Array.isArray(payload)) {
+        rawList = payload as Object[];
+      } else {
+        const rec = payload as Record<string, Object | undefined>;
+        const cand = rec['list'] ?? rec['items'] ?? rec['folders'];
+        if (Array.isArray(cand)) {
+          rawList = cand as Object[];
+        }
+      }
+      for (let i = 0; i < rawList.length; i++) {
+        const el = rawList[i];
+        if (typeof el === 'object' && el !== null) {
+          items.push(el as PhotoFolderListItem);
+        }
+      }
+      const data: PhotoFolderListData = { list: items };
+      return { success: true, data: data };
+    } catch (e) {
+      return { success: false, message: String(e) || '文件夹列表加载异常' };
+    }
+  }
+
+  /**
+   * 结构化搜索：POST /p/api/v2/search/results
+   * body 与官方一致：keyword + filters + antiFilters。
+   */
+  async searchResultsByFilters(
+    keyword: string,
+    filtersJson: string,
+    antiFiltersJson: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryListItem[]>> {
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const searchResultPaths: string[] = [
+        `${FN_PHOTO_API_V2_PREFIX}/search/results`,
+        `${FN_PHOTO_API_PREFIX}/search/results`,
+      ];
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const filters = filtersJson.trim().length > 0 ? filtersJson.trim() : '[]';
+      const anti = antiFiltersJson.trim().length > 0 ? antiFiltersJson.trim() : '[]';
+      const bodyStr =
+        `{"keyword":${JSON.stringify(keyword)},"filters":${filters},"antiFilters":${anti}}`;
+      hilog.info(DOMAIN, TAG, 'searchFilters body: %{public}s', bodyStr);
+      for (let pi = 0; pi < searchResultPaths.length; pi++) {
+        const pathTry = searchResultPaths[pi];
+        const authx = await genFnGalleryAuthxPostRaw(pathTry, bodyStr);
+        const headers = this.buildGalleryFetchHeaders(authx, cookie);
+        headers['Content-Type'] = 'application/json';
+        const raw = await this.rawRequest(
+          `${activeBase}${pathTry}`,
+          http.RequestMethod.POST,
+          headers,
+          bodyStr,
+          timeoutMs,
+          CertPolicy.isTrusted(activeBase)
+        );
+        if (raw.code < 200 || raw.code >= 300) {
+          continue;
+        }
+        let parsed: Record<string, string | number | Object | undefined> | undefined;
+        try {
+          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+        } catch (_e) {
+          parsed = undefined;
+        }
+        if (parsed === undefined || !FnHttpClientGalleryOps.galleryEnvelopeBizOk(parsed)) {
+          continue;
+        }
+        const arr = FnHttpClientGalleryOps.searchResultItemsFromData(
+          FnHttpClientGalleryOps.galleryEnvelopeData(parsed)
+        );
+        return {
+          success: true,
+          data: FnHttpClientGalleryOps.normalizeSearchResultGalleryItems(arr)
+        };
+      }
+      return { success: false, message: '搜索结果为空' };
+    } catch (e) {
+      return { success: false, message: String(e) || '筛选搜索异常' };
     }
   }
 

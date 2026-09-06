@@ -3,6 +3,7 @@ import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import {
   AiPersonItem,
+  FnClientResult,
   GalleryListItem,
   MagicSearchItem,
   MediaCategoryItem,
@@ -35,6 +36,16 @@ import {
   loadSmartCategories
 } from './GalleryAlbumModeLoaders';
 import { fillAndPersistCustomSmartCategoryCovers, enrichSmartCategoryCountsFromSearch } from '../SmartCategoryMagicSearch';
+import { galleryAlbumItemIdOf } from './GalleryAlbumFlowLogic';
+import {
+  gallerySearchBuildAntiFiltersJson,
+  gallerySearchBuildFiltersJson,
+  gallerySearchFilterHasConstraint,
+  gallerySearchFilterHasPositive,
+  gallerySearchGetApplied,
+  gallerySearchSetApplied
+} from '../search/GallerySearchFilterLogic';
+import { GallerySearchFilterSnapshot } from '../search/GallerySearchFilterTypes';
 import { smartCategoryCurrentAccount, smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
 import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
 import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
@@ -107,12 +118,60 @@ export function galleryAlbumPlayModeSwitchMotion(host: GalleryAlbumModeOrchestra
   );
 }
 
+function gallerySearchMapMagicItems(rawList: MagicSearchItem[]): GalleryListItem[] {
+  const out: GalleryListItem[] = [];
+  for (let i = 0; i < rawList.length; i++) {
+    const item = rawList[i];
+    const hasRichMedia =
+      item.additional !== undefined ||
+      item.thumbnail !== undefined ||
+      item.category !== undefined ||
+      item.fileType !== undefined;
+    if (hasRichMedia) {
+      out.push(item as GalleryListItem);
+      continue;
+    }
+    const id = item.id !== undefined ? String(item.id) : '';
+    const session = item.session !== undefined ? item.session : '';
+    if (id.length > 0 && session.length > 0) {
+      const mapped: GalleryListItem = {
+        id: id,
+        thumb: `/p/api/v1/stream/p/t/${id}/s/${session}`
+      };
+      out.push(mapped);
+      continue;
+    }
+    out.push(item as GalleryListItem);
+  }
+  return out;
+}
+
+function gallerySearchIntersectById(aiItems: GalleryListItem[], filterItems: GalleryListItem[]): GalleryListItem[] {
+  const allow = new Set<string>();
+  for (let i = 0; i < filterItems.length; i++) {
+    const id = galleryAlbumItemIdOf(filterItems[i]);
+    if (id.length > 0) {
+      allow.add(id);
+    }
+  }
+  const out: GalleryListItem[] = [];
+  for (let i = 0; i < aiItems.length; i++) {
+    const id = galleryAlbumItemIdOf(aiItems[i]);
+    if (id.length > 0 && allow.has(id)) {
+      out.push(aiItems[i]);
+    }
+  }
+  return out;
+}
+
 export async function galleryAlbumRunSearch(
   host: GalleryAlbumModeOrchestratorHost,
   keyword: string
 ): Promise<void> {
   const kw = keyword.trim();
-  if (kw.length === 0) {
+  const snapshot = gallerySearchGetApplied();
+  const hasFilter = gallerySearchFilterHasConstraint(snapshot);
+  if (kw.length === 0 && !hasFilter) {
     return;
   }
   host.exitGallerySelection();
@@ -132,34 +191,47 @@ export async function galleryAlbumRunSearch(
     return;
   }
   try {
-    const res = await client.doMagicSearch(kw);
-    if (!res.success || res.data === undefined) {
-      host.searchError = res.message ?? '搜索失败';
-      host.searchLoading = false;
-      return;
+    const antiJson = gallerySearchBuildAntiFiltersJson(snapshot);
+    const filtersJson = gallerySearchBuildFiltersJson(snapshot);
+    const hasPositive = gallerySearchFilterHasPositive(snapshot);
+    if (kw.length > 0 && hasPositive) {
+      const aiTask = client.doMagicSearch(kw, 20000, antiJson);
+      const filterTask = client.searchResultsByFilters('', filtersJson, antiJson);
+      const aiRes = await aiTask;
+      const filterRes = await filterTask;
+      if (!aiRes.success || aiRes.data === undefined) {
+        host.searchError = aiRes.message !== undefined ? aiRes.message : '搜索失败';
+        host.searchLoading = false;
+        return;
+      }
+      if (!filterRes.success || filterRes.data === undefined) {
+        host.searchError = filterRes.message !== undefined ? filterRes.message : '筛选失败';
+        host.searchLoading = false;
+        return;
+      }
+      const aiItems = gallerySearchMapMagicItems(aiRes.data.list !== undefined ? aiRes.data.list : []);
+      host.searchResults = gallerySearchIntersectById(aiItems, filterRes.data);
+    } else if (hasPositive || (kw.length === 0 && hasFilter)) {
+      const res: FnClientResult<GalleryListItem[]> =
+        await client.searchResultsByFilters(kw, filtersJson, antiJson);
+      if (!res.success || res.data === undefined) {
+        host.searchError = res.message !== undefined ? res.message : '搜索失败';
+        host.searchLoading = false;
+        return;
+      }
+      host.searchResults = res.data;
+    } else {
+      const res = await client.doMagicSearch(kw, 20000, antiJson);
+      if (!res.success || res.data === undefined) {
+        host.searchError = res.message ?? '搜索失败';
+        host.searchLoading = false;
+        return;
+      }
+      host.searchResults = gallerySearchMapMagicItems(res.data.list !== undefined ? res.data.list : []);
     }
-    const rawList = res.data.list ?? [];
-    host.searchResults = rawList.map((item: MagicSearchItem): GalleryListItem => {
-      const hasRichMedia =
-        item.additional !== undefined ||
-        item.thumbnail !== undefined ||
-        item.category !== undefined ||
-        item.fileType !== undefined;
-      if (hasRichMedia) {
-        return item as GalleryListItem;
-      }
-      const id = item.id !== undefined ? String(item.id) : '';
-      const session = item.session !== undefined ? item.session : '';
-      if (id.length > 0 && session.length > 0) {
-        return {
-          id: id,
-          thumb: `/p/api/v1/stream/p/t/${id}/s/${session}`
-        };
-      }
-      return item as GalleryListItem;
-    });
     if (host.searchResults.length === 0) {
-      host.searchError = '未找到相关媒体';
+      host.searchError = kw.length > 0 && hasPositive ?
+        '没有同时满足关键词和筛选的照片' : '未找到相关媒体';
     }
   } catch (e) {
     host.searchError = String(e) || '搜索异常';
@@ -173,6 +245,7 @@ export function galleryAlbumClearSearch(host: GalleryAlbumModeOrchestratorHost):
   host.searchResults = [];
   host.searchError = '';
   host.searchLoading = false;
+  gallerySearchSetApplied(new GallerySearchFilterSnapshot());
 }
 
 export function galleryAlbumClearCategory(host: GalleryAlbumModeOrchestratorHost): void {

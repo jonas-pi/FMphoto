@@ -100,6 +100,18 @@ export const MAP_GET_IDS_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/map/getIds`,
   '/api/v1/map/getIds'
 ];
+/** 搜索筛选项：GET /p/api/v1/search/filterlist */
+export const SEARCH_FILTERLIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/search/filterlist`;
+export const SEARCH_FILTERLIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/search/filterlist`,
+  '/api/v1/search/filterlist'
+];
+/** 相册已选文件夹：GET /p/api/v1/photo/folder/list */
+export const PHOTO_FOLDER_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/photo/folder/list`;
+export const PHOTO_FOLDER_LIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/photo/folder/list`,
+  '/api/v1/photo/folder/list'
+];
 /** 地理位置列表：官方 Web 端 /geo 使用 exploreApi.getGeos */
 export const EXPLORE_GEOS_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/explore/geos`;
 export const EXPLORE_GEOS_PATH_CANDIDATES: string[] = [

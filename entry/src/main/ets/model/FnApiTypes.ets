@@ -356,9 +356,36 @@ export interface RecycleBinListData {
   now?: number;
 }
 
-/** POST /p/api/v1/magic-search/do 请求体 */
+/** POST /p/api/v1/magic-search/do 请求体（官方 Lc：keyword + antiFilters；有正向筛选时补 filters） */
 export interface MagicSearchDoBody {
   keyword: string;
+  antiFilters?: Object[];
+  filters?: Object[];
+}
+
+/** GET /p/api/v1/search/filterlist 单层筛选项 */
+export interface SearchFilterListNode {
+  filterName?: string;
+  filterValues?: string[];
+  subFilter?: SearchFilterListNode[];
+}
+
+/** GET /p/api/v1/search/filterlist 返回 data */
+export interface SearchFilterListData {
+  list?: SearchFilterListNode[];
+}
+
+/** GET /p/api/v1/photo/folder/list 单项 */
+export interface PhotoFolderListItem {
+  folderPath?: string;
+  path?: string;
+  name?: string;
+}
+
+/** GET /p/api/v1/photo/folder/list 返回 data */
+export interface PhotoFolderListData {
+  list?: PhotoFolderListItem[];
+  items?: PhotoFolderListItem[];
 }
 
 /**
@@ -446,6 +473,7 @@ export interface AiPersonItem {
   posterId?: string | number;
   coverId?: string | number;
   faceUrl?: string;
+  isHide?: boolean;
 }
 
 /** GET /p/api/v1/ai-person/list 返回 data */

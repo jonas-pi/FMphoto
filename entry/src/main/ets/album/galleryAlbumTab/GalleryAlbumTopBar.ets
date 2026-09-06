@@ -191,6 +191,7 @@ export struct GalleryAlbumTopBar {
   /** 系统状态栏高度：内容区顶部留白仍用此值；按钮避让靠 titleBar.avoidLayoutSafeArea。 */
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
+  @Prop searchFilterActive: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   /** 真实可滚动内容：图库/相册/分类等页面 Stack，由调用方通过尾随闭包传入。 */
@@ -206,6 +207,7 @@ export struct GalleryAlbumTopBar {
   onEnterSelection: () => void = () => {};
   onBackToGallery: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
+  onOpenSearchFilter: () => void = () => {};
 
   /** 不进 @State：只挡自动抢焦，避免为了收键盘刷新输入框。 */
   private suppressSearchAutoFocus: boolean = true;
@@ -310,6 +312,13 @@ export struct GalleryAlbumTopBar {
       this.getUIContext().getFocusController().clearFocus();
     } catch (_e) {
     }
+  }
+
+  private onSearchFilterAction(): void {
+    if (this.inSearchMode) {
+      this.releaseSearchImeForOverlay();
+    }
+    this.onOpenSearchFilter();
   }
 
   private onMoreMenuAction(): void {
@@ -490,6 +499,15 @@ export struct GalleryAlbumTopBar {
       };
       return [this.menuItem(doneContent)];
     }
+    const filterContent: HdsNavigationIconOptions = {
+      label: this.searchFilterActive ? '已筛选' : '筛选',
+      icon: $r('sys.symbol.slider_horizontal_2'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
+      action: (): void => {
+        this.onSearchFilterAction();
+      }
+    };
     const moreContent: HdsNavigationIconOptions = {
       label: '更多',
       icon: $r('sys.symbol.dot_grid_2x2'),
@@ -499,7 +517,7 @@ export struct GalleryAlbumTopBar {
         this.onMoreMenuAction();
       }
     };
-    return [this.menuItem(moreContent)];
+    return [this.menuItem(filterContent), this.menuItem(moreContent)];
   }
 
   private buildDefaultMenuItems(): HdsNavigationMenuItemOptions[] {
