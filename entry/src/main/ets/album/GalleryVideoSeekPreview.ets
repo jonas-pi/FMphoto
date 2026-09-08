@@ -5,7 +5,7 @@
  * 表现为缓存条停住、小窗一直黑。因此本会话只读本地预取，不再 setUrlSource。
  *
  * 抽帧优先级：
- * 1) 已封口的连续文件 → AVImageGenerator + 独立 fd
+ * 1) 已封口的连续文件 → AVImageGenerator + 独立 fd（API20 按比例缩放抽帧）
  * 2) 边下边播半成品 → AVMetadataExtractor.dataSrc + 独立 fd（与播放器同一套 fill）
  * 3) 预取尚未可播 → 只显示时间，不出画（避免再打一条 HTTP）
  */
@@ -28,11 +28,13 @@ import {
 
 const DOMAIN: number = 0xFF00;
 const TAG: string = 'SeekPreview';
-const PREVIEW_MAX_W: number = 160;
-const PREVIEW_MAX_H: number = 90;
+/** 小窗约 160×90 vp，按 2x 抽帧避免发糊 */
+const PREVIEW_MAX_W: number = 320;
+const PREVIEW_MAX_H: number = 180;
 const PREVIEW_BUCKET_MS: number = 400;
-/** dataSrc 抽到未下完的偏移时可能一直等 0 字节，超时后放开队列给下一帧 */
-const PREVIEW_FETCH_WATCHDOG_MS: number = 2500;
+/** 卡住时尽快让出队列；4K I 帧偶发超过 500ms */
+const PREVIEW_FETCH_WATCHDOG_MS: number = 800;
+const PREVIEW_CACHE_MAX: number = 40;
 
 export class GalleryVideoSeekPreviewSession {
   private generator: media.AVImageGenerator | null = null;
@@ -48,6 +50,9 @@ export class GalleryVideoSeekPreviewSession {
   private seq: number = 0;
   private fetchWatchId: number = 0;
   private onFrame: ((pix: image.PixelMap | undefined) => void) | null = null;
+  private cacheKeys: number[] = [];
+  private cacheVals: image.PixelMap[] = [];
+  private shownBucket: number = -1;
 
   prepare(url: string, _headers: Record<string, string>, onFrame: (pix: image.PixelMap | undefined) => void): void {
     this.wantUrl = url.trim();
@@ -55,16 +60,33 @@ export class GalleryVideoSeekPreviewSession {
     this.ensureAttached();
   }
 
+  /** 松手 seek 时停抽帧，但保留生成器与缓存，下次拖动不用重建。 */
+  idle(): void {
+    this.clearFetchWatch();
+    this.inflight = false;
+    this.pendingMs = -1;
+  }
+
   request(timeMs: number, videoPxW: number, videoPxH: number, durationMs: number): void {
-    // 拖动过程中满载可能刚变得可播，每次请求都尝试挂上本地源。
     this.ensureAttached();
     let ms = Math.max(0, timeMs);
-    // 尚未下到的时间点抽帧只会失败；改落到已缓存前缀，小窗至少有画。
     if (this.wantUrl.length > 0 && !isGalleryVideoLanPrefetchComplete()) {
       const cap = galleryVideoLanPrefetchBufferedMs(durationMs);
       if (cap > 0 && ms > cap) {
         ms = cap;
       }
+    }
+    const bucket = Math.floor(ms / PREVIEW_BUCKET_MS);
+    const exact = this.cacheGet(bucket);
+    if (exact !== undefined) {
+      this.pendingMs = -1;
+      this.lastBucket = bucket;
+      this.emitFrame(bucket, exact);
+      return;
+    }
+    const near = this.cacheNearest(bucket);
+    if (near !== undefined) {
+      this.emitFrame(this.shownBucket >= 0 ? this.shownBucket : bucket, near);
     }
     this.pendingMs = ms;
     this.pendingVw = videoPxW;
@@ -94,22 +116,17 @@ export class GalleryVideoSeekPreviewSession {
       if (!isGalleryVideoLanPrefetchComplete()) {
         return;
       }
-      // 半成品 extractor 在封口后必须换完整文件，否则仍按流式解析。
       this.detachSources();
     }
     if (this.fd >= 0 && this.attachedUrl === url) {
-      // 正在异步 create generator/extractor，不要重复 open。
       return;
     }
     if (this.tryAttachLocal(url)) {
-      hilog.info(DOMAIN, TAG, 'attach local file');
       return;
     }
     if (this.tryAttachPrefetchDataSrc(url)) {
-      hilog.info(DOMAIN, TAG, 'attach prefetch dataSrc');
       return;
     }
-    // 尚未可播或没有本地缓存时不再打原片 HTTPS，避免和满载下载抢带宽。
   }
 
   private clearFetchWatch(): void {
@@ -129,6 +146,8 @@ export class GalleryVideoSeekPreviewSession {
     this.inflight = false;
     this.pendingMs = -1;
     this.lastBucket = -1;
+    this.shownBucket = -1;
+    this.clearCache();
     const gen = this.generator;
     this.generator = null;
     const ext = this.extractor;
@@ -192,7 +211,6 @@ export class GalleryVideoSeekPreviewSession {
     return true;
   }
 
-  /** ImageGenerator 建失败时，完整文件改走 extractor.fdSrc */
   private tryAttachExtractorFd(url: string, fd: number): void {
     const self = this;
     media.createAVMetadataExtractor().then((ext: media.AVMetadataExtractor): void => {
@@ -222,10 +240,6 @@ export class GalleryVideoSeekPreviewSession {
     });
   }
 
-  /**
-   * 边下边播：用独立 fd 的 dataSrc 抽帧。
-   * 播放器继续播，抽帧不另开 HTTP，缓存条才能继续涨。
-   */
   private tryAttachPrefetchDataSrc(url: string): boolean {
     if (!isGalleryVideoLanPrefetchPlayable(url) || isGalleryVideoLanPrefetchComplete()) {
       return false;
@@ -274,11 +288,105 @@ export class GalleryVideoSeekPreviewSession {
     const boxR = PREVIEW_MAX_W / PREVIEW_MAX_H;
     const even = (n: number): number => Math.max(2, n - (n % 2));
     if (ratio >= boxR) {
-      const h = even(Math.max(54, Math.round(PREVIEW_MAX_W / ratio)));
+      const h = even(Math.max(108, Math.round(PREVIEW_MAX_W / ratio)));
       return { width: even(PREVIEW_MAX_W), height: h };
     }
-    const w = even(Math.max(80, Math.round(PREVIEW_MAX_H * ratio)));
+    const w = even(Math.max(160, Math.round(PREVIEW_MAX_H * ratio)));
     return { width: w, height: even(PREVIEW_MAX_H) };
+  }
+
+  private emitFrame(bucket: number, pix: image.PixelMap): void {
+    this.shownBucket = bucket;
+    const cb = this.onFrame;
+    if (cb !== null) {
+      cb(pix);
+    }
+  }
+
+  private cacheGet(bucket: number): image.PixelMap | undefined {
+    for (let i = 0; i < this.cacheKeys.length; i++) {
+      if (this.cacheKeys[i] === bucket) {
+        return this.cacheVals[i];
+      }
+    }
+    return undefined;
+  }
+
+  private cacheNearest(bucket: number): image.PixelMap | undefined {
+    const prev = this.cacheGet(bucket - 1);
+    if (prev !== undefined) {
+      return prev;
+    }
+    const next = this.cacheGet(bucket + 1);
+    if (next !== undefined) {
+      return next;
+    }
+    if (this.shownBucket >= 0) {
+      return this.cacheGet(this.shownBucket);
+    }
+    return undefined;
+  }
+
+  private cachePut(bucket: number, pix: image.PixelMap): void {
+    for (let i = 0; i < this.cacheKeys.length; i++) {
+      if (this.cacheKeys[i] === bucket) {
+        const old = this.cacheVals[i];
+        if (old !== pix) {
+          try {
+            old.release();
+          } catch (_e) {
+          }
+        }
+        this.cacheVals[i] = pix;
+        return;
+      }
+    }
+    this.cacheKeys.push(bucket);
+    this.cacheVals.push(pix);
+    while (this.cacheKeys.length > PREVIEW_CACHE_MAX) {
+      let dropAt = 0;
+      if (this.cacheKeys[0] === this.shownBucket && this.cacheKeys.length > 1) {
+        dropAt = 1;
+      }
+      const drop = this.cacheVals[dropAt];
+      this.cacheKeys.splice(dropAt, 1);
+      this.cacheVals.splice(dropAt, 1);
+      try {
+        drop.release();
+      } catch (_e) {
+      }
+    }
+  }
+
+  private clearCache(): void {
+    for (let i = 0; i < this.cacheVals.length; i++) {
+      try {
+        this.cacheVals[i].release();
+      } catch (_e) {
+      }
+    }
+    this.cacheKeys = [];
+    this.cacheVals = [];
+  }
+
+  private startFetch(
+    gen: media.AVImageGenerator | null,
+    ext: media.AVMetadataExtractor | null,
+    timeUs: number,
+    query: media.AVImageQueryOptions,
+    param: media.PixelMapParams
+  ): Promise<image.PixelMap> {
+    if (gen !== null) {
+      const g = gen;
+      const size: media.OutputSize = { width: param.width, height: param.height };
+      return g.fetchScaledFrameByTime(timeUs, query, size).catch((): Promise<image.PixelMap> => {
+        return g.fetchFrameByTime(timeUs, query, param);
+      });
+    }
+    if (ext !== null) {
+      return ext.fetchFrameByTime(timeUs, query, param);
+    }
+    return Promise.reject(new Error('no source'));
   }
 
   private pump(): void {
@@ -292,6 +400,13 @@ export class GalleryVideoSeekPreviewSession {
       return;
     }
     const bucket = Math.floor(ms / PREVIEW_BUCKET_MS);
+    const cached = this.cacheGet(bucket);
+    if (cached !== undefined) {
+      this.pendingMs = -1;
+      this.lastBucket = bucket;
+      this.emitFrame(bucket, cached);
+      return;
+    }
     if (bucket === this.lastBucket) {
       this.pendingMs = -1;
       return;
@@ -313,18 +428,8 @@ export class GalleryVideoSeekPreviewSession {
     }, PREVIEW_FETCH_WATCHDOG_MS);
     const timeUs = ms * 1000;
     const param = this.previewParam(this.pendingVw, this.pendingVh);
-    // 半成品优先关键帧，CLOSEST 可能去解尚未下到的非关键帧
     const query = media.AVImageQueryOptions.AV_IMAGE_QUERY_PREVIOUS_SYNC;
-    let job: Promise<image.PixelMap>;
-    if (gen !== null) {
-      job = gen.fetchFrameByTime(timeUs, query, param);
-    } else if (ext !== null) {
-      job = ext.fetchFrameByTime(timeUs, query, param);
-    } else {
-      this.inflight = false;
-      return;
-    }
-    job.then((pix: image.PixelMap): void => {
+    this.startFetch(gen, ext, timeUs, query, param).then((pix: image.PixelMap): void => {
       if (seq !== this.seq) {
         try {
           pix.release();
@@ -334,20 +439,11 @@ export class GalleryVideoSeekPreviewSession {
         return;
       }
       this.lastBucket = bucket;
-      hilog.info(DOMAIN, TAG, 'frame ok t=%{public}s', `${ms}`);
-      const cb = this.onFrame;
-      if (cb !== null) {
-        cb(pix);
-      } else {
-        try {
-          pix.release();
-        } catch (_e) {
-        }
-      }
+      this.cachePut(bucket, pix);
+      this.emitFrame(bucket, pix);
       this.finishPump(seq);
     }).catch((error: Error): void => {
       hilog.warn(DOMAIN, TAG, 'fetchFrame fail t=%{public}s err=%{public}s', `${ms}`, `${error}`);
-      // 拖动期间满载可能刚好下完，立刻切完整文件再抽一次。
       if (seq === this.seq && gen === null &&
         isGalleryVideoLanPrefetchForUrl(this.attachedUrl) &&
         isGalleryVideoLanPrefetchComplete()) {
@@ -361,7 +457,6 @@ export class GalleryVideoSeekPreviewSession {
           this.pendingMs = ms;
         }
         if (this.tryAttachLocal(this.wantUrl)) {
-          hilog.info(DOMAIN, TAG, 'fallback to completed local file');
           return;
         }
       }

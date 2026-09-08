@@ -446,23 +446,21 @@ export async function galleryAlbumBootstrap(
 
   let workClient = client;
   if (workClient.getLongToken().length === 0) {
-    const tok = await workClient.fetchFnosLongTokenProbe(12000);
-    if (tok.length > 0) {
-      const cur = AppSession.getStored();
-      if (cur !== null) {
-        cur.fnosLongToken = tok;
-        AppSession.apply(cur);
-        try {
-          const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-          void SessionPreferences.save(ctx, cur);
-        } catch (_e) {
-        }
-        const refreshed = AppSession.getClient();
-        if (refreshed !== null) {
-          workClient = refreshed;
+    // 时间轴走 Authx，不必堵住首屏等 cookie；与 Home 一样后台补 long-token。
+    void workClient.fetchFnosLongTokenProbe(12000).then((tok: string): void => {
+      if (tok.length > 0) {
+        const cur = AppSession.getStored();
+        if (cur !== null) {
+          cur.fnosLongToken = tok;
+          AppSession.apply(cur);
+          try {
+            const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+            void SessionPreferences.save(ctx, cur);
+          } catch (_e) {
+          }
         }
       }
-    }
+    });
   }
 
   let tl = await workClient.getGalleryTimeline();

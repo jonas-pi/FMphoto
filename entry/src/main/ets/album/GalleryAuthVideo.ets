@@ -86,6 +86,8 @@ const GALLERY_VIDEO_DEFER_SEEK_MIN_MS = 800;
 const GALLERY_VIDEO_PLAYBACK_INFO_INTERVAL_MS = 2000;
 /** 拖进度条时缓冲条跟本地已下前缀刷新，不必等 2s 的 playbackInfo */
 const GALLERY_VIDEO_SEEK_BUFFER_POLL_MS = 250;
+/** seekDone 迟迟不来时放开 timeUpdate，避免进度条卡死 */
+const GALLERY_VIDEO_SEEK_DONE_WATCHDOG_MS = 2500;
 /** CACHED_DURATION 低于该值时打告警（毫秒） */
 const GALLERY_VIDEO_CACHED_DURATION_WARN_MS = 2000;
 /** 内网原片改走本地 dataSrc 前，等待 moov 可读的最长时间 */
@@ -224,6 +226,7 @@ export struct GalleryAuthVideo {
   private playbackInfoTimerId: number = 0;
   /** 拖进度条时单独刷缓冲条，避免被拖动逻辑挡住或等 2s playbackInfo */
   private seekBufferPollId: number = 0;
+  private seekDoneWatchId: number = 0;
   /** prepare/play 卡住时给出重试，避免无限转圈 */
   private loadWatchdogId: number = 0;
   /** 最近一次 CACHED_DURATION（毫秒），供停滞诊断 */
@@ -328,6 +331,29 @@ export struct GalleryAuthVideo {
     } catch (_e) {
     }
     this.seekBufferPollId = 0;
+  }
+
+  private clearSeekDoneWatch(): void {
+    if (this.seekDoneWatchId === 0) {
+      return;
+    }
+    try {
+      clearTimeout(this.seekDoneWatchId);
+    } catch (_e) {
+    }
+    this.seekDoneWatchId = 0;
+  }
+
+  private armSeekDoneWatch(): void {
+    this.clearSeekDoneWatch();
+    this.seekDoneWatchId = setTimeout((): void => {
+      this.seekDoneWatchId = 0;
+      if (!this.seekInFlight) {
+        return;
+      }
+      hilog.warn(DOMAIN, TAG, 'seekDone timeout pos=%{public}s', `${this.currentMs}`);
+      this.seekInFlight = false;
+    }, GALLERY_VIDEO_SEEK_DONE_WATCHDOG_MS);
   }
 
   private clearLoadWatchdog(): void {
@@ -496,6 +522,7 @@ export struct GalleryAuthVideo {
     this.playingFromLocalFd = false;
     stopGalleryVideoLanPrefetch();
     this.seekInFlight = false;
+    this.clearSeekDoneWatch();
     // 切换到下一个视频时保留用户最近一次选择的倍速，不再重置为 1.0x。
     this.speedRate = LAST_VIDEO_SPEED_RATE;
     // 切换到下一个视频时保留上次选择的清晰度档位。
@@ -624,6 +651,7 @@ export struct GalleryAuthVideo {
     this.clearSeekPreviewPix();
     this.seekPreviewSession.release();
     this.stopSeekBufferPoll();
+    this.clearSeekDoneWatch();
     stopGalleryVideoLanPrefetch();
     this.stopPlaybackInfoWatch();
     this.clearLoadWatchdog();
@@ -804,6 +832,16 @@ export struct GalleryAuthVideo {
       return '1.5X';
     }
     return `${r.toFixed(1)}X`;
+  }
+
+  private qualityBadgeText(): string {
+    const idx = (this.qualityIndex >= 0 && this.qualityIndex < QUALITY_OPTIONS.length) ?
+      this.qualityIndex : 0;
+    const q = QUALITY_OPTIONS[idx];
+    if (q.directStream) {
+      return '原始';
+    }
+    return `${q.resolution}p`;
   }
 
   /**
@@ -1003,21 +1041,27 @@ export struct GalleryAuthVideo {
     this.chromeHideTimer = 0;
   }
 
-  /** 播放中无操作则收起顶底栏与浮层；暂停/结束/卡住保持显示 */
+  /** 播放中无操作则收起顶底栏与浮层；暂停/结束/卡住/拖进度保持显示 */
   private scheduleChromeAutoHide(): void {
     this.clearChromeAutoHideTimer();
-    if (!this.active || !this.isPlaying || this.videoRebuffering || this.videoLoading) {
+    if (!this.active || !this.isPlaying || this.videoRebuffering || this.videoLoading ||
+      this.draggingSeek) {
       return;
     }
     this.chromeHideTimer = setTimeout((): void => {
       this.chromeHideTimer = 0;
-      if (this.active && this.isPlaying && !this.videoRebuffering && !this.videoLoading) {
+      if (this.active && this.isPlaying && !this.videoRebuffering && !this.videoLoading &&
+        !this.draggingSeek) {
         setGalleryPreviewToolbarVisible(false);
       }
     }, GALLERY_VIDEO_CHROME_AUTOHIDE_MS);
   }
 
   private bumpChromeAutoHide(): void {
+    if (this.draggingSeek) {
+      this.clearChromeAutoHideTimer();
+      return;
+    }
     if (this.videoRebuffering || this.videoLoading) {
       this.clearChromeAutoHideTimer();
       setGalleryPreviewToolbarVisible(true);
@@ -1209,8 +1253,10 @@ export struct GalleryAuthVideo {
     try {
       p.seek(toMs, this.userSeekMode());
       this.currentMs = toMs;
+      this.armSeekDoneWatch();
     } catch (_e) {
       this.seekInFlight = false;
+      this.clearSeekDoneWatch();
     }
   }
 
@@ -1244,8 +1290,11 @@ export struct GalleryAuthVideo {
 
   private endSeekDrag(): void {
     this.stopSeekBufferPoll();
-    this.seekByRatio(this.dragRatio);
+    // 停抽帧但保留生成器与缓存，下次拖动不用重建。
+    this.seekPreviewSession.idle();
+    const ratio = this.dragRatio;
     this.draggingSeek = false;
+    this.seekByRatio(ratio);
   }
 
   private requestSeekPreview(): void {
@@ -1256,25 +1305,24 @@ export struct GalleryAuthVideo {
   }
 
   private applySeekPreviewPix(pix: PixelMap | undefined): void {
-    const old = this.seekPreviewPix;
+    // 帧由 SeekPreview 会话缓存持有，这里只换引用，避免把缓存里的 PixelMap 提前 release。
     this.seekPreviewPix = pix;
-    hilog.info(DOMAIN, TAG, 'seek preview pix %{public}s', pix !== undefined ? 'set' : 'empty');
-    if (old !== undefined && old !== pix) {
-      try {
-        old.release();
-      } catch (_e) {
-      }
-    }
   }
 
   private clearSeekPreviewPix(): void {
-    const old = this.seekPreviewPix;
     this.seekPreviewPix = undefined;
-    if (old !== undefined) {
-      try {
-        old.release();
-      } catch (_e) {
-      }
+  }
+
+  /** 起播后预挂生成本地抽帧器，避免第一次拖动空等 createAVImageGenerator */
+  private warmSeekPreviewIfLocal(): void {
+    if (!this.playingFromPrefetch && !this.canPlayFromLanCache()) {
+      return;
+    }
+    this.seekPreviewSession.prepare(this.videoUrl, {}, (pix: PixelMap | undefined): void => {
+      this.applySeekPreviewPix(pix);
+    });
+    if (this.durationMs > 0) {
+      this.seekPreviewSession.request(this.currentMs, this.videoPxW, this.videoPxH, this.durationMs);
     }
   }
 
@@ -1747,6 +1795,7 @@ export struct GalleryAuthVideo {
     });
     player.on('seekDone', (time: number): void => {
       if (gen !== this.playGen) { return; }
+      this.clearSeekDoneWatch();
       this.seekInFlight = false;
       this.currentMs = time;
     });
@@ -1825,6 +1874,7 @@ export struct GalleryAuthVideo {
         this.scheduleChromeAutoHide();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
+        this.warmSeekPreviewIfLocal();
         if ((this.playingFromPrefetch ?
           this.pendingRestoreMs >= 0 :
           this.pendingRestoreMs > GALLERY_VIDEO_DEFER_SEEK_MIN_MS) && this.durationMs > 0) {
@@ -1836,8 +1886,10 @@ export struct GalleryAuthVideo {
             this.seekInFlight = true;
             player.seek(toMs, this.userSeekMode());
             this.currentMs = toMs;
+            this.armSeekDoneWatch();
           } catch (_e) {
             this.seekInFlight = false;
+            this.clearSeekDoneWatch();
           }
         } else {
           this.pendingRestoreMs = -1;
@@ -2059,13 +2111,14 @@ export struct GalleryAuthVideo {
 
       if (!this.videoLoading) {
         GalleryVideoOverlayChrome({
-        visible: this.previewToolbarVisible,
+        visible: this.previewToolbarVisible || this.draggingSeek,
         showCenterPlay: this.showCenterPlay(),
         landscape: this.landscape,
         speedText: this.speedBadgeText(),
         speedRate: this.speedRate,
         qualityLabels: this.qualityMenuLabels(),
         qualityIndex: this.qualityIndex,
+        qualityText: this.qualityBadgeText(),
         currentText: this.fmtTime(this.currentMs),
         durationText: this.fmtTime(this.durationMs),
         progress: this.progressRatio(),
@@ -2106,9 +2159,8 @@ export struct GalleryAuthVideo {
           this.bumpChromeAutoHide();
         },
         onSeekCancel: (): void => {
-          this.stopSeekBufferPoll();
-          this.draggingSeek = false;
-          this.seekInFlight = false;
+          // 长拖后系统可能 cancel 而不是 end，仍按当前指示位置落地。
+          this.endSeekDrag();
           this.bumpChromeAutoHide();
         },
         onSeekTapRatio: (ratio: number): void => {

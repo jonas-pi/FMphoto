@@ -7,7 +7,6 @@ import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { hdsEffect } from '@kit.UIDesignKit';
-import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
 import {
@@ -20,6 +19,8 @@ import { isIpLiteralHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
 import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
+import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
+import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import { FnLoginPrimaryButton, FnLoginSecondaryButton } from '../common/FnLoginButtons';
 import { FnLoginRoutePrefSegment } from '../common/FnLoginRoutePrefSegment';
 import { FnLoginTextField } from '../common/FnLoginTextField';
@@ -209,16 +210,7 @@ struct Login {
   ): Promise<void> {
     /** 内置 Web 固定 https:5667，与登录 base 可能不同，一并加入信任列表（自签证书） */
     CertPolicy.addTrusted(fnWebViewBaseUrl(base));
-    const client = new FnHttpClient(base, token);
     let longTok = longTokenFromWs !== undefined && longTokenFromWs.length > 0 ? longTokenFromWs : '';
-    if (longTok.length === 0) {
-      try {
-        longTok = await client.fetchFnosLongTokenProbe(14000);
-      } catch (e) {
-        hilog.warn(LOGIN_DOMAIN, LOGIN_TAG, 'fetchFnosLongTokenProbe: %{public}s', String(e));
-        longTok = '';
-      }
-    }
     const sharedParsed = this.parseSharedHostInput(this.fnIdInput);
     const stored: StoredSession = {
       baseUrl: base,
@@ -252,7 +244,15 @@ struct Login {
     } catch (_e) {
       existing = null;
     }
-    if (existing !== null && existing.albumParentGuid.length > 0) {
+    const accountChanged = existing === null || existing.account !== stored.account ||
+      existing.baseUrl !== stored.baseUrl;
+    if (accountChanged) {
+      GalleryTimelineRefreshStore.bump();
+      stopGalleryVideoLanPrefetch();
+    }
+    // 换账号不得沿用上一用户的相册根；同账号才保留，避免进错库再重拉。
+    if (existing !== null && existing.albumParentGuid.length > 0 &&
+      existing.account === stored.account && existing.baseUrl === stored.baseUrl) {
       stored.albumParentGuid = existing.albumParentGuid;
     }
 

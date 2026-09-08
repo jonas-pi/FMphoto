@@ -19,6 +19,8 @@ import { RecycleBinPageNavigationContent } from './RecycleBinPage';
 import { SmartCategoryPageNavigationContent } from './SmartCategoryPage';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
 import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
+import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
+import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { proactiveRefreshLongTokenOnForeground } from '../auth/SessionReauth';
@@ -1097,6 +1099,8 @@ struct MePanel {
               await SessionPreferences.clearSession(ctx);
               invalidateAutoSync();
               await GalleryAutoSyncLedger.clear(ctx);
+              GalleryTimelineRefreshStore.bump();
+              stopGalleryVideoLanPrefetch();
               AppSession.clear();
               this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
               });

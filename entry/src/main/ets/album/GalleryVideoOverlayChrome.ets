@@ -1,10 +1,9 @@
 /**
  * 官方图库风格视频浮层。
- * 倍速 / 清晰度走系统 bindMenu、bindContextMenu，不要自绘半模态。
+ * 倍速、清晰度各自 bindMenu，按钮文案跟当前档位。
  * 视频手势与控件分层，避免父级单击/长按抢走菜单。
  */
 import {
-  fnHdsBindContextMenuOptions,
   fnHdsBindMenuOptions
 } from '../common/FnHdsOverlay';
 import { FnHdsOverlayCapsule } from '../common/FnHdsOverlayCapsule';
@@ -21,6 +20,7 @@ import { playGalleryLongPressMenuHaptic } from './GallerySelectionHaptic';
 
 const OVERLAY_PILL_HEIGHT_VP: number = 36;
 const OVERLAY_SPEED_WIDTH_VP: number = 60;
+const OVERLAY_QUALITY_WIDTH_VP: number = 72;
 const OVERLAY_LANDSCAPE_SIZE_VP: number = 36;
 const OVERLAY_PLAY_SIZE_VP: number = 72;
 const OVERLAY_SIDE_PAD_VP: number = 16;
@@ -37,6 +37,7 @@ export struct GalleryVideoOverlayChrome {
   @Prop speedRate: number = 1.0;
   @Prop qualityLabels: string[] = ['原始', '高清 1080p', '均衡 720p', '流畅 480p'];
   @Prop qualityIndex: number = 0;
+  @Prop qualityText: string = '原始';
   @Prop currentText: string = '00:00';
   @Prop durationText: string = '00:00';
   @Prop progress: number = 0;
@@ -71,8 +72,6 @@ export struct GalleryVideoOverlayChrome {
   @StorageProp(FN_SYSTEM_RIGHT_INSET_VP_KEY) private systemRightInsetVp: number = 0;
   /** 本次手势已按拖动处理时，抬起不再走点击 seek，避免二次跳点 */
   private seekPanUsed: boolean = false;
-  private skipSpeedClick: boolean = false;
-  private lastQualityMenuAt: number = 0;
 
   private isBrightnessVolumeZone(localX: number, localY: number): boolean {
     return galleryIsVideoBrightnessVolumeZone(localX, localY, this.overlayW, this.overlayH);
@@ -124,15 +123,15 @@ export struct GalleryVideoOverlayChrome {
     }
   }
 
-  private openQualityMenu(): void {
-    const now = Date.now();
-    if (now - this.lastQualityMenuAt < 400) {
-      return;
-    }
-    this.lastQualityMenuAt = now;
-    this.skipSpeedClick = true;
+  private openSpeedMenu(): void {
     this.onInteract();
-    playGalleryLongPressMenuHaptic();
+    this.qualityMenuVisible = false;
+    this.speedMenuVisible = true;
+  }
+
+  private openQualityMenu(): void {
+    this.onInteract();
+    this.speedMenuVisible = false;
     this.qualityMenuVisible = true;
   }
 
@@ -213,7 +212,7 @@ export struct GalleryVideoOverlayChrome {
           const lp = event as BaseGestureEvent;
           const fingers = lp.fingerList;
           if (fingers !== undefined && fingers.length > 0 && this.visible) {
-            // 底栏控件区（倍速/进度）不走全屏按住倍速，把长按留给清晰度菜单
+            // 底栏控件区（倍速/清晰度/进度）不走全屏按住倍速
             const y = fingers[0].localY;
             if (y > this.overlayH - OVERLAY_PILL_HEIGHT_VP - 80 - this.bottomPadding) {
               return GestureJudgeResult.REJECT;
@@ -297,24 +296,15 @@ export struct GalleryVideoOverlayChrome {
       if (this.visible) {
         Stack({ alignContent: Alignment.Bottom }) {
           Column({ space: 16 }) {
-          Row() {
+          Row({ space: 8 }) {
             Stack() {
               FnHdsOverlayCapsule({
                 barWidth: OVERLAY_SPEED_WIDTH_VP,
                 barHeight: OVERLAY_PILL_HEIGHT_VP,
                 text: this.speedText,
                 fontSizeValue: 13,
-                enableLongPress: true,
                 onBarClick: (): void => {
-                  if (this.skipSpeedClick) {
-                    this.skipSpeedClick = false;
-                    return;
-                  }
-                  this.onInteract();
-                  this.speedMenuVisible = true;
-                },
-                onBarLongPress: (): void => {
-                  this.openQualityMenu();
+                  this.openSpeedMenu();
                 }
               })
             }
@@ -322,12 +312,6 @@ export struct GalleryVideoOverlayChrome {
             .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
             .clip(false)
             .draggable(false)
-            .parallelGesture(
-              LongPressGesture({ repeat: false })
-                .onAction((): void => {
-                  this.openQualityMenu();
-                })
-            )
             .bindMenu(this.speedMenuVisible, this.speedMenu, fnHdsBindMenuOptions(
               Placement.TopLeft,
               (): void => {
@@ -337,13 +321,29 @@ export struct GalleryVideoOverlayChrome {
                 this.onInteract();
               }
             ))
-            .bindContextMenu(this.qualityMenuVisible, this.qualityMenu, fnHdsBindContextMenuOptions(
+
+            Stack() {
+              FnHdsOverlayCapsule({
+                barWidth: OVERLAY_QUALITY_WIDTH_VP,
+                barHeight: OVERLAY_PILL_HEIGHT_VP,
+                text: this.qualityText,
+                fontSizeValue: 13,
+                onBarClick: (): void => {
+                  this.openQualityMenu();
+                }
+              })
+            }
+            .width(fnHdsCapsuleOverlayWidth(OVERLAY_QUALITY_WIDTH_VP))
+            .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
+            .clip(false)
+            .draggable(false)
+            .bindMenu(this.qualityMenuVisible, this.qualityMenu, fnHdsBindMenuOptions(
               Placement.TopLeft,
               (): void => {
-                this.onInteract();
+                this.qualityMenuVisible = false;
               },
               (): void => {
-                this.qualityMenuVisible = false;
+                this.onInteract();
               }
             ))
 
@@ -423,8 +423,8 @@ export struct GalleryVideoOverlayChrome {
                     this.onSeekEnd();
                   })
                   .onActionCancel((): void => {
-                    this.seekPanUsed = false;
-                    this.onSeekCancel();
+                    // 拖太久控件被卸掉时走 cancel；仍提交当前落点，避免进度弹回。
+                    this.onSeekEnd();
                   })
               )
               .onTouch((ev: TouchEvent): void => {
