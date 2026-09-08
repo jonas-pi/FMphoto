@@ -98,6 +98,12 @@ import {
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
 import {
+  isGalleryLanBurstAutoEnabled,
+  isGalleryLanBurstEnabled,
+  isGalleryLanBurstForceEnabled,
+  setGalleryLanBurstForceEnabled
+} from '../album/GalleryPerfProfile';
+import {
   FN_GLOBAL_TAB_SWITCH_CURVE,
   FN_GLOBAL_TAB_SWITCH_DURATION,
   FN_PAGE_ENTER_CURVE,
@@ -125,9 +131,14 @@ import {
 
 const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
 const ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP: number = 72;
+const ME_LAN_BURST_SWITCH_ROW_HEIGHT_VP: number = 80;
 const ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP: number = 22;
 const ME_ACTION_GAP_VP: number = 18;
 const ME_CONNECTION_ROW_RADIUS_VP: number = 22;
+/** 系统 Toast 默认约 1500ms；切网提示未消失前不弹满载，避免盖住「当前内网连接」 */
+const ENDPOINT_TOAST_DURATION_MS: number = 1600;
+/** 满载 Toast 抬高，即使时间窗临界也不会和切网 Toast 叠在同一高度 */
+const LAN_BURST_TOAST_BOTTOM_VP: string = '168vp';
 
 @Component
 struct MePanel {
@@ -136,6 +147,10 @@ struct MePanel {
   onEndpointSwitched: () => void = () => {};
   @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private sdkApiVersion: number = 0;
+  /** 用户手动满载开关；内网自动拉满时开关可关，实际仍走爆发档 */
+  @State private lanBurstForceEnabled: boolean = false;
+  @State private lanBurstAutoEnabled: boolean = false;
+  @State private lanBurstEnabled: boolean = false;
   @State private endpointInfo: EndpointConnectionInfo = resolveEndpointConnectionInfo(null);
   @State private endpointSwitching: boolean = false;
   @State private probeSheetVisible: boolean = false;
@@ -144,6 +159,7 @@ struct MePanel {
   @State private probeSelectedLabel: string = '';
   @State private probeSelectedAddress: string = '';
   @State private probeSelectedLatencyText: string = '';
+  @State private probeSelectedOk: boolean = false;
   @State private probeOtherItems: FnEndpointProbeLineItem[] = [];
   @State private twofaSheetVisible: boolean = false;
   @State private twofaLoading: boolean = false;
@@ -158,6 +174,9 @@ struct MePanel {
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   private lastImmersiveToggleAt: number = 0;
+  private lastLanBurstToggleAt: number = 0;
+  private lastEndpointToastAt: number = 0;
+  private burstToastTimer: number = -1;
   private probeSeq: number = 0;
   private twofaSwitchCompleted: boolean = false;
 
@@ -179,6 +198,14 @@ struct MePanel {
 
   private refreshEndpointInfo(): void {
     this.endpointInfo = resolveEndpointConnectionInfo(AppSession.getStored());
+    this.refreshLanBurstSwitch();
+  }
+
+  /** 切网后自动档会变，开关文案要跟着刷新 */
+  private refreshLanBurstSwitch(): void {
+    this.lanBurstForceEnabled = isGalleryLanBurstForceEnabled();
+    this.lanBurstAutoEnabled = isGalleryLanBurstAutoEnabled();
+    this.lanBurstEnabled = isGalleryLanBurstEnabled();
   }
 
   private onPageShowSignalChanged(): void {
@@ -203,7 +230,48 @@ struct MePanel {
     if (message.length === 0) {
       return;
     }
-    this.getUIContext().getPromptAction().showToast({ message });
+    this.lastEndpointToastAt = Date.now();
+    this.getUIContext().getPromptAction().showToast({ message, duration: 1500 });
+  }
+
+  /** 取消尚未弹出的满载提示，避免离开「我的」后仍弹出 */
+  private cancelLanBurstToast(): void {
+    if (this.burstToastTimer >= 0) {
+      clearTimeout(this.burstToastTimer);
+      this.burstToastTimer = -1;
+    }
+  }
+
+  /**
+   * 仅手动打开满载时提示。内网自动拉满跟着「当前内网连接」，不再另弹一条。
+   * 若切网 Toast 还在，等到它结束后再弹琥珀色满载 Toast，并抬高位置避免重叠。
+   */
+  private showLanBurstToast(): void {
+    this.cancelLanBurstToast();
+    const elapsed = Date.now() - this.lastEndpointToastAt;
+    const waitMs = (this.lastEndpointToastAt > 0 && elapsed < ENDPOINT_TOAST_DURATION_MS) ?
+      (ENDPOINT_TOAST_DURATION_MS - elapsed) : 0;
+    const fire = (): void => {
+      this.burstToastTimer = -1;
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: $r('app.string.lan_burst_toast_on'),
+          duration: 2000,
+          bottom: LAN_BURST_TOAST_BOTTOM_VP,
+          backgroundColor: $r('app.color.lan_burst_accent'),
+          textColor: $r('app.color.lan_burst_toast_text'),
+          backgroundBlurStyle: BlurStyle.NONE
+        });
+      } catch (_e) {
+      }
+    };
+    if (waitMs > 0) {
+      this.burstToastTimer = setTimeout((): void => {
+        fire();
+      }, waitMs);
+      return;
+    }
+    fire();
   }
 
   private clearProbeDisplay(): void {
@@ -211,6 +279,7 @@ struct MePanel {
     this.probeSelectedLabel = '';
     this.probeSelectedAddress = '';
     this.probeSelectedLatencyText = '';
+    this.probeSelectedOk = false;
     this.probeOtherItems = [];
   }
 
@@ -219,6 +288,7 @@ struct MePanel {
       return;
     }
     this.probeSheetVisible = true;
+    this.refreshLanBurstSwitch();
     void this.reloadEndpointProbe();
   }
 
@@ -246,6 +316,7 @@ struct MePanel {
       this.probeSelectedLabel = display.selectedLabel;
       this.probeSelectedAddress = display.selectedAddress;
       this.probeSelectedLatencyText = display.selectedLatencyText;
+      this.probeSelectedOk = display.selectedOk;
       this.probeOtherItems = display.otherItems;
     } catch (_e) {
       if (seq === this.probeSeq) {
@@ -438,15 +509,49 @@ struct MePanel {
     this.toggleImmersiveLight(!this.immersiveLightEnabled);
   }
 
+  private lanBurstSupportText(): string {
+    if (this.lanBurstForceEnabled) {
+      return '本次已强制拉满，重启应用后关闭';
+    }
+    if (this.lanBurstAutoEnabled) {
+      return '当前内网已自动拉满；打开后离开内网仍保持';
+    }
+    return '内网会自动开启；打开后公网/中继也拉满';
+  }
+
+  private toggleLanBurstForce(enabled: boolean): void {
+    setGalleryLanBurstForceEnabled(enabled);
+    this.refreshLanBurstSwitch();
+    if (enabled) {
+      this.showLanBurstToast();
+    } else {
+      this.cancelLanBurstToast();
+    }
+  }
+
+  private triggerLanBurstForceToggle(): void {
+    const now = Date.now();
+    if (now - this.lastLanBurstToggleAt < 120) {
+      return;
+    }
+    this.lastLanBurstToggleAt = now;
+    this.toggleLanBurstForce(!this.lanBurstForceEnabled);
+  }
+
   aboutToAppear(): void {
     this.sdkApiVersion = fnCurrentSdkApiVersion();
     this.refreshEndpointInfo();
     FnTransferQueueStore.ensureStorage();
     this.refreshTransferQueueTasks();
+    this.refreshLanBurstSwitch();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void fnLoadImmersiveLightPreference(ctx).then((enabled: boolean): void => {
       this.immersiveLightEnabled = enabled;
     });
+  }
+
+  aboutToDisappear(): void {
+    this.cancelLanBurstToast();
   }
 
   @Builder
@@ -459,9 +564,14 @@ struct MePanel {
         selectedLabel: this.probeSelectedLabel,
         selectedAddress: this.probeSelectedAddress,
         selectedLatencyText: this.probeSelectedLatencyText,
+        selectedOk: this.probeSelectedOk,
         otherItems: this.probeOtherItems,
         useCardStyle: false,
-        fillSheet: true
+        fillSheet: true,
+        showBurstStatus: true,
+        burstEnabled: this.lanBurstEnabled,
+        burstForce: this.lanBurstForceEnabled,
+        burstAuto: this.lanBurstAutoEnabled
       })
     }
     .width('100%')
@@ -795,6 +905,59 @@ struct MePanel {
     })
   }
 
+  @Builder
+  private lanBurstSwitchContent() {
+    Row({ space: 12 }) {
+      Column({ space: 6 }) {
+        Text('满载模式')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.lanBurstSupportText())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+
+      Toggle({ type: ToggleType.Switch, isOn: this.lanBurstForceEnabled })
+        .selectedColor($r('app.color.lan_burst_accent'))
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 18, right: 16, top: 0, bottom: 0 })
+    .alignItems(VerticalAlign.Center)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private lanBurstSwitchRow() {
+    Stack() {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.card_background'))
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .linearGradient(fnLiquidGlassGradient(this.shouldUseHds()))
+        .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
+        .borderWidth(1)
+        .borderColor($r('app.color.immersive_panel_border'))
+        .clip(true)
+
+      this.lanBurstSwitchContent()
+    }
+    .width('100%')
+    .height(ME_LAN_BURST_SWITCH_ROW_HEIGHT_VP)
+    .onClick((): void => {
+      this.triggerLanBurstForceToggle();
+    })
+  }
+
   build() {
     Column() {
       Row() {
@@ -877,6 +1040,12 @@ struct MePanel {
           .height(ME_ACTION_GAP_VP)
 
         this.connectionStatusRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.lanBurstSwitchRow()
 
         Blank()
           .width('100%')

@@ -191,6 +191,18 @@
     {
       "name": "immersive_tabbar_bg",
       "value": "#2E11161E"
+    },
+    {
+      "name": "lan_burst_accent",
+      "value": "#FFC14A"
+    },
+    {
+      "name": "lan_burst_badge_bg",
+      "value": "#40FFC14A"
+    },
+    {
+      "name": "lan_burst_toast_text",
+      "value": "#1A1408"
     }
   ]
 }

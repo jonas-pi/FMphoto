@@ -153,6 +153,26 @@
       "value": "连接路径"
     },
     {
+      "name": "login_probe_others",
+      "value": "其他路径"
+    },
+    {
+      "name": "probe_burst_on_force",
+      "value": "满载已生效 · 手动"
+    },
+    {
+      "name": "probe_burst_on_auto",
+      "value": "满载已生效 · 内网"
+    },
+    {
+      "name": "probe_burst_off",
+      "value": "满载未开启"
+    },
+    {
+      "name": "lan_burst_toast_on",
+      "value": "满载模式已开启"
+    },
+    {
       "name": "tab_home",
       "value": "首页"
     },

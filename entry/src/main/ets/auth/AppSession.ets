@@ -7,7 +7,7 @@ import { CertPolicy } from '../network/CertPolicy';
 import { clearOpenApiAuthxCredentials, setOpenApiAuthxCredentials } from '../network/AuthxSigner';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import { SessionPreferences, StoredSession } from './SessionPreferences';
-import { applyGalleryLanBurstForSession, setGalleryLanBurstEnabled } from '../album/GalleryPerfProfile';
+import { applyGalleryLanBurstForSession, resetGalleryLanBurstSession } from '../album/GalleryPerfProfile';
 
 /** 当前图库/预览用的 Web 根地址；切网时原地更新，页面用 @StorageProp 跟随，避免重载。 */
 export const FN_MEDIA_BASE_URL: string = 'FN_MEDIA_BASE_URL';
@@ -84,7 +84,7 @@ export class AppSession {
     // 退出会话时清理内存中的签名凭据，避免跨账号误用。
     clearOpenApiAuthxCredentials();
     AppStorage.setOrCreate<string>(FN_MEDIA_BASE_URL, '');
-    setGalleryLanBurstEnabled(false);
+    resetGalleryLanBurstSession();
   }
 
   /** 从磁盘加载并应用信任列表与 HttpClient */

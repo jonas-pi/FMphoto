@@ -1,7 +1,8 @@
 /**
  * 图库性能档：按整机内存容量选高性能 / 均衡 / 流畅，内存紧张时再降档。
  * 只在 Ability 启动与前后台切换探测，不进滑动热路径。
- * 内网连接时额外打开带宽爆发：只认会话 LAN 槽位，公网/中继不得漏到该档。
+ * 内网连接时额外打开带宽爆发：只认会话 LAN 槽位，公网/中继不得自动漏到该档。
+ * 「我的」页可手动打开满载；只活在本次进程，重启后关闭，避免一进应用就打满流量。
  */
 import { AbilityConstant } from '@kit.AbilityKit';
 import { hilog, hidebug } from '@kit.PerformanceAnalysisKit';
@@ -28,8 +29,12 @@ let deviceGear: GalleryPerfGear = GalleryPerfGear.BALANCED;
 let pressureGear: GalleryPerfGear = GalleryPerfGear.PERFORMANCE;
 let lastProbeAtMs: number = 0;
 let probed: boolean = false;
-/** 当前会话走内网时拉高下载并发；切公网/中继后关闭 */
+/** 实际生效的爆发档：内网自动 或 用户手动满载 */
 let galleryLanBurst: boolean = false;
+/** 会话判定的内网自动爆发，切公网/中继后关闭 */
+let galleryLanBurstAuto: boolean = false;
+/** 用户在「我的」页打开的满载；不落盘，进程结束即失效 */
+let galleryLanBurstForce: boolean = false;
 let lanBurstListener: (() => void) | null = null;
 
 function stripHostBrackets(host: string): string {
@@ -116,22 +121,54 @@ export function isGalleryLanBurstEnabled(): boolean {
   return galleryLanBurst;
 }
 
+/** 「我的」页开关：只表示用户是否手动强制满载，不含内网自动档 */
+export function isGalleryLanBurstForceEnabled(): boolean {
+  return galleryLanBurstForce;
+}
+
+/** 当前是否由内网槽位自动拉满，供开关副文案区分 */
+export function isGalleryLanBurstAutoEnabled(): boolean {
+  return galleryLanBurstAuto;
+}
+
 export function registerGalleryLanBurstListener(cb: () => void): void {
   lanBurstListener = cb;
 }
 
-export function setGalleryLanBurstEnabled(enabled: boolean): void {
+/** 按「手动满载 OR 内网自动」合成生效档，避免切网冲掉用户本次打开的开关 */
+function syncGalleryLanBurstEffective(): void {
+  const enabled = galleryLanBurstForce || galleryLanBurstAuto;
   if (galleryLanBurst === enabled) {
     return;
   }
   galleryLanBurst = enabled;
-  hilog.info(DOMAIN, TAG, 'lan burst=%{public}d', enabled ? 1 : 0);
+  hilog.info(DOMAIN, TAG, 'lan burst=%{public}d force=%{public}d auto=%{public}d',
+    enabled ? 1 : 0, galleryLanBurstForce ? 1 : 0, galleryLanBurstAuto ? 1 : 0);
   if (lanBurstListener !== null) {
     lanBurstListener();
   }
 }
 
-/** 登录/切网后按会话槽位决定是否拉满带宽，公网/中继不得漏到爆发档 */
+/**
+ * 用户手动打开/关闭满载。不写 Preferences，杀进程后回到自动判定，
+ * 避免下次冷启动在公网仍满载、用户还没来得及关开关就耗掉流量。
+ */
+export function setGalleryLanBurstForceEnabled(enabled: boolean): void {
+  if (galleryLanBurstForce === enabled) {
+    return;
+  }
+  galleryLanBurstForce = enabled;
+  syncGalleryLanBurstEffective();
+}
+
+/** 退出登录时清掉自动档和手动满载，避免下一账号沿用本次开关 */
+export function resetGalleryLanBurstSession(): void {
+  galleryLanBurstAuto = false;
+  galleryLanBurstForce = false;
+  syncGalleryLanBurstEffective();
+}
+
+/** 登录/切网后按会话槽位决定自动爆发；手动满载仍可在公网/中继叠加打开 */
 export function applyGalleryLanBurstForSession(
   baseUrl: string,
   endpointLanUrl: string,
@@ -142,7 +179,7 @@ export function applyGalleryLanBurstForSession(
   endpointPublicIpv6Url: string,
   endpointRelayUrl: string
 ): void {
-  const enabled = shouldEnableLanBurst(
+  galleryLanBurstAuto = shouldEnableLanBurst(
     baseUrl,
     endpointLanUrl !== undefined ? endpointLanUrl : '',
     endpointLanIpv6Url !== undefined ? endpointLanIpv6Url : '',
@@ -152,7 +189,7 @@ export function applyGalleryLanBurstForSession(
     endpointPublicIpv6Url !== undefined ? endpointPublicIpv6Url : '',
     endpointRelayUrl !== undefined ? endpointRelayUrl : ''
   );
-  setGalleryLanBurstEnabled(enabled);
+  syncGalleryLanBurstEffective();
 }
 
 function memKbToMb(kb: bigint): number {
