@@ -408,57 +408,137 @@ export function isIpLiteralHost(host: string): boolean {
   return false;
 }
 
-function isPrivateIpv4Host(host: string): boolean {
+function stripHostBrackets(host: string): string {
+  let h = host.trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']') && h.length > 2) {
+    h = h.substring(1, h.length - 1);
+  }
+  return h;
+}
+
+/** 按八位组判断，避免 startsWith('10.') 这类前缀误伤 */
+function ipv4Octets(host: string): number[] | null {
   if (!isIpv4Literal(host)) {
+    return null;
+  }
+  const parts = host.split('.');
+  const out: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const n = parseInt(parts[i], 10);
+    if (isNaN(n)) {
+      return null;
+    }
+    out.push(n);
+  }
+  return out;
+}
+
+function isRfc1918OrLoopbackIpv4(host: string): boolean {
+  const o = ipv4Octets(host);
+  if (o === null) {
     return false;
   }
-  if (host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('127.')) {
+  if (o[0] === 10 || o[0] === 127) {
     return true;
   }
-  if (host.startsWith('169.254.')) {
+  if (o[0] === 192 && o[1] === 168) {
     return true;
   }
-  if (host.startsWith('172.')) {
-    const parts = host.split('.');
-    if (parts.length >= 2) {
-      const second = parseInt(parts[1], 10);
-      return !isNaN(second) && second >= 16 && second <= 31;
-    }
+  if (o[0] === 169 && o[1] === 254) {
+    return true;
+  }
+  if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) {
+    return true;
   }
   return false;
 }
 
-/** 主机是否像内网：RFC1918、ULA/链路本地 IPv6、localhost、.local/.lan */
-export function isIntranetHost(host: string): boolean {
-  let h = host.trim().toLowerCase();
-  if (h.length === 0) {
+/** 家庭常见网段：不含 10/172，避免把 VPN / 公司内网当成千兆 LAN */
+function isHomeLanIpv4(host: string): boolean {
+  const o = ipv4Octets(host);
+  if (o === null) {
     return false;
   }
-  if (h.startsWith('[') && h.endsWith(']') && h.length > 2) {
-    h = h.substring(1, h.length - 1);
+  if (o[0] === 192 && o[1] === 168) {
+    return true;
+  }
+  if (o[0] === 127) {
+    return true;
+  }
+  if (o[0] === 169 && o[1] === 254) {
+    return true;
+  }
+  return false;
+}
+
+function isLocalIpv6(host: string): boolean {
+  if (host === '::1') {
+    return true;
+  }
+  if (host.indexOf(':') < 0) {
+    return false;
+  }
+  if (host.startsWith('fe80:')) {
+    return true;
+  }
+  // fc00::/7：首字节 fc 或 fd，其后必须是十六进制或冒号，避免误伤主机名
+  if (host.length < 3) {
+    return false;
+  }
+  if (host.charAt(0) !== 'f') {
+    return false;
+  }
+  const second = host.charAt(1);
+  if (second !== 'c' && second !== 'd') {
+    return false;
+  }
+  const third = host.charAt(2);
+  return third === ':' || (third >= '0' && third <= '9') || (third >= 'a' && third <= 'f');
+}
+
+function isMdnsLanHost(host: string): boolean {
+  return host.endsWith('.local') || host.endsWith('.lan') || host.endsWith('.home.arpa');
+}
+
+/**
+ * 会话 LAN 槽位命中后的主机校验：RFC1918（含 10/172）、ULA、链路本地、mDNS。
+ * 公网域名 / 公网 IP 不会过。
+ */
+export function isPrivateLanHost(host: string): boolean {
+  const h = stripHostBrackets(host);
+  if (h.length === 0) {
+    return false;
   }
   if (h === 'localhost' || h === '::1') {
     return true;
   }
-  if (h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.home.arpa')) {
+  if (isMdnsLanHost(h)) {
     return true;
   }
-  if (isPrivateIpv4Host(h)) {
+  if (isRfc1918OrLoopbackIpv4(h) || isLocalIpv6(h)) {
     return true;
-  }
-  if (h.indexOf(':') >= 0) {
-    return h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd');
   }
   return false;
 }
 
-/** 当前 API baseUrl 是否指向内网主机 */
-export function isIntranetServerUrl(baseUrl: string): boolean {
-  const parts = parseNormalizedBaseUrl(baseUrl);
-  if (parts === null) {
+/**
+ * 无 LAN 槽位时的兜底：只认家庭网段，10/172 必须靠 NAS 登记的内网槽位。
+ */
+export function isHomeLanHost(host: string): boolean {
+  const h = stripHostBrackets(host);
+  if (h.length === 0) {
     return false;
   }
-  return isIntranetHost(parts.host);
+  if (h === 'localhost' || h === '::1') {
+    return true;
+  }
+  if (isMdnsLanHost(h)) {
+    return true;
+  }
+  if (isHomeLanIpv4(h) || isLocalIpv6(h)) {
+    return true;
+  }
+  return false;
 }
 
 /** 用新主机替换 baseUrl 中的 host（保留协议与端口） */

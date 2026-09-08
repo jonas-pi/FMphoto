@@ -1,12 +1,13 @@
 /**
  * 图库性能档：按整机内存容量选高性能 / 均衡 / 流畅，内存紧张时再降档。
  * 只在 Ability 启动与前后台切换探测，不进滑动热路径。
- * 内网连接时额外打开带宽爆发：提高缩略图并发，不关掉滑动/跳转解码闸门。
+ * 内网连接时额外打开带宽爆发：只认会话 LAN 槽位，公网/中继不得漏到该档。
  */
 import { AbilityConstant } from '@kit.AbilityKit';
 import { hilog, hidebug } from '@kit.PerformanceAnalysisKit';
 import { UIContext } from '@kit.ArkUI';
-import { isIntranetServerUrl } from '../network/ServerUrl';
+import { isFnRelayBaseUrl } from '../network/FnConnectApi';
+import { isHomeLanHost, isPrivateLanHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
 
 const DOMAIN: number = 0xFF00;
 const TAG: string = 'GalleryPerf';
@@ -31,6 +32,14 @@ let probed: boolean = false;
 let galleryLanBurst: boolean = false;
 let lanBurstListener: (() => void) | null = null;
 
+function stripHostBrackets(host: string): string {
+  const h = host.trim().toLowerCase();
+  if (h.startsWith('[') && h.endsWith(']') && h.length > 2) {
+    return h.substring(1, h.length - 1);
+  }
+  return h;
+}
+
 function endpointUrlsMatch(left: string, right: string): boolean {
   const a = left.trim();
   const b = right.trim();
@@ -39,7 +48,68 @@ function endpointUrlsMatch(left: string, right: string): boolean {
   }
   const na = a.endsWith('/') ? a.substring(0, a.length - 1) : a;
   const nb = b.endsWith('/') ? b.substring(0, b.length - 1) : b;
-  return na.toLowerCase() === nb.toLowerCase();
+  if (na.toLowerCase() === nb.toLowerCase()) {
+    return true;
+  }
+  const pa = parseNormalizedBaseUrl(na);
+  const pb = parseNormalizedBaseUrl(nb);
+  if (pa === null || pb === null) {
+    return false;
+  }
+  const ha = stripHostBrackets(pa.host);
+  const hb = stripHostBrackets(pb.host);
+  if (ha.length === 0 || hb.length === 0 || pa.scheme !== pb.scheme) {
+    return false;
+  }
+  const portA = pa.port !== null ? pa.port : (pa.scheme === 'https' ? 443 : 80);
+  const portB = pb.port !== null ? pb.port : (pb.scheme === 'https' ? 443 : 80);
+  return ha === hb && portA === portB;
+}
+
+function matchesAnyEndpoint(baseUrl: string, slots: string[]): boolean {
+  for (let i = 0; i < slots.length; i++) {
+    if (endpointUrlsMatch(baseUrl, slots[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function currentHostOf(baseUrl: string): string {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  return parts !== null ? parts.host : '';
+}
+
+/**
+ * 内网爆发只认会话通道，禁止 RFC1918 启发式把 VPN/公司 10.x 漏成千兆档。
+ * 公网 / 中继槽位命中一律关闭；LAN 槽位命中且主机确是私网才开；
+ * 单地址登录仅 192.168 / 链路本地 / ULA / .local 兜底。
+ */
+function shouldEnableLanBurst(
+  baseUrl: string,
+  lanUrl: string,
+  lanIpv6Url: string,
+  publicUrl: string,
+  publicDomainUrl: string,
+  publicIpUrl: string,
+  publicIpv6Url: string,
+  relayUrl: string
+): boolean {
+  const current = baseUrl.trim();
+  if (current.length === 0 || isFnRelayBaseUrl(current)) {
+    return false;
+  }
+  if (matchesAnyEndpoint(current, [relayUrl])) {
+    return false;
+  }
+  if (matchesAnyEndpoint(current, [publicUrl, publicDomainUrl, publicIpUrl, publicIpv6Url])) {
+    return false;
+  }
+  const host = currentHostOf(current);
+  if (matchesAnyEndpoint(current, [lanUrl, lanIpv6Url])) {
+    return isPrivateLanHost(host);
+  }
+  return isHomeLanHost(host);
 }
 
 export function isGalleryLanBurstEnabled(): boolean {
@@ -61,16 +131,28 @@ export function setGalleryLanBurstEnabled(enabled: boolean): void {
   }
 }
 
-/** 登录/切网后根据当前 baseUrl 与内网槽位决定是否拉满带宽 */
+/** 登录/切网后按会话槽位决定是否拉满带宽，公网/中继不得漏到爆发档 */
 export function applyGalleryLanBurstForSession(
   baseUrl: string,
   endpointLanUrl: string,
-  endpointLanIpv6Url: string
+  endpointLanIpv6Url: string,
+  endpointPublicUrl: string,
+  endpointPublicDomainUrl: string,
+  endpointPublicIpUrl: string,
+  endpointPublicIpv6Url: string,
+  endpointRelayUrl: string
 ): void {
-  const lanUrl = endpointLanUrl !== undefined ? endpointLanUrl : '';
-  const lanIpv6Url = endpointLanIpv6Url !== undefined ? endpointLanIpv6Url : '';
-  const bySlot = endpointUrlsMatch(baseUrl, lanUrl) || endpointUrlsMatch(baseUrl, lanIpv6Url);
-  setGalleryLanBurstEnabled(bySlot || isIntranetServerUrl(baseUrl));
+  const enabled = shouldEnableLanBurst(
+    baseUrl,
+    endpointLanUrl !== undefined ? endpointLanUrl : '',
+    endpointLanIpv6Url !== undefined ? endpointLanIpv6Url : '',
+    endpointPublicUrl !== undefined ? endpointPublicUrl : '',
+    endpointPublicDomainUrl !== undefined ? endpointPublicDomainUrl : '',
+    endpointPublicIpUrl !== undefined ? endpointPublicIpUrl : '',
+    endpointPublicIpv6Url !== undefined ? endpointPublicIpv6Url : '',
+    endpointRelayUrl !== undefined ? endpointRelayUrl : ''
+  );
+  setGalleryLanBurstEnabled(enabled);
 }
 
 function memKbToMb(kb: bigint): number {

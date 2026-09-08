@@ -248,11 +248,16 @@ export function scheduleGalleryVideoLanPrefetch(directUrl: string, cacheDir: str
   if (!isGalleryLanBurstEnabled() || url.length === 0 || isHlsUrl(url) || cacheDir.length === 0) {
     return;
   }
-  if (prefetchUrl === url && (prefetchHeadReq !== null || prefetchComplete)) {
-    if (prefetchComplete) {
-      notifyPlayableWaiters(true);
+  // 同一 URL 只要还在写、已有字节或已完成，seek / 重入都不得 stop 后重拉
+  if (prefetchUrl === url) {
+    const busy = prefetchHeadReq !== null || prefetchTailReq !== null ||
+      prefetchWriteFd >= 0 || prefetchHeadBytes > 0 || prefetchComplete;
+    if (busy) {
+      if (prefetchComplete) {
+        notifyPlayableWaiters(true);
+      }
+      return;
     }
-    return;
   }
   stopGalleryVideoLanPrefetch();
   prefetchUrl = url;
@@ -432,15 +437,14 @@ async function runPrefetch(gen: number, url: string, filePath: string): Promise<
 }
 
 function maybeStartTail(gen: number, url: string, headers: Record<string, string>, storedBase: string): void {
-  if (prefetchTailReq !== null || prefetchTailBuf !== null) {
+  if (prefetchTailReq !== null) {
     return;
   }
   if (prefetchTotalBytes < PREFETCH_TAIL_BYTES * 2) {
     return;
   }
+  // 先并行拉尾，成功 206 后再截断 head；未确认 Range 时 head 继续写完整文件，避免留下空洞
   const tailStart = prefetchTotalBytes - PREFETCH_TAIL_BYTES;
-  prefetchTailStart = tailStart;
-  prefetchTailBuf = new ArrayBuffer(PREFETCH_TAIL_BYTES);
   void runTailStream(gen, url, headers, storedBase, tailStart);
 }
 
@@ -538,6 +542,21 @@ async function runHeadStream(
   }
 }
 
+function appendTailChunk(chunk: ArrayBuffer): void {
+  const tailBuf = prefetchTailBuf;
+  if (tailBuf === null || chunk.byteLength === 0) {
+    return;
+  }
+  const room = tailBuf.byteLength - prefetchTailGot;
+  if (room <= 0) {
+    return;
+  }
+  const take = Math.min(room, chunk.byteLength);
+  new Uint8Array(tailBuf).set(new Uint8Array(chunk, 0, take), prefetchTailGot);
+  prefetchTailGot += take;
+  notifyPlayableWaiters(true);
+}
+
 async function runTailStream(
   gen: number,
   url: string,
@@ -549,23 +568,20 @@ async function runTailStream(
   prefetchTailReq = req;
   const h = copyHeaders(headers);
   h['Range'] = `bytes=${tailStart}-`;
+  const pending: ArrayBuffer[] = [];
   let dataEndResolve: (() => void) | undefined = undefined;
   const dataEndPromise = new Promise<void>((resolve: () => void) => {
     dataEndResolve = resolve;
   });
   const onData = (chunk: ArrayBuffer): void => {
-    const tailBuf = prefetchTailBuf;
-    if (gen !== prefetchGen || tailBuf === null || chunk.byteLength === 0) {
+    if (gen !== prefetchGen || chunk.byteLength === 0) {
       return;
     }
-    const room = tailBuf.byteLength - prefetchTailGot;
-    if (room <= 0) {
+    if (prefetchTailBuf !== null) {
+      appendTailChunk(chunk);
       return;
     }
-    const take = Math.min(room, chunk.byteLength);
-    new Uint8Array(tailBuf).set(new Uint8Array(chunk, 0, take), prefetchTailGot);
-    prefetchTailGot += take;
-    notifyPlayableWaiters(true);
+    pending.push(chunk);
   };
   const onEnd = (): void => {
     if (dataEndResolve !== undefined) {
@@ -587,9 +603,17 @@ async function runTailStream(
     if (gen !== prefetchGen) {
       return;
     }
-    if (code !== 206 && code !== 200) {
+    // 只认 206。忽略 Range 的 200 会把文件头当成 moov
+    if (code !== 206) {
       hilog.warn(DOMAIN, TAG, 'lan cache tail http %{public}d', code);
       return;
+    }
+    if (prefetchTailBuf === null) {
+      prefetchTailStart = tailStart;
+      prefetchTailBuf = new ArrayBuffer(PREFETCH_TAIL_BYTES);
+    }
+    for (let i = 0; i < pending.length; i++) {
+      appendTailChunk(pending[i]);
     }
     await dataEndPromise;
     if (gen === prefetchGen) {
@@ -599,6 +623,9 @@ async function runTailStream(
   } catch (_e) {
     if (gen === prefetchGen) {
       hilog.warn(DOMAIN, TAG, 'lan cache tail abort');
+      prefetchTailStart = -1;
+      prefetchTailBuf = null;
+      prefetchTailGot = 0;
     }
   } finally {
     try {

@@ -984,14 +984,6 @@ export struct GalleryAuthVideo {
     }
   }
 
-  private kickLanVideoPrefetch(): void {
-    if (!this.currentQualityOption().directStream) {
-      stopGalleryVideoLanPrefetch();
-      return;
-    }
-    scheduleGalleryVideoLanPrefetch(this.videoUrl, this.lanPrefetchCacheDir());
-  }
-
   private revealPlaybackChrome(): void {
     this.clearChromeAutoHideTimer();
     setGalleryPreviewToolbarVisible(true);
@@ -1480,6 +1472,10 @@ export struct GalleryAuthVideo {
         return;
       }
       this.playingFromPrefetch = ready;
+      if (!ready) {
+        // 起播改走播放器 HTTP 时必须停掉本地预取，否则同一条原片会被拉两次
+        stopGalleryVideoLanPrefetch();
+      }
       hilog.info(DOMAIN, TAG, 'lan dataSrc ready=%{public}s', `${ready}`);
     } else {
       this.playingFromPrefetch = false;
@@ -1607,7 +1603,7 @@ export struct GalleryAuthVideo {
       }
       if (infoType === media.BufferingInfoType.BUFFERING_END) {
         this.videoRebuffering = false;
-        this.kickLanVideoPrefetch();
+        // seek 引起的 BUFFERING 不得重拉本地缓存；同 URL 预取由 schedule 自行去重
         this.bumpChromeAutoHide();
         hilog.info(DOMAIN, TAG, 'BUFFERING_END pos=%{public}s cachedMs=%{public}s',
           `${this.currentMs}`, `${this.lastCachedDurationMs}`);
@@ -1712,7 +1708,6 @@ export struct GalleryAuthVideo {
         this.playbackEnded = false;
         this.onPlaybackChromeChanged();
         this.scheduleChromeAutoHide();
-        this.kickLanVideoPrefetch();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
         if (this.pendingRestoreMs > GALLERY_VIDEO_DEFER_SEEK_MIN_MS && this.durationMs > 0) {
