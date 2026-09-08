@@ -1256,20 +1256,17 @@ struct GalleryPreview {
             this.completeLivePhotoSave('cancel');
           }
         ))
-      Column()
-        .width(1)
-        .height(1)
-        .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
-          this.choiceSheetTitle,
-          (): void => {
-            this.completeChoice(-1);
-          }
-        ))
     }
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
+      this.choiceSheetTitle,
+      (): void => {
+        this.completeChoice(-1);
+      }
+    ))
   }
 
   pageTransition(): void {

@@ -5,7 +5,12 @@
  * - 有 systemMaterial 时不要再叠 blurStyle / 不透明底，否则材质会被盖住
  */
 import { uiMaterial } from '@kit.ArkUI';
-import { fnCurrentSdkApiVersion } from './FnImmersiveSettings';
+import { hdsEffect } from '@kit.UIDesignKit';
+import {
+  fnCanUseHdsImmersive,
+  fnCurrentSdkApiVersion,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from './FnImmersiveSettings';
 
 /** ArkUI 组件级 systemMaterial（bindSheet / bindMenu）起始 API */
 const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
@@ -64,9 +69,11 @@ export function fnHdsSheetSystemMaterial(): uiMaterial.Material | undefined {
     return undefined;
   }
   if (cachedSheetMaterial === undefined) {
+    // 官方 bindSheet 示例用 ULTRA_THICK；补 lightEffect 才有触摸流光（沉浸光感）
     // @SuppressWarnings compatibility
     cachedSheetMaterial = new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.ULTRA_THICK
+      style: uiMaterial.ImmersiveStyle.ULTRA_THICK,
+      lightEffect: { color: undefined }
     });
   }
   return cachedSheetMaterial;
@@ -166,7 +173,7 @@ export function fnHdsSheetOptions(
     backgroundColor: Color.Transparent,
     onDisappear: onDisappear
   };
-  const material = fnHdsSheetSystemMaterial();
+  const material = fnCanUseHdsImmersive() ? fnHdsSheetSystemMaterial() : undefined;
   if (material !== undefined) {
     // @SuppressWarnings compatibility
     options.systemMaterial = material;
@@ -272,6 +279,73 @@ export function fnHdsBindContextMenuOptions(
 }
 
 /**
+ * 半模态选项行：文字居中；开启沉浸光感时走官方按压流光。
+ */
+@Component
+struct FnHdsChoiceSheetItem {
+  @Prop label: string = '';
+  @Prop selected: boolean = false;
+  onSelect: () => void = (): void => {};
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
+
+  private shouldUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private onPressTouch(event: TouchEvent): void {
+    if (!this.shouldUseHds()) {
+      return;
+    }
+    if (event.type === TouchType.Down) {
+      this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.pressShadowType = hdsEffect.PressShadowType.NONE;
+    }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Center }) {
+      Text(this.label)
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      if (this.selected) {
+        Row() {
+          Blank()
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.ohos_id_color_activated')])
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ right: 4 })
+        .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    .width('100%')
+    .height(48)
+    .padding({ left: 16, right: 16 })
+    .backgroundColor(Color.Transparent)
+    .onTouch((event: TouchEvent): void => {
+      this.onPressTouch(event);
+    })
+    .visualEffect(new hdsEffect.HdsEffectBuilder()
+      .pressShadow(this.pressShadowType)
+      .buildEffect())
+    .onClick((): void => {
+      this.onSelect();
+    })
+  }
+}
+
+/**
  * 半模态选项列表。内容保持透明，材质由 bindSheet.systemMaterial 提供。
  */
 @Component
@@ -284,22 +358,12 @@ export struct FnHdsChoiceSheet {
   build() {
     Column() {
       ForEach(this.buttons, (label: string, idx: number) => {
-        Row() {
-          Text(label)
-            .fontSize(16)
-            .fontColor($r('app.color.text_primary'))
-            .layoutWeight(1)
-          if (this.selectedIndex === idx) {
-            SymbolGlyph($r('sys.symbol.checkmark'))
-              .fontSize(18)
-              .fontColor([$r('sys.color.ohos_id_color_activated')])
+        FnHdsChoiceSheetItem({
+          label: label,
+          selected: this.selectedIndex === idx,
+          onSelect: (): void => {
+            this.onSelect(idx);
           }
-        }
-        .width('100%')
-        .height(48)
-        .padding({ left: 16, right: 16 })
-        .onClick((): void => {
-          this.onSelect(idx);
         })
       }, (label: string, idx: number) => `hds_choice_${idx}_${label}`)
     }

@@ -18,11 +18,18 @@ import {
 import { galleryIsVideoBrightnessVolumeZone } from './GalleryPreviewVerticalGesture';
 import { playGalleryLongPressMenuHaptic } from './GallerySelectionHaptic';
 
-const OVERLAY_PILL_HEIGHT_VP: number = 36;
-const OVERLAY_SPEED_WIDTH_VP: number = 60;
-const OVERLAY_QUALITY_WIDTH_VP: number = 72;
-const OVERLAY_LANDSCAPE_SIZE_VP: number = 36;
+const OVERLAY_PILL_HEIGHT_VP: number = 28;
+const OVERLAY_SPEED_WIDTH_VP: number = 52;
+const OVERLAY_QUALITY_WIDTH_VP: number = 60;
+const OVERLAY_LANDSCAPE_SIZE_VP: number = 28;
 const OVERLAY_PLAY_SIZE_VP: number = 72;
+const OVERLAY_PILL_FONT_VP: number = 12;
+const OVERLAY_FULLSCREEN_FONT_VP: number = 15;
+const OVERLAY_CTRL_ROW_SPACE_VP: number = 6;
+const OVERLAY_CTRL_COL_SPACE_VP: number = 6;
+const OVERLAY_BOTTOM_PAD_VP: number = 4;
+/** 进度+时间大约高度；长按倍速在底栏区域内不触发 */
+const OVERLAY_CHROME_HIT_EXTRA_VP: number = 52;
 const OVERLAY_SIDE_PAD_VP: number = 16;
 /** 横屏左右边距约 70vp，躲开挖孔摄像头 */
 const OVERLAY_LANDSCAPE_SIDE_EXTRA_VP: number = 54;
@@ -214,7 +221,7 @@ export struct GalleryVideoOverlayChrome {
           if (fingers !== undefined && fingers.length > 0 && this.visible) {
             // 底栏控件区（倍速/清晰度/进度）不走全屏按住倍速
             const y = fingers[0].localY;
-            if (y > this.overlayH - OVERLAY_PILL_HEIGHT_VP - 80 - this.bottomPadding) {
+            if (y > this.overlayH - OVERLAY_PILL_HEIGHT_VP - OVERLAY_CHROME_HIT_EXTRA_VP - this.bottomPadding) {
               return GestureJudgeResult.REJECT;
             }
           }
@@ -295,14 +302,14 @@ export struct GalleryVideoOverlayChrome {
 
       if (this.visible) {
         Stack({ alignContent: Alignment.Bottom }) {
-          Column({ space: 16 }) {
-          Row({ space: 8 }) {
+          Column({ space: OVERLAY_CTRL_COL_SPACE_VP }) {
+          Row({ space: OVERLAY_CTRL_ROW_SPACE_VP }) {
             Stack() {
               FnHdsOverlayCapsule({
                 barWidth: OVERLAY_SPEED_WIDTH_VP,
                 barHeight: OVERLAY_PILL_HEIGHT_VP,
                 text: this.speedText,
-                fontSizeValue: 13,
+                fontSizeValue: OVERLAY_PILL_FONT_VP,
                 onBarClick: (): void => {
                   this.openSpeedMenu();
                 }
@@ -327,7 +334,7 @@ export struct GalleryVideoOverlayChrome {
                 barWidth: OVERLAY_QUALITY_WIDTH_VP,
                 barHeight: OVERLAY_PILL_HEIGHT_VP,
                 text: this.qualityText,
-                fontSizeValue: 13,
+                fontSizeValue: OVERLAY_PILL_FONT_VP,
                 onBarClick: (): void => {
                   this.openQualityMenu();
                 }
@@ -356,7 +363,7 @@ export struct GalleryVideoOverlayChrome {
               barHeight: OVERLAY_LANDSCAPE_SIZE_VP,
               useSymbol: true,
               symbol: this.fullscreenSymbol(),
-              fontSizeValue: 18,
+              fontSizeValue: OVERLAY_FULLSCREEN_FONT_VP,
               onBarClick: (): void => {
                 this.onInteract();
                 this.onFullscreen();
@@ -364,7 +371,7 @@ export struct GalleryVideoOverlayChrome {
             })
           }
           .width('100%')
-          .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
+          .height(OVERLAY_PILL_HEIGHT_VP)
           .alignItems(VerticalAlign.Center)
           .clip(false)
 
@@ -455,7 +462,7 @@ export struct GalleryVideoOverlayChrome {
           .padding({
             left: this.overlaySidePad(this.systemLeftInsetVp),
             right: this.overlaySidePad(this.systemRightInsetVp),
-            bottom: 8 + this.bottomPadding
+            bottom: OVERLAY_BOTTOM_PAD_VP + this.bottomPadding
           })
           .clip(false)
         }
