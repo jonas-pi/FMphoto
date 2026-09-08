@@ -10,6 +10,7 @@ import {
   GALLERY_TIMELINE_DRAG_WATCHDOG_MS,
   GALLERY_TIMELINE_EXPANDED_AUTO_HIDE_MS,
   GALLERY_TIMELINE_RAIL_AUTO_HIDE_MS,
+  GALLERY_TIMELINE_SEEK_DECODE_HOLD_MS,
   GALLERY_TIMELINE_SEEK_NO_SCROLLER_GUARD_MS,
   GALLERY_TIMELINE_SEEK_RELEASE_FREEZE_MS
 } from './GalleryAlbumTabConstants';
@@ -19,6 +20,7 @@ import {
   timelineScrubScrollRailOnly as selectTimelineScrubScrollRailOnly
 } from './GalleryAlbumState';
 import { TimelineDayModel, TimelineYearMonthPair } from './GalleryAlbumTabTypes';
+import { setGalleryListScrollFrozen, setGallerySeekDecodeHold } from '../GalleryAlbumCommon';
 
 export interface TimelineGestureControllerHost {
   scrollerRef: Scroller;
@@ -128,6 +130,8 @@ export function timelineGestureRefreshVisualPlaceholderMode(host: TimelineGestur
   if (host.visualPlaceholderMode !== next) {
     host.visualPlaceholderMode = next;
   }
+  // 与 visualPlaceholderMode 同步，但不走 @State，避免快滑时整页 rebuild。
+  setGalleryListScrollFrozen(next);
 }
 
 export function timelineGestureTouchTimelineBarOnScroll(host: TimelineGestureControllerHost): void {
@@ -174,6 +178,7 @@ export function timelineGestureArmTimelineDragWatchdog(host: TimelineGestureCont
     host.timelineLongPressExpanded = false;
     host.timelineSeekInProgress = false;
     timelineGestureRefreshVisualPlaceholderMode(host);
+    setGallerySeekDecodeHold(false);
     timelineGestureShowTimelineBar(host);
     timelineGestureLogScrollDebug(host, 'timeline drag watchdog release');
     host.runMainListScrollSettledWork();
@@ -258,6 +263,7 @@ export function timelineGestureRunMainListScrollSettledWork(
   if (host.timelineSidebarDragging || host.timelineSeekInProgress) {
     return;
   }
+  setGallerySeekDecodeHold(false);
   host.syncGalleryTimelineAtTopForPull();
   if (!host.gallerySlideGestureActive && !host.galleryMainListScrollEnabled) {
     host.galleryMainListScrollEnabled = true;
@@ -369,25 +375,11 @@ export function timelineGestureKickPostTimelineReleaseLoad(host: TimelineGesture
   passes.push(pass0);
 
   const pass1 = new TimelineReleaseVisiblePassPlan();
-  pass1.delayMs = 120;
+  pass1.delayMs = 280;
   pass1.refreshVisibleRange = true;
-  pass1.allowRoughFallback = false;
+  pass1.allowRoughFallback = true;
   pass1.label = 'pass1';
   passes.push(pass1);
-
-  const pass2 = new TimelineReleaseVisiblePassPlan();
-  pass2.delayMs = 280;
-  pass2.refreshVisibleRange = true;
-  pass2.allowRoughFallback = true;
-  pass2.label = 'pass2';
-  passes.push(pass2);
-
-  const pass3 = new TimelineReleaseVisiblePassPlan();
-  pass3.delayMs = 520;
-  pass3.refreshVisibleRange = true;
-  pass3.allowRoughFallback = true;
-  pass3.label = 'pass3';
-  passes.push(pass3);
   for (let i = 0; i < passes.length; i++) {
     const pass = passes[i];
     setTimeout((): void => {
@@ -475,6 +467,7 @@ export function timelineGestureEndTimelineDrag(host: TimelineGestureControllerHo
   host.timelineDragWatchdogGen++;
   host.ignoreListFreezeUntilMs = Date.now() + GALLERY_TIMELINE_SEEK_RELEASE_FREEZE_MS;
   host.timelineSeekNoScrollerGuardUntilMs = Date.now() + GALLERY_TIMELINE_SEEK_NO_SCROLLER_GUARD_MS;
+  setGallerySeekDecodeHold(true, GALLERY_TIMELINE_SEEK_DECODE_HOLD_MS);
   host.timelineSidebarDragging = false;
   host.timelinePressing = false;
   host.timelineLongPressExpanded = false;

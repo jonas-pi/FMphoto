@@ -408,6 +408,59 @@ export function isIpLiteralHost(host: string): boolean {
   return false;
 }
 
+function isPrivateIpv4Host(host: string): boolean {
+  if (!isIpv4Literal(host)) {
+    return false;
+  }
+  if (host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('127.')) {
+    return true;
+  }
+  if (host.startsWith('169.254.')) {
+    return true;
+  }
+  if (host.startsWith('172.')) {
+    const parts = host.split('.');
+    if (parts.length >= 2) {
+      const second = parseInt(parts[1], 10);
+      return !isNaN(second) && second >= 16 && second <= 31;
+    }
+  }
+  return false;
+}
+
+/** 主机是否像内网：RFC1918、ULA/链路本地 IPv6、localhost、.local/.lan */
+export function isIntranetHost(host: string): boolean {
+  let h = host.trim().toLowerCase();
+  if (h.length === 0) {
+    return false;
+  }
+  if (h.startsWith('[') && h.endsWith(']') && h.length > 2) {
+    h = h.substring(1, h.length - 1);
+  }
+  if (h === 'localhost' || h === '::1') {
+    return true;
+  }
+  if (h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.home.arpa')) {
+    return true;
+  }
+  if (isPrivateIpv4Host(h)) {
+    return true;
+  }
+  if (h.indexOf(':') >= 0) {
+    return h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd');
+  }
+  return false;
+}
+
+/** 当前 API baseUrl 是否指向内网主机 */
+export function isIntranetServerUrl(baseUrl: string): boolean {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null) {
+    return false;
+  }
+  return isIntranetHost(parts.host);
+}
+
 /** 用新主机替换 baseUrl 中的 host（保留协议与端口） */
 export function replaceBaseUrlHost(baseUrl: string, newHost: string): string {
   const parts = parseNormalizedBaseUrl(baseUrl);

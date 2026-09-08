@@ -15,6 +15,11 @@ import {
   galleryViewGranularityColumns
 } from './galleryAlbumTab/GalleryAlbumGranularity';
 import { FN_WINDOW_WIDTH_BP_KEY } from '../common/FnWindowBreakpoint';
+import {
+  galleryPerfDayCachedCount,
+  galleryPerfMonthCachedCount,
+  galleryPerfYearCachedCount
+} from './GalleryPerfProfile';
 
 function densityOf(mode: GalleryViewGranularity): 'day' | 'month' | 'year' {
   if (mode === GalleryViewGranularity.MONTH) {
@@ -26,15 +31,15 @@ function densityOf(mode: GalleryViewGranularity): 'day' | 'month' | 'year' {
   return 'day';
 }
 
-/** 与 GalleryAlbumMainModeView.currentListCachedCount 对齐 */
+/** 与 GalleryAlbumMainModeView.currentListCachedCount 对齐，随内存档位变化 */
 function listCachedCountOf(mode: GalleryViewGranularity): number {
   if (mode === GalleryViewGranularity.YEAR) {
-    return 14;
+    return galleryPerfYearCachedCount();
   }
   if (mode === GalleryViewGranularity.MONTH) {
-    return 8;
+    return galleryPerfMonthCachedCount();
   }
-  return 3;
+  return galleryPerfDayCachedCount(false);
 }
 
 function diskCacheKey(fullUrl: string, autoCropBlack: boolean): string {

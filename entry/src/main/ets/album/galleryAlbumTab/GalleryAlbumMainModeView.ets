@@ -3,37 +3,20 @@ import { GalleryListItem } from '../../model/FnApiTypes';
 import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
 import {
-  GalleryNetworkThumb,
-  GalleryStaticThumbPlaceholder,
   GalleryThumbSkeleton,
   getThumbLoadTelemetry,
-  isGifItem,
-  isVideoItem,
-  nasUrl,
-  pickThumbForGridDensity,
-  thumbDensityCacheRank,
-  thumbIdentityOfItem,
   setThumbHighThroughputLevel
 } from '../GalleryAlbumCommon';
-import { isLivePhotoItem } from '../livephoto/LivePhotoDetect';
-import { gallerySharedTransitionId } from '../GallerySharedTransition';
-import { GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE } from '../GallerySlidePick';
 import {
-  galleryGridArmInitialSlide,
-  galleryGridCanStartSecondaryPan,
-  galleryGridClearInitialSlide,
+  galleryPerfDayCachedCount,
+  galleryPerfMonthCachedCount,
+  galleryPerfYearCachedCount
+} from '../GalleryPerfProfile';
+import {
   galleryGridHandleListTouch,
-  galleryGridHandleRowTouch,
-  galleryGridOnSecondaryPanFinish,
-  galleryGridOnSecondaryPanStart,
-  galleryGridOnSequenceLongPress,
-  galleryGridOnSequencePanFinish,
   galleryGridResetTouchTracking,
-  galleryGridShouldUpdateSecondaryPan,
-  galleryGridShouldUpdateSequencePan,
   GalleryGridSlideTouchHost,
-  GalleryGridSlideTouchSession,
-  GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
+  GalleryGridSlideTouchSession
 } from '../GalleryGridSlideTouch';
 import { gallerySlideAutoScrollOnListDidScroll } from '../GallerySlideAutoScroll';
 import {
@@ -44,8 +27,8 @@ import { GalleryFingerWindowPoint, YearMarker } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 import { GalleryViewGranularity, galleryViewGranularityAfterPinch } from './GalleryAlbumGranularity';
-import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
 import { GalleryPinchScaleUpdater } from './GalleryAlbumPinchScale';
+import { GalleryTimelineFlowRow, GalleryTimelineFlowRowHost } from './GalleryTimelineFlowRow';
 
 const GALLERY_THUMB_THROUGHPUT_DROP_COOLDOWN_MS: number = 900;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
@@ -81,7 +64,6 @@ export struct GalleryAlbumMainModeView {
   @Prop gallerySlideGestureActive: boolean = false;
   @Prop galleryLongPressIgnoreClickUntil: number = 0;
   @Prop timelineSidebarDragging: boolean = false;
-  @Prop isDraggingOrFling: boolean = false;
   @Prop sectionsLength: number = 0;
   @Prop orderedDaysLength: number = 0;
   @Prop timelineExpandedChrome: boolean = false;
@@ -98,6 +80,7 @@ export struct GalleryAlbumMainModeView {
   scrollerRef: Scroller = new Scroller();
   flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
   private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
+  private flowRowHost: GalleryTimelineFlowRowHost | undefined = undefined;
   private thumbThroughputLevel: number = 0;
   private thumbLastAdaptiveDropAtMs: number = 0;
   @State private granularityOpacity: number = 1;
@@ -554,25 +537,6 @@ export struct GalleryAlbumMainModeView {
     this.onListDidScroll(offset, scrollState);
   }
 
-  private currentThumbDensity(): 'day' | 'month' | 'year' {
-    if (this.viewGranularity === GalleryViewGranularity.YEAR) {
-      return 'year';
-    }
-    if (this.viewGranularity === GalleryViewGranularity.MONTH) {
-      return 'month';
-    }
-    return 'day';
-  }
-
-  private rowTrailingBlankSlots(node: GalleryFlowNode): number[] {
-    const blanks: number[] = [];
-    const count = Math.max(0, node.rowColumnCount - node.rowSlotItems.length);
-    for (let i = 0; i < count; i++) {
-      blanks.push(i);
-    }
-    return blanks;
-  }
-
   private loadingSkeletonColumns(): number[] {
     const cols: number[] = [];
     for (let i = 0; i < Math.max(1, this.gridColumns); i++) {
@@ -583,25 +547,16 @@ export struct GalleryAlbumMainModeView {
 
   private currentListCachedCount(): number {
     if (this.viewGranularity === GalleryViewGranularity.YEAR) {
-      return 14;
+      return galleryPerfYearCachedCount();
     }
     if (this.viewGranularity === GalleryViewGranularity.MONTH) {
-      return 8;
+      return galleryPerfMonthCachedCount();
     }
-    // 官方 List.cachedCount：可视行约 n/2；列数变多时每行更重，预加载行略减
-    return this.gridColumns >= 4 ? 2 : 3;
+    return galleryPerfDayCachedCount(this.gridColumns >= 4);
   }
 
   private shouldTrackGalleryThumbRect(): boolean {
     return this.gallerySelectionMode || this.gallerySlideGestureActive || this.slideTouch.initialSlidePending;
-  }
-
-  private vpToPx(value: number): number {
-    try {
-      return this.getUIContext().vp2px(value);
-    } catch (_e) {
-      return value;
-    }
   }
 
   private asSlideTouchHost(): GalleryGridSlideTouchHost {
@@ -616,18 +571,45 @@ export struct GalleryAlbumMainModeView {
     return new MainSlideTouchHostBridge();
   }
 
-  private beginMainFirstSlideAtNode(node: GalleryFlowNode, xPx: number, yPx: number): boolean {
-    const all = this.getFlatItems();
-    const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
-    if (fi < 0 || fi >= all.length) {
-      return false;
+  private getFlowRowHost(): GalleryTimelineFlowRowHost {
+    if (this.flowRowHost !== undefined) {
+      return this.flowRowHost;
     }
-    const item = all[fi];
-    if (!this.gallerySelectionMode) {
-      this.onGalleryThumbLongPress(item);
+    const self = this;
+    class MainFlowRowHostBridge implements GalleryTimelineFlowRowHost {
+      itemIdOf(item: GalleryListItem): string { return self.itemIdOf(item); }
+      galleryThumbDomId(photoId: string): string { return self.galleryThumbDomId(photoId); }
+      recordGalleryThumbRectFromDom(photoId: string, domId: string): void {
+        self.recordGalleryThumbRectFromDom(photoId, domId);
+      }
+      onGalleryThumbTap(item: GalleryListItem, flatIndex: number): void {
+        self.onGalleryThumbTap(item, flatIndex);
+      }
+      getFlatItems(): GalleryListItem[] { return self.getFlatItems(); }
+      endGallerySlideSelectGesture(): void { self.endGallerySlideSelectGesture(); }
+      readGestureFingerWindow(ev: GestureEvent): GalleryFingerWindowPoint | null {
+        return self.readGestureFingerWindow(ev);
+      }
+      pickGalleryThumbFlatForRowOrCache(node: GalleryFlowNode, xPx: number, yPx: number): number {
+        return self.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
+      }
+      onGalleryThumbLongPress(item: GalleryListItem): void { self.onGalleryThumbLongPress(item); }
+      beginGallerySlideSelectGesture(ev: GestureEvent, item: GalleryListItem, anchorFlat: number): void {
+        self.beginGallerySlideSelectGesture(ev, item, anchorFlat);
+      }
+      beginGallerySlideSelectGestureAtWindowPx(item: GalleryListItem, anchorFlat: number, xPx: number,
+        yPx: number): void {
+        self.beginGallerySlideSelectGestureAtWindowPx(item, anchorFlat, xPx, yPx);
+      }
+      onGallerySlidePanUpdate(ev: GestureEvent): void { self.onGallerySlidePanUpdate(ev); }
+      shouldTrackGalleryThumbRect(): boolean { return self.shouldTrackGalleryThumbRect(); }
+      isSelectionMode(): boolean { return self.gallerySelectionMode; }
+      isSlideActive(): boolean { return self.gallerySlideGestureActive; }
+      endSlide(): void { self.endGallerySlideSelectGesture(); }
+      followSlideAtWindowPx(xPx: number, yPx: number): void { self.onGallerySlideTouchMoveWindow(xPx, yPx); }
     }
-    this.beginGallerySlideSelectGestureAtWindowPx(item, fi, xPx, yPx);
-    return true;
+    this.flowRowHost = new MainFlowRowHostBridge();
+    return this.flowRowHost;
   }
 
   private onMainListTouchEvent(event: TouchEvent): void {
@@ -641,56 +623,6 @@ export struct GalleryAlbumMainModeView {
       }
     }
     galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
-  }
-
-  @Builder
-  private buildGalleryTimelineThumbCell(item: GalleryListItem, flatIndex: number) {
-    Stack({ alignContent: Alignment.TopEnd }) {
-      GalleryNetworkThumb({
-        uri: nasUrl(this.baseUrl, pickThumbForGridDensity(item, this.currentThumbDensity())),
-        isVideo: isVideoItem(item),
-        isGif: isGifItem(item),
-        isLive: isLivePhotoItem(item),
-        paused: this.timelineSidebarDragging ||
-          (this.isDraggingOrFling && this.pinchCoverPix === undefined),
-        fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY && this.pinchCoverPix === undefined,
-        cacheIdentity: thumbIdentityOfItem(item),
-        cacheRank: thumbDensityCacheRank(this.currentThumbDensity()),
-        sharedTransitionId: gallerySharedTransitionId(this.itemIdOf(item))
-      })
-        .width('100%')
-        .aspectRatio(1)
-      if (this.timelineSidebarDragging) {
-        GalleryStaticThumbPlaceholder({
-          animatePulse: this.timelineSidebarDragging
-        })
-          .width('100%')
-          .aspectRatio(1)
-          .hitTestBehavior(HitTestMode.None)
-      }
-      GalleryAlbumSelectionOverlay({
-        itemId: this.itemIdOf(item),
-        visualScope: GALLERY_SELECTION_SCOPE_ALBUM,
-        selectionMode: this.gallerySelectionMode
-      })
-    }
-    .id(this.itemIdOf(item).length > 0 ? this.galleryThumbDomId(this.itemIdOf(item)) : `gt_na_${flatIndex}`)
-    .onAreaChange((): void => {
-      if (!this.shouldTrackGalleryThumbRect()) {
-        return;
-      }
-      const pid = this.itemIdOf(item);
-      if (pid.length > 0) {
-        this.recordGalleryThumbRectFromDom(pid, this.galleryThumbDomId(pid));
-      }
-    })
-    .layoutWeight(1)
-    .aspectRatio(1)
-    .backgroundColor(Color.Transparent)
-    .draggable(false)
-    .onClick((): void => {
-      this.onGalleryThumbTap(item, flatIndex);
-    })
   }
 
   @Builder
@@ -716,126 +648,17 @@ export struct GalleryAlbumMainModeView {
       }
     } else {
       ListItem() {
-        Row({ space: 2 }) {
-          ForEach(node.rowSlotItems, (slot: GalleryListItem | null, k: number) => {
-            if (slot !== null && slot !== undefined) {
-              this.buildGalleryTimelineThumbCell(slot, node.rowSlotFlatIndices[k])
-            } else {
-              if (this.timelineSidebarDragging) {
-                GalleryStaticThumbPlaceholder({
-                  animatePulse: this.timelineSidebarDragging
-                })
-                  .layoutWeight(1)
-                  .aspectRatio(1)
-              } else {
-                GalleryThumbSkeleton()
-                  .layoutWeight(1)
-                  .aspectRatio(1)
-              }
-            }
-          }, (slot: GalleryListItem | null, k: number) => {
-            if (slot !== null && slot !== undefined) {
-              const id = this.itemIdOf(slot);
-              if (id.length > 0) {
-                return `ti_${node.key}_${k}_${id}`;
-              }
-              const fi = node.rowSlotFlatIndices[k];
-              if (fi >= 0) {
-                return `ti_${node.key}_${k}_f${fi}`;
-              }
-            }
-            return `sk_${node.key}_${k}`;
-          })
-          ForEach(this.rowTrailingBlankSlots(node), (blankIndex: number) => {
-            Blank().layoutWeight(1)
-          }, (blankIndex: number) => `bk_${node.key}_${blankIndex}`)
-        }
-        .width('100%')
-        .padding({ left: 2, right: 2, top: 1, bottom: 1 })
-        .onTouch((event: TouchEvent): void => {
-          galleryGridHandleRowTouch(
-            this.slideTouch,
-            this.asSlideTouchHost(),
-            event,
-            (xPx: number, yPx: number): boolean => this.beginMainFirstSlideAtNode(node, xPx, yPx)
-          );
+        GalleryTimelineFlowRow({
+          node: node,
+          baseUrl: this.baseUrl,
+          viewGranularity: this.viewGranularity,
+          gallerySelectionMode: this.gallerySelectionMode,
+          timelineSidebarDragging: this.timelineSidebarDragging,
+          fadeInEnabled: this.viewGranularity === GalleryViewGranularity.DAY && this.pinchCoverPix === undefined,
+          host: this.getFlowRowHost(),
+          slideTouch: this.slideTouch
         })
-        .parallelGesture(GestureGroup(GestureMode.Parallel,
-          GestureGroup(GestureMode.Sequence,
-            LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
-              .onAction((ev: GestureEvent): void => {
-                if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
-                  return;
-                }
-                galleryGridClearInitialSlide(this.slideTouch);
-                this.endGallerySlideSelectGesture();
-                const pt = this.readGestureFingerWindow(ev);
-                if (pt === null) {
-                  return;
-                }
-                if (!this.beginMainFirstSlideAtNode(node, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
-                  return;
-                }
-                galleryGridArmInitialSlide(this.slideTouch);
-              }),
-            PanGesture({
-              fingers: 1,
-              direction: PanDirection.All,
-              distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
-            })
-              .onActionUpdate((ev: GestureEvent): void => {
-                if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
-                  return;
-                }
-                this.onGallerySlidePanUpdate(ev);
-              })
-              .onActionEnd((): void => {
-                galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
-              })
-              .onActionCancel((): void => {
-                galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
-              })
-          ),
-          PanGesture({
-            fingers: 1,
-            direction: PanDirection.Horizontal,
-            distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
-          })
-            .onActionStart((ev: GestureEvent): void => {
-              this.slideTouch.secondaryPanDriving = false;
-              if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
-                return;
-              }
-              const pt = this.readGestureFingerWindow(ev);
-              if (pt === null) {
-                return;
-              }
-              const xPx = this.vpToPx(pt.x);
-              const yPx = this.vpToPx(pt.y);
-              const fi = this.pickGalleryThumbFlatForRowOrCache(node, xPx, yPx);
-              if (fi < 0) {
-                return;
-              }
-              const all = this.getFlatItems();
-              if (fi >= all.length) {
-                return;
-              }
-              galleryGridOnSecondaryPanStart(this.slideTouch);
-              this.beginGallerySlideSelectGesture(ev, all[fi], fi);
-            })
-            .onActionUpdate((ev: GestureEvent): void => {
-              if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
-                return;
-              }
-              this.onGallerySlidePanUpdate(ev);
-            })
-            .onActionEnd((): void => {
-              galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
-            })
-            .onActionCancel((): void => {
-              galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
-            })
-        ))
+          .reuseId(`row_c${node.rowColumnCount}`)
       }
       .draggable(false)
     }

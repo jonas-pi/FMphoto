@@ -5,6 +5,13 @@ import { BackgroundKeepAliveController } from '../background/BackgroundKeepAlive
 import { GalleryThumbDiskCache } from '../album/GalleryThumbDiskCache';
 import { ensureGalleryThumbCacheEpochStorage } from '../album/GalleryThumbPersist';
 import {
+  applyGalleryMemoryLevel,
+  applyGalleryPerfImageCache,
+  ensureGalleryPerfProfile,
+  refreshGalleryPerfProfile
+} from '../album/GalleryPerfProfile';
+import { trimThumbPixCache } from '../album/GalleryAlbumCommon';
+import {
   fnApplySplashWindowBackground,
   fnApplySplashWindowChrome,
   fnRestoreAppSystemBars
@@ -35,6 +42,7 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, LOG_TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onCreate');
+    ensureGalleryPerfProfile();
     GalleryThumbDiskCache.init(this.context.cacheDir);
     ensureGalleryThumbCacheEpochStorage();
     FnTransferQueueStore.ensureStorage();
@@ -84,8 +92,7 @@ export default class EntryAbility extends UIAbility {
       fnBindSystemAvoidArea(mainWindow);
       try {
         const ui = mainWindow.getUIContext();
-        ui.setImageCacheCount(100);
-        ui.setImageRawDataCacheSize(64 * 1024 * 1024);
+        applyGalleryPerfImageCache(ui);
       } catch (_e) {
       }
     }).catch((_e: Error): void => {
@@ -117,6 +124,8 @@ export default class EntryAbility extends UIAbility {
     BackgroundKeepAliveController.onAbilityForegroundOrDestroy(this.context);
     ensureStarted(this.context);
     scheduleCheck();
+    refreshGalleryPerfProfile();
+    this.applyPerfImageCacheIfReady();
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onForeground');
   }
 
@@ -124,5 +133,27 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onBackground');
     // 官方 Background Tasks Kit：短时挂起宽限 + 数据传输类长时任务（见 module backgroundModes）
     BackgroundKeepAliveController.onAbilityBackground(this.context);
+  }
+
+  /**
+   * 整机可用内存变化时降档并裁 PixelMap 缓存，不在此释放 UI 组件。
+   */
+  onMemoryLevel(level: AbilityConstant.MemoryLevel): void {
+    const keep = applyGalleryMemoryLevel(level);
+    this.applyPerfImageCacheIfReady();
+    if (keep >= 0) {
+      trimThumbPixCache(keep);
+    }
+    hilog.info(DOMAIN, LOG_TAG, 'onMemoryLevel=%{public}d keep=%{public}d', level, keep);
+  }
+
+  private applyPerfImageCacheIfReady(): void {
+    if (this.mainWindow === null) {
+      return;
+    }
+    try {
+      applyGalleryPerfImageCache(this.mainWindow.getUIContext());
+    } catch (_e) {
+    }
   }
 }

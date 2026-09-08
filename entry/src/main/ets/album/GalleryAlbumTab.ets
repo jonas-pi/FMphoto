@@ -39,10 +39,11 @@ import {
   nasUrl,
   pickThumb,
   recommendedThumbCacheKeep,
-  THUMB_CACHE_MAX,
+  currentThumbCacheMax,
   trimThumbPixCache,
   trimThumbPixCacheForList,
 } from './GalleryAlbumCommon';
+import { galleryPerfScrollCacheFloor } from './GalleryPerfProfile';
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from './GalleryFlowDataSource';
 import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from './GalleryPreviewEntryGate';
@@ -542,16 +543,15 @@ export struct GalleryAlbumTab {
   @State private galleryMainListScrollEnabled: boolean = true;
   /**
    * 统一交互状态机：
-   * - timelineSidebarDragging: 时间轴手势进行中
-   * - isDraggingOrFling: 主列表正在拖动或惯性滚动（Scroll/Fling）
-   * - visualPlaceholderMode: 图片加载门控；时间轴拖动或主列表拖动/惯性时为 true
-   *
-   * 约束：任何图片请求开关都只看 visualPlaceholderMode，避免多状态互相覆盖。
+   * - timelineSidebarDragging: 时间轴手势进行中（@State，会盖占位层）
+   * - isDraggingOrFling / listKineticScrolling / visualPlaceholderMode:
+   *   主列表拖动或惯性；刻意不用 @State，避免快滑时整页 rebuild 把宫格刷脏。
+   *   图片解码门控走 setGalleryListScrollFrozen。
    */
   @State private timelineSidebarDragging: boolean = false;
-  @State private listKineticScrolling: boolean = false;
-  @State private isDraggingOrFling: boolean = false;
-  @State private visualPlaceholderMode: boolean = false;
+  private listKineticScrolling: boolean = false;
+  private isDraggingOrFling: boolean = false;
+  private visualPlaceholderMode: boolean = false;
   /** 主列表进入 Idle 后的 settled 防抖定时器 id，再次滚动时取消。 */
   private listSettledTimer: number = -1;
   /** settled 防抖代次，避免旧定时器回写。 */
@@ -2200,18 +2200,11 @@ export struct GalleryAlbumTab {
     const baseKeep = recommendedThumbCacheKeep(this.currentThumbHeavyItemCount(), false);
     if (this.homeSurface !== 'photos' || this.inSearchMode || this.inCategoryMode ||
       this.inSmartCategoryMode || this.inPersonMode) {
-      return Math.min(THUMB_CACHE_MAX, baseKeep);
+      return Math.min(currentThumbCacheMax(), baseKeep);
     }
     const columns = this.currentGalleryGridColumns();
-    let floor = 64;
-    if (columns >= 17) {
-      floor = 192;
-    } else if (columns >= 8) {
-      floor = 128;
-    } else if (columns >= 4) {
-      floor = 96;
-    }
-    return Math.min(THUMB_CACHE_MAX, Math.max(baseKeep, floor));
+    const floor = galleryPerfScrollCacheFloor(columns);
+    return Math.min(currentThumbCacheMax(), Math.max(baseKeep, floor));
   }
 
   private invalidateNavigationGuard(): void {
@@ -2513,6 +2506,7 @@ export struct GalleryAlbumTab {
     this.lastGranularityMotionMode = this.renderedViewGranularity;
     // 捏合切等级时列表可能仍处在拖动/惯性标记中，强制清掉以免 rebuild 被推迟、画面卡住。
     this.isDraggingOrFling = false;
+    timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
     galleryAlbumRebuildFlow(this.asVisibleLoadHost());
     this.restoreGranularityAnchorScroll(anchor);
     this.refreshRootPhotosScrollTitle();
@@ -3050,7 +3044,6 @@ export struct GalleryAlbumTab {
           gallerySlideGestureActive: this.gallerySlideGestureActive,
           galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
           timelineSidebarDragging: this.timelineSidebarDragging,
-          isDraggingOrFling: this.isDraggingOrFling,
           sectionsLength: this.sections.length,
           orderedDaysLength: this.orderedDays.length,
           timelineExpandedChrome: timelineGestureTimelineScrubExpandedChrome(this.asTimelineGestureHost()),

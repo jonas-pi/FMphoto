@@ -31,11 +31,11 @@ import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
 import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns } from '../../common/FnWindowBreakpoint';
+import { galleryPerfDayCachedCount } from '../GalleryPerfProfile';
 
 const GALLERY_SEARCH_INITIAL_RENDER_COUNT = 120;
 const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
 const GALLERY_SEARCH_APPEND_PREFETCH_ROWS = 8;
-const GALLERY_SEARCH_LIST_CACHED_COUNT = 3;
 const GALLERY_SEARCH_THUMB_RESUME_DELAY_MS = 96;
 export const GALLERY_ALBUM_SEARCH_LIST_DOM_ID: string = 'gallery_album_search_list';
 
@@ -605,7 +605,7 @@ export struct GalleryAlbumSearchModeView {
           .layoutWeight(1)
           .clip(true)
           .id(GALLERY_ALBUM_SEARCH_LIST_DOM_ID)
-          .cachedCount(this.searchGridColumns() >= 4 ? 2 : GALLERY_SEARCH_LIST_CACHED_COUNT)
+          .cachedCount(galleryPerfDayCachedCount(this.searchGridColumns() >= 4))
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
           .divider({ strokeWidth: 0 })

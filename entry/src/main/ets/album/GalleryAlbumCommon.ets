@@ -14,6 +14,16 @@ import {
   GALLERY_THUMB_CACHE_EPOCH_KEY,
   THUMB_DISK_NONE
 } from './GalleryThumbDiskCache';
+import {
+  galleryPerfCapThumbConcurrent,
+  galleryPerfFreezeResumeBatch,
+  galleryPerfFreezeResumeDelayMs,
+  galleryPerfPaintBatchMax,
+  galleryPerfScaleCacheKeep,
+  galleryPerfThumbCacheMax,
+  galleryPerfThumbConcurrentRaw,
+  registerGalleryLanBurstListener
+} from './GalleryPerfProfile';
 
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
@@ -29,8 +39,13 @@ const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOFT_VP = 64;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP = 42;
 const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
 
-/** 缩略图全局缓存上限。宫格已按最长边 360px 降采样，可比全分辨率多留一些 */
+/** 缩略图全局缓存绝对上限；实际上限随 GalleryPerfProfile 档位收缩 */
 export const THUMB_CACHE_MAX = 288;
+
+export function currentThumbCacheMax(): number {
+  const cap = galleryPerfThumbCacheMax();
+  return cap < THUMB_CACHE_MAX ? cap : THUMB_CACHE_MAX;
+}
 const thumbPixCache = new Map<string, PixelMap>();
 const thumbPixIdentityCache = new Map<string, ThumbIdentityCacheEntry>();
 const previewMidPixCache = new Map<string, PixelMap>();
@@ -253,24 +268,14 @@ async function decodeFullPixFromTempFile(
 }
 
 /**
- * 缩略图并发加载限流器：最多同时进行 MAX_THUMB_CONCURRENT 个网络请求 + 解码。
- * 超出时排入等待队列，前一个完成后自动释放并启动下一个，避免大量并发导致主线程和网络拥塞。
- * 队列采用“可见优先 + 公平退避”：
- * - 常态优先最近进入视区的任务（近似 LIFO）；
- * - 每隔若干次切换到最早排队任务，避免老任务长期饥饿导致“永远不加载”。
+ * 缩略图并发加载限流器：最多同时进行若干个网络请求 + 解码。
+ * 超出时排入等待队列，前一个完成后自动释放并启动下一个。
+ * 队列采用“可见优先 + 公平退避”：常态近似 LIFO，每隔若干次唤醒最早排队任务。
+ * 公网保持克制；内网爆发把原始并发拉到 32～64，再按内存档封顶。
+ * 快滑 / 时间轴跳转仍走解码闸门，避免为打满带宽把 UI 再次打卡。
  */
-/**
- * 缩略图（含视频封面 JPEG）并发上限：网络 + 解码同时进行的最大任务数。
- * - 视频格与图片格共用同一路径，封面往往更大，并发过低时队列排长、体感「带宽没用满」。
- * - 过高会抬升瞬时内存与解码 CPU，低端机或弱网可改回 4～6。
- */
-const BASE_MAX_THUMB_CONCURRENT = 8;
-const MONTH_MAX_THUMB_CONCURRENT = 16;
-const YEAR_MAX_THUMB_CONCURRENT = 20;
-const AGGRESSIVE_MAX_THUMB_CONCURRENT = 28;
 const THUMB_LOAD_EWMA_ALPHA = 0.24;
 const THUMB_PAINT_BATCH_DELAY_MS = 18;
-const THUMB_PAINT_BATCH_MAX = 8;
 let thumbLoadActive = 0;
 const thumbLoadWaiters: Array<() => void> = [];
 let thumbWakeCount = 0;
@@ -339,16 +344,7 @@ function rememberThumbIdentityCache(identity: string, cacheKey: string, rank: nu
 }
 
 function currentMaxThumbConcurrent(): number {
-  if (thumbHighThroughputDemand >= 3) {
-    return AGGRESSIVE_MAX_THUMB_CONCURRENT;
-  }
-  if (thumbHighThroughputDemand >= 2) {
-    return YEAR_MAX_THUMB_CONCURRENT;
-  }
-  if (thumbHighThroughputDemand >= 1) {
-    return MONTH_MAX_THUMB_CONCURRENT;
-  }
-  return BASE_MAX_THUMB_CONCURRENT;
+  return galleryPerfCapThumbConcurrent(galleryPerfThumbConcurrentRaw(thumbHighThroughputDemand));
 }
 
 function updateThumbEwma(current: number, next: number): number {
@@ -381,7 +377,7 @@ function flushThumbPaintCommitQueue(): void {
     clearTimeout(thumbPaintCommitTimer);
     thumbPaintCommitTimer = -1;
   }
-  const batchCount = Math.min(THUMB_PAINT_BATCH_MAX, thumbPaintCommitQueue.length);
+  const batchCount = Math.min(galleryPerfPaintBatchMax(), thumbPaintCommitQueue.length);
   for (let i = 0; i < batchCount; i++) {
     const next = thumbPaintCommitQueue.shift();
     if (next !== undefined) {
@@ -397,7 +393,7 @@ function flushThumbPaintCommitQueue(): void {
 
 export function enqueueThumbPaintCommit(task: () => void): void {
   thumbPaintCommitQueue.push(task);
-  if (thumbPaintCommitQueue.length >= THUMB_PAINT_BATCH_MAX) {
+  if (thumbPaintCommitQueue.length >= galleryPerfPaintBatchMax()) {
     flushThumbPaintCommitQueue();
     return;
   }
@@ -406,6 +402,93 @@ export function enqueueThumbPaintCommit(task: () => void): void {
       flushThumbPaintCommitQueue();
     }, THUMB_PAINT_BATCH_DELAY_MS);
   }
+}
+
+/**
+ * 主时间线快滑冻结：模块级开关，不走 @Prop/@State，避免整屏缩略图变脏。
+ * 已上屏的 PixelMap 继续显示；未命中缓存的网络解码推迟到松手后 resume。
+ */
+let galleryListScrollFrozen: boolean = false;
+let gallerySeekDecodeHold: boolean = false;
+let gallerySeekDecodeHoldTimer: number = -1;
+const galleryThumbFreezeResumes: Array<() => void> = [];
+let galleryThumbFreezeResumeTimer: number = -1;
+
+export function isGalleryListScrollFrozen(): boolean {
+  return galleryListScrollFrozen || gallerySeekDecodeHold;
+}
+
+function pumpGalleryThumbFreezeResumes(): void {
+  if (isGalleryListScrollFrozen()) {
+    return;
+  }
+  const batch = Math.max(1, galleryPerfFreezeResumeBatch());
+  const chunk = galleryThumbFreezeResumes.splice(0, batch);
+  for (let i = 0; i < chunk.length; i++) {
+    chunk[i]();
+  }
+  if (galleryThumbFreezeResumes.length <= 0 || isGalleryListScrollFrozen()) {
+    return;
+  }
+  if (galleryThumbFreezeResumeTimer >= 0) {
+    return;
+  }
+  galleryThumbFreezeResumeTimer = setTimeout((): void => {
+    galleryThumbFreezeResumeTimer = -1;
+    pumpGalleryThumbFreezeResumes();
+  }, galleryPerfFreezeResumeDelayMs());
+}
+
+export function setGalleryListScrollFrozen(frozen: boolean): void {
+  if (galleryListScrollFrozen === frozen) {
+    return;
+  }
+  galleryListScrollFrozen = frozen;
+  if (frozen || gallerySeekDecodeHold) {
+    return;
+  }
+  pumpGalleryThumbFreezeResumes();
+}
+
+/**
+ * 时间轴跳转后的解码闸门：与列表 fling 冻结独立。
+ * 跳转落点未稳住前不解开网络解码，松手后按批 resume，避免一次灌入整月缩略图。
+ */
+export function setGallerySeekDecodeHold(hold: boolean, maxHoldMs: number = 0): void {
+  if (gallerySeekDecodeHoldTimer >= 0) {
+    clearTimeout(gallerySeekDecodeHoldTimer);
+    gallerySeekDecodeHoldTimer = -1;
+  }
+  if (gallerySeekDecodeHold === hold) {
+    if (hold && maxHoldMs > 0) {
+      gallerySeekDecodeHoldTimer = setTimeout((): void => {
+        gallerySeekDecodeHoldTimer = -1;
+        setGallerySeekDecodeHold(false);
+      }, maxHoldMs);
+    }
+    return;
+  }
+  gallerySeekDecodeHold = hold;
+  if (hold) {
+    if (maxHoldMs > 0) {
+      gallerySeekDecodeHoldTimer = setTimeout((): void => {
+        gallerySeekDecodeHoldTimer = -1;
+        setGallerySeekDecodeHold(false);
+      }, maxHoldMs);
+    }
+    return;
+  }
+  if (!galleryListScrollFrozen) {
+    pumpGalleryThumbFreezeResumes();
+  }
+}
+
+export function registerGalleryThumbFreezeResume(resume: () => void): void {
+  if (!isGalleryListScrollFrozen()) {
+    resume();
+    return;
+  }
+  galleryThumbFreezeResumes.push(resume);
 }
 
 function takeNextThumbWaiter(): (() => void) | undefined {
@@ -423,6 +506,10 @@ function pumpThumbWaiters(): void {
     next();
   }
 }
+
+registerGalleryLanBurstListener((): void => {
+  pumpThumbWaiters();
+});
 
 function acquireThumbSlot(): Promise<void> {
   if (thumbLoadActive < currentMaxThumbConcurrent()) {
@@ -526,35 +613,35 @@ export function recommendedThumbCacheKeep(itemCount: number, aggressive: boolean
   const total = Math.max(0, Math.floor(itemCount));
   if (aggressive) {
     if (total > 1200) {
-      return 20;
+      return galleryPerfScaleCacheKeep(20);
     }
     if (total > 720) {
-      return 24;
+      return galleryPerfScaleCacheKeep(24);
     }
     if (total > 360) {
-      return 28;
+      return galleryPerfScaleCacheKeep(28);
     }
     if (total > 180) {
-      return 32;
+      return galleryPerfScaleCacheKeep(32);
     }
-    return 40;
+    return galleryPerfScaleCacheKeep(40);
   }
   if (total > 2400) {
-    return 48;
+    return galleryPerfScaleCacheKeep(48);
   }
   if (total > 1200) {
-    return 56;
+    return galleryPerfScaleCacheKeep(56);
   }
   if (total > 720) {
-    return 64;
+    return galleryPerfScaleCacheKeep(64);
   }
   if (total > 360) {
-    return 80;
+    return galleryPerfScaleCacheKeep(80);
   }
   if (total > 180) {
-    return 96;
+    return galleryPerfScaleCacheKeep(96);
   }
-  return 120;
+  return galleryPerfScaleCacheKeep(120);
 }
 
 export function trimThumbPixCacheForList(itemCount: number, aggressive: boolean = false): void {
@@ -1102,7 +1189,7 @@ async function thisLoadPreviewMidPix(fullUrl: string, midKey: string): Promise<P
 }
 
 function rememberDecodedThumbPix(key: string, pix: PixelMap, cacheIdentity: string, cacheRank: number): void {
-  if (thumbPixCache.size >= THUMB_CACHE_MAX && !thumbPixCache.has(key)) {
+  if (thumbPixCache.size >= currentThumbCacheMax() && !thumbPixCache.has(key)) {
     let firstKey: string | undefined = undefined;
     for (const k of thumbPixCache.keys()) {
       firstKey = k;
@@ -1392,6 +1479,8 @@ export struct GalleryNetworkThumb {
   /** 失败重试次数：用于弱网/短时请求失败后自动补偿加载 */
   private retryCount: number = 0;
   private needsUpgradeAfterResume: boolean = false;
+  /** 快滑冻结时已登记松手补拉，避免重复入队 */
+  private freezeResumeQueued: boolean = false;
 
   private logDebug(message: string): void {
     if (this.debugLabel.length <= 0) {
@@ -1417,6 +1506,7 @@ export struct GalleryNetworkThumb {
     this.loading = false;
     this.retryCount = 0;
     this.needsUpgradeAfterResume = false;
+    this.freezeResumeQueued = false;
     void this.loadPix();
   }
 
@@ -1436,6 +1526,7 @@ export struct GalleryNetworkThumb {
     this.loadVersion++;
     this.retryCount = 0;
     this.needsUpgradeAfterResume = false;
+    this.freezeResumeQueued = false;
     this.loading = false;
     this.pix = undefined;
     this.pixAlpha = 0;
@@ -1455,8 +1546,24 @@ export struct GalleryNetworkThumb {
   aboutToDisappear(): void {
     // 组件离屏后提升版本号，阻止旧任务回写
     this.loadVersion++;
+    this.freezeResumeQueued = false;
     // 不能保留旧任务的 loading 状态，否则返回页面时 aboutToAppear 无法补拉已被淘汰的封面。
     this.loading = false;
+  }
+
+  private queueFreezeResumeIfNeeded(): void {
+    if (!isGalleryListScrollFrozen() || this.freezeResumeQueued) {
+      return;
+    }
+    this.freezeResumeQueued = true;
+    const resumeVersion = this.loadVersion;
+    registerGalleryThumbFreezeResume((): void => {
+      if (resumeVersion !== this.loadVersion) {
+        return;
+      }
+      this.freezeResumeQueued = false;
+      void this.loadPix();
+    });
   }
 
   private applyLoadedPix(pix: PixelMap, versionAtStart: number, uriAtStart: string): void {
@@ -1505,8 +1612,9 @@ export struct GalleryNetworkThumb {
       this.needsUpgradeAfterResume = true;
       this.logDebug(`identity-hit-upgrade-r${reusedRank}->${this.cacheRank}`);
     }
-    if (this.paused) {
+    if (this.paused || isGalleryListScrollFrozen()) {
       this.logDebug(this.needsUpgradeAfterResume ? 'upgrade-deferred-paused' : 'load-skipped-paused');
+      this.queueFreezeResumeIfNeeded();
       return;
     }
     this.logDebug('load-start');

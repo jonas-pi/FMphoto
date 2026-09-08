@@ -1,6 +1,6 @@
 import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
+import { galleryPerfDateFeedBatch } from '../GalleryPerfProfile';
 import {
-  DATE_FEED_BATCH,
   GALLERY_LAST_KNOWN_DEGENERATE_NEW_SLOT_SPAN,
   GALLERY_LAST_KNOWN_MIN_PREV_SLOT_SPAN,
   GALLERY_LAST_KNOWN_SHRINK_IGNORE_RATIO,
@@ -20,6 +20,10 @@ import {
   GALLERY_SCROLL_DEBUG_LOG,
   GALLERY_SCROLL_DELTA_CONSUME_MAX_IT,
   GALLERY_SCROLL_Y_ESTIMATE_MAX_NODES,
+  GALLERY_TIMELINE_SEEK_MAX_DAY_SPAN,
+  GALLERY_TIMELINE_SEEK_VISIBLE_SLOT_CAP_DAY,
+  GALLERY_TIMELINE_SEEK_VISIBLE_SLOT_CAP_MONTH,
+  GALLERY_TIMELINE_SEEK_VISIBLE_SLOT_CAP_YEAR,
   PUMP_UI_GAP_MS
 } from './GalleryAlbumTabConstants';
 import {
@@ -516,7 +520,7 @@ export function galleryAlbumVisibleAlignDayOffsetToLoadedGap(
     if (latestGap < 0) {
       return current;
     }
-    const target = Math.max(start, latestGap - DATE_FEED_BATCH + 1);
+    const target = Math.max(start, latestGap - galleryPerfDateFeedBatch() + 1);
     if (target !== current) {
       host.dayOffsets.set(key, target);
     }
@@ -820,6 +824,20 @@ function galleryAlbumVisibleBufferScale(host: GalleryAlbumVisibleLoadHost): numb
   return 1;
 }
 
+function galleryAlbumVisibleIsSeekViewportOnly(host: GalleryAlbumVisibleLoadHost): boolean {
+  return host.timelineSeekInProgress || Date.now() < host.ignoreListFreezeUntilMs;
+}
+
+function galleryAlbumVisibleSeekSlotCap(host: GalleryAlbumVisibleLoadHost): number {
+  if (host.viewGranularity === GalleryViewGranularity.YEAR) {
+    return GALLERY_TIMELINE_SEEK_VISIBLE_SLOT_CAP_YEAR;
+  }
+  if (host.viewGranularity === GalleryViewGranularity.MONTH) {
+    return GALLERY_TIMELINE_SEEK_VISIBLE_SLOT_CAP_MONTH;
+  }
+  return GALLERY_TIMELINE_SEEK_VISIBLE_SLOT_CAP_DAY;
+}
+
 export function galleryAlbumVisibleComputeLoadVisibleBufferAfterSlots(
   host: GalleryAlbumVisibleLoadHost,
   aggressive: boolean,
@@ -834,7 +852,11 @@ export function galleryAlbumVisibleComputeLoadVisibleBufferAfterSlots(
     GALLERY_LOAD_VISIBLE_BUFFER_AFTER_CAP * scale,
     sk * GALLERY_LOAD_VISIBLE_SKELETON_SLOT_MULTIPLIER
   );
-  return Math.max(base, extra);
+  const raw = Math.max(base, extra);
+  if (!galleryAlbumVisibleIsSeekViewportOnly(host)) {
+    return raw;
+  }
+  return Math.min(raw, galleryAlbumVisibleSeekSlotCap(host));
 }
 
 export function galleryAlbumVisibleLoadVisibleItemsThrottled(
@@ -1202,14 +1224,31 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       );
     }
   }
-  const loD = startHit.dayIdx;
-  const hiD = endHit.dayIdx;
-  const spanDays = hiD - loD;
+  let pumpLo = startHit.dayIdx;
+  let pumpHi = endHit.dayIdx;
+  let maxSeekDays: number = GALLERY_TIMELINE_SEEK_MAX_DAY_SPAN;
+  if (host.viewGranularity === GalleryViewGranularity.YEAR) {
+    maxSeekDays = 4;
+  } else if (host.viewGranularity === GalleryViewGranularity.MONTH) {
+    maxSeekDays = 3;
+  }
+  if (galleryAlbumVisibleIsSeekViewportOnly(host) && (pumpHi - pumpLo) > maxSeekDays) {
+    if (host.visibleLoadPreferBottomFirst) {
+      pumpLo = Math.max(pumpLo, pumpHi - maxSeekDays);
+    } else {
+      pumpHi = Math.min(pumpHi, pumpLo + maxSeekDays);
+    }
+    galleryAlbumVisibleTrace(
+      host,
+      `loadVisible clamp seek day span -> ${pumpLo}~${pumpHi}`
+    );
+  }
+  const spanDays = pumpHi - pumpLo;
 
   if (!host.exhausted) {
     galleryAlbumVisibleTrace(
       host,
-      `loadVisible trigger visible-band pump: loDay=${loD}, hiDay=${hiD}, spanDays=${spanDays}, `
+      `loadVisible trigger visible-band pump: loDay=${pumpLo}, hiDay=${pumpHi}, spanDays=${spanDays}, `
       + `start=${start}, end=${end}, priority=${host.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
     );
     if (host.isInScrollInteractiveLogWindow()) {
@@ -1230,7 +1269,7 @@ export function galleryAlbumVisibleLoadVisibleItemsThrottled(
       return;
     }
     const runId = galleryAlbumVisibleStartBandPump(host, epochBand);
-    void galleryAlbumVisiblePumpVisibleDayBandAllChunks(host, loD, hiD, start, end, epochBand, runId);
+    void galleryAlbumVisiblePumpVisibleDayBandAllChunks(host, pumpLo, pumpHi, start, end, epochBand, runId);
   }
 }
 
@@ -1350,7 +1389,7 @@ export async function galleryAlbumVisiblePumpVisibleDayBandSequential(
       `visible-band day ${d}: key=${dayKey(day.year, day.month, day.day)}, global=${g0}~${g1}, `
       + `need=${localNeed}~${overlapEndExclusive}`
     );
-    const maxRoundsForRange = Math.max(1, Math.ceil(Math.max(1, overlapEndExclusive - localNeed) / DATE_FEED_BATCH) + 2);
+    const maxRoundsForRange = Math.max(1, Math.ceil(Math.max(1, overlapEndExclusive - localNeed) / galleryPerfDateFeedBatch()) + 2);
     let rounds = 0;
     while (rounds < maxRoundsForRange) {
       const nextGap = preferBottomFirst

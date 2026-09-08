@@ -22,8 +22,8 @@ import { fillAndPersistCustomSmartCategoryCovers, enrichSmartCategoryCountsFromS
 import { smartCategoryCurrentAccount, smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
 import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
 import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
+import { galleryPerfDateFeedBatch } from '../GalleryPerfProfile';
 import {
-  DATE_FEED_BATCH,
   DAY_MAX_ROUNDS,
   EMPTY_PAGE_ADVANCE_THRESHOLD,
   GALLERY_BATCH_VERBOSE_LOG,
@@ -369,7 +369,7 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
       };
       const st = fmtDayStart(day.year, day.month, day.day);
       const et = fmtDayEnd(day.year, day.month, day.day);
-      const res = await client.getGalleryList(st, et, DATE_FEED_BATCH, 0, 'index');
+      const res = await client.getGalleryList(st, et, galleryPerfDateFeedBatch(), 0, 'index');
       if (res.success !== true) {
         continue;
       }
@@ -658,8 +658,9 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
   const off = host.dayOffsets.get(key) ?? 0;
   const rounds = host.dayRounds.get(key) ?? 0;
   const emptyRounds = host.dayEmptyRounds.get(key) ?? 0;
+  const feedBatch = galleryPerfDateFeedBatch();
   const itemCountBasedMax = day.itemCount > 0
-    ? Math.ceil(day.itemCount / DATE_FEED_BATCH) + 20
+    ? Math.ceil(day.itemCount / feedBatch) + 20
     : DAY_MAX_ROUNDS;
   const dayMaxRounds = Math.max(DAY_MAX_ROUNDS, itemCountBasedMax);
 
@@ -683,7 +684,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
       `loadOneBatch request: dayIndex=${host.dayIndex}, key=${key}, off=${off}, rounds=${rounds}, `
       + `emptyRounds=${emptyRounds}, itemCount=${day.itemCount}`
     );
-    let res = await client.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
+    let res = await client.getGalleryList(st, et, feedBatch, off, 'index');
     if (gen !== host.loadGen || epoch !== host.pumpEpoch) {
       return -1;
     }
@@ -696,7 +697,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
         if (recovered) {
           const c2 = AppSession.getClient();
           if (c2 !== null) {
-            res = await c2.getGalleryList(st, et, DATE_FEED_BATCH, off, 'index');
+            res = await c2.getGalleryList(st, et, feedBatch, off, 'index');
           }
         }
       }
@@ -728,7 +729,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
       host.dayEmptyRounds.set(key, emptyRounds + 1);
     }
 
-    if (list.length > 0 && list.length < DATE_FEED_BATCH) {
+    if (list.length > 0 && list.length < feedBatch) {
       host.dayRounds.set(key, rounds + 1);
       if (GALLERY_BATCH_VERBOSE_LOG) {
         hilog.warn(
@@ -772,7 +773,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     }
 
     if (transientEmpty) {
-      const likelyTailEmptyAfterShortLeadPage = off > 0 && off < DATE_FEED_BATCH;
+      const likelyTailEmptyAfterShortLeadPage = off > 0 && off < feedBatch;
       if (likelyTailEmptyAfterShortLeadPage) {
         if (day.itemCount !== newOff) {
           day.itemCount = newOff;

@@ -39,6 +39,7 @@ export struct GalleryVideoOverlayChrome {
   @Prop currentText: string = '00:00';
   @Prop durationText: string = '00:00';
   @Prop progress: number = 0;
+  @Prop bufferProgress: number = 0;
   @Prop bottomPadding: number = 0;
   onPlay: () => void = () => {};
   onSelectSpeed: (rate: number) => void = (_rate: number) => {};
@@ -76,6 +77,13 @@ export struct GalleryVideoOverlayChrome {
 
   private fillPercent(): number {
     return Math.round(Math.max(0, Math.min(1, this.progress)) * 100);
+  }
+
+  /** 缓冲条至少盖住已播放段，避免 seek 后灰条短于蓝条 */
+  private bufferFillPercent(): number {
+    const played = Math.max(0, Math.min(1, this.progress));
+    const buffered = Math.max(0, Math.min(1, this.bufferProgress));
+    return Math.round(Math.max(played, buffered) * 100);
   }
 
   private isCurrentSpeed(rate: number): boolean {
@@ -344,6 +352,11 @@ export struct GalleryVideoOverlayChrome {
                 .width('100%')
                 .height(3)
                 .backgroundColor($r('app.color.immersive_panel_border'))
+                .borderRadius(2)
+              Row()
+                .width(`${this.bufferFillPercent()}%`)
+                .height(3)
+                .backgroundColor('#8CFFFFFF')
                 .borderRadius(2)
               Row()
                 .width(`${this.fillPercent()}%`)
