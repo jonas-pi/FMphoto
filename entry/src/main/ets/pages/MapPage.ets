@@ -3,7 +3,9 @@ import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryNetworkThumb, nasUrl, pickThumb } from '../album/GalleryAlbumCommon';
-import { FnFullLoadingMask, FnInlineLoading, FnTopBar } from '../common/FnUiCommon';
+import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
+import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
+import { FnFullLoadingMask, FnInlineLoading } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -253,6 +255,7 @@ struct MapPage {
   private webController: webview.WebviewController = new webview.WebviewController();
 
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @State private officialMapUrl: string = '';
   @State private webBaseUrl: string = '';
   @State private webLoading: boolean = false;
@@ -1327,9 +1330,10 @@ struct MapPage {
 
   build() {
     Column() {
-      FnTopBar({
+      FnHdsSimpleChrome({
         title: '地图',
         subtitle: this.mapPageSubtitle(),
+        topSafeInsetVp: this.systemTopInsetVp,
         onBack: (): void => {
           this.handleBack();
         }
@@ -1352,6 +1356,7 @@ struct MapPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   pageTransition(): void {

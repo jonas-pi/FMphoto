@@ -37,7 +37,9 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { FnFullLoadingMask, FnInlineLoading, FnPrimaryButton, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
+import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
+import { FnFullLoadingMask, FnInlineLoading, FnPrimaryButton, FnStateText } from '../common/FnUiCommon';
 import { fnHdsFitContentSheetOptions } from '../common/FnHdsOverlay';
 
 const SMART_CAT_LOG_DOMAIN: number = 0xFF00;
@@ -49,6 +51,7 @@ struct SmartCategoryPage {
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private error: string = '';
@@ -604,9 +607,10 @@ struct SmartCategoryPage {
 
   build() {
     Column() {
-      FnTopBar({
+      FnHdsSimpleChrome({
         title: '智能分类',
         rightText: this.loading ? '' : (this.editing ? '完成' : '编辑'),
+        topSafeInsetVp: this.systemTopInsetVp,
         onBack: (): void => {
           this.handleBack();
         },
@@ -787,6 +791,7 @@ struct SmartCategoryPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.addSheetVisible, this.addKeywordSheetBuilder, fnHdsFitContentSheetOptions(
       '添加关键词',
       (): void => {

@@ -24,9 +24,11 @@ import {
   gallerySharedSourceDomId
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
+import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { FnListDataSource } from '../common/FnListDataSource';
+import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
-import { FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import { FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -56,6 +58,7 @@ struct FolderBrowsePage {
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
   @StorageProp(GALLERY_PREVIEW_HERO_ACTIVE_KEY) private previewHeroActive: boolean = false;
   @State private loading: boolean = false;
@@ -481,8 +484,9 @@ struct FolderBrowsePage {
 
   build() {
     Column() {
-      FnTopBar({
+      FnHdsSimpleChrome({
         title: this.title,
+        topSafeInsetVp: this.systemTopInsetVp,
         onBack: (): void => {
           this.handleBack();
         }

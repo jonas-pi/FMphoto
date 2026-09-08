@@ -6,7 +6,9 @@ import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } fro
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { FnListDataSource } from '../common/FnListDataSource';
 import { personCacheIdentity, personFace as resolvePersonFace } from '../album/GalleryAlbumEntityData';
-import { FnFullLoadingMask, FnInlineLoading, FnStateText, FnTopBar } from '../common/FnUiCommon';
+import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
+import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
+import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -20,6 +22,7 @@ struct PersonPage {
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @State private loading: boolean = false;
   @State private opening: boolean = false;
   @State private error: string = '';
@@ -167,8 +170,9 @@ struct PersonPage {
 
   build() {
     Column() {
-      FnTopBar({
+      FnHdsSimpleChrome({
         title: '人物',
+        topSafeInsetVp: this.systemTopInsetVp,
         onBack: (): void => {
           this.navigateBack();
         }
@@ -233,6 +237,7 @@ struct PersonPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   pageTransition(): void {
