@@ -9,6 +9,7 @@ import {
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
+  IconStyleMode,
   TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
@@ -23,6 +24,9 @@ export struct FnHdsSimpleChrome {
   @Prop title: string = '';
   @Prop subtitle: string = '';
   @Prop rightText: string = '';
+  /** 官方圆形菜单图标；rightAsIcon 为 true 时与返回按钮同款圆形背板 */
+  @Prop rightIcon: Resource = $r('sys.symbol.pencil_line');
+  @Prop rightAsIcon: boolean = false;
   @Prop topSafeInsetVp: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   scrollerList: Scroller[] = [];
@@ -42,6 +46,18 @@ export struct FnHdsSimpleChrome {
     const label = this.rightText.trim();
     if (label.length === 0) {
       return [];
+    }
+    if (this.rightAsIcon) {
+      const iconContent: HdsNavigationIconOptions = {
+        label: label,
+        icon: this.rightIcon,
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
+        action: (): void => {
+          this.onRightClick();
+        }
+      };
+      return [this.menuItem(iconContent)];
     }
     const content: HdsNavigationIconOptions = {
       label: label,

@@ -315,6 +315,14 @@ struct SmartCategoryPage {
     }
   }
 
+  /** 官方 Symbol：编辑 pencil_line，完成 checkmark */
+  private editActionIcon(): Resource {
+    if (this.editing) {
+      return $r('sys.symbol.checkmark');
+    }
+    return $r('sys.symbol.pencil_line');
+  }
+
   private openAddSheet(): void {
     this.addKeywordDraft = '';
     this.addSheetVisible = true;
@@ -610,6 +618,8 @@ struct SmartCategoryPage {
       FnHdsSimpleChrome({
         title: '智能分类',
         rightText: this.loading ? '' : (this.editing ? '完成' : '编辑'),
+        rightIcon: this.editActionIcon(),
+        rightAsIcon: true,
         topSafeInsetVp: this.systemTopInsetVp,
         onBack: (): void => {
           this.handleBack();

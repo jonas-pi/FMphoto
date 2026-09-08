@@ -9,6 +9,7 @@
 export const GALLERY_SELECTION_SCOPE_ALBUM: string = 'album';
 export const GALLERY_SELECTION_SCOPE_CATEGORY: string = 'category';
 export const GALLERY_SELECTION_SCOPE_RECYCLE: string = 'recycle';
+export const GALLERY_SELECTION_SCOPE_FOLDER: string = 'folder';
 
 let galleryAlbumSelectedVisualIds: Set<string> = new Set<string>();
 const galleryAlbumOverlaySetters: Map<string, ((selected: boolean) => void)[]> =

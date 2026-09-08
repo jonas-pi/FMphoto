@@ -51,7 +51,8 @@ export function folderBrowseCoverRel(id: string, uuid: string): string {
 }
 
 export function folderBrowseCoverRelFromItem(item: FolderViewCoverItem): string {
-  const idVal = item.id;
+  const rec = item as Record<string, Object | string | number | boolean | undefined | null>;
+  const idVal = rec['id'] ?? rec['photoId'] ?? rec['photo_id'];
   let id = '';
   if (typeof idVal === 'string') {
     id = idVal.trim();
@@ -62,12 +63,15 @@ export function folderBrowseCoverRelFromItem(item: FolderViewCoverItem): string 
     return '';
   }
   let uuid = '';
-  const uuidA = item.uuid;
-  const uuidB = item.photoUUID;
-  if (uuidA !== undefined && uuidA.length > 0) {
+  const uuidA = rec['uuid'];
+  const uuidB = rec['photoUUID'];
+  const uuidC = rec['photo_uuid'];
+  if (typeof uuidA === 'string' && uuidA.trim().length > 0) {
     uuid = uuidA.trim();
-  } else if (uuidB !== undefined && uuidB.length > 0) {
+  } else if (typeof uuidB === 'string' && uuidB.trim().length > 0) {
     uuid = uuidB.trim();
+  } else if (typeof uuidC === 'string' && uuidC.trim().length > 0) {
+    uuid = uuidC.trim();
   }
   return folderBrowseCoverRel(id, uuid);
 }
@@ -92,7 +96,8 @@ export function folderBrowseFoldersFromList(raw: PhotoFolderListItem[]): FolderB
 
 export function folderBrowseApplyCoverUris(
   folders: FolderBrowseFolderItem[],
-  covers: FolderViewCoverItem[]
+  covers: FolderViewCoverItem[],
+  requestedNames: string[]
 ): void {
   const byName = new Map<string, string>();
   const byPath = new Map<string, string>();
@@ -113,6 +118,19 @@ export function folderBrowseApplyCoverUris(
     if (p.length > 0 && !byPath.has(p)) {
       byPath.set(p, uri);
     }
+    if (i < requestedNames.length) {
+      const req = requestedNames[i].trim();
+      if (req.length > 0) {
+        const reqPath = folderBrowseNormalizePath(req);
+        if (reqPath.length > 0 && !byPath.has(reqPath)) {
+          byPath.set(reqPath, uri);
+        }
+        const reqName = folderBrowseLabelOf(req);
+        if (reqName.length > 0 && !byName.has(reqName)) {
+          byName.set(reqName, uri);
+        }
+      }
+    }
   }
   for (let i = 0; i < folders.length; i++) {
     const folder = folders[i];
@@ -127,6 +145,68 @@ export function folderBrowseApplyCoverUris(
       folder.coverUri = uri;
     }
   }
+}
+
+/** 根目录封面要用完整路径当 dirNames；子目录用文件夹名，与 Web setPosters 一致。 */
+export function folderBrowseCoverDirNames(folders: FolderBrowseFolderItem[], currentPath: string): string[] {
+  const atRoot = currentPath.trim().length === 0;
+  const names: string[] = [];
+  for (let i = 0; i < folders.length; i++) {
+    const folder = folders[i];
+    const value = atRoot ? folder.path : folder.name;
+    if (value.length > 0) {
+      names.push(value);
+    }
+  }
+  return names;
+}
+
+/** 子目录封面请求失败时，改用另一种命名再试一次。 */
+export function folderBrowseCoverDirNamesFallback(folders: FolderBrowseFolderItem[], currentPath: string): string[] {
+  const atRoot = currentPath.trim().length === 0;
+  const names: string[] = [];
+  for (let i = 0; i < folders.length; i++) {
+    const folder = folders[i];
+    const value = atRoot ? folder.name : folder.path;
+    if (value.length > 0) {
+      names.push(value);
+    }
+  }
+  return names;
+}
+
+/** 从完整路径还原可逐级返回的路径栈。 */
+export function folderBrowsePathStackFromPath(path: string): string[] {
+  const normalized = folderBrowseNormalizePath(path);
+  if (normalized.length === 0) {
+    return [];
+  }
+  const leadingSlash = normalized.startsWith('/');
+  const raw = leadingSlash ? normalized.substring(1) : normalized;
+  const segs = raw.split('/');
+  const stack: string[] = [];
+  let acc = '';
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    if (seg.length === 0) {
+      continue;
+    }
+    if (acc.length === 0) {
+      acc = leadingSlash ? `/${seg}` : seg;
+    } else {
+      acc = `${acc}/${seg}`;
+    }
+    stack.push(acc);
+  }
+  return stack;
+}
+
+export function folderBrowseMediaId(item: GalleryListItem): string {
+  const id = item.id;
+  if (id === undefined) {
+    return '';
+  }
+  return String(id).trim();
 }
 
 function mediaItemKey(item: GalleryListItem, index: number): string {

@@ -1460,11 +1460,42 @@ export class FnHttpClientGalleryOps {
         if (Array.isArray(cand)) {
           rawList = cand as Object[];
         }
+        if (rawList.length === 0) {
+          const keys = Object.keys(rec);
+          for (let ki = 0; ki < keys.length; ki++) {
+            const key = keys[ki];
+            if (key === 'list' || key === 'items' || key === 'total' || key === 'count' || key === 'code') {
+              continue;
+            }
+            const el = rec[key];
+            if (typeof el === 'object' && el !== null) {
+              const one = el as FolderViewCoverItem;
+              const hasPath = (one.path !== undefined && one.path.length > 0) ||
+                (one.folderPath !== undefined && one.folderPath.length > 0);
+              if (hasPath) {
+                items.push(one);
+              } else {
+                const patched: FolderViewCoverItem = {
+                  id: one.id,
+                  uuid: one.uuid,
+                  photoUUID: one.photoUUID,
+                  dirName: one.dirName,
+                  name: one.name,
+                  path: key,
+                  folderPath: one.folderPath
+                };
+                items.push(patched);
+              }
+            }
+          }
+        }
       }
-      for (let i = 0; i < rawList.length; i++) {
-        const el = rawList[i];
-        if (typeof el === 'object' && el !== null) {
-          items.push(el as FolderViewCoverItem);
+      if (items.length === 0) {
+        for (let i = 0; i < rawList.length; i++) {
+          const el = rawList[i];
+          if (typeof el === 'object' && el !== null) {
+            items.push(el as FolderViewCoverItem);
+          }
         }
       }
       const data: FolderViewCoverData = { list: items };

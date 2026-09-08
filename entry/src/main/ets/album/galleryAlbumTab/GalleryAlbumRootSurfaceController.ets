@@ -16,6 +16,7 @@ import {
   GALLERY_ALBUM_ROUTE_RECYCLE,
   GALLERY_ALBUM_ROUTE_SMART
 } from '../GalleryAlbumNavigation';
+import { FolderBrowseNavStore } from '../../pages/folderBrowsePage/FolderBrowseNavStore';
 
 export interface GalleryAlbumRootSurfaceHost {
   getUIContext(): UIContext;
@@ -154,16 +155,19 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
 export function galleryAlbumOpenFolderBrowse(
   uiCtx: UIContext,
   baseUrl: string,
-  onFailed: (msg: string) => void
+  onFailed: (msg: string) => void,
+  folderPath: string = ''
 ): void {
+  FolderBrowseNavStore.setPendingPath(folderPath);
   const param: GalleryAlbumNavigationParam = { baseUrl: baseUrl };
   if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_FOLDER, param)) {
     return;
   }
   uiCtx.getRouter().pushUrl({
     url: 'pages/FolderBrowsePage',
-    params: { baseUrl: baseUrl }
+    params: { baseUrl: baseUrl, folderPath: folderPath }
   }).catch((_e: Error): void => {
+    FolderBrowseNavStore.consumePendingPath();
     onFailed('打开文件夹失败');
   });
 }

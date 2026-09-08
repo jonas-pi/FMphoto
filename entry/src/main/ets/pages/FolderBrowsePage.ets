@@ -1,3 +1,4 @@
+import { UIContext } from '@kit.ArkUI';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import {
   FnClientResult,
@@ -15,6 +16,13 @@ import {
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
+import {
+  askLivePhotoSaveChoice,
+  LivePhotoSaveActionSheet,
+  LivePhotoSaveChoice,
+  LIVE_PHOTO_PRIVILEGE_SHEET_TITLE
+} from '../album/livephoto/LivePhotoSaveActionSheet';
+import { FnHdsChoiceSheet, fnHdsFitContentSheetOptions, fnHdsSaveButtonSheetOptions } from '../common/FnHdsOverlay';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GALLERY_PREVIEW_OPENING_KEY } from '../album/GalleryPreviewEntryGate';
@@ -24,11 +32,25 @@ import {
   gallerySharedSourceDomId
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
-import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
+import { GalleryAlbumBatchActionBar } from '../album/GalleryAlbumBatchActionBar';
+import {
+  GALLERY_SELECTION_SCOPE_FOLDER,
+  GalleryAlbumSelectionOverlay,
+  galleryAlbumSyncSelectionVisualState
+} from '../album/galleryAlbumTab/GalleryAlbumSelectionOverlay';
+import { gallerySlideshowLaunchForItems } from '../album/slideshow/GallerySlideshowLauncher';
+import {
+  GallerySlideshowConfig,
+  GallerySlideshowScope,
+  GallerySlideshowScopeKind,
+  gallerySlideshowScopeLabel
+} from '../album/slideshow/GallerySlideshowTypes';
+import { GallerySlideshowSettingsSheet } from '../album/slideshow/GallerySlideshowSettingsSheet';
 import { FnListDataSource } from '../common/FnListDataSource';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../common/FnWindowBreakpoint';
-import { FnInlineLoading, FnStateText } from '../common/FnUiCommon';
+import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
+import { GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP } from '../common/GalleryButtonStyles';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -47,10 +69,21 @@ import {
 import {
   folderBrowseApplyCoverUris,
   folderBrowseBuildGrid,
+  folderBrowseCoverDirNames,
+  folderBrowseCoverDirNamesFallback,
   folderBrowseFoldersFromList,
   folderBrowseLabelOf,
+  folderBrowseMediaId,
+  folderBrowsePathStackFromPath,
   folderBrowsePermissionMessage
 } from './folderBrowsePage/FolderBrowseLogic';
+import { FolderBrowseChrome } from './folderBrowsePage/FolderBrowseChrome';
+import { FolderBrowseNavStore } from './folderBrowsePage/FolderBrowseNavStore';
+import {
+  folderBrowseConfirmBatchDelete,
+  folderBrowseConfirmBatchDownload,
+  FolderBrowseBatchActionsHost
+} from './folderBrowsePage/FolderBrowseBatchActions';
 
 @Entry
 @Component
@@ -67,15 +100,31 @@ struct FolderBrowsePage {
   @State private title: string = '文件夹';
   @State private thumbLoadingPaused: boolean = false;
   @State private gridItems: FolderBrowseGridItem[] = [];
+  @State private selectionMode: boolean = false;
+  @State private selectedCount: number = 0;
+  @State private moreMenuExpanded: boolean = false;
+  @State private slideshowSettingsVisible: boolean = false;
+  @State private slideshowPreparing: boolean = false;
+  @State private batchDeleting: boolean = false;
+  @State private batchDownloading: boolean = false;
+  @State private liveSaveSheetVisible: boolean = false;
+  @State private choiceSheetVisible: boolean = false;
+  @State private choiceSheetTitle: string = '';
+  @State private choiceSheetButtons: string[] = [];
   private readonly gridSource: FnListDataSource<FolderBrowseGridItem> = new FnListDataSource<FolderBrowseGridItem>();
+  private readonly gridScroller: Scroller = new Scroller();
   private pathStack: string[] = [];
   private folders: FolderBrowseFolderItem[] = [];
   private mediaItems: GalleryListItem[] = [];
+  private selectedIds: string[] = [];
   private mediaOffset: number = 0;
   private mediaHasMore: boolean = false;
   private loadGen: number = 0;
   private albumBackHandlerToken: number = 0;
   private thumbResumeTimer: number = -1;
+  private slideshowRequestSeq: number = 0;
+  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
+  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
 
   onBackPress(): boolean {
     this.handleBack();
@@ -83,6 +132,26 @@ struct FolderBrowsePage {
   }
 
   private handleBack(): void {
+    if (this.liveSaveSheetVisible) {
+      this.completeLivePhotoSave('cancel');
+      return;
+    }
+    if (this.choiceSheetVisible) {
+      this.completeChoice(-1);
+      return;
+    }
+    if (this.slideshowSettingsVisible) {
+      this.dismissSlideshowSettings();
+      return;
+    }
+    if (this.moreMenuExpanded) {
+      this.dismissMoreMenu();
+      return;
+    }
+    if (this.selectionMode) {
+      this.exitSelection();
+      return;
+    }
     if (this.pathStack.length > 0) {
       this.pathStack.pop();
       void this.loadCurrent(true);
@@ -100,6 +169,7 @@ struct FolderBrowsePage {
   aboutToAppear(): void {
     this.albumNavigationMode = GalleryAlbumNavigation.isAvailable();
     this.thumbLoadingPaused = false;
+    this.applyIncomingFolderPath();
     if (this.albumNavigationMode) {
       this.albumBackHandlerToken = GalleryAlbumNavigation.registerBackHandler((): boolean => {
         this.handleBack();
@@ -118,6 +188,18 @@ struct FolderBrowsePage {
     GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     this.clearThumbResumeTimer();
     trimThumbPixCacheForList(this.gridItems.length, false);
+    galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_FOLDER);
+  }
+
+  private applyIncomingFolderPath(): void {
+    let incoming = FolderBrowseNavStore.consumePendingPath();
+    if (incoming.length === 0) {
+      const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
+      if (rp !== undefined && rp['folderPath'] !== undefined) {
+        incoming = String(rp['folderPath']);
+      }
+    }
+    this.pathStack = folderBrowsePathStackFromPath(incoming);
   }
 
   private toast(msg: string): void {
@@ -143,6 +225,10 @@ struct FolderBrowsePage {
     const next = folderBrowseBuildGrid(this.folders, this.mediaItems);
     this.gridItems = next;
     this.gridSource.reloadAll(next);
+  }
+
+  private totalCount(): number {
+    return this.gridItems.length;
   }
 
   private clearThumbResumeTimer(): void {
@@ -173,6 +259,9 @@ struct FolderBrowsePage {
     this.syncTitle();
     this.error = '';
     if (reset) {
+      if (this.selectionMode) {
+        this.exitSelection();
+      }
       this.loading = true;
       this.folders = [];
       this.mediaItems = [];
@@ -241,19 +330,15 @@ struct FolderBrowsePage {
     }
   }
 
-  private async loadCovers(gen: number, currentPath: string): Promise<void> {
-    if (this.folders.length === 0) {
-      return;
-    }
-    const client = AppSession.getClient();
-    if (client === null) {
-      return;
-    }
-    const names: string[] = [];
-    for (let i = 0; i < this.folders.length; i++) {
-      names.push(this.folders[i].name);
-    }
+  private async fetchCoverBatch(
+    currentPath: string,
+    names: string[]
+  ): Promise<FolderViewCoverItem[]> {
     const allCovers: FolderViewCoverItem[] = [];
+    const client = AppSession.getClient();
+    if (client === null || names.length === 0) {
+      return allCovers;
+    }
     let offset = 0;
     while (offset < names.length) {
       const end = Math.min(offset + FOLDER_BROWSE_COVER_BATCH, names.length);
@@ -262,9 +347,6 @@ struct FolderBrowsePage {
         batch.push(names[i]);
       }
       const res = await client.getFolderViewCover(currentPath, batch, 20000);
-      if (gen !== this.loadGen) {
-        return;
-      }
       if (res.success && res.data !== undefined) {
         const coverList: FolderViewCoverItem[] = res.data.list !== undefined
           ? res.data.list
@@ -275,10 +357,29 @@ struct FolderBrowsePage {
       }
       offset = end;
     }
-    if (gen !== this.loadGen || allCovers.length === 0) {
+    return allCovers;
+  }
+
+  private async loadCovers(gen: number, currentPath: string): Promise<void> {
+    if (this.folders.length === 0) {
       return;
     }
-    folderBrowseApplyCoverUris(this.folders, allCovers);
+    let names: string[] = folderBrowseCoverDirNames(this.folders, currentPath);
+    let allCovers: FolderViewCoverItem[] = await this.fetchCoverBatch(currentPath, names);
+    if (gen !== this.loadGen) {
+      return;
+    }
+    if (allCovers.length === 0) {
+      names = folderBrowseCoverDirNamesFallback(this.folders, currentPath);
+      allCovers = await this.fetchCoverBatch(currentPath, names);
+      if (gen !== this.loadGen) {
+        return;
+      }
+    }
+    if (allCovers.length === 0) {
+      return;
+    }
+    folderBrowseApplyCoverUris(this.folders, allCovers, names);
     this.publishGrid();
   }
 
@@ -367,10 +468,272 @@ struct FolderBrowsePage {
 
   private onItemClick(item: FolderBrowseGridItem): void {
     if (item.kind === FOLDER_BROWSE_KIND_FOLDER) {
+      if (this.selectionMode) {
+        return;
+      }
       this.enterFolder(item.folderPath);
       return;
     }
+    if (this.selectionMode) {
+      const media = item.media;
+      if (media === undefined) {
+        return;
+      }
+      this.toggleMediaSelected(folderBrowseMediaId(media));
+      return;
+    }
     this.openMedia(item.mediaIndex);
+  }
+
+  private setSelectedIds(ids: string[]): void {
+    this.selectedIds = ids;
+    this.selectedCount = ids.length;
+    galleryAlbumSyncSelectionVisualState(this.selectionMode, ids, GALLERY_SELECTION_SCOPE_FOLDER);
+  }
+
+  private toggleMediaSelected(id: string): void {
+    if (id.length === 0) {
+      return;
+    }
+    const next: string[] = [];
+    let found = false;
+    for (let i = 0; i < this.selectedIds.length; i++) {
+      if (this.selectedIds[i] === id) {
+        found = true;
+      } else {
+        next.push(this.selectedIds[i]);
+      }
+    }
+    if (!found) {
+      next.push(id);
+    }
+    this.setSelectedIds(next);
+  }
+
+  private enterSelection(): void {
+    if (this.selectionMode) {
+      return;
+    }
+    this.selectionMode = true;
+    this.setSelectedIds(this.selectedIds);
+  }
+
+  private exitSelection(): void {
+    if (!this.selectionMode && this.selectedIds.length === 0) {
+      return;
+    }
+    this.selectionMode = false;
+    this.setSelectedIds([]);
+  }
+
+  private toggleToolbarMode(): void {
+    if (this.selectionMode) {
+      this.exitSelection();
+      return;
+    }
+    this.enterSelection();
+  }
+
+  private dismissMoreMenu(): void {
+    if (!this.moreMenuExpanded) {
+      return;
+    }
+    this.moreMenuExpanded = false;
+  }
+
+  private toggleMoreMenu(): void {
+    this.moreMenuExpanded = !this.moreMenuExpanded;
+  }
+
+  private enterMultiselectFromMoreMenu(): void {
+    this.dismissMoreMenu();
+    this.enterSelection();
+  }
+
+  private canStartSlideshow(): boolean {
+    return this.mediaItems.length > 0 || this.mediaHasMore;
+  }
+
+  private openSlideshowSettings(): void {
+    this.dismissMoreMenu();
+    if (!this.canStartSlideshow()) {
+      this.toast('暂无可播放媒体');
+      return;
+    }
+    this.slideshowSettingsVisible = true;
+  }
+
+  private dismissSlideshowSettings(): void {
+    this.slideshowSettingsVisible = false;
+  }
+
+  private slideshowScope(): GallerySlideshowScope {
+    const scope: GallerySlideshowScope = {
+      kind: GallerySlideshowScopeKind.FLAT_ITEMS,
+      scopeLabel: this.title
+    };
+    return scope;
+  }
+
+  private async waitForAllMedia(isActive: () => boolean): Promise<void> {
+    let guard = 0;
+    while (this.mediaHasMore && isActive() && guard < 40) {
+      const before = this.mediaOffset;
+      await this.loadMoreMedia();
+      if (this.mediaOffset <= before) {
+        break;
+      }
+      guard++;
+    }
+  }
+
+  private async startFolderSlideshow(config: GallerySlideshowConfig): Promise<void> {
+    if (this.slideshowPreparing || !this.canStartSlideshow()) {
+      return;
+    }
+    this.slideshowPreparing = true;
+    const seq = ++this.slideshowRequestSeq;
+    const isActive = (): boolean => seq === this.slideshowRequestSeq;
+    try {
+      await this.waitForAllMedia(isActive);
+      if (!isActive()) {
+        return;
+      }
+      await gallerySlideshowLaunchForItems(
+        this.getUIContext(),
+        this.baseUrl,
+        this.mediaItems,
+        config,
+        (msg: string): void => {
+          this.toast(msg);
+        },
+        isActive,
+        this.title
+      );
+      if (isActive()) {
+        this.slideshowSettingsVisible = false;
+      }
+    } finally {
+      if (isActive()) {
+        this.slideshowPreparing = false;
+      }
+    }
+  }
+
+  private removeMediaByIds(ids: string[]): void {
+    const next: GalleryListItem[] = [];
+    for (let i = 0; i < this.mediaItems.length; i++) {
+      const id: string = folderBrowseMediaId(this.mediaItems[i]);
+      let drop = false;
+      for (let j = 0; j < ids.length; j++) {
+        if (ids[j] === id) {
+          drop = true;
+          break;
+        }
+      }
+      if (drop) {
+        continue;
+      }
+      next.push(this.mediaItems[i]);
+    }
+    this.mediaItems = next;
+    this.mediaOffset = this.mediaItems.length;
+    this.publishGrid();
+  }
+
+  private asBatchActionsHost(): FolderBrowseBatchActionsHost {
+    const self = this;
+    class FolderBrowseBatchActionsHostBridge implements FolderBrowseBatchActionsHost {
+      getUIContext(): UIContext { return self.getUIContext(); }
+
+      get baseUrl(): string { return self.baseUrl; }
+      set baseUrl(v: string) { self.baseUrl = v; }
+
+      get mediaItems(): GalleryListItem[] { return self.mediaItems; }
+      set mediaItems(v: GalleryListItem[]) { self.mediaItems = v; }
+
+      get selectedIds(): string[] { return self.selectedIds; }
+      set selectedIds(v: string[]) { self.setSelectedIds(v); }
+
+      get batchDeleting(): boolean { return self.batchDeleting; }
+      set batchDeleting(v: boolean) { self.batchDeleting = v; }
+
+      get batchDownloading(): boolean { return self.batchDownloading; }
+      set batchDownloading(v: boolean) { self.batchDownloading = v; }
+
+      toast(msg: string): void { self.toast(msg); }
+      exitSelection(): void { self.exitSelection(); }
+      removeMediaByIds(ids: string[]): void { self.removeMediaByIds(ids); }
+      askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
+      askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
+    }
+    return new FolderBrowseBatchActionsHostBridge();
+  }
+
+  private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
+    return askLivePhotoSaveChoice(
+      (title: string, buttons: string[]): Promise<number> => this.askChoice(title, buttons),
+      (): Promise<boolean> => this.askLivePhotoPrivilege()
+    );
+  }
+
+  private askLivePhotoPrivilege(): Promise<boolean> {
+    if (this.liveSaveSheetVisible) {
+      return Promise.resolve(false);
+    }
+    return new Promise<boolean>((resolve: (ok: boolean) => void) => {
+      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+        resolve(choice === 'privilege');
+      };
+      this.liveSaveSheetVisible = true;
+    });
+  }
+
+  private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
+    const resolver = this.liveSaveResolver;
+    this.liveSaveResolver = undefined;
+    this.liveSaveSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(choice);
+    }
+  }
+
+  private askChoice(title: string, buttons: string[]): Promise<number> {
+    if (this.choiceSheetVisible) {
+      return Promise.resolve(-1);
+    }
+    return new Promise<number>((resolve: (index: number) => void) => {
+      this.choiceSheetTitle = title;
+      this.choiceSheetButtons = buttons;
+      this.choiceSheetResolver = resolve;
+      this.choiceSheetVisible = true;
+    });
+  }
+
+  private completeChoice(index: number): void {
+    const resolver = this.choiceSheetResolver;
+    this.choiceSheetResolver = undefined;
+    this.choiceSheetVisible = false;
+    if (resolver !== undefined) {
+      resolver(index);
+    }
+  }
+
+  private liveFolderCoverUri(key: string): string {
+    const list = this.gridItems;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].key === key) {
+        return list[i].coverUri;
+      }
+    }
+    return '';
+  }
+
+  private gridVisualKey(item: FolderBrowseGridItem): string {
+    if (item.kind === FOLDER_BROWSE_KIND_FOLDER) {
+      return `${item.key}|${item.coverUri}`;
+    }
+    return item.key;
   }
 
   private itemIsVideo(item: FolderBrowseGridItem): boolean {
@@ -405,13 +768,49 @@ struct FolderBrowsePage {
     return gallerySharedSourceDomId(String(id).trim());
   }
 
+  private mediaSelectionId(item: FolderBrowseGridItem): string {
+    if (item.media === undefined) {
+      return '';
+    }
+    return folderBrowseMediaId(item.media);
+  }
+
+  @Builder
+  private liveSaveSheetBuilder() {
+    LivePhotoSaveActionSheet({
+      onSelect: (choice: LivePhotoSaveChoice): void => {
+        this.completeLivePhotoSave(choice);
+      }
+    })
+  }
+
+  @Builder
+  private choiceSheetBuilder() {
+    FnHdsChoiceSheet({
+      buttons: this.choiceSheetButtons,
+      onSelect: (index: number): void => {
+        this.completeChoice(index);
+      }
+    })
+  }
+
+  @Builder
+  private slideshowSettingsBuilder() {
+    GallerySlideshowSettingsSheet({
+      preparing: this.slideshowPreparing,
+      onStart: (config: GallerySlideshowConfig): void => {
+        void this.startFolderSlideshow(config);
+      }
+    })
+  }
+
   @Builder
   private folderTile(item: FolderBrowseGridItem) {
     Column({ space: 6 }) {
       Stack({ alignContent: Alignment.Center }) {
-        if (item.coverUri.length > 0) {
+        if (this.liveFolderCoverUri(item.key).length > 0) {
           GalleryNetworkThumb({
-            uri: nasUrl(this.baseUrl, item.coverUri),
+            uri: nasUrl(this.baseUrl, this.liveFolderCoverUri(item.key)),
             isVideo: false,
             isGif: false,
             paused: this.thumbLoadingPaused,
@@ -454,21 +853,30 @@ struct FolderBrowsePage {
   @Builder
   private mediaTile(item: FolderBrowseGridItem) {
     Column({ space: 6 }) {
-      GalleryNetworkThumb({
-        uri: this.mediaThumbUri(item),
-        isVideo: this.itemIsVideo(item),
-        isGif: this.itemIsGif(item),
-        isLive: this.itemIsLive(item),
-        paused: this.thumbLoadingPaused,
-        fadeInEnabled: false,
-        cacheIdentity: item.key,
-        cacheRank: 1
-      })
-        .width('100%')
-        .aspectRatio(1)
-        .borderRadius(12)
-        .clip(true)
-        .id(this.mediaSharedId(item))
+      Stack({ alignContent: Alignment.TopEnd }) {
+        GalleryNetworkThumb({
+          uri: this.mediaThumbUri(item),
+          isVideo: this.itemIsVideo(item),
+          isGif: this.itemIsGif(item),
+          isLive: this.itemIsLive(item),
+          paused: this.thumbLoadingPaused,
+          fadeInEnabled: false,
+          cacheIdentity: item.key,
+          cacheRank: 1
+        })
+          .width('100%')
+          .aspectRatio(1)
+        GalleryAlbumSelectionOverlay({
+          itemId: this.mediaSelectionId(item),
+          visualScope: GALLERY_SELECTION_SCOPE_FOLDER,
+          selectionMode: this.selectionMode
+        })
+      }
+      .width('100%')
+      .aspectRatio(1)
+      .borderRadius(12)
+      .clip(true)
+      .id(this.mediaSharedId(item))
 
       Text(item.title)
         .fontSize(12)
@@ -483,71 +891,157 @@ struct FolderBrowsePage {
   }
 
   build() {
-    Column() {
-      FnHdsSimpleChrome({
-        title: this.title,
-        topSafeInsetVp: this.systemTopInsetVp,
-        onBack: (): void => {
-          this.handleBack();
-        }
-      })
-
-      if (this.loading) {
-        FnInlineLoading({ text: '加载中…' })
-          .layoutWeight(1)
-      } else if (this.error.length > 0 && this.gridItems.length === 0) {
-        FnStateText({ text: this.error })
-      } else {
-        Stack({ alignContent: Alignment.Center }) {
-          Grid() {
-            LazyForEach(this.gridSource, (item: FolderBrowseGridItem) => {
-              GridItem() {
-                Column() {
-                  if (item.kind === FOLDER_BROWSE_KIND_MEDIA) {
-                    this.mediaTile(item)
-                  } else {
-                    this.folderTile(item)
-                  }
-                }
-                .width('100%')
-                .onClick((): void => {
-                  this.onGridItemClick(item.key);
-                })
-              }
-            }, (item: FolderBrowseGridItem) => item.key)
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        FolderBrowseChrome({
+          selectionMode: this.selectionMode,
+          selectedCount: this.selectedCount,
+          title: this.title,
+          totalCount: this.totalCount(),
+          topSafeInsetVp: this.systemTopInsetVp,
+          moreMenuExpanded: this.moreMenuExpanded,
+          scrollerList: [this.gridScroller],
+          onCancelSelection: (): void => {
+            this.exitSelection();
+          },
+          onBack: (): void => {
+            this.handleBack();
+          },
+          onToggleMode: (): void => {
+            this.toggleToolbarMode();
+          },
+          onShowMoreMenu: (): void => {
+            this.toggleMoreMenu();
+          },
+          onDismissMoreMenu: (): void => {
+            this.dismissMoreMenu();
+          },
+          onEnterMultiselectFromMore: (): void => {
+            this.enterMultiselectFromMoreMenu();
+          },
+          onOpenSlideshowFromMore: (): void => {
+            this.openSlideshowSettings();
           }
-          .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(FOLDER_BROWSE_BASE_COLUMNS, this.windowWidthBp)))
-          .columnsGap(8)
-          .rowsGap(8)
-          .cachedCount(8)
+        })
+          .width('100%')
+
+        if (this.loading) {
+          FnInlineLoading({ text: '加载中…' })
+            .layoutWeight(1)
+        } else if (this.error.length > 0 && this.gridItems.length === 0) {
+          FnStateText({ text: this.error })
+            .layoutWeight(1)
+        } else {
+          Stack({ alignContent: Alignment.Bottom }) {
+            Grid(this.gridScroller) {
+              LazyForEach(this.gridSource, (item: FolderBrowseGridItem) => {
+                GridItem() {
+                  Column() {
+                    if (item.kind === FOLDER_BROWSE_KIND_MEDIA) {
+                      this.mediaTile(item)
+                    } else {
+                      this.folderTile(item)
+                    }
+                  }
+                  .width('100%')
+                  .onClick((): void => {
+                    this.onGridItemClick(item.key);
+                  })
+                }
+              }, (item: FolderBrowseGridItem) => this.gridVisualKey(item))
+            }
+            .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(FOLDER_BROWSE_BASE_COLUMNS, this.windowWidthBp)))
+            .columnsGap(8)
+            .rowsGap(8)
+            .cachedCount(8)
+            .width('100%')
+            .height('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: this.selectionMode && this.selectedCount > 0 ? 88 : 10 })
+            .onReachEnd((): void => {
+              void this.loadMoreMedia();
+            })
+            .onScrollIndex((_first: number, last: number): void => {
+              if (last >= this.gridItems.length - 6) {
+                void this.loadMoreMedia();
+              }
+            })
+            .onDidScroll((_offset: number, scrollState: ScrollState): void => {
+              this.onGridScrollStateChange(scrollState);
+            })
+
+            if (this.selectionMode && this.selectedCount > 0) {
+              GalleryAlbumBatchActionBar({
+                downloading: this.batchDownloading,
+                deleting: this.batchDeleting,
+                onDownload: (): void => {
+                  void folderBrowseConfirmBatchDownload(this.asBatchActionsHost());
+                },
+                onDelete: (): void => {
+                  void folderBrowseConfirmBatchDelete(this.asBatchActionsHost());
+                }
+              })
+                .width('100%')
+                .height(GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP)
+            }
+
+            if (this.batchDeleting || this.batchDownloading) {
+              FnFullLoadingMask({
+                text: this.batchDeleting ? '移入回收站中…' : '下载中…',
+                topOffsetVp: 0
+              })
+            }
+
+            if (this.previewOpening) {
+              GalleryPreviewOpeningMask({ topOffsetVp: 0 })
+            }
+          }
           .layoutWeight(1)
           .width('100%')
-          .padding({ left: 12, right: 12, top: 8, bottom: 10 })
-          .onReachEnd((): void => {
-            void this.loadMoreMedia();
-          })
-          .onScrollIndex((_first: number, last: number): void => {
-            if (last >= this.gridItems.length - 6) {
-              void this.loadMoreMedia();
-            }
-          })
-          .onDidScroll((_offset: number, scrollState: ScrollState): void => {
-            this.onGridScrollStateChange(scrollState);
-          })
-
-          if (this.previewOpening) {
-            GalleryPreviewOpeningMask({ topOffsetVp: 0 })
-          }
         }
-        .layoutWeight(1)
-        .width('100%')
       }
+      .width('100%')
+      .height('100%')
+
+      if (this.slideshowPreparing) {
+        FnFullLoadingMask({
+          text: '正在准备幻灯片...',
+          topOffsetVp: 0
+        })
+          .width('100%')
+          .height('100%')
+          .zIndex(30)
+      }
+
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.liveSaveSheetVisible, this.liveSaveSheetBuilder, fnHdsSaveButtonSheetOptions(
+          LIVE_PHOTO_PRIVILEGE_SHEET_TITLE,
+          (): void => {
+            this.completeLivePhotoSave('cancel');
+          }
+        ))
+      Column()
+        .width(1)
+        .height(1)
+        .bindSheet(this.slideshowSettingsVisible, this.slideshowSettingsBuilder, fnHdsFitContentSheetOptions(
+          gallerySlideshowScopeLabel(this.slideshowScope()),
+          (): void => {
+            this.dismissSlideshowSettings();
+          }
+        ))
     }
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
     .id(GALLERY_PREVIEW_SOURCE_FOLDER_ID)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(
+      this.choiceSheetTitle,
+      (): void => {
+        this.completeChoice(-1);
+      }
+    ))
   }
 
   pageTransition(): void {

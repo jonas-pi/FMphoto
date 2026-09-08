@@ -34,6 +34,7 @@ import {
 } from '../album/GallerySharedTransition';
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
+import { galleryAlbumOpenFolderBrowse } from '../album/galleryAlbumTab/GalleryAlbumRootSurfaceController';
 import {
   gallerySlideAutoScrollIsRunning,
   gallerySlideAutoScrollOnListDidScroll
@@ -219,6 +220,7 @@ struct CategoryGallery {
   private pageSessionToken: number = -1;
   private pageSourceKind: string = '';
   private pageCategoryKey: string = '';
+  private pageFolderPath: string = '';
   private pageUseCreatedAtGrouping: boolean = false;
   private slideshowRequestSeq: number = 0;
   private albumBackHandlerToken: number = 0;
@@ -289,6 +291,22 @@ struct CategoryGallery {
     if (!this.selectionMode) {
       this.toggleToolbarMode();
     }
+  }
+
+  private canJumpToFolderView(): boolean {
+    return this.pageSourceKind === 'folder' && this.pageFolderPath.trim().length > 0;
+  }
+
+  private jumpToFolderView(): void {
+    this.dismissMoreMenu();
+    const folderPath = this.pageFolderPath.trim();
+    if (folderPath.length === 0) {
+      this.toast('无法跳转到文件夹视图');
+      return;
+    }
+    galleryAlbumOpenFolderBrowse(this.getUIContext(), this.baseUrl, (msg: string): void => {
+      this.toast(msg);
+    }, folderPath);
   }
 
   private openSlideshowSettings(): void {
@@ -791,6 +809,7 @@ struct CategoryGallery {
     this.pageSessionToken = CategoryGalleryNavStore.sessionToken;
     this.pageSourceKind = CategoryGalleryNavStore.sourceKind;
     this.pageCategoryKey = CategoryGalleryNavStore.categoryKey;
+    this.pageFolderPath = CategoryGalleryNavStore.folderPath;
     this.pageUseCreatedAtGrouping = CategoryGalleryNavStore.useCreatedAtGrouping;
     this.baseUrl = CategoryGalleryNavStore.baseUrl;
     this.title = CategoryGalleryNavStore.title;
@@ -1520,6 +1539,7 @@ struct CategoryGallery {
             topSafeInsetVp: this.systemTopInsetVp,
             personAlbumMode: this.usesMoreMenuMode(),
             moreMenuExpanded: this.moreMenuExpanded,
+            showJumpToFolderView: this.canJumpToFolderView(),
             scrollerList: [this.listScroller],
             onCancelSelection: (): void => {
               this.exitCgSelection();
@@ -1541,6 +1561,9 @@ struct CategoryGallery {
             },
             onOpenSlideshowFromMore: (): void => {
               this.openSlideshowSettings();
+            },
+            onJumpToFolderView: (): void => {
+              this.jumpToFolderView();
             }
           })
             .width('100%')
