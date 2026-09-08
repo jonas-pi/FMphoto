@@ -59,7 +59,16 @@ export class AppSession {
       AppSession.client.setWsSignKeyB64(signKey);
     }
     AppStorage.setOrCreate<string>(FN_MEDIA_BASE_URL, fnWebViewBaseUrl(s.baseUrl));
-    applyGalleryLanBurstForSession(s.baseUrl, s.endpointLanUrl, s.endpointLanIpv6Url);
+    applyGalleryLanBurstForSession(
+      s.baseUrl,
+      s.endpointLanUrl,
+      s.endpointLanIpv6Url,
+      s.endpointPublicUrl,
+      s.endpointPublicDomainUrl,
+      s.endpointPublicIpUrl,
+      s.endpointPublicIpv6Url,
+      s.endpointRelayUrl
+    );
   }
 
   static updateAlbumParentGuid(guid: string): void {
