@@ -1,0 +1,1 @@
+import{i as e}from"./BiyabqWj49CmEwTO2.js";var t=()=>{let{data:t}=e();return{user:t,isAdmin:(t==null?void 0:t.isAdmin)??!1,uid:(t==null?void 0:t.nasUid)??0,name:(t==null?void 0:t.name)??``}};export{t};

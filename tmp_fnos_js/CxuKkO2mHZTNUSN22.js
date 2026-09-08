@@ -1,0 +1,1 @@
+import{n as e}from"./C3HNOMUdS6MFhUC9.js";var t=()=>{let t=e(e=>e.app.isDark);return{isDark:t,theme:t?`dark`:`light`}};export{t};

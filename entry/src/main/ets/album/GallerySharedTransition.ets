@@ -14,6 +14,7 @@ export const GALLERY_PREVIEW_HERO_ACTIVE_KEY: string = 'galleryPreviewHeroActive
 export const GALLERY_PREVIEW_SOURCE_HOME_ID: string = 'gallery_preview_source_home';
 export const GALLERY_PREVIEW_SOURCE_CATEGORY_ID: string = 'gallery_preview_source_category';
 export const GALLERY_PREVIEW_SOURCE_RECYCLE_ID: string = 'gallery_preview_source_recycle';
+export const GALLERY_PREVIEW_SOURCE_FOLDER_ID: string = 'gallery_preview_source_folder';
 
 /** 官方一镜到底示例多用 Friction；过短的 EaseInOut 容易在宽高跳变时显得卡、像逃逸 */
 export const GALLERY_SHARED_TRANSITION_DURATION: number = 260;

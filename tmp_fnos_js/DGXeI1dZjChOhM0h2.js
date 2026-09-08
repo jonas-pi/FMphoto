@@ -1,0 +1,1 @@
+import{o as e}from"./BiyabqWj49CmEwTO2.js";import{t}from"./ClJq-CSV2L-QKfaO2.js";var n=()=>{var n,r;let{isAdmin:i}=t(),{data:a}=e();return{isShowExternalLink:(a==null||(n=a.data)==null?void 0:n.shareLinkPurview)===`all`||(a==null||(r=a.data)==null?void 0:r.shareLinkPurview)===`admin`&&i}};export{n as t};

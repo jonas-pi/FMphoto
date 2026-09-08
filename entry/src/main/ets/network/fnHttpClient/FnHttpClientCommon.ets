@@ -61,6 +61,14 @@ export const GALLERY_FOLDER_FILELIST_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/folder_view/getFileList`,
   '/api/v1/folder_view/getFileList'
 ];
+/** folder_view 子目录列表（下钻用，与 photo/folder/list 根目录接口不同） */
+export const GALLERY_FOLDER_DIRLIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/folder_view/getFolderList`;
+export const GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/folder_view/getFolderList`,
+  '/api/v1/folder_view/getFolderList'
+];
+/** 文件夹封面：POST /p/api/v1/folder_view/cover */
+export const GALLERY_FOLDER_COVER_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/folder_view/cover`;
 /** 回收站列表：签名 path 与 gallery 系列一致为 /p/api/v1/... */
 export const RECYCLE_BIN_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/recycle-bin/list`;
 /** 照片中人物识别：GET /p/api/v1/ai-person/personInPhoto?id=xxx */

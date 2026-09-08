@@ -13,6 +13,9 @@ import {
   DOMAIN,
   EXPLORE_GEOS_PATH_CANDIDATES,
   EXPLORE_GEOS_SIGN_PATH,
+  GALLERY_FOLDER_COVER_SIGN_PATH,
+  GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES,
+  GALLERY_FOLDER_DIRLIST_SIGN_PATH,
   GALLERY_FOLDER_FILELIST_PATH_CANDIDATES,
   GALLERY_FOLDER_FILELIST_SIGN_PATH,
   GALLERY_GETLIST_PATH_CANDIDATES,
@@ -58,6 +61,8 @@ import {
   ExploreGeosData,
   FnClientResult,
   FnJsonValue,
+  FolderViewCoverData,
+  FolderViewCoverItem,
   GalleryGetListData,
   GalleryListItem,
   GalleryPhotoDetailData,
@@ -1276,16 +1281,34 @@ export class FnHttpClientGalleryOps {
   }
 
   /**
-   * 相册已选文件夹：GET /p/api/v1/photo/folder/list
+   * 相册已选根目录：GET /p/api/v1/photo/folder/list
+   * 浏览下钻请用 getFolderViewFolderList。desc/orderBy 与官方一致。
    */
-  async getPhotoFolderList(timeoutMs: number = 20000): Promise<FnClientResult<PhotoFolderListData>> {
+  async getPhotoFolderList(
+    timeoutMs: number = 20000,
+    folderPath: string = '',
+    desc: boolean = false,
+    orderBy: number = 2
+  ): Promise<FnClientResult<PhotoFolderListData>> {
     try {
+      const params: Record<string, string | number | boolean> = {};
+      params['desc'] = desc;
+      params['orderBy'] = orderBy;
+      const fp = folderPath.trim();
+      if (fp.length > 0) {
+        params['folderPath'] = fp;
+      }
+      const qs = buildGallerySortedQuery(params);
+      const pathCandidates: string[] = [];
+      for (let i = 0; i < PHOTO_FOLDER_LIST_PATH_CANDIDATES.length; i++) {
+        pathCandidates.push(`${PHOTO_FOLDER_LIST_PATH_CANDIDATES[i]}?${qs}`);
+      }
       const gallerySign: FnGalleryGetSignSpec = {
         signPathOnly: PHOTO_FOLDER_LIST_SIGN_PATH,
-        queryParams: GALLERY_QUERY_EMPTY
+        queryParams: params
       };
       const res = await this.requestGalleryGetJson<Object>(
-        PHOTO_FOLDER_LIST_PATH_CANDIDATES,
+        pathCandidates,
         gallerySign,
         timeoutMs,
         3
@@ -1293,14 +1316,147 @@ export class FnHttpClientGalleryOps {
       if (!res.success || res.data === undefined) {
         return { success: false, message: res.message ?? '文件夹列表加载失败' };
       }
-      const payload = res.data;
-      const items: PhotoFolderListItem[] = [];
+      const data: PhotoFolderListData = {
+        list: FnHttpClientGalleryOps.parseFolderListPayload(res.data)
+      };
+      return { success: true, data: data };
+    } catch (e) {
+      return { success: false, message: String(e) || '文件夹列表加载异常' };
+    }
+  }
+
+  /**
+   * 子目录列表：GET /p/api/v1/folder_view/getFolderList
+   * 与官方文件夹视图一致，必须带 folderPath；根目录仍走 photo/folder/list。
+   */
+  async getFolderViewFolderList(
+    folderPath: string,
+    desc: boolean = false,
+    orderBy: number = 2,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<PhotoFolderListData>> {
+    const fp = folderPath.trim();
+    if (fp.length === 0) {
+      return { success: false, message: 'folderPath 不能为空' };
+    }
+    try {
+      const params: Record<string, string | number | boolean> = {};
+      params['folderPath'] = fp;
+      params['desc'] = desc;
+      params['orderBy'] = orderBy;
+      const qs = buildGallerySortedQuery(params);
+      const pathCandidates: string[] = [];
+      for (let i = 0; i < GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES.length; i++) {
+        pathCandidates.push(`${GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES[i]}?${qs}`);
+      }
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: GALLERY_FOLDER_DIRLIST_SIGN_PATH,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<Object>(
+        pathCandidates,
+        gallerySign,
+        timeoutMs,
+        3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '文件夹列表加载失败' };
+      }
+      const data: PhotoFolderListData = {
+        list: FnHttpClientGalleryOps.parseFolderListPayload(res.data)
+      };
+      return { success: true, data: data };
+    } catch (e) {
+      return { success: false, message: String(e) || '文件夹列表加载异常' };
+    }
+  }
+
+  private static parseFolderListPayload(payload: Object): PhotoFolderListItem[] {
+    const items: PhotoFolderListItem[] = [];
+    let rawList: Object[] = [];
+    if (Array.isArray(payload)) {
+      rawList = payload as Object[];
+    } else {
+      const rec = payload as Record<string, Object | undefined>;
+      const cand = rec['list'] ?? rec['items'] ?? rec['folders'];
+      if (Array.isArray(cand)) {
+        rawList = cand as Object[];
+      }
+    }
+    for (let i = 0; i < rawList.length; i++) {
+      const el = rawList[i];
+      if (typeof el === 'object' && el !== null) {
+        items.push(el as PhotoFolderListItem);
+      }
+    }
+    return items;
+  }
+
+  /**
+   * 文件夹封面：POST /p/api/v1/folder_view/cover
+   * body 与官方一致：{ currentPath, dirNames }
+   */
+  async getFolderViewCover(
+    currentPath: string,
+    dirNames: string[],
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<FolderViewCoverData>> {
+    const names: string[] = [];
+    for (let i = 0; i < dirNames.length; i++) {
+      const n = dirNames[i].trim();
+      if (n.length > 0) {
+        names.push(n);
+      }
+    }
+    if (names.length === 0) {
+      const empty: FolderViewCoverData = { list: [] };
+      return { success: true, data: empty };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = GALLERY_FOLDER_COVER_SIGN_PATH;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const quoted: string[] = [];
+      for (let i = 0; i < names.length; i++) {
+        quoted.push(`"${escapeJsonString(names[i])}"`);
+      }
+      const bodyStr =
+        `{"currentPath":"${escapeJsonString(currentPath.trim())}","dirNames":[${quoted.join(',')}]}`;
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '封面响应无法解析' };
+      }
+      if (!FnHttpClientGalleryOps.galleryEnvelopeBizOk(parsed)) {
+        const errLine = FnHttpClientGalleryOps.envelopeErrorLine(parsed);
+        return { success: false, message: errLine.length > 0 ? errLine : '获取文件夹封面失败' };
+      }
+      const payload = parsed['data'];
+      const items: FolderViewCoverItem[] = [];
       let rawList: Object[] = [];
       if (Array.isArray(payload)) {
         rawList = payload as Object[];
-      } else {
+      } else if (payload !== undefined && typeof payload === 'object' && payload !== null) {
         const rec = payload as Record<string, Object | undefined>;
-        const cand = rec['list'] ?? rec['items'] ?? rec['folders'];
+        const cand = rec['list'] ?? rec['items'];
         if (Array.isArray(cand)) {
           rawList = cand as Object[];
         }
@@ -1308,13 +1464,13 @@ export class FnHttpClientGalleryOps {
       for (let i = 0; i < rawList.length; i++) {
         const el = rawList[i];
         if (typeof el === 'object' && el !== null) {
-          items.push(el as PhotoFolderListItem);
+          items.push(el as FolderViewCoverItem);
         }
       }
-      const data: PhotoFolderListData = { list: items };
+      const data: FolderViewCoverData = { list: items };
       return { success: true, data: data };
     } catch (e) {
-      return { success: false, message: String(e) || '文件夹列表加载异常' };
+      return { success: false, message: String(e) || '文件夹封面加载异常' };
     }
   }
 

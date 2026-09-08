@@ -10,6 +10,7 @@ import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPre
 import {
   GalleryAlbumNavigation,
   GalleryAlbumNavigationParam,
+  GALLERY_ALBUM_ROUTE_FOLDER,
   GALLERY_ALBUM_ROUTE_MAP,
   GALLERY_ALBUM_ROUTE_PERSON,
   GALLERY_ALBUM_ROUTE_RECYCLE,
@@ -148,6 +149,29 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
       host.personLoading = false;
     })();
   }
+}
+
+export function galleryAlbumOpenFolderBrowse(
+  uiCtx: UIContext,
+  baseUrl: string,
+  onFailed: (msg: string) => void
+): void {
+  const param: GalleryAlbumNavigationParam = { baseUrl: baseUrl };
+  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_FOLDER, param)) {
+    return;
+  }
+  uiCtx.getRouter().pushUrl({
+    url: 'pages/FolderBrowsePage',
+    params: { baseUrl: baseUrl }
+  }).catch((_e: Error): void => {
+    onFailed('打开文件夹失败');
+  });
+}
+
+export function galleryAlbumOpenFolderBrowsePage(host: GalleryAlbumRootSurfaceHost): void {
+  galleryAlbumOpenFolderBrowse(host.getUIContext(), host.baseUrl, (msg: string): void => {
+    host.toast(msg);
+  });
 }
 
 export function galleryAlbumOpenRecycleBinPage(host: GalleryAlbumRootSurfaceHost): void {

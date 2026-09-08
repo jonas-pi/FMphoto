@@ -379,13 +379,34 @@ export interface SearchFilterListData {
 export interface PhotoFolderListItem {
   folderPath?: string;
   path?: string;
+  filePath?: string;
+  dir?: string;
   name?: string;
+  dirName?: string;
+  key?: string;
 }
 
 /** GET /p/api/v1/photo/folder/list 返回 data */
 export interface PhotoFolderListData {
   list?: PhotoFolderListItem[];
   items?: PhotoFolderListItem[];
+}
+
+/** POST /p/api/v1/folder_view/cover 单项，字段随版本宽松兼容 */
+export interface FolderViewCoverItem {
+  id?: string | number;
+  uuid?: string;
+  photoUUID?: string;
+  dirName?: string;
+  name?: string;
+  path?: string;
+  folderPath?: string;
+}
+
+/** POST /p/api/v1/folder_view/cover 返回 data */
+export interface FolderViewCoverData {
+  list?: FolderViewCoverItem[];
+  items?: FolderViewCoverItem[];
 }
 
 /**

@@ -3,16 +3,19 @@ import { SymbolGlyphModifier, window } from '@kit.ArkUI';
 import { DividerMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { retargetGalleryAfterEndpointSwitch } from '../album/GalleryEndpointRetarget';
 import { GalleryAlbumTab } from '../album/GalleryAlbumTab';
+import { galleryAlbumOpenFolderBrowse } from '../album/galleryAlbumTab/GalleryAlbumRootSurfaceController';
 import {
   GalleryAlbumNavigation,
   GALLERY_ALBUM_NAV_DEPTH_KEY,
   GALLERY_ALBUM_ROUTE_CATEGORY,
+  GALLERY_ALBUM_ROUTE_FOLDER,
   GALLERY_ALBUM_ROUTE_MAP,
   GALLERY_ALBUM_ROUTE_PERSON,
   GALLERY_ALBUM_ROUTE_RECYCLE,
   GALLERY_ALBUM_ROUTE_SMART
 } from '../album/GalleryAlbumNavigation';
 import { CategoryGalleryNavigationContent } from './CategoryGallery';
+import { FolderBrowsePageNavigationContent } from './FolderBrowsePage';
 import { MapPageNavigationContent } from './MapPage';
 import { PersonPageNavigationContent } from './PersonPage';
 import { RecycleBinPageNavigationContent } from './RecycleBinPage';
@@ -1364,6 +1367,12 @@ struct Home {
     this.galleryViewGranularity = nextGalleryViewGranularity(this.galleryViewGranularity);
   }
 
+  private openFolderBrowse(): void {
+    galleryAlbumOpenFolderBrowse(this.getUIContext(), this.galleryBaseUrl, (msg: string): void => {
+      this.toast(msg);
+    });
+  }
+
   private clearGallerySelectionDockTimer(): void {
     if (this.gallerySelectionDockTimer >= 0) {
       clearTimeout(this.gallerySelectionDockTimer);
@@ -1507,6 +1516,8 @@ struct Home {
         MapPageNavigationContent()
       } else if (name === GALLERY_ALBUM_ROUTE_RECYCLE) {
         RecycleBinPageNavigationContent()
+      } else if (name === GALLERY_ALBUM_ROUTE_FOLDER) {
+        FolderBrowsePageNavigationContent()
       }
     }
     .hideTitleBar(true)
@@ -1731,10 +1742,21 @@ struct Home {
         .layoutWeight(1)
         .hitTestBehavior(HitTestMode.None)
       Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
-        Blank()
-          .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-          .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-          .hitTestBehavior(HitTestMode.None)
+        FnHdsOverlayCapsule({
+          barWidth: FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+          barHeight: FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
+          useSymbol: true,
+          symbol: $r('sys.symbol.folder'),
+          fontSizeValue: 22,
+          fontColorValue: $r('app.color.text_primary'),
+          onBarClick: (): void => {
+            this.openFolderBrowse();
+          }
+        })
+        .margin({
+          left: -FN_HDS_CAPSULE_JELLY_VP,
+          right: -FN_HDS_CAPSULE_JELLY_VP
+        })
 
         Blank()
           .width(this.centerDockWidthVp())
@@ -1767,6 +1789,28 @@ struct Home {
     .height('100%')
     .clip(false)
     .hitTestBehavior(HitTestMode.Transparent)
+  }
+
+  @Builder
+  private floatingDockFolderButtonFallback() {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(22)
+        .fontColor([$r('app.color.text_primary')])
+    }
+    .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+    .backgroundColor($r('app.color.gallery_material_surface_bg'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP / 2)
+    .borderWidth(1)
+    .borderColor(this.dockMaterialBorderColor())
+    .shadow({ radius: 18, color: this.dockMaterialShadowColor(), offsetX: 0, offsetY: 8 })
+    .clip(true)
+    .onClick((): void => {
+      this.openFolderBrowse();
+    })
   }
 
   @Builder
@@ -1832,9 +1876,13 @@ struct Home {
           .layoutWeight(1)
           .hitTestBehavior(HitTestMode.None)
         Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
-          Blank()
-            .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-            .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          if (this.shouldShowGalleryDockSideButtons()) {
+            this.floatingDockFolderButtonFallback()
+          } else {
+            Blank()
+              .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+              .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+          }
 
           this.floatingDockFallbackTabs()
 

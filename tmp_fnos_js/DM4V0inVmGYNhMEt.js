@@ -1,0 +1,1 @@
+import{a as e}from"./CNC7AqOflzn1314W.js";import{o as t}from"./BKWCRp0KeIAIAcwA.js";import"./CAD8TGTuM4RfoAvO.js";var n=e(t()),r=function(e){var t=(0,n.useRef)(e);t.current=(0,n.useMemo)(function(){return e},[e]);var r=(0,n.useRef)(void 0);return r.current||(r.current=function(){var e=[...arguments];return t.current.apply(this,e)}),r.current};export{r as t};

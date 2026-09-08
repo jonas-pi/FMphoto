@@ -48,6 +48,7 @@ import {
   ItemListResponse,
   LoginResultData,
   LogoutResultData,
+  FolderViewCoverData,
   MagicSearchData,
   MapPreviewBoundaryData,
   MapPreviewAllPointData,
@@ -1089,8 +1090,30 @@ export class FnHttpClient {
     return this.galleryOps.getSearchFilterList(showShootingInformation, timeoutMs);
   }
 
-  async getPhotoFolderList(timeoutMs: number = 20000): Promise<FnClientResult<PhotoFolderListData>> {
-    return this.galleryOps.getPhotoFolderList(timeoutMs);
+  async getPhotoFolderList(
+    timeoutMs: number = 20000,
+    folderPath: string = '',
+    desc: boolean = false,
+    orderBy: number = 2
+  ): Promise<FnClientResult<PhotoFolderListData>> {
+    return this.galleryOps.getPhotoFolderList(timeoutMs, folderPath, desc, orderBy);
+  }
+
+  async getFolderViewCover(
+    currentPath: string,
+    dirNames: string[],
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<FolderViewCoverData>> {
+    return this.galleryOps.getFolderViewCover(currentPath, dirNames, timeoutMs);
+  }
+
+  async getFolderViewFolderList(
+    folderPath: string,
+    desc: boolean = false,
+    orderBy: number = 2,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<PhotoFolderListData>> {
+    return this.galleryOps.getFolderViewFolderList(folderPath, desc, orderBy, timeoutMs);
   }
 
   async searchResultsByFilters(
