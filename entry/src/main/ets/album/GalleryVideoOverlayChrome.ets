@@ -26,6 +26,9 @@ const OVERLAY_PLAY_SIZE_VP: number = 72;
 const OVERLAY_SIDE_PAD_VP: number = 16;
 /** 横屏左右边距约 70vp，躲开挖孔摄像头 */
 const OVERLAY_LANDSCAPE_SIDE_EXTRA_VP: number = 54;
+const SEEK_PREVIEW_MAX_W_VP: number = 160;
+const SEEK_PREVIEW_MAX_H_VP: number = 90;
+const SEEK_KNOB_SIZE_VP: number = 10;
 
 @Component
 export struct GalleryVideoOverlayChrome {
@@ -41,6 +44,10 @@ export struct GalleryVideoOverlayChrome {
   @Prop progress: number = 0;
   @Prop bufferProgress: number = 0;
   @Prop bottomPadding: number = 0;
+  @Prop seekPreviewVisible: boolean = false;
+  @Prop seekPreviewPix: PixelMap | undefined = undefined;
+  @Prop videoPxW: number = 0;
+  @Prop videoPxH: number = 0;
   onPlay: () => void = () => {};
   onSelectSpeed: (rate: number) => void = (_rate: number) => {};
   onSelectQuality: (index: number) => void = (_index: number) => {};
@@ -67,7 +74,8 @@ export struct GalleryVideoOverlayChrome {
   @State private qualityMenuVisible: boolean = false;
   @StorageProp(FN_SYSTEM_LEFT_INSET_VP_KEY) private systemLeftInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_RIGHT_INSET_VP_KEY) private systemRightInsetVp: number = 0;
-  private dragStartRatio: number = 0;
+  /** 本次手势已按拖动处理时，抬起不再走点击 seek，避免二次跳点 */
+  private seekPanUsed: boolean = false;
   private skipSpeedClick: boolean = false;
   private lastQualityMenuAt: number = 0;
 
@@ -97,6 +105,88 @@ export struct GalleryVideoOverlayChrome {
       return OVERLAY_SIDE_PAD_VP;
     }
     return Math.max(OVERLAY_SIDE_PAD_VP + OVERLAY_LANDSCAPE_SIDE_EXTRA_VP, insetVp + 16);
+  }
+
+  private seekPreviewWidthVp(): number {
+    const aw = this.videoPxW > 0 ? this.videoPxW : 16;
+    const ah = this.videoPxH > 0 ? this.videoPxH : 9;
+    const ratio = aw / ah;
+    const boxR = SEEK_PREVIEW_MAX_W_VP / SEEK_PREVIEW_MAX_H_VP;
+    if (ratio >= boxR) {
+      return SEEK_PREVIEW_MAX_W_VP;
+    }
+    return Math.max(80, Math.round(SEEK_PREVIEW_MAX_H_VP * ratio));
+  }
+
+  private seekPreviewHeightVp(): number {
+    const aw = this.videoPxW > 0 ? this.videoPxW : 16;
+    const ah = this.videoPxH > 0 ? this.videoPxH : 9;
+    const ratio = aw / ah;
+    const boxR = SEEK_PREVIEW_MAX_W_VP / SEEK_PREVIEW_MAX_H_VP;
+    if (ratio >= boxR) {
+      return Math.max(54, Math.round(SEEK_PREVIEW_MAX_W_VP / ratio));
+    }
+    return SEEK_PREVIEW_MAX_H_VP;
+  }
+
+  /** 小窗水平跟随进度点，并夹在轨道范围内 */
+  private seekPreviewLeftVp(): number {
+    const w = this.seekPreviewWidthVp();
+    const x = this.progress * this.barW - w / 2;
+    return Math.max(0, Math.min(this.barW - w, x));
+  }
+
+  @Builder
+  private seekPreviewCard() {
+    Column({ space: 4 }) {
+      if (this.seekPreviewPix !== undefined) {
+        Image(this.seekPreviewPix)
+          .width(this.seekPreviewWidthVp())
+          .height(this.seekPreviewHeightVp())
+          .objectFit(ImageFit.Cover)
+          .borderRadius(8)
+      } else {
+        Row()
+          .width(this.seekPreviewWidthVp())
+          .height(this.seekPreviewHeightVp())
+          .backgroundColor('#CC111111')
+          .borderRadius(8)
+      }
+      Text(this.currentText)
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .maxLines(1)
+    }
+    .padding(4)
+    .backgroundColor('#E6111111')
+    .borderRadius(10)
+    .borderWidth(1)
+    .borderColor('#66FFFFFF')
+    .hitTestBehavior(HitTestMode.None)
+    .margin({ left: this.seekPreviewLeftVp(), bottom: 44 })
+  }
+
+  /** 进度条落点按手指在轨道上的绝对位置，不相对当前播放进度偏移 */
+  private ratioFromBarX(localX: number): number {
+    if (this.barW <= 1) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, localX / this.barW));
+  }
+
+  private gestureBarX(ev: GestureEvent): number {
+    if (ev.fingerList !== undefined && ev.fingerList.length > 0) {
+      return ev.fingerList[0].localX;
+    }
+    return -1;
+  }
+
+  private applyBarRatioFromGesture(ev: GestureEvent): void {
+    const x = this.gestureBarX(ev);
+    if (x >= 0) {
+      this.onSeekRatio(this.ratioFromBarX(x));
+    }
   }
 
   private openQualityMenu(): void {
@@ -343,60 +433,92 @@ export struct GalleryVideoOverlayChrome {
           .alignItems(VerticalAlign.Center)
           .clip(false)
 
-          Column({ space: 4 }) {
-            this.timeLabel()
-            Stack({ alignContent: Alignment.Start }) {
-              Row()
-                .width('100%')
-                .height(3)
-                .backgroundColor($r('app.color.immersive_panel_border'))
-                .borderRadius(2)
-              Row()
-                .width(`${this.bufferFillPercent()}%`)
-                .height(3)
-                .backgroundColor('#8CFFFFFF')
-                .borderRadius(2)
-              Row()
-                .width(`${this.fillPercent()}%`)
-                .height(3)
-                .backgroundColor($r('app.color.brand_primary'))
-                .borderRadius(2)
+          Stack({ alignContent: Alignment.BottomStart }) {
+            Column({ space: 4 }) {
+              this.timeLabel()
+              Stack({ alignContent: Alignment.Start }) {
+                Row()
+                  .width('100%')
+                  .height(3)
+                  .backgroundColor($r('app.color.immersive_panel_border'))
+                  .borderRadius(2)
+                  .margin({ top: 9 })
+                Row()
+                  .width(`${this.bufferFillPercent()}%`)
+                  .height(3)
+                  .backgroundColor('#8CFFFFFF')
+                  .borderRadius(2)
+                  .margin({ top: 9 })
+                Row()
+                  .width(`${this.fillPercent()}%`)
+                  .height(3)
+                  .backgroundColor($r('app.color.brand_primary'))
+                  .borderRadius(2)
+                  .margin({ top: 9 })
+                if (this.seekPreviewVisible) {
+                  Row()
+                    .width(SEEK_KNOB_SIZE_VP)
+                    .height(SEEK_KNOB_SIZE_VP)
+                    .borderRadius(SEEK_KNOB_SIZE_VP / 2)
+                    .backgroundColor($r('app.color.brand_primary'))
+                    .position({
+                      x: this.progress * this.barW - SEEK_KNOB_SIZE_VP / 2,
+                      y: (22 - SEEK_KNOB_SIZE_VP) / 2
+                    })
+                }
+              }
+              .width('100%')
+              .height(22)
+              .clip(false)
+              .onAreaChange((_old, area): void => {
+                const w = area.width as number;
+                this.barW = w > 1 ? w : 1;
+              })
+              .gesture(
+                PanGesture({ direction: PanDirection.Horizontal })
+                  .onActionStart((ev: GestureEvent): void => {
+                    this.seekPanUsed = true;
+                    this.onSeekStart();
+                    this.applyBarRatioFromGesture(ev);
+                  })
+                  .onActionUpdate((ev: GestureEvent): void => {
+                    this.applyBarRatioFromGesture(ev);
+                  })
+                  .onActionEnd((): void => {
+                    this.onSeekEnd();
+                  })
+                  .onActionCancel((): void => {
+                    this.seekPanUsed = false;
+                    this.onSeekCancel();
+                  })
+              )
+              .onTouch((ev: TouchEvent): void => {
+                if (ev.type === TouchType.Down) {
+                  this.seekPanUsed = false;
+                  return;
+                }
+                if (ev.type !== TouchType.Up) {
+                  return;
+                }
+                if (this.seekPanUsed) {
+                  this.seekPanUsed = false;
+                  return;
+                }
+                const ts = ev.touches;
+                if (ts === undefined || ts.length < 1) {
+                  return;
+                }
+                this.onSeekTapRatio(this.ratioFromBarX(ts[0].x));
+              })
             }
             .width('100%')
-            .height(22)
-            .onAreaChange((_old, area): void => {
-              const w = area.width as number;
-              this.barW = w > 1 ? w : 1;
-            })
-            .gesture(
-              PanGesture({ direction: PanDirection.Horizontal })
-                .onActionStart((): void => {
-                  this.dragStartRatio = this.progress;
-                  this.onSeekStart();
-                })
-                .onActionUpdate((ev: GestureEvent): void => {
-                  const r = this.dragStartRatio + (this.barW > 0 ? ev.offsetX / this.barW : 0);
-                  this.onSeekRatio(Math.max(0, Math.min(1, r)));
-                })
-                .onActionEnd((): void => {
-                  this.onSeekEnd();
-                })
-                .onActionCancel((): void => {
-                  this.onSeekCancel();
-                })
-            )
-            .onTouch((ev: TouchEvent): void => {
-              if (ev.type !== TouchType.Up) {
-                return;
-              }
-              const ts = ev.touches;
-              if (ts === undefined || ts.length < 1) {
-                return;
-              }
-              this.onSeekTapRatio(Math.max(0, Math.min(1, ts[0].x / this.barW)));
-            })
+
+            if (this.seekPreviewVisible) {
+              this.seekPreviewCard()
+            }
           }
           .width('100%')
+          .clip(false)
           }
           .width('100%')
           .padding({
@@ -404,10 +526,12 @@ export struct GalleryVideoOverlayChrome {
             right: this.overlaySidePad(this.systemRightInsetVp),
             bottom: 8 + this.bottomPadding
           })
+          .clip(false)
         }
         .width('100%')
         .height('100%')
         .hitTestBehavior(HitTestMode.Transparent)
+        .clip(false)
       }
     }
     .width('100%')

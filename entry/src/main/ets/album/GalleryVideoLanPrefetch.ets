@@ -213,6 +213,11 @@ export function galleryVideoLanPrefetchFileSize(): number {
   return prefetchTotalBytes > 0 ? prefetchTotalBytes : -1;
 }
 
+/** AVImageGenerator 需要独立路径；与播放器 fd 分开打开 */
+export function getGalleryVideoLanPrefetchPath(): string {
+  return prefetchPath;
+}
+
 export function galleryVideoLanPrefetchBufferedMs(durationMs: number): number {
   if (durationMs <= 0) {
     return 0;
