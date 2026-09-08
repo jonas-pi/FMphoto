@@ -147,6 +147,68 @@ export function isGalleryVideoLanPrefetchPlayable(url: string): boolean {
   return isGalleryVideoLanPrefetchForUrl(url) && isPlayableNow();
 }
 
+export function isGalleryVideoLanPrefetchComplete(): boolean {
+  return prefetchComplete && prefetchPath.length > 0;
+}
+
+/**
+ * 下完后把内存里的文件尾写回磁盘，得到连续 mp4。
+ * 官方：完整独立文件应走 fd://，dataSrc 只适合边下边播。
+ */
+export function sealGalleryVideoLanPrefetchFile(): boolean {
+  if (!prefetchComplete || prefetchPath.length === 0) {
+    return false;
+  }
+  if (prefetchTailStart >= 0 && prefetchTailBuf !== null && prefetchTailGot > 0) {
+    if (prefetchWriteFd < 0) {
+      return false;
+    }
+    try {
+      fileIo.lseek(prefetchWriteFd, prefetchTailStart, fileIo.WhenceType.SEEK_SET);
+      const payload = prefetchTailGot === prefetchTailBuf.byteLength
+        ? prefetchTailBuf
+        : prefetchTailBuf.slice(0, prefetchTailGot);
+      fileIo.writeSync(prefetchWriteFd, payload);
+    } catch (_e) {
+      return false;
+    }
+    if (prefetchTotalBytes > 0) {
+      prefetchHeadBytes = prefetchTotalBytes;
+    } else {
+      prefetchHeadBytes = prefetchTailStart + prefetchTailGot;
+    }
+    prefetchTailStart = -1;
+    prefetchTailBuf = null;
+    prefetchTailGot = 0;
+  }
+  closeFd(prefetchWriteFd);
+  prefetchWriteFd = -1;
+  return true;
+}
+
+export function closeGalleryVideoLanPrefetchFd(fd: number): void {
+  if (fd < 0) {
+    return;
+  }
+  try {
+    fileIo.closeSync(fd);
+  } catch (_e) {
+  }
+}
+
+/** 给 AVPlayer 单独开只读 fd；官方要求传给播放器的句柄不要再用于其它读写 */
+export function openGalleryVideoLanPrefetchPlayFd(): number {
+  if (prefetchPath.length === 0) {
+    return -1;
+  }
+  try {
+    const f = fileIo.openSync(prefetchPath, fileIo.OpenMode.READ_ONLY);
+    return f.fd;
+  } catch (_e) {
+    return -1;
+  }
+}
+
 export function galleryVideoLanPrefetchFileSize(): number {
   return prefetchTotalBytes > 0 ? prefetchTotalBytes : -1;
 }

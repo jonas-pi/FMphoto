@@ -24,9 +24,13 @@ import {
   fillGalleryVideoLanPrefetch,
   galleryVideoLanPrefetchBufferedMs,
   galleryVideoLanPrefetchFileSize,
+  isGalleryVideoLanPrefetchComplete,
   isGalleryVideoLanPrefetchForUrl,
   isGalleryVideoLanPrefetchPlayable,
+  openGalleryVideoLanPrefetchPlayFd,
+  closeGalleryVideoLanPrefetchFd,
   scheduleGalleryVideoLanPrefetch,
+  sealGalleryVideoLanPrefetchFile,
   stopGalleryVideoLanPrefetch,
   waitGalleryVideoLanPrefetchPlayable
 } from './GalleryVideoLanPrefetch';
@@ -70,6 +74,10 @@ const GALLERY_VIDEO_PREFERRED_BUFFER_DURATION_SEC = 20;
  */
 const GALLERY_VIDEO_START_BUFFER_DIRECT_SEC = 0.6;
 const GALLERY_VIDEO_START_BUFFER_TRANSCODE_SEC = 0.8;
+/** 本地 fd/dataSrc：磁盘远快于码率，用短起播水线，避免 4K seek 后按「下载<码率」灌满约 5 秒才恢复 */
+const GALLERY_VIDEO_START_BUFFER_LOCAL_SEC = 0.3;
+/** 本地文件缓冲区不必拉满 20MB，seek 后更快回到可播 */
+const GALLERY_VIDEO_PREFERRED_BUFFER_LOCAL_SEC = 5;
 /** 短边超过该值视为超高清，默认走 1080p 转码而不是原始直链 */
 const GALLERY_VIDEO_UHD_MIN_P = 1440;
 /** prepared 之后若迟迟进不了 playing，视为拉流卡住 */
@@ -221,6 +229,10 @@ export struct GalleryAuthVideo {
   private bufferEndMs: number = 0;
   /** 当前实例已用内网本地缓存作为 AVPlayer.dataSrc */
   private playingFromPrefetch: boolean = false;
+  /** 缓存已封成连续文件并走 fd://；此时拖动应按本地文件 seek，不要再走流式 dataSrc */
+  private playingFromLocalFd: boolean = false;
+  /** 传给 AVPlayer 的只读 fd，release 之后才能 close */
+  private lanPlayFd: number = -1;
 
   /** 视频 Surface 跟随深浅色，避免浅色模式铺白、深色模式铺黑不一致 */
   private surfaceBackgroundColor(): ResourceColor {
@@ -265,7 +277,15 @@ export struct GalleryAuthVideo {
     return lower.indexOf('.m3u8') >= 0;
   }
 
-  private buildPlaybackStrategy(directStream: boolean): media.PlaybackStrategy {
+  private buildPlaybackStrategy(directStream: boolean, localFile: boolean = false): media.PlaybackStrategy {
+    if (localFile) {
+      const localStrategy: media.PlaybackStrategy = {
+        showFirstFrameOnPrepare: true,
+        preferredBufferDuration: GALLERY_VIDEO_PREFERRED_BUFFER_LOCAL_SEC,
+        preferredBufferDurationForPlaying: GALLERY_VIDEO_START_BUFFER_LOCAL_SEC
+      };
+      return localStrategy;
+    }
     const startSec = directStream
       ? GALLERY_VIDEO_START_BUFFER_DIRECT_SEC
       : GALLERY_VIDEO_START_BUFFER_TRANSCODE_SEC;
@@ -467,6 +487,7 @@ export struct GalleryAuthVideo {
     this.bufferProgress = 0;
     this.lastCachedDurationMs = 0;
     this.playingFromPrefetch = false;
+    this.playingFromLocalFd = false;
     stopGalleryVideoLanPrefetch();
     this.wasPlayingBeforeSeek = false;
     this.seekResumePending = false;
@@ -629,6 +650,7 @@ export struct GalleryAuthVideo {
     const p = this.avPlayer;
     this.avPlayer = null;
     GalleryAuthVideo.safeRelease(p);
+    this.closeLanPlayFd();
   }
 
   /**
@@ -682,6 +704,19 @@ export struct GalleryAuthVideo {
     if (p === null) { return; }
     GalleryAuthVideo.unbindPlayerListeners(p);
     p.release().catch((): void => {});
+  }
+
+  private closeLanPlayFd(): void {
+    if (this.lanPlayFd < 0) {
+      return;
+    }
+    closeGalleryVideoLanPrefetchFd(this.lanPlayFd);
+    this.lanPlayFd = -1;
+  }
+
+  /** 本地缓存 seek：官方默认 SEEK_PREV_SYNC，落到前一个 I 帧，4K 长 GOP 比 CLOSEST 快得多 */
+  private lanSeekMode(): media.SeekMode {
+    return this.playingFromPrefetch ? media.SeekMode.SEEK_PREV_SYNC : media.SeekMode.SEEK_CLOSEST;
   }
 
   private progressRatio(): number {
@@ -1149,8 +1184,17 @@ export struct GalleryAuthVideo {
       this.scheduleStartPlay();
       return;
     }
+    // 缓冲条已满但仍走 dataSrc 时，4K seek 会按流式起播水线再灌数秒；改 fd:// 走本地文件
+    if (this.playingFromPrefetch && !this.playingFromLocalFd && isGalleryVideoLanPrefetchComplete()) {
+      this.pendingRestoreMs = toMs;
+      this.currentMs = toMs;
+      this.userStartedOnce = true;
+      this.playbackEnded = false;
+      this.scheduleStartPlay();
+      return;
+    }
     try {
-      p.seek(toMs, media.SeekMode.SEEK_CLOSEST);
+      p.seek(toMs, this.lanSeekMode());
       this.currentMs = toMs;
     } catch (_e) {
     }
@@ -1393,6 +1437,7 @@ export struct GalleryAuthVideo {
       isGalleryVideoLanPrefetchForUrl(this.videoUrl);
     if (!keepLanCache) {
       this.playingFromPrefetch = false;
+      this.playingFromLocalFd = false;
       this.bufferEndMs = 0;
       this.bufferProgress = 0;
       stopGalleryVideoLanPrefetch();
@@ -1435,6 +1480,7 @@ export struct GalleryAuthVideo {
       GalleryAuthVideo.unbindPlayerListeners(old);
       try { await old.release(); } catch (_e) {}
     }
+    this.closeLanPlayFd();
     if (gen !== this.playGen) { return; }
 
     const client = AppSession.getClient();
@@ -1486,6 +1532,7 @@ export struct GalleryAuthVideo {
 
     const useLanDataSrc = q.directStream && isGalleryLanBurstEnabled() &&
       !GalleryAuthVideo.isHlsUrl(playableUrl);
+    this.playingFromLocalFd = false;
     if (useLanDataSrc) {
       scheduleGalleryVideoLanPrefetch(playableUrl, this.lanPrefetchCacheDir());
       const ready = await waitGalleryVideoLanPrefetchPlayable(playableUrl, GALLERY_VIDEO_LAN_DATASRC_WAIT_MS);
@@ -1496,17 +1543,20 @@ export struct GalleryAuthVideo {
       if (!ready) {
         // 起播改走播放器 HTTP 时必须停掉本地预取，否则同一条原片会被拉两次
         stopGalleryVideoLanPrefetch();
+      } else if (isGalleryVideoLanPrefetchComplete() && sealGalleryVideoLanPrefetchFile()) {
+        this.playingFromLocalFd = true;
       }
-      hilog.info(DOMAIN, TAG, 'lan dataSrc ready=%{public}s', `${ready}`);
+      hilog.info(DOMAIN, TAG, 'lan cache ready=%{public}s fd=%{public}s', `${ready}`,
+        `${this.playingFromLocalFd}`);
     } else {
       this.playingFromPrefetch = false;
     }
 
-    const playbackStrategy = this.buildPlaybackStrategy(q.directStream);
+    const playbackStrategy = this.buildPlaybackStrategy(q.directStream, this.playingFromPrefetch);
     hilog.info(DOMAIN, TAG,
-      'startPlay quality=%{public}s direct=%{public}s hls=%{public}s dataSrc=%{public}s buf=%{public}ss startWatermark=%{public}ss url=%{public}s',
+      'startPlay quality=%{public}s direct=%{public}s hls=%{public}s local=%{public}s fd=%{public}s buf=%{public}ss startWatermark=%{public}ss url=%{public}s',
       q.label, `${q.directStream}`, `${GalleryAuthVideo.isHlsUrl(playableUrl)}`,
-      `${this.playingFromPrefetch}`,
+      `${this.playingFromPrefetch}`, `${this.playingFromLocalFd}`,
       `${playbackStrategy.preferredBufferDuration}`,
       `${playbackStrategy.preferredBufferDurationForPlaying}`,
       GalleryAuthVideo.sanitizeUrlForLog(playableUrl));
@@ -1735,12 +1785,15 @@ export struct GalleryAuthVideo {
         this.scheduleChromeAutoHide();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
-        if (this.pendingRestoreMs > GALLERY_VIDEO_DEFER_SEEK_MIN_MS && this.durationMs > 0) {
+        if ((this.playingFromPrefetch ?
+          this.pendingRestoreMs >= 0 :
+          this.pendingRestoreMs > GALLERY_VIDEO_DEFER_SEEK_MIN_MS) && this.durationMs > 0) {
           const toMs = Math.min(this.pendingRestoreMs, Math.max(0, this.durationMs - 500));
           this.pendingRestoreMs = -1;
-          hilog.info(DOMAIN, TAG, 'quality switch seek after playing toMs=%{public}s', `${toMs}`);
+          hilog.info(DOMAIN, TAG, 'restore seek after playing toMs=%{public}s local=%{public}s',
+            `${toMs}`, `${this.playingFromPrefetch}`);
           try {
-            player.seek(toMs, media.SeekMode.SEEK_CLOSEST);
+            player.seek(toMs, this.lanSeekMode());
             this.currentMs = toMs;
           } catch (_e) {
           }
@@ -1786,7 +1839,16 @@ export struct GalleryAuthVideo {
 
     // 设置媒体源（触发 idle → initialized 异步过渡，通过 stateChange 回调继续）
     try {
-      if (this.playingFromPrefetch) {
+      if (this.playingFromLocalFd) {
+        const playFd = openGalleryVideoLanPrefetchPlayFd();
+        if (playFd >= 0) {
+          this.lanPlayFd = playFd;
+          player.url = `fd://${playFd}`;
+        } else {
+          this.playingFromLocalFd = false;
+        }
+      }
+      if (this.playingFromPrefetch && !this.playingFromLocalFd) {
         const dataSrc: media.AVDataSrcDescriptor = {
           fileSize: galleryVideoLanPrefetchFileSize(),
           callback: (buffer: ArrayBuffer, length: number, pos?: number): number => {
@@ -1794,7 +1856,7 @@ export struct GalleryAuthVideo {
           }
         };
         player.dataSrc = dataSrc;
-      } else {
+      } else if (!this.playingFromPrefetch) {
         // 网络 HLS 无需 setMimeType（官方文档仅本地 fd:// m3u8 需要），URL 以 .m3u8 结尾即可自动识别
         const source = media.createMediaSourceWithUrl(playableUrl, headers);
         // 官方：setMediaSource 开始预下载，缓冲策略必须在这里传入，不能拖到 initialized 之后。
