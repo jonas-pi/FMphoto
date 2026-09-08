@@ -312,7 +312,8 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
     // 上传队列会逐文件执行，并不存在 20 张的接口批次限制；与手动同步选择上限保持一致，
     // 让用户一次选择更多媒体，同时避免无限制选择给系统 Picker 和任务队列造成过大压力。
     opt.maxSelectNumber = 500;
-    opt.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    // 相册上传需同时支持图片与视频；IMAGE_TYPE 会让系统 Picker 只展示图片，视频无法勾选。
+    opt.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_VIDEO_TYPE;
     const out = await new photoAccessHelper.PhotoViewPicker().select(opt);
     uris = out.photoUris ?? [];
   } catch (_e) {

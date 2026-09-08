@@ -452,8 +452,11 @@ export function mimeFromExt(ext: string): string {
   if (e === 'webp') return 'image/webp';
   if (e === 'bmp') return 'image/bmp';
   if (e === 'heic' || e === 'heif') return 'image/heif';
-  if (e === 'mp4') return 'video/mp4';
+  if (e === 'mp4' || e === 'm4v') return 'video/mp4';
   if (e === 'mov') return 'video/quicktime';
+  if (e === '3gp' || e === '3gpp') return 'video/3gpp';
+  if (e === 'mkv') return 'video/x-matroska';
+  if (e === 'webm') return 'video/webm';
   return 'application/octet-stream';
 }
 
