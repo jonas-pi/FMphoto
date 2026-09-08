@@ -19,7 +19,6 @@ import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
-import { isGalleryLanBurstEnabled } from './GalleryPerfProfile';
 import {
   fillGalleryVideoLanPrefetch,
   galleryVideoLanPrefetchBufferedMs,
@@ -79,14 +78,14 @@ const GALLERY_VIDEO_START_BUFFER_TRANSCODE_SEC = 0.8;
 const GALLERY_VIDEO_START_BUFFER_LOCAL_SEC = 0.3;
 /** 本地文件缓冲区不必拉满 20MB，seek 后更快回到可播 */
 const GALLERY_VIDEO_PREFERRED_BUFFER_LOCAL_SEC = 5;
-/** 短边超过该值视为超高清，默认走 1080p 转码而不是原始直链 */
-const GALLERY_VIDEO_UHD_MIN_P = 1440;
 /** prepared 之后若迟迟进不了 playing，视为拉流卡住 */
 const GALLERY_VIDEO_LOAD_WATCHDOG_MS = 12000;
 /** 清晰度切换后先起播，进度超过该值再 seek，避免在未缓存位置卡死 */
 const GALLERY_VIDEO_DEFER_SEEK_MIN_MS = 800;
 /** getPlaybackInfo 最短统计周期 500ms；诊断日志用 2s，避免刷屏 */
 const GALLERY_VIDEO_PLAYBACK_INFO_INTERVAL_MS = 2000;
+/** 拖进度条时缓冲条跟本地已下前缀刷新，不必等 2s 的 playbackInfo */
+const GALLERY_VIDEO_SEEK_BUFFER_POLL_MS = 250;
 /** CACHED_DURATION 低于该值时打告警（毫秒） */
 const GALLERY_VIDEO_CACHED_DURATION_WARN_MS = 2000;
 /** 内网原片改走本地 dataSrc 前，等待 moov 可读的最长时间 */
@@ -187,8 +186,6 @@ export struct GalleryAuthVideo {
   private playGen: number = 0;
   private surfaceReady: boolean = false;
   private dragStartRatio: number = 0;
-  private wasPlayingBeforeSeek: boolean = false;
-  private seekResumePending: boolean = false;
   /** seek 完成前挡住 timeUpdate，避免进度条先跳回旧位置再落到目标点 */
   private seekInFlight: boolean = false;
   private seekPreviewSession: GalleryVideoSeekPreviewSession = new GalleryVideoSeekPreviewSession();
@@ -225,6 +222,8 @@ export struct GalleryAuthVideo {
   private chromeHideTimer: number = 0;
   /** 周期性拉取下载速率，用来对照“只播前几秒”是否因拉流停滞 */
   private playbackInfoTimerId: number = 0;
+  /** 拖进度条时单独刷缓冲条，避免被拖动逻辑挡住或等 2s playbackInfo */
+  private seekBufferPollId: number = 0;
   /** prepare/play 卡住时给出重试，避免无限转圈 */
   private loadWatchdogId: number = 0;
   /** 最近一次 CACHED_DURATION（毫秒），供停滞诊断 */
@@ -313,6 +312,24 @@ export struct GalleryAuthVideo {
     this.playbackInfoTimerId = 0;
   }
 
+  private startSeekBufferPoll(): void {
+    this.stopSeekBufferPoll();
+    this.seekBufferPollId = setInterval((): void => {
+      this.syncBufferFromLanCache();
+    }, GALLERY_VIDEO_SEEK_BUFFER_POLL_MS);
+  }
+
+  private stopSeekBufferPoll(): void {
+    if (this.seekBufferPollId === 0) {
+      return;
+    }
+    try {
+      clearInterval(this.seekBufferPollId);
+    } catch (_e) {
+    }
+    this.seekBufferPollId = 0;
+  }
+
   private clearLoadWatchdog(): void {
     if (this.loadWatchdogId === 0) {
       return;
@@ -338,27 +355,6 @@ export struct GalleryAuthVideo {
     }, GALLERY_VIDEO_LOAD_WATCHDOG_MS);
   }
 
-  /**
-   * 4K/2.7K 原片 20MB 缓冲只够几秒，公网默认改走 1080p 转码。
-   * 内网带宽足够，保持「原始」直链把链路打满；手选档位仍优先生效。
-   */
-  private preferTranscodeForUhd(): void {
-    if (this.maxResolutionP < GALLERY_VIDEO_UHD_MIN_P) {
-      return;
-    }
-    if (this.qualityIndex !== 0) {
-      return;
-    }
-    if (isGalleryLanBurstEnabled()) {
-      hilog.info(DOMAIN, TAG, 'LAN burst keep original for UHD %{public}sp', `${this.maxResolutionP}`);
-      return;
-    }
-    if (this.isQualityAllowed(1)) {
-      hilog.info(DOMAIN, TAG, 'UHD %{public}sp 默认改用 1080p 转码', `${this.maxResolutionP}`);
-      this.qualityIndex = 1;
-    }
-  }
-
   private startPlaybackInfoWatch(player: media.AVPlayer, gen: number): void {
     this.stopPlaybackInfoWatch();
     this.playbackInfoTimerId = setInterval((): void => {
@@ -366,6 +362,8 @@ export struct GalleryAuthVideo {
         this.stopPlaybackInfoWatch();
         return;
       }
+      // 满载缓冲条跟磁盘进度，不要等 getPlaybackInfo 回来才刷新。
+      this.syncBufferFromLanCache();
       player.getPlaybackInfo().then((info: media.PlaybackInfo): void => {
         if (gen !== this.playGen || this.avPlayer !== player) {
           return;
@@ -488,6 +486,7 @@ export struct GalleryAuthVideo {
     this.durationMs = 0;
     this.draggingSeek = false;
     this.dragRatio = 0;
+    this.stopSeekBufferPoll();
     this.clearSeekPreviewPix();
     this.seekPreviewSession.release();
     this.bufferEndMs = 0;
@@ -496,15 +495,12 @@ export struct GalleryAuthVideo {
     this.playingFromPrefetch = false;
     this.playingFromLocalFd = false;
     stopGalleryVideoLanPrefetch();
-    this.wasPlayingBeforeSeek = false;
-    this.seekResumePending = false;
     this.seekInFlight = false;
     // 切换到下一个视频时保留用户最近一次选择的倍速，不再重置为 1.0x。
     this.speedRate = LAST_VIDEO_SPEED_RATE;
     // 切换到下一个视频时保留上次选择的清晰度档位。
     this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
     this.normalizeQualityIndex();
-    this.preferTranscodeForUhd();
     this.longPressSpeeding = false;
     this.videoPxW = 0;
     this.videoPxH = 0;
@@ -536,7 +532,6 @@ export struct GalleryAuthVideo {
     this.speedRate = LAST_VIDEO_SPEED_RATE;
     this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
     this.normalizeQualityIndex();
-    this.preferTranscodeForUhd();
     this.autoRecoverCount = 0;
     this.showPlaybackRetry = false;
     this.lastTogglePlaySeq = this.togglePlaySeq;
@@ -628,6 +623,7 @@ export struct GalleryAuthVideo {
     this.playGen++;
     this.clearSeekPreviewPix();
     this.seekPreviewSession.release();
+    this.stopSeekBufferPoll();
     stopGalleryVideoLanPrefetch();
     this.stopPlaybackInfoWatch();
     this.clearLoadWatchdog();
@@ -670,6 +666,11 @@ export struct GalleryAuthVideo {
    *   从而减少服务端看到的重复 quit 与 stream/v 请求。
    */
   private scheduleStartPlay(): void {
+    // 拖动期间重建播放器会黑屏并打断边下边播；松手 seek 时若需要再切 fd://。
+    if (this.draggingSeek) {
+      hilog.info(DOMAIN, TAG, 'defer startPlay while dragging');
+      return;
+    }
     if (this.restartTimerId !== 0) {
       try {
         clearTimeout(this.restartTimerId);
@@ -770,9 +771,7 @@ export struct GalleryAuthVideo {
     if (this.syncBufferFromLanCache()) {
       return;
     }
-    if (this.draggingSeek) {
-      return;
-    }
+    // 拖动时播放仍在继续，缓冲条应跟着真实缓存走，不能把更新丢掉。
     const end = Math.max(0, this.currentMs) + this.lastCachedDurationMs;
     this.bufferEndMs = Math.max(this.bufferEndMs, end);
     if (this.durationMs > 0) {
@@ -1215,47 +1214,51 @@ export struct GalleryAuthVideo {
     }
   }
 
+  /**
+   * 原始直链走本地预取：公网、内网、是否满载都一样。
+   * 转码 HLS 是分片协议，不能当作单个原片文件灌入这条 dataSrc。
+   */
+  private shouldPrefetchOriginal(directStream: boolean, url: string): boolean {
+    return directStream && url.length > 0 && !GalleryAuthVideo.isHlsUrl(url);
+  }
+
   private canPlayFromLanCache(): boolean {
-    return this.currentQualityOption().directStream && isGalleryLanBurstEnabled() &&
+    return this.shouldPrefetchOriginal(this.currentQualityOption().directStream, this.videoUrl) &&
       isGalleryVideoLanPrefetchPlayable(this.videoUrl);
   }
 
-  private async beginSeekDrag(): Promise<void> {
-    const p = this.avPlayer;
+  private beginSeekDrag(): void {
     this.draggingSeek = true;
     this.dragStartRatio = this.progressRatio();
     this.dragRatio = this.dragStartRatio;
-    this.wasPlayingBeforeSeek = this.isPlaying;
-    this.seekResumePending = false;
     this.clearChromeAutoHideTimer();
-    this.seekPreviewSession.prepare(this.videoUrl, (pix: PixelMap | undefined): void => {
+    this.startSeekBufferPoll();
+    // 拖动期间播放器继续播放；这里只移动进度指示和请求预览，
+    // 真正的 seek 统一在松手时执行一次，避免拖动过程中暂停或反复跳转。
+    // 预览只走本地自定义缓存，不再另拉原片 HTTPS（会抢下载且抽帧失败）。
+    this.seekPreviewSession.prepare(this.videoUrl, {}, (pix: PixelMap | undefined): void => {
       this.applySeekPreviewPix(pix);
     });
     this.requestSeekPreview();
-    if (p !== null && this.wasPlayingBeforeSeek) {
-      try {
-        await p.pause();
-      } catch (_e) {
-      }
-    }
   }
 
   private endSeekDrag(): void {
+    this.stopSeekBufferPoll();
     this.seekByRatio(this.dragRatio);
     this.draggingSeek = false;
-    this.seekResumePending = this.wasPlayingBeforeSeek;
   }
 
   private requestSeekPreview(): void {
     if (!this.draggingSeek || this.durationMs <= 0) {
       return;
     }
-    this.seekPreviewSession.request(this.currentMs, this.videoPxW, this.videoPxH);
+    this.seekPreviewSession.request(this.currentMs, this.videoPxW, this.videoPxH, this.durationMs);
   }
 
   private applySeekPreviewPix(pix: PixelMap | undefined): void {
     const old = this.seekPreviewPix;
     this.seekPreviewPix = pix;
+    hilog.info(DOMAIN, TAG, 'seek preview pix %{public}s', pix !== undefined ? 'set' : 'empty');
     if (old !== undefined && old !== pix) {
       try {
         old.release();
@@ -1481,7 +1484,7 @@ export struct GalleryAuthVideo {
     const qKeep = QUALITY_OPTIONS[
       (this.qualityIndex >= 0 && this.qualityIndex < QUALITY_OPTIONS.length) ? this.qualityIndex : 0
     ];
-    const keepLanCache = qKeep.directStream && isGalleryLanBurstEnabled() &&
+    const keepLanCache = this.shouldPrefetchOriginal(qKeep.directStream, this.videoUrl) &&
       isGalleryVideoLanPrefetchForUrl(this.videoUrl);
     if (!keepLanCache) {
       this.playingFromPrefetch = false;
@@ -1578,8 +1581,7 @@ export struct GalleryAuthVideo {
       this.decodeSessionPhotoId = '';
     }
 
-    const useLanDataSrc = q.directStream && isGalleryLanBurstEnabled() &&
-      !GalleryAuthVideo.isHlsUrl(playableUrl);
+    const useLanDataSrc = this.shouldPrefetchOriginal(q.directStream, playableUrl);
     this.playingFromLocalFd = false;
     if (useLanDataSrc) {
       scheduleGalleryVideoLanPrefetch(playableUrl, this.lanPrefetchCacheDir());
@@ -1747,17 +1749,6 @@ export struct GalleryAuthVideo {
       if (gen !== this.playGen) { return; }
       this.seekInFlight = false;
       this.currentMs = time;
-      if (this.seekResumePending) {
-        this.seekResumePending = false;
-        player.play().catch((e: Error): void => {
-          if (this.shouldIgnorePlaybackFailureSignal(player, gen)) {
-            return;
-          }
-          hilog.warn(DOMAIN, TAG, 'seek 后 play Promise 拒绝: %{public}s',
-            GalleryAuthVideo.formatMediaErr(e));
-          this.setPlaybackFailureHint('视频播放失败');
-        });
-      }
     });
 
     // 状态机回调：setMediaSource 后 state 仍为 idle；
@@ -1931,6 +1922,67 @@ export struct GalleryAuthVideo {
     return QUALITY_OPTIONS[0];
   }
 
+  private seekPreviewWidthVp(): number {
+    const aw = this.videoPxW > 0 ? this.videoPxW : 16;
+    const ah = this.videoPxH > 0 ? this.videoPxH : 9;
+    const ratio = aw / ah;
+    if (ratio >= 160 / 90) {
+      return 160;
+    }
+    return Math.max(80, Math.round(90 * ratio));
+  }
+
+  private seekPreviewHeightVp(): number {
+    const aw = this.videoPxW > 0 ? this.videoPxW : 16;
+    const ah = this.videoPxH > 0 ? this.videoPxH : 9;
+    const ratio = aw / ah;
+    if (ratio >= 160 / 90) {
+      return Math.max(54, Math.round(160 / ratio));
+    }
+    return 90;
+  }
+
+  private seekPreviewLeftVp(): number {
+    const pad = this.landscape ? 70 : 16;
+    const barW = Math.max(1, this.viewW - pad * 2);
+    const w = this.seekPreviewWidthVp();
+    const x = pad + this.progressRatio() * barW - w / 2;
+    return Math.max(pad, Math.min(this.viewW - pad - w, x));
+  }
+
+  /** PixelMap 必须画在本组件 build 里，不能经 @Prop / @BuilderParam 传给浮层 */
+  @Builder
+  private seekPreviewCard() {
+    Column({ space: 4 }) {
+      if (this.seekPreviewPix !== undefined) {
+        Image(this.seekPreviewPix)
+          .width(this.seekPreviewWidthVp())
+          .height(this.seekPreviewHeightVp())
+          .objectFit(ImageFit.Cover)
+          .borderRadius(8)
+          .syncLoad(true)
+      } else {
+        Row()
+          .width(this.seekPreviewWidthVp())
+          .height(this.seekPreviewHeightVp())
+          .backgroundColor('#CC111111')
+          .borderRadius(8)
+      }
+      Text(this.fmtTime(this.currentMs))
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .maxLines(1)
+    }
+    .padding(4)
+    .backgroundColor('#E6111111')
+    .borderRadius(10)
+    .borderWidth(1)
+    .borderColor('#66FFFFFF')
+    .hitTestBehavior(HitTestMode.None)
+    .margin({ left: this.seekPreviewLeftVp(), bottom: this.effectiveBottomPadding() + 52 })
+  }
+
   build() {
     Stack({ alignContent: Alignment.Center }) {
       XComponent({
@@ -2020,9 +2072,6 @@ export struct GalleryAuthVideo {
         bufferProgress: this.bufferProgress,
         bottomPadding: this.effectiveBottomPadding(),
         seekPreviewVisible: this.draggingSeek,
-        seekPreviewPix: this.seekPreviewPix,
-        videoPxW: this.videoPxW,
-        videoPxH: this.videoPxH,
         onPlay: (): void => {
           void this.togglePlayPause();
         },
@@ -2043,7 +2092,7 @@ export struct GalleryAuthVideo {
         },
         onSeekStart: (): void => {
           this.clearChromeAutoHideTimer();
-          void this.beginSeekDrag();
+          this.beginSeekDrag();
         },
         onSeekRatio: (ratio: number): void => {
           this.dragRatio = ratio;
@@ -2057,8 +2106,8 @@ export struct GalleryAuthVideo {
           this.bumpChromeAutoHide();
         },
         onSeekCancel: (): void => {
+          this.stopSeekBufferPoll();
           this.draggingSeek = false;
-          this.seekResumePending = false;
           this.seekInFlight = false;
           this.bumpChromeAutoHide();
         },
@@ -2103,6 +2152,17 @@ export struct GalleryAuthVideo {
       })
         .width('100%')
         .height('100%')
+      }
+
+      if (this.draggingSeek) {
+        Column() {
+          this.seekPreviewCard()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Start)
+        .hitTestBehavior(HitTestMode.None)
       }
 
       if (!this.videoLoading) {

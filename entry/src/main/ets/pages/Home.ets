@@ -147,7 +147,7 @@ struct MePanel {
   onEndpointSwitched: () => void = () => {};
   @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private sdkApiVersion: number = 0;
-  /** 用户手动满载开关；内网自动拉满时开关可关，实际仍走爆发档 */
+  /** 用户手动满载；内网自动满载由独立状态展示，不会改写用户开关 */
   @State private lanBurstForceEnabled: boolean = false;
   @State private lanBurstAutoEnabled: boolean = false;
   @State private lanBurstEnabled: boolean = false;
@@ -243,8 +243,8 @@ struct MePanel {
   }
 
   /**
-   * 仅手动打开满载时提示。内网自动拉满跟着「当前内网连接」，不再另弹一条。
-   * 若切网 Toast 还在，等到它结束后再弹琥珀色满载 Toast，并抬高位置避免重叠。
+   * 手动打开满载时提示；内网自动满载不重复弹提示。
+   * 若切网 Toast 还在，等它结束后再显示，并抬高位置避免重叠。
    */
   private showLanBurstToast(): void {
     this.cancelLanBurstToast();
@@ -511,12 +511,12 @@ struct MePanel {
 
   private lanBurstSupportText(): string {
     if (this.lanBurstForceEnabled) {
-      return '本次已强制拉满，重启应用后关闭';
+      return '本次已拉满网络利用率，重启应用后关闭';
     }
     if (this.lanBurstAutoEnabled) {
-      return '当前内网已自动拉满；打开后离开内网仍保持';
+      return '当前内网已自动满载；切到公网/中继后恢复受控利用率';
     }
-    return '内网会自动开启；打开后公网/中继也拉满';
+    return '当前为受控利用率；可手动开启满载，所有通道均使用自定义拉取';
   }
 
   private toggleLanBurstForce(enabled: boolean): void {

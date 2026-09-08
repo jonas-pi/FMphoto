@@ -26,8 +26,6 @@ const OVERLAY_PLAY_SIZE_VP: number = 72;
 const OVERLAY_SIDE_PAD_VP: number = 16;
 /** 横屏左右边距约 70vp，躲开挖孔摄像头 */
 const OVERLAY_LANDSCAPE_SIDE_EXTRA_VP: number = 54;
-const SEEK_PREVIEW_MAX_W_VP: number = 160;
-const SEEK_PREVIEW_MAX_H_VP: number = 90;
 const SEEK_KNOB_SIZE_VP: number = 10;
 
 @Component
@@ -45,9 +43,6 @@ export struct GalleryVideoOverlayChrome {
   @Prop bufferProgress: number = 0;
   @Prop bottomPadding: number = 0;
   @Prop seekPreviewVisible: boolean = false;
-  @Prop seekPreviewPix: PixelMap | undefined = undefined;
-  @Prop videoPxW: number = 0;
-  @Prop videoPxH: number = 0;
   onPlay: () => void = () => {};
   onSelectSpeed: (rate: number) => void = (_rate: number) => {};
   onSelectQuality: (index: number) => void = (_index: number) => {};
@@ -105,66 +100,6 @@ export struct GalleryVideoOverlayChrome {
       return OVERLAY_SIDE_PAD_VP;
     }
     return Math.max(OVERLAY_SIDE_PAD_VP + OVERLAY_LANDSCAPE_SIDE_EXTRA_VP, insetVp + 16);
-  }
-
-  private seekPreviewWidthVp(): number {
-    const aw = this.videoPxW > 0 ? this.videoPxW : 16;
-    const ah = this.videoPxH > 0 ? this.videoPxH : 9;
-    const ratio = aw / ah;
-    const boxR = SEEK_PREVIEW_MAX_W_VP / SEEK_PREVIEW_MAX_H_VP;
-    if (ratio >= boxR) {
-      return SEEK_PREVIEW_MAX_W_VP;
-    }
-    return Math.max(80, Math.round(SEEK_PREVIEW_MAX_H_VP * ratio));
-  }
-
-  private seekPreviewHeightVp(): number {
-    const aw = this.videoPxW > 0 ? this.videoPxW : 16;
-    const ah = this.videoPxH > 0 ? this.videoPxH : 9;
-    const ratio = aw / ah;
-    const boxR = SEEK_PREVIEW_MAX_W_VP / SEEK_PREVIEW_MAX_H_VP;
-    if (ratio >= boxR) {
-      return Math.max(54, Math.round(SEEK_PREVIEW_MAX_W_VP / ratio));
-    }
-    return SEEK_PREVIEW_MAX_H_VP;
-  }
-
-  /** 小窗水平跟随进度点，并夹在轨道范围内 */
-  private seekPreviewLeftVp(): number {
-    const w = this.seekPreviewWidthVp();
-    const x = this.progress * this.barW - w / 2;
-    return Math.max(0, Math.min(this.barW - w, x));
-  }
-
-  @Builder
-  private seekPreviewCard() {
-    Column({ space: 4 }) {
-      if (this.seekPreviewPix !== undefined) {
-        Image(this.seekPreviewPix)
-          .width(this.seekPreviewWidthVp())
-          .height(this.seekPreviewHeightVp())
-          .objectFit(ImageFit.Cover)
-          .borderRadius(8)
-      } else {
-        Row()
-          .width(this.seekPreviewWidthVp())
-          .height(this.seekPreviewHeightVp())
-          .backgroundColor('#CC111111')
-          .borderRadius(8)
-      }
-      Text(this.currentText)
-        .fontSize(11)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Color.White)
-        .maxLines(1)
-    }
-    .padding(4)
-    .backgroundColor('#E6111111')
-    .borderRadius(10)
-    .borderWidth(1)
-    .borderColor('#66FFFFFF')
-    .hitTestBehavior(HitTestMode.None)
-    .margin({ left: this.seekPreviewLeftVp(), bottom: 44 })
   }
 
   /** 进度条落点按手指在轨道上的绝对位置，不相对当前播放进度偏移 */
@@ -512,10 +447,6 @@ export struct GalleryVideoOverlayChrome {
               })
             }
             .width('100%')
-
-            if (this.seekPreviewVisible) {
-              this.seekPreviewCard()
-            }
           }
           .width('100%')
           .clip(false)

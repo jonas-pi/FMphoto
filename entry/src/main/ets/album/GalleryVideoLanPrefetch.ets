@@ -1,5 +1,6 @@
 /**
- * 内网原片边下边播：官方 AVPlayer.dataSrc 从本地文件读，HTTP 只负责往文件里写。
+ * 原片边下边播：官方 AVPlayer.dataSrc 从本地文件读，HTTP 只负责往文件里写。
+ * 公网 / 中继 / 内网同一套；满载只影响网络利用率和配套性能档，不决定是否预取。
  * 另拉文件尾（moov 常在末尾），避免半成品 mp4 无法 prepare。
  */
 import { http } from '@kit.NetworkKit';
@@ -19,6 +20,10 @@ const PREFETCH_READ_TIMEOUT_MS: number = 120000;
 const PREFETCH_FLUSH_BYTES: number = 1024 * 1024;
 const PREFETCH_TAIL_BYTES: number = 8 * 1024 * 1024;
 const PREFETCH_HEAD_MIN_PLAYABLE: number = 64 * 1024;
+/** 非满载使用小 Range 串行下载，避免单条长连接瞬间占满公网带宽 */
+const PREFETCH_CONTROLLED_CHUNK_BYTES: number = 2 * 1024 * 1024;
+/** 约 64Mbps：覆盖常见 30Mbps 原片并留余量；满载模式不设上限 */
+const PREFETCH_CONTROLLED_BYTES_PER_SEC: number = 8 * 1024 * 1024;
 
 let prefetchGen: number = 0;
 let prefetchUrl: string = '';
@@ -63,6 +68,24 @@ function parsePositiveInt(text: string): number {
 
 function parseContentLength(headers: Object): number {
   return parsePositiveInt(headerLookup(headers, 'content-length'));
+}
+
+function parseContentRangeTotal(headers: Object): number {
+  const value = headerLookup(headers, 'content-range').trim();
+  const slash = value.lastIndexOf('/');
+  if (slash < 0 || slash + 1 >= value.length) {
+    return -1;
+  }
+  return parsePositiveInt(value.substring(slash + 1));
+}
+
+function waitMs(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve: () => void) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function isPlayableNow(): boolean {
@@ -266,8 +289,22 @@ export function waitGalleryVideoLanPrefetchPlayable(url: string, timeoutMs: numb
 
 /**
  * dataSrc 回调：已缓存返回字节数；尚未下到返回 0；结束 -1；失败 -2。
+ * 播放器与抽帧器必须使用不同的只读 fd，避免 lseek 互相踩。
  */
 export function fillGalleryVideoLanPrefetch(buffer: ArrayBuffer, length: number, pos?: number): number {
+  return fillGalleryVideoLanPrefetchFromFd(prefetchReadFd, buffer, length, pos);
+}
+
+/**
+ * 给抽帧器单独喂数：必须传入独立只读 fd，不能和播放器共用句柄。
+ * 官方：同一 fd 同时给 AVPlayer / AVMetadataExtractor 会互相抢 lseek。
+ */
+export function fillGalleryVideoLanPrefetchFromFd(
+  fd: number,
+  buffer: ArrayBuffer,
+  length: number,
+  pos?: number
+): number {
   try {
     if (length <= 0) {
       return 0;
@@ -303,11 +340,11 @@ export function fillGalleryVideoLanPrefetch(buffer: ArrayBuffer, length: number,
       return prefetchComplete ? -1 : 0;
     }
     const take = Math.min(want, prefetchHeadBytes - start);
-    if (prefetchReadFd < 0 || take <= 0) {
+    if (fd < 0 || take <= 0) {
       return 0;
     }
-    fileIo.lseek(prefetchReadFd, start, fileIo.WhenceType.SEEK_SET);
-    return fileIo.readSync(prefetchReadFd, buffer, { length: take });
+    fileIo.lseek(fd, start, fileIo.WhenceType.SEEK_SET);
+    return fileIo.readSync(fd, buffer, { length: take });
   } catch (_e) {
     return -2;
   }
@@ -315,7 +352,7 @@ export function fillGalleryVideoLanPrefetch(buffer: ArrayBuffer, length: number,
 
 export function scheduleGalleryVideoLanPrefetch(directUrl: string, cacheDir: string): void {
   const url = directUrl.trim();
-  if (!isGalleryLanBurstEnabled() || url.length === 0 || isHlsUrl(url) || cacheDir.length === 0) {
+  if (url.length === 0 || isHlsUrl(url) || cacheDir.length === 0) {
     return;
   }
   // 同一 URL 只拉一次：seek / BUFFERING 再入不得 unlink 从头下。
@@ -497,9 +534,25 @@ async function runPrefetch(gen: number, url: string, filePath: string): Promise<
   } catch (_e) {
     return;
   }
-  hilog.info(DOMAIN, TAG, 'lan cache start');
+  hilog.info(DOMAIN, TAG, 'custom cache start full=%{public}d', isGalleryLanBurstEnabled() ? 1 : 0);
   const headDone = runHeadStream(gen, url, headers, stored.baseUrl);
   await headDone;
+}
+
+function tryMarkPrefetchComplete(): void {
+  if (prefetchTotalBytes <= 0) {
+    return;
+  }
+  if (prefetchTailStart < 0) {
+    prefetchComplete = prefetchHeadBytes >= prefetchTotalBytes;
+  } else {
+    const tailNeed = prefetchTailBuf !== null ? prefetchTailBuf.byteLength : 0;
+    prefetchComplete = prefetchHeadBytes >= prefetchTailStart &&
+      tailNeed > 0 && prefetchTailGot >= tailNeed;
+  }
+  if (prefetchComplete) {
+    notifyPlayableWaiters(true);
+  }
 }
 
 function maybeStartTail(gen: number, url: string, headers: Record<string, string>, storedBase: string): void {
@@ -514,7 +567,150 @@ function maybeStartTail(gen: number, url: string, headers: Record<string, string
   void runTailStream(gen, url, headers, storedBase, tailStart);
 }
 
+interface HeadRangeResult {
+  code: number;
+  received: number;
+  elapsedMs: number;
+}
+
+/**
+ * 拉取实现与通道无关，只由满载开关选择速率：
+ * - 满载：单条长流尽快拉完；
+ * - 非满载：2MiB Range 串行拉取，并按 8MiB/s 节拍等待。
+ */
 async function runHeadStream(
+  gen: number,
+  url: string,
+  headers: Record<string, string>,
+  storedBase: string
+): Promise<void> {
+  if (isGalleryLanBurstEnabled()) {
+    await runHeadStreamUnlimited(gen, url, headers, storedBase);
+    return;
+  }
+  let start = prefetchHeadBytes;
+  while (gen === prefetchGen && !prefetchComplete) {
+    const targetEnd = prefetchTailStart >= 0 ? prefetchTailStart : prefetchTotalBytes;
+    if (targetEnd > 0 && start >= targetEnd) {
+      tryMarkPrefetchComplete();
+      return;
+    }
+    const end = start + PREFETCH_CONTROLLED_CHUNK_BYTES - 1;
+    const result = await runHeadRange(gen, url, headers, storedBase, start, end);
+    if (gen !== prefetchGen || result.code < 200 || result.code >= 300 || result.received <= 0) {
+      return;
+    }
+    if (result.code === 200) {
+      // 服务端忽略 Range 时只能接受完整响应；仍保持自定义 dataSrc，不退回系统拉取。
+      tryMarkPrefetchComplete();
+      return;
+    }
+    const next = prefetchHeadBytes;
+    if (next <= start) {
+      return;
+    }
+    start = next;
+    if (!isGalleryLanBurstEnabled()) {
+      const expectedMs = Math.ceil(result.received * 1000 / PREFETCH_CONTROLLED_BYTES_PER_SEC);
+      await waitMs(expectedMs - result.elapsedMs);
+    }
+  }
+}
+
+async function runHeadRange(
+  gen: number,
+  url: string,
+  headers: Record<string, string>,
+  storedBase: string,
+  start: number,
+  end: number
+): Promise<HeadRangeResult> {
+  const req = http.createHttp();
+  prefetchHeadReq = req;
+  const acc = new ArrayBuffer(PREFETCH_FLUSH_BYTES);
+  const accOffRef: number[] = [0];
+  let writeFailed = false;
+  let received = 0;
+  let responseCode = -1;
+  const startedAt = Date.now();
+  let dataEndResolve: (() => void) | undefined = undefined;
+  const dataEndPromise = new Promise<void>((resolve: () => void) => {
+    dataEndResolve = resolve;
+  });
+  const onHeaders = (h: Object): void => {
+    if (gen !== prefetchGen) {
+      return;
+    }
+    const rangeTotal = parseContentRangeTotal(h);
+    const fullLength = parseContentLength(h);
+    const total = rangeTotal > 0 ? rangeTotal : fullLength;
+    if (total > 0 && prefetchTotalBytes < 0) {
+      prefetchTotalBytes = total;
+      maybeStartTail(gen, url, headers, storedBase);
+    }
+  };
+  const onData = (chunk: ArrayBuffer): void => {
+    if (writeFailed || gen !== prefetchGen || chunk.byteLength === 0) {
+      return;
+    }
+    received += chunk.byteLength;
+    if (!appendHeadChunk(chunk, acc, accOffRef)) {
+      writeFailed = true;
+    }
+  };
+  const onEnd = (): void => {
+    if (dataEndResolve !== undefined) {
+      dataEndResolve();
+    }
+  };
+  req.on('headersReceive', onHeaders);
+  req.on('dataReceive', onData);
+  req.on('dataEnd', onEnd);
+  try {
+    const opt: http.HttpRequestOptions = {
+      method: http.RequestMethod.GET,
+      header: copyHeaders(headers),
+      connectTimeout: PREFETCH_CONNECT_TIMEOUT_MS,
+      readTimeout: PREFETCH_READ_TIMEOUT_MS,
+      maxLimit: PREFETCH_MAX_BYTES
+    };
+    (opt.header as Record<string, string>)['Range'] = `bytes=${start}-${end}`;
+    applyCert(opt, storedBase);
+    responseCode = await req.requestInStream(url, opt);
+    if (gen !== prefetchGen) {
+      return { code: responseCode, received: received, elapsedMs: Date.now() - startedAt };
+    }
+    if (responseCode < 200 || responseCode >= 300) {
+      hilog.warn(DOMAIN, TAG, 'controlled cache http %{public}d', responseCode);
+      return { code: responseCode, received: received, elapsedMs: Date.now() - startedAt };
+    }
+    await dataEndPromise;
+    if (!writeFailed && accOffRef[0] > 0) {
+      flushHead(acc, accOffRef[0]);
+      accOffRef[0] = 0;
+    }
+    tryMarkPrefetchComplete();
+    notifyPlayableWaiters(true);
+  } catch (_e) {
+    if (gen === prefetchGen) {
+      hilog.warn(DOMAIN, TAG, 'controlled cache head abort');
+    }
+  } finally {
+    try {
+      req.off('headersReceive', onHeaders);
+      req.off('dataReceive', onData);
+      req.off('dataEnd', onEnd);
+    } catch (_e) {
+    }
+    if (prefetchHeadReq === req) {
+      prefetchHeadReq = null;
+    }
+    destroyReq(req);
+  }
+  return { code: responseCode, received: received, elapsedMs: Date.now() - startedAt };
+}
+
+async function runHeadStreamUnlimited(
   gen: number,
   url: string,
   headers: Record<string, string>,
@@ -569,7 +765,7 @@ async function runHeadStream(
       return;
     }
     if (code < 200 || code >= 300) {
-      hilog.warn(DOMAIN, TAG, 'lan cache http %{public}d', code);
+      hilog.warn(DOMAIN, TAG, 'full cache http %{public}d', code);
       return;
     }
     await dataEndPromise;
@@ -578,21 +774,14 @@ async function runHeadStream(
       accOffRef[0] = 0;
     }
     if (!writeFailed && gen === prefetchGen) {
-      if (prefetchTailStart < 0) {
-        prefetchComplete = true;
-      } else {
-        const tailNeed = prefetchTailBuf !== null ? prefetchTailBuf.byteLength : 0;
-        if (prefetchHeadBytes >= prefetchTailStart && prefetchTailGot >= tailNeed && tailNeed > 0) {
-          prefetchComplete = true;
-        }
-      }
-      hilog.info(DOMAIN, TAG, 'lan cache head bytes=%{public}s total=%{public}s fast=%{public}s',
+      tryMarkPrefetchComplete();
+      hilog.info(DOMAIN, TAG, 'full cache head bytes=%{public}s total=%{public}s fast=%{public}s',
         `${prefetchHeadBytes}`, `${prefetchTotalBytes}`, `${prefetchFastStart}`);
       notifyPlayableWaiters(true);
     }
   } catch (_e) {
     if (gen === prefetchGen) {
-      hilog.warn(DOMAIN, TAG, 'lan cache head abort');
+      hilog.warn(DOMAIN, TAG, 'full cache head abort');
     }
   } finally {
     try {
@@ -620,6 +809,7 @@ function appendTailChunk(chunk: ArrayBuffer): void {
   const take = Math.min(room, chunk.byteLength);
   new Uint8Array(tailBuf).set(new Uint8Array(chunk, 0, take), prefetchTailGot);
   prefetchTailGot += take;
+  tryMarkPrefetchComplete();
   notifyPlayableWaiters(true);
 }
 

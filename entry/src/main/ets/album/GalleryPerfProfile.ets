@@ -1,8 +1,8 @@
 /**
  * 图库性能档：按整机内存容量选高性能 / 均衡 / 流畅，内存紧张时再降档。
  * 只在 Ability 启动与前后台切换探测，不进滑动热路径。
- * 内网连接时额外打开带宽爆发：只认会话 LAN 槽位，公网/中继不得自动漏到该档。
- * 「我的」页可手动打开满载；只活在本次进程，重启后关闭，避免一进应用就打满流量。
+ * 所有连接通道使用同一套自定义拉取；满载只改变网络利用率及配套性能档。
+ * 内网自动满载；公网/中继默认受控，用户可在本次进程中手动开启满载。
  */
 import { AbilityConstant } from '@kit.AbilityKit';
 import { hilog, hidebug } from '@kit.PerformanceAnalysisKit';
@@ -29,9 +29,9 @@ let deviceGear: GalleryPerfGear = GalleryPerfGear.BALANCED;
 let pressureGear: GalleryPerfGear = GalleryPerfGear.PERFORMANCE;
 let lastProbeAtMs: number = 0;
 let probed: boolean = false;
-/** 实际生效的爆发档：内网自动 或 用户手动满载 */
+/** 实际生效的满载档：内网自动或用户手动开启 */
 let galleryLanBurst: boolean = false;
-/** 会话判定的内网自动爆发，切公网/中继后关闭 */
+/** 当前连接是否命中可信内网槽位并自动满载 */
 let galleryLanBurstAuto: boolean = false;
 /** 用户在「我的」页打开的满载；不落盘，进程结束即失效 */
 let galleryLanBurstForce: boolean = false;
@@ -86,11 +86,10 @@ function currentHostOf(baseUrl: string): string {
 }
 
 /**
- * 内网爆发只认会话通道，禁止 RFC1918 启发式把 VPN/公司 10.x 漏成千兆档。
- * 公网 / 中继槽位命中一律关闭；LAN 槽位命中且主机确是私网才开；
- * 单地址登录仅 192.168 / 链路本地 / ULA / .local 兜底。
+ * 自动满载只认可信内网连接，避免 VPN/公司 10.x 被误判。
+ * 公网及中继槽位明确不自动满载，但仍使用相同的自定义拉取。
  */
-function shouldEnableLanBurst(
+function shouldAutoEnableFullLoad(
   baseUrl: string,
   lanUrl: string,
   lanIpv6Url: string,
@@ -104,10 +103,7 @@ function shouldEnableLanBurst(
   if (current.length === 0 || isFnRelayBaseUrl(current)) {
     return false;
   }
-  if (matchesAnyEndpoint(current, [relayUrl])) {
-    return false;
-  }
-  if (matchesAnyEndpoint(current, [publicUrl, publicDomainUrl, publicIpUrl, publicIpv6Url])) {
+  if (matchesAnyEndpoint(current, [relayUrl, publicUrl, publicDomainUrl, publicIpUrl, publicIpv6Url])) {
     return false;
   }
   const host = currentHostOf(current);
@@ -126,7 +122,7 @@ export function isGalleryLanBurstForceEnabled(): boolean {
   return galleryLanBurstForce;
 }
 
-/** 当前是否由内网槽位自动拉满，供开关副文案区分 */
+/** 当前是否因可信内网连接而自动满载 */
 export function isGalleryLanBurstAutoEnabled(): boolean {
   return galleryLanBurstAuto;
 }
@@ -135,7 +131,7 @@ export function registerGalleryLanBurstListener(cb: () => void): void {
   lanBurstListener = cb;
 }
 
-/** 按「手动满载 OR 内网自动」合成生效档，避免切网冲掉用户本次打开的开关 */
+/** 内网自动满载，或者用户在任意通道手动开启满载 */
 function syncGalleryLanBurstEffective(): void {
   const enabled = galleryLanBurstForce || galleryLanBurstAuto;
   if (galleryLanBurst === enabled) {
@@ -168,7 +164,7 @@ export function resetGalleryLanBurstSession(): void {
   syncGalleryLanBurstEffective();
 }
 
-/** 登录/切网后按会话槽位决定自动爆发；手动满载仍可在公网/中继叠加打开 */
+/** 登录或切换通道后，仅更新“是否自动满载”；自定义拉取方式不受影响 */
 export function applyGalleryLanBurstForSession(
   baseUrl: string,
   endpointLanUrl: string,
@@ -179,7 +175,7 @@ export function applyGalleryLanBurstForSession(
   endpointPublicIpv6Url: string,
   endpointRelayUrl: string
 ): void {
-  galleryLanBurstAuto = shouldEnableLanBurst(
+  galleryLanBurstAuto = shouldAutoEnableFullLoad(
     baseUrl,
     endpointLanUrl !== undefined ? endpointLanUrl : '',
     endpointLanIpv6Url !== undefined ? endpointLanIpv6Url : '',
