@@ -9,7 +9,7 @@ import {
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleMode,
-  TextStyleMode,
+  IconStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { AppSession } from '../auth/AppSession';
@@ -83,7 +83,9 @@ struct Settings {
   private titleBarContent(): TitleBarContentOptions {
     const saveContent: HdsNavigationIconOptions = {
       label: $r('app.string.save'),
-      type: TextStyleMode.NORMAL,
+      icon: $r('sys.symbol.checkmark'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
       action: (): void => {
         this.persistAndBack();
       }

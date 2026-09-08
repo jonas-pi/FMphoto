@@ -1482,11 +1482,26 @@ export struct GalleryNetworkThumb {
   /** 快滑冻结时已登记松手补拉，避免重复入队 */
   private freezeResumeQueued: boolean = false;
 
+  /**
+   * @Reusable 组件切换父列表时，未显式传入的 @Prop 在极短窗口内可能为 undefined。
+   * 字符串属性进入渲染和缓存逻辑前统一收口，避免复用回调触发未捕获 TypeError。
+   */
+  private safeString(value: string): string {
+    const raw = value as Object | string | number | boolean | undefined | null;
+    return typeof raw === 'string' ? raw : '';
+  }
+
+  private safeSharedTransitionId(): string {
+    return this.safeString(this.sharedTransitionId);
+  }
+
   private logDebug(message: string): void {
-    if (this.debugLabel.length <= 0) {
+    const label = this.safeString(this.debugLabel);
+    if (label.length <= 0) {
       return;
     }
-    hilog.warn(DOMAIN, TAG, 'thumb %{public}s %{public}s uri=%{public}s', this.debugLabel, message, this.uri);
+    hilog.warn(DOMAIN, TAG, 'thumb %{public}s %{public}s uri=%{public}s',
+      label, message, this.safeString(this.uri));
   }
 
   onUriChange(): void {
@@ -1567,7 +1582,7 @@ export struct GalleryNetworkThumb {
   }
 
   private applyLoadedPix(pix: PixelMap, versionAtStart: number, uriAtStart: string): void {
-    if (versionAtStart !== this.loadVersion || uriAtStart !== this.uri) {
+    if (versionAtStart !== this.loadVersion || uriAtStart !== this.safeString(this.uri)) {
       return;
     }
     this.pix = pix;
@@ -1584,26 +1599,28 @@ export struct GalleryNetworkThumb {
   }
 
   private async loadPix(): Promise<void> {
-    if (this.uri.length === 0 || this.loading) {
+    const safeUri = this.safeString(this.uri);
+    const safeIdentity = this.safeString(this.cacheIdentity);
+    if (safeUri.length === 0 || this.loading) {
       return;
     }
-    const cacheKey = thumbCacheKey(this.uri, this.isVideo);
+    const cacheKey = thumbCacheKey(safeUri, this.isVideo);
     const cached = thumbPixCache.get(cacheKey);
     if (cached !== undefined) {
       this.pix = cached;
       this.pixAlpha = 1;
       this.retryCount = 0;
-      rememberThumbIdentityCache(this.cacheIdentity, cacheKey, this.cacheRank);
+      rememberThumbIdentityCache(safeIdentity, cacheKey, this.cacheRank);
       this.needsUpgradeAfterResume = false;
       this.logDebug('cache-hit');
       return;
     }
-    const reused = getThumbPixCachedByIdentity(this.cacheIdentity);
+    const reused = getThumbPixCachedByIdentity(safeIdentity);
     if (reused !== undefined) {
       this.pix = reused;
       this.pixAlpha = 1;
       this.retryCount = 0;
-      const reusedRank = getThumbIdentityCacheRank(this.cacheIdentity);
+      const reusedRank = getThumbIdentityCacheRank(safeIdentity);
       if (reusedRank >= this.cacheRank) {
         this.needsUpgradeAfterResume = false;
         this.logDebug(`identity-hit-r${reusedRank}`);
@@ -1619,16 +1636,16 @@ export struct GalleryNetworkThumb {
     }
     this.logDebug('load-start');
     const versionAtStart = this.loadVersion;
-    const uriAtStart = this.uri;
+    const uriAtStart = safeUri;
     this.loading = true;
     const pix = await loadThumbPix(
       uriAtStart,
       this.isVideo,
-      this.cacheIdentity,
+      safeIdentity,
       this.cacheRank,
       this.diskPersistKind
     );
-    if (versionAtStart !== this.loadVersion || uriAtStart !== this.uri) {
+    if (versionAtStart !== this.loadVersion || uriAtStart !== this.safeString(this.uri)) {
       this.loading = false;
       this.logDebug('load-stale');
       return;
@@ -1712,8 +1729,8 @@ export struct GalleryNetworkThumb {
     .borderRadius(0)
     .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
-    .id(this.sharedTransitionId.length > 0 ? `${this.sharedTransitionId}_source` : '')
-    .sharedTransition(this.sharedTransitionId, gallerySharedTransitionOptions())
+    .id(this.safeSharedTransitionId().length > 0 ? `${this.safeSharedTransitionId()}_source` : '')
+    .sharedTransition(this.safeSharedTransitionId(), gallerySharedTransitionOptions())
     // 防止子节点未覆盖区域仍响应系统拖拽
     .draggable(false)
     // Image/骨架会参与命中并吞掉长按与 Pan，父级 Stack 上的多选手势永远收不到；整卡不参与命中，事件落到外层图库格

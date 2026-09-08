@@ -1471,7 +1471,8 @@ export class FnHttpClientGalleryOps {
             if (typeof el === 'object' && el !== null) {
               const one = el as FolderViewCoverItem;
               const hasPath = (one.path !== undefined && one.path.length > 0) ||
-                (one.folderPath !== undefined && one.folderPath.length > 0);
+                (one.folderPath !== undefined && one.folderPath.length > 0) ||
+                (one.dirPath !== undefined && one.dirPath.length > 0);
               if (hasPath) {
                 items.push(one);
               } else {

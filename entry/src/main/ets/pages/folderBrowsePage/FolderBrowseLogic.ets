@@ -1,6 +1,7 @@
 import { FN_PHOTO_API_PREFIX } from '../../network/FnPhotoRoutes';
 import { FolderViewCoverItem, GalleryListItem, PhotoFolderListItem } from '../../model/FnApiTypes';
 import {
+  FOLDER_BROWSE_DIR_ID_PREFIX,
   FOLDER_BROWSE_KIND_FOLDER,
   FOLDER_BROWSE_KIND_MEDIA,
   FolderBrowseFolderItem,
@@ -50,30 +51,128 @@ export function folderBrowseCoverRel(id: string, uuid: string): string {
   return `${FN_PHOTO_API_PREFIX}/stream/p/t/${id}/xs/${uuid}`;
 }
 
-export function folderBrowseCoverRelFromItem(item: FolderViewCoverItem): string {
-  const rec = item as Record<string, Object | string | number | boolean | undefined | null>;
+type FolderBrowseLooseRec = Record<string, Object | string | number | boolean | undefined | null>;
+
+function folderBrowseAsRec(
+  value: Object | string | number | boolean | undefined | null
+): FolderBrowseLooseRec | null {
+  if (value === undefined || value === null || typeof value !== 'object') {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return null;
+  }
+  return value as FolderBrowseLooseRec;
+}
+
+function folderBrowseFirstRec(
+  value: Object | string | number | boolean | undefined | null
+): FolderBrowseLooseRec | null {
+  if (Array.isArray(value)) {
+    const arr = value as Object[];
+    for (let i = 0; i < arr.length; i++) {
+      const rec = folderBrowseAsRec(arr[i]);
+      if (rec !== null) {
+        return rec;
+      }
+    }
+    return null;
+  }
+  return folderBrowseAsRec(value);
+}
+
+function folderBrowseReadId(rec: FolderBrowseLooseRec): string {
   const idVal = rec['id'] ?? rec['photoId'] ?? rec['photo_id'];
-  let id = '';
   if (typeof idVal === 'string') {
-    id = idVal.trim();
-  } else if (typeof idVal === 'number' && Number.isFinite(idVal)) {
-    id = `${Math.floor(idVal)}`;
+    return idVal.trim();
   }
-  if (id.length === 0) {
-    return '';
+  if (typeof idVal === 'number' && Number.isFinite(idVal)) {
+    return `${Math.floor(idVal)}`;
   }
-  let uuid = '';
-  const uuidA = rec['uuid'];
-  const uuidB = rec['photoUUID'];
-  const uuidC = rec['photo_uuid'];
-  if (typeof uuidA === 'string' && uuidA.trim().length > 0) {
-    uuid = uuidA.trim();
-  } else if (typeof uuidB === 'string' && uuidB.trim().length > 0) {
-    uuid = uuidB.trim();
-  } else if (typeof uuidC === 'string' && uuidC.trim().length > 0) {
-    uuid = uuidC.trim();
+  return '';
+}
+
+function folderBrowseReadUuid(rec: FolderBrowseLooseRec): string {
+  const keys: string[] = ['uuid', 'photoUUID', 'photo_uuid', 'session'];
+  for (let i = 0; i < keys.length; i++) {
+    const v = rec[keys[i]];
+    if (typeof v === 'string' && v.trim().length > 0) {
+      return v.trim();
+    }
   }
-  return folderBrowseCoverRel(id, uuid);
+  return '';
+}
+
+function folderBrowseReadThumbUrl(rec: FolderBrowseLooseRec): string {
+  const keys: string[] = ['xsUrl', 'sUrl', 'mUrl', 'xxsUrl', 'cover', 'thumb', 'url'];
+  for (let i = 0; i < keys.length; i++) {
+    const v = rec[keys[i]];
+    if (typeof v === 'string' && v.trim().length > 0 && v.indexOf('/stream/') >= 0) {
+      return v.trim();
+    }
+  }
+  const additional = folderBrowseAsRec(rec['additional']);
+  if (additional !== null) {
+    const th = folderBrowseAsRec(additional['thumbnail']);
+    if (th !== null) {
+      const nested = folderBrowseReadThumbUrl(th);
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+  }
+  return '';
+}
+
+function folderBrowseCoverRelFromPhoto(rec: FolderBrowseLooseRec): string {
+  const nested = folderBrowseAsRec(rec['photo'] ?? rec['media'] ?? rec['item']);
+  if (nested !== null) {
+    const nestedRel = folderBrowseCoverRelFromPhoto(nested);
+    if (nestedRel.length > 0) {
+      return nestedRel;
+    }
+  }
+  const direct = folderBrowseReadThumbUrl(rec);
+  if (direct.length > 0) {
+    return direct;
+  }
+  return folderBrowseCoverRel(folderBrowseReadId(rec), folderBrowseReadUuid(rec));
+}
+
+/** 官方封面项是 {dirPath, cover[], defaultCover[]}，getPosters 取 cover[0].id + uuid。 */
+export function folderBrowseCoverRelFromItem(item: FolderViewCoverItem): string {
+  const rec = item as FolderBrowseLooseRec;
+  const fromCover = folderBrowseFirstRec(rec['cover']);
+  if (fromCover !== null) {
+    const uri = folderBrowseCoverRelFromPhoto(fromCover);
+    if (uri.length > 0) {
+      return uri;
+    }
+  }
+  const fromDefault = folderBrowseFirstRec(rec['defaultCover'] ?? rec['default_cover']);
+  if (fromDefault !== null) {
+    const uri = folderBrowseCoverRelFromPhoto(fromDefault);
+    if (uri.length > 0) {
+      return uri;
+    }
+  }
+  return folderBrowseCoverRelFromPhoto(rec);
+}
+
+function folderBrowseCoverItemPath(item: FolderViewCoverItem): string {
+  const rec = item as FolderBrowseLooseRec;
+  const dirVal = rec['dirPath'];
+  const dir = typeof dirVal === 'string' ? dirVal : '';
+  return folderBrowseNormalizePath(dir.length > 0 ? dir : (item.path ?? item.folderPath ?? ''));
+}
+
+function folderBrowseCoverItemName(item: FolderViewCoverItem): string {
+  const rec = item as FolderBrowseLooseRec;
+  const dirVal = rec['dirPath'];
+  const dir = typeof dirVal === 'string' ? dirVal : '';
+  const nameVal = rec['dirName'] ?? rec['name'];
+  const explicit = typeof nameVal === 'string' ? nameVal : '';
+  return folderBrowseLabelOf(dir.length > 0 ? dir : (item.path ?? item.folderPath ?? ''), explicit);
 }
 
 export function folderBrowseFoldersFromList(raw: PhotoFolderListItem[]): FolderBrowseFolderItem[] {
@@ -82,7 +181,7 @@ export function folderBrowseFoldersFromList(raw: PhotoFolderListItem[]): FolderB
   for (let i = 0; i < raw.length; i++) {
     const src = raw[i];
     const path = folderBrowsePathOf(src);
-    if (path.length === 0 || seen.has(path)) {
+    if (path.length === 0 || folderBrowseIsOsRootPath(path) || seen.has(path)) {
       continue;
     }
     seen.add(path);
@@ -106,15 +205,11 @@ export function folderBrowseApplyCoverUris(
     if (uri.length === 0) {
       continue;
     }
-    const cover = covers[i];
-    const name = folderBrowseLabelOf(
-      cover.path ?? cover.folderPath ?? '',
-      cover.dirName ?? cover.name ?? ''
-    );
+    const name = folderBrowseCoverItemName(covers[i]);
     if (name.length > 0 && !byName.has(name)) {
       byName.set(name, uri);
     }
-    const p = folderBrowseNormalizePath(cover.path ?? cover.folderPath ?? '');
+    const p = folderBrowseCoverItemPath(covers[i]);
     if (p.length > 0 && !byPath.has(p)) {
       byPath.set(p, uri);
     }
@@ -175,28 +270,78 @@ export function folderBrowseCoverDirNamesFallback(folders: FolderBrowseFolderIte
   return names;
 }
 
-/** 从完整路径还原可逐级返回的路径栈。 */
-export function folderBrowsePathStackFromPath(path: string): string[] {
+/** NAS/系统根路径，禁止作为浏览目标。 */
+export function folderBrowseIsOsRootPath(path: string): boolean {
   const normalized = folderBrowseNormalizePath(path);
-  if (normalized.length === 0) {
+  return normalized === '/' || normalized === '\\';
+}
+
+/**
+ * 进入文件夹浏览页时的路径栈：只放目标目录自己。
+ * 禁止按 `/` 拆出祖先，否则返回会一路退到存储根。
+ */
+export function folderBrowseLandingStack(path: string): string[] {
+  const normalized = folderBrowseNormalizePath(path);
+  if (normalized.length === 0 || folderBrowseIsOsRootPath(normalized)) {
     return [];
   }
-  const leadingSlash = normalized.startsWith('/');
-  const raw = leadingSlash ? normalized.substring(1) : normalized;
-  const segs = raw.split('/');
-  const stack: string[] = [];
-  let acc = '';
-  for (let i = 0; i < segs.length; i++) {
-    const seg = segs[i];
-    if (seg.length === 0) {
+  return [normalized];
+}
+
+/** child 是否就是 floor，或位于 floor 之下。空 floor 表示相册文件夹根。 */
+export function folderBrowsePathAllowed(path: string, floor: string): boolean {
+  const target = folderBrowseNormalizePath(path);
+  if (folderBrowseIsOsRootPath(target)) {
+    return false;
+  }
+  const root = folderBrowseNormalizePath(floor);
+  if (root.length === 0) {
+    return target.length > 0;
+  }
+  return target === root || target.indexOf(`${root}/`) === 0;
+}
+
+/** 从相册已配置根目录中找出包含目标路径的最外层授权根。 */
+export function folderBrowseAuthorizedRoot(
+  targetPath: string,
+  roots: FolderBrowseFolderItem[]
+): string {
+  const target = folderBrowseNormalizePath(targetPath);
+  let matched = '';
+  for (let i = 0; i < roots.length; i++) {
+    const root = folderBrowseNormalizePath(roots[i].path);
+    if (root.length === 0 || folderBrowseIsOsRootPath(root) ||
+      !folderBrowsePathAllowed(target, root)) {
       continue;
     }
-    if (acc.length === 0) {
-      acc = leadingSlash ? `/${seg}` : seg;
-    } else {
-      acc = `${acc}/${seg}`;
+    if (matched.length === 0 || root.length < matched.length) {
+      matched = root;
     }
-    stack.push(acc);
+  }
+  return matched;
+}
+
+/** 仅在授权根内构造可返回路径栈，不生成授权根以上的任何祖先。 */
+export function folderBrowseStackWithinRoot(targetPath: string, rootPath: string): string[] {
+  const target = folderBrowseNormalizePath(targetPath);
+  const root = folderBrowseNormalizePath(rootPath);
+  if (root.length === 0 || !folderBrowsePathAllowed(target, root)) {
+    return [];
+  }
+  const stack: string[] = [root];
+  if (target === root) {
+    return stack;
+  }
+  const suffix = target.substring(root.length + 1);
+  const segments = suffix.split('/');
+  let current = root;
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment.length === 0) {
+      continue;
+    }
+    current = `${current}/${segment}`;
+    stack.push(current);
   }
   return stack;
 }
@@ -207,6 +352,71 @@ export function folderBrowseMediaId(item: GalleryListItem): string {
     return '';
   }
   return String(id).trim();
+}
+
+export function folderBrowseDirSelectionId(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) {
+    return '';
+  }
+  return `${FOLDER_BROWSE_DIR_ID_PREFIX}${trimmed}`;
+}
+
+export function folderBrowseIsDirSelectionId(id: string): boolean {
+  return id.indexOf(FOLDER_BROWSE_DIR_ID_PREFIX) === 0 &&
+    id.length > FOLDER_BROWSE_DIR_ID_PREFIX.length;
+}
+
+export function folderBrowseDirPathFromSelectionId(id: string): string {
+  if (!folderBrowseIsDirSelectionId(id)) {
+    return '';
+  }
+  return id.substring(FOLDER_BROWSE_DIR_ID_PREFIX.length);
+}
+
+export function folderBrowseSelectionIdOf(item: FolderBrowseGridItem): string {
+  if (item.kind === FOLDER_BROWSE_KIND_FOLDER) {
+    return folderBrowseDirSelectionId(item.folderPath);
+  }
+  if (item.media !== undefined) {
+    return folderBrowseMediaId(item.media);
+  }
+  return '';
+}
+
+export function folderBrowseSelectionHasFolder(ids: string[]): boolean {
+  for (let i = 0; i < ids.length; i++) {
+    if (folderBrowseIsDirSelectionId(ids[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function folderBrowseMergeMediaUnique(
+  acc: GalleryListItem[],
+  incoming: GalleryListItem[]
+): GalleryListItem[] {
+  const seen = new Set<string>();
+  const out: GalleryListItem[] = [];
+  for (let i = 0; i < acc.length; i++) {
+    const id = folderBrowseMediaId(acc[i]);
+    if (id.length > 0) {
+      seen.add(id);
+    }
+    out.push(acc[i]);
+  }
+  for (let i = 0; i < incoming.length; i++) {
+    const id = folderBrowseMediaId(incoming[i]);
+    if (id.length > 0 && seen.has(id)) {
+      continue;
+    }
+    if (id.length > 0) {
+      seen.add(id);
+    }
+    out.push(incoming[i]);
+  }
+  return out;
 }
 
 function mediaItemKey(item: GalleryListItem, index: number): string {

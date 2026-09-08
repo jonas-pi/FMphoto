@@ -28,13 +28,15 @@ const GALLERY_BATCH_ACTION_DOCK_WIDTH_VP: number = 228;
 export struct GalleryAlbumBatchActionBar {
   @Prop downloading: boolean = false;
   @Prop deleting: boolean = false;
+  /** 所选含文件夹时置灰删除，仍回调 onDelete 由页面提示 */
+  @Prop deleteEnabled: boolean = true;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onDownload: () => void = () => {};
   onDelete: () => void = () => {};
 
   private actionColor(busy: boolean, destructive: boolean = false): ResourceColor {
-    if (busy) {
+    if (busy || (destructive && !this.deleteEnabled)) {
       return $r('app.color.text_secondary');
     }
     return destructive ? '#E11D48' : $r('app.color.brand_primary');

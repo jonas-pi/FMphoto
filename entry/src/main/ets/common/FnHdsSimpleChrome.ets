@@ -10,7 +10,6 @@ import {
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
   IconStyleMode,
-  TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from './FnUiCommon';
@@ -47,26 +46,16 @@ export struct FnHdsSimpleChrome {
     if (label.length === 0) {
       return [];
     }
-    if (this.rightAsIcon) {
-      const iconContent: HdsNavigationIconOptions = {
-        label: label,
-        icon: this.rightIcon,
-        type: IconStyleMode.NORMAL,
-        isEnabled: true,
-        action: (): void => {
-          this.onRightClick();
-        }
-      };
-      return [this.menuItem(iconContent)];
-    }
-    const content: HdsNavigationIconOptions = {
+    const iconContent: HdsNavigationIconOptions = {
       label: label,
-      type: TextStyleMode.NORMAL,
+      icon: this.rightIcon,
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
       action: (): void => {
         this.onRightClick();
       }
     };
-    return [this.menuItem(content)];
+    return [this.menuItem(iconContent)];
   }
 
   private backIconOptions(): HdsNavigationBackButtonItemOptions {

@@ -2770,10 +2770,6 @@ export struct GalleryAlbumTab {
     galleryAlbumRequestBootstrap(this.asLifecycleHost(), debounced);
   }
 
-  private enterGallerySelectionModeFromToolbar(): void {
-    galleryAlbumEnterGallerySelectionModeFromToolbar(this.asLifecycleHost());
-  }
-
   /**
    * 时间线区域下拉刷新：使用系统 Refresh 动效；非列表顶部、多选或子模式时不发起网络请求。
    */
@@ -2808,9 +2804,6 @@ export struct GalleryAlbumTab {
           },
           onExitSelection: (): void => {
             galleryAlbumExitSelection(this.asSelectionGestureHost());
-          },
-          onEnterSelection: (): void => {
-            this.enterGallerySelectionModeFromToolbar();
           },
           onBackToGallery: (): void => {
             this.returnToHomeSurfaceRoot(true);
@@ -3388,7 +3381,7 @@ export struct GalleryAlbumTab {
         GalleryAlbumMoreMenuLayer({
           expanded: this.moreMenuExpanded,
           topSafeInsetVp: this.topSafeInsetVp,
-          showMoreMultiselect: this.inSearchMode,
+          showMoreMultiselect: true,
           showMoreUpload: this.shouldShowUploadInMoreMenu(),
           onDismiss: (): void => {
             this.dismissMoreMenu();

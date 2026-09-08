@@ -343,6 +343,31 @@ function pickBest(results: LoginEndpointProbeResult[]): LoginEndpointProbeResult
   return bestDirect !== null ? bestDirect : bestRelay;
 }
 
+/**
+ * 自动模式下只要任一内网地址可达，就优先内网。
+ * 公网域名回流或 FN ID 返回的公网 IPv6 即使延迟略低，也不能抢占可用 LAN。
+ */
+function preferLanForAuto(
+  results: LoginEndpointProbeResult[],
+  best: LoginEndpointProbeResult,
+  preference: string
+): LoginEndpointProbeResult {
+  if (preference !== LOGIN_ENDPOINT_PREF_AUTO && preference.length > 0) {
+    return best;
+  }
+  let bestLan: LoginEndpointProbeResult | null = null;
+  for (let i = 0; i < results.length; i++) {
+    const current = results[i];
+    if (!current.ok || !isLanKind(current.candidate.kind)) {
+      continue;
+    }
+    if (bestLan === null || current.score > bestLan.score) {
+      bestLan = current;
+    }
+  }
+  return bestLan !== null ? bestLan : best;
+}
+
 /** 公网域名与公网 IP 都通时，强制优先域名 */
 function preferDomainIfBothPublicOk(
   results: LoginEndpointProbeResult[],
@@ -725,6 +750,7 @@ export async function selectAmongEndpointPool(
     }
     return failed;
   }
+  best = preferLanForAuto(scored, best, preference);
   best = preferDomainIfBothPublicOk(scored, best);
   const selected = selectionFromProbes(
     best,

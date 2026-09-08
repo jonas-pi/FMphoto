@@ -11,9 +11,11 @@ import {
   BlurStrategy,
   hdsEffect,
   HdsNavigationBackgroundStyle,
+  HdsNavigationIconOptions,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleBarStyle,
   HdsTabsFloatingStyle,
+  IconStyleMode,
   PaddingOptions,
   ScrollEffectOptions,
   ScrollEffectType,
@@ -112,6 +114,20 @@ export function fnHdsNavChromeScrollEffectOpts(): ScrollEffectOptions {
     // @SuppressWarnings compatibility
     scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
   };
+}
+
+/**
+ * 多选态「取消」：官方 xmark + 圆形菜单背板，与返回按钮同款。
+ */
+export function fnHdsRoundCancelIcon(action: () => void): HdsNavigationIconOptions {
+  const content: HdsNavigationIconOptions = {
+    label: '取消',
+    icon: $r('sys.symbol.xmark'),
+    type: IconStyleMode.NORMAL,
+    isEnabled: true,
+    action: action
+  };
+  return content;
 }
 
 /** 迷你顶栏 originalStyle：沉浸开则透明按钮背板，关则浅灰玻璃。 */

@@ -13,11 +13,10 @@ import {
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
   IconStyleMode,
-  TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
-import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
-import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
+import { FnHdsMoreMenuAnchor } from '../../common/FnHdsMoreMenu';
+import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions, fnHdsRoundCancelIcon } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
@@ -76,7 +75,9 @@ export struct CategoryGalleryChrome {
     if (this.selectionMode) {
       const doneContent: HdsNavigationIconOptions = {
         label: '完成',
-        type: TextStyleMode.NORMAL,
+        icon: $r('sys.symbol.checkmark'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
         action: (): void => {
           this.onToggleMode();
         }
@@ -97,7 +98,9 @@ export struct CategoryGalleryChrome {
     }
     const multiContent: HdsNavigationIconOptions = {
       label: $r('app.string.gallery_multiselect'),
-      type: TextStyleMode.NORMAL,
+      icon: $r('sys.symbol.checkmark_circle'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
       action: (): void => {
         this.onToggleMode();
       }
@@ -107,14 +110,9 @@ export struct CategoryGalleryChrome {
 
   private backIconOptions(): HdsNavigationBackButtonItemOptions {
     if (this.selectionMode) {
-      const cancelIcon: HdsNavigationBackButtonItemOptions = {
-        label: '取消',
-        isEnabled: true,
-        action: (): void => {
-          this.onCancelSelection();
-        }
-      };
-      return cancelIcon;
+      return fnHdsRoundCancelIcon((): void => {
+        this.onCancelSelection();
+      });
     }
     const backIcon: HdsNavigationBackButtonItemOptions = {
       label: '返回',
@@ -150,26 +148,6 @@ export struct CategoryGalleryChrome {
       .height(0)
   }
 
-  @Builder
-  private moreMenuBuilder() {
-    Menu() {
-      MenuItem({ content: '多选' })
-        .onClick((): void => {
-          this.onEnterMultiselectFromMore();
-        })
-      MenuItem({ content: '幻灯片' })
-        .onClick((): void => {
-          this.onOpenSlideshowFromMore();
-        })
-      if (this.showJumpToFolderView) {
-        MenuItem({ content: '跳转到文件夹视图' })
-          .onClick((): void => {
-            this.onJumpToFolderView();
-          })
-      }
-    }
-  }
-
   build() {
     // 高度只包顶栏，禁止 100% 铺满，否则 HdsNavigation 会把宫格命中区盖住，松手后点不动。
     Stack({ alignContent: Alignment.TopEnd }) {
@@ -191,17 +169,25 @@ export struct CategoryGalleryChrome {
       .clip(true)
       .hitTestBehavior(HitTestMode.Default)
 
-      Row()
-        .width(40)
-        .height(40)
-        .margin({ top: this.topSafeInsetVp + 8, right: $r('app.float.hds_title_bar_padding_horizontal') })
-        .hitTestBehavior(HitTestMode.None)
-        .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
-          Placement.BottomLeft,
-          (): void => {
-            this.onDismissMoreMenu();
-          }
-        ))
+      FnHdsMoreMenuAnchor({
+        expanded: this.moreMenuExpanded,
+        topSafeInsetVp: this.topSafeInsetVp,
+        showMultiselect: true,
+        showSlideshow: true,
+        showJumpToFolder: this.showJumpToFolderView,
+        onDismiss: (): void => {
+          this.onDismissMoreMenu();
+        },
+        onMultiselect: (): void => {
+          this.onEnterMultiselectFromMore();
+        },
+        onSlideshow: (): void => {
+          this.onOpenSlideshowFromMore();
+        },
+        onJumpToFolder: (): void => {
+          this.onJumpToFolderView();
+        }
+      })
     }
     .width('100%')
     // 作为全屏 Stack 子节点会被拉高；写死高度，空白区 Transparent 把点击还给宫格

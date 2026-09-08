@@ -401,6 +401,12 @@ export interface FolderViewCoverItem {
   name?: string;
   path?: string;
   folderPath?: string;
+  /** 官方 list 项用 dirPath 对齐文件夹 */
+  dirPath?: string;
+  /** 官方封面照片数组（优先） */
+  cover?: Object;
+  /** 无自定义封面时的默认照片数组 */
+  defaultCover?: Object;
 }
 
 /** POST /p/api/v1/folder_view/cover 返回 data */

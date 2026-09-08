@@ -9,11 +9,10 @@ import {
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
   IconStyleMode,
-  TextStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
-import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
-import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
+import { FnHdsMoreMenuAnchor } from '../../common/FnHdsMoreMenu';
+import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions, fnHdsRoundCancelIcon } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
@@ -27,11 +26,13 @@ export struct FolderBrowseChrome {
   @Prop totalCount: number = 0;
   @Prop topSafeInsetVp: number = 0;
   @Prop moreMenuExpanded: boolean = false;
+  @Prop canGoUp: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   scrollerList: Scroller[] = [];
 
   onCancelSelection: () => void = () => {};
   onBack: () => void = () => {};
+  onGoUp: () => void = () => {};
   onToggleMode: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
   onDismissMoreMenu: () => void = () => {};
@@ -58,13 +59,24 @@ export struct FolderBrowseChrome {
     if (this.selectionMode) {
       const doneContent: HdsNavigationIconOptions = {
         label: '完成',
-        type: TextStyleMode.NORMAL,
+        icon: $r('sys.symbol.checkmark'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
         action: (): void => {
           this.onToggleMode();
         }
       };
       return [this.menuItem(doneContent)];
     }
+    const upContent: HdsNavigationIconOptions = {
+      label: '上一级',
+      icon: $r('sys.symbol.arrow_up'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: this.canGoUp,
+      action: (): void => {
+        this.onGoUp();
+      }
+    };
     const moreContent: HdsNavigationIconOptions = {
       label: '更多',
       icon: $r('sys.symbol.dot_grid_2x2'),
@@ -74,19 +86,14 @@ export struct FolderBrowseChrome {
         this.onShowMoreMenu();
       }
     };
-    return [this.menuItem(moreContent)];
+    return [this.menuItem(upContent), this.menuItem(moreContent)];
   }
 
   private backIconOptions(): HdsNavigationBackButtonItemOptions {
     if (this.selectionMode) {
-      const cancelIcon: HdsNavigationBackButtonItemOptions = {
-        label: '取消',
-        isEnabled: true,
-        action: (): void => {
-          this.onCancelSelection();
-        }
-      };
-      return cancelIcon;
+      return fnHdsRoundCancelIcon((): void => {
+        this.onCancelSelection();
+      });
     }
     const backIcon: HdsNavigationBackButtonItemOptions = {
       label: '返回',
@@ -120,20 +127,6 @@ export struct FolderBrowseChrome {
       .height(0)
   }
 
-  @Builder
-  private moreMenuBuilder() {
-    Menu() {
-      MenuItem({ content: '多选' })
-        .onClick((): void => {
-          this.onEnterMultiselectFromMore();
-        })
-      MenuItem({ content: '幻灯片' })
-        .onClick((): void => {
-          this.onOpenSlideshowFromMore();
-        })
-    }
-  }
-
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
       Column() {
@@ -154,17 +147,21 @@ export struct FolderBrowseChrome {
       .clip(true)
       .hitTestBehavior(HitTestMode.Default)
 
-      Row()
-        .width(40)
-        .height(40)
-        .margin({ top: this.topSafeInsetVp + 8, right: $r('app.float.hds_title_bar_padding_horizontal') })
-        .hitTestBehavior(HitTestMode.None)
-        .bindMenu(this.moreMenuExpanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
-          Placement.BottomLeft,
-          (): void => {
-            this.onDismissMoreMenu();
-          }
-        ))
+      FnHdsMoreMenuAnchor({
+        expanded: this.moreMenuExpanded,
+        topSafeInsetVp: this.topSafeInsetVp,
+        showMultiselect: true,
+        showSlideshow: true,
+        onDismiss: (): void => {
+          this.onDismissMoreMenu();
+        },
+        onMultiselect: (): void => {
+          this.onEnterMultiselectFromMore();
+        },
+        onSlideshow: (): void => {
+          this.onOpenSlideshowFromMore();
+        }
+      })
     }
     .width('100%')
     .height(this.topSafeInsetVp + FN_HDS_NAV_CHROME_HEIGHT_VP)

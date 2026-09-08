@@ -1,6 +1,6 @@
 /**
  * 图库顶栏：对齐官方 HdsNavigation.titleBar + systemMaterialEffect。
- * 搜索 / 更多 / 多选走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
+ * 搜索 / 更多走 titleBar.menu / backIcon，由系统处理命中与沉浸光感。
  */
 import {
   HdsNavigation,
@@ -8,12 +8,12 @@ import {
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
-  IconStyleMode,
-  TextStyleMode
+  IconStyleMode
 } from '@kit.UIDesignKit';
-import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
+import { FnHdsMoreMenuAnchor } from '../../common/FnHdsMoreMenu';
 import {
   fnHdsMiniTitleBarOptions,
+  fnHdsRoundCancelIcon,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
 import {
@@ -141,44 +141,27 @@ export struct GalleryAlbumMoreMenuLayer {
   onOpenSlideshow: () => void = () => {};
   onStartUpload: () => void = () => {};
 
-  @Builder
-  private moreMenuBuilder() {
-    Menu() {
-      if (this.showMoreMultiselect) {
-        MenuItem({ content: '多选' })
-          .onClick((): void => {
-            this.onEnterMultiselect();
-          })
-      }
-      if (this.showMoreUpload) {
-        // 与相册页“+”按钮复用同一手动 Picker 上传流程；
-        // NAS 去重规则明确前，不从更多菜单触发自动扫描与同步。
-        MenuItem({ content: '上传' })
-          .onClick((): void => {
-            this.onStartUpload();
-          })
-      }
-      MenuItem({ content: '幻灯片' })
-        .onClick((): void => {
-          this.onOpenSlideshow();
-        })
-    }
-  }
-
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
-      Row()
-        .width(40)
-        .height(40)
-        .margin({ top: this.topSafeInsetVp + 8, right: $r('app.float.hds_title_bar_padding_horizontal') })
-        .hitTestBehavior(HitTestMode.None)
-        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
-        .bindMenu(this.expanded, this.moreMenuBuilder, fnHdsBindMenuOptions(
-          Placement.BottomLeft,
-          (): void => {
-            this.onDismiss();
-          }
-        ))
+      FnHdsMoreMenuAnchor({
+        expanded: this.expanded,
+        topSafeInsetVp: this.topSafeInsetVp,
+        showMultiselect: this.showMoreMultiselect,
+        showUpload: this.showMoreUpload,
+        showSlideshow: true,
+        onDismiss: (): void => {
+          this.onDismiss();
+        },
+        onMultiselect: (): void => {
+          this.onEnterMultiselect();
+        },
+        onUpload: (): void => {
+          this.onStartUpload();
+        },
+        onSlideshow: (): void => {
+          this.onOpenSlideshow();
+        }
+      })
     }
     .width('100%')
     .height('100%')
@@ -214,7 +197,6 @@ export struct GalleryAlbumTopBar {
   onOpenSearch: () => void = () => {};
   onStartUpload: () => void = () => {};
   onExitSelection: () => void = () => {};
-  onEnterSelection: () => void = () => {};
   onBackToGallery: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
   onOpenSearchFilter: () => void = () => {};
@@ -512,7 +494,9 @@ export struct GalleryAlbumTopBar {
     if (this.gallerySelectionMode) {
       const doneContent: HdsNavigationIconOptions = {
         label: '完成',
-        type: TextStyleMode.NORMAL,
+        icon: $r('sys.symbol.checkmark'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
         action: (): void => {
           this.onExitSelection();
         }
@@ -542,14 +526,9 @@ export struct GalleryAlbumTopBar {
 
   private buildDefaultMenuItems(): HdsNavigationMenuItemOptions[] {
     if (this.gallerySelectionMode) {
-      const cancelContent: HdsNavigationIconOptions = {
-        label: '取消',
-        type: TextStyleMode.NORMAL,
-        action: (): void => {
-          this.onExitSelection();
-        }
-      };
-      return [this.menuItem(cancelContent)];
+      return [this.menuItem(fnHdsRoundCancelIcon((): void => {
+        this.onExitSelection();
+      }))];
     }
     if (!this.isRootSurfaceMode()) {
       const empty: HdsNavigationMenuItemOptions[] = [];
@@ -567,15 +546,6 @@ export struct GalleryAlbumTopBar {
         }
       };
       items.push(this.menuItem(uploadContent));
-    } else {
-      const multiContent: HdsNavigationIconOptions = {
-        label: '多选',
-        type: TextStyleMode.NORMAL,
-        action: (): void => {
-          this.onEnterSelection();
-        }
-      };
-      items.push(this.menuItem(multiContent));
     }
     const searchContent: HdsNavigationIconOptions = {
       label: '搜索',

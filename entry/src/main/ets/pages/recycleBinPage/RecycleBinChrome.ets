@@ -10,10 +10,10 @@ import {
   HdsNavigationMenuItemOptions,
   HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
-  TextStyleMode,
+  IconStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
-import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from '../../common/FnUiCommon';
+import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions, fnHdsRoundCancelIcon } from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
@@ -53,7 +53,9 @@ export struct RecycleBinChrome {
     if (this.selectionMode) {
       const doneContent: HdsNavigationIconOptions = {
         label: '完成',
-        type: TextStyleMode.NORMAL,
+        icon: $r('sys.symbol.checkmark'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
         action: (): void => {
           this.onToggleMode();
         }
@@ -62,7 +64,9 @@ export struct RecycleBinChrome {
     }
     const multiContent: HdsNavigationIconOptions = {
       label: $r('app.string.gallery_multiselect'),
-      type: TextStyleMode.NORMAL,
+      icon: $r('sys.symbol.checkmark_circle'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
       action: (): void => {
         this.onToggleMode();
       }
@@ -72,14 +76,9 @@ export struct RecycleBinChrome {
 
   private backIconOptions(): HdsNavigationBackButtonItemOptions {
     if (this.selectionMode) {
-      const cancelIcon: HdsNavigationBackButtonItemOptions = {
-        label: '取消',
-        isEnabled: true,
-        action: (): void => {
-          this.onCancelSelection();
-        }
-      };
-      return cancelIcon;
+      return fnHdsRoundCancelIcon((): void => {
+        this.onCancelSelection();
+      });
     }
     const backIcon: HdsNavigationBackButtonItemOptions = {
       label: '返回',

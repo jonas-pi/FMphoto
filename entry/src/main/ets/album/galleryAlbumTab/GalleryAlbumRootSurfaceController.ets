@@ -158,16 +158,26 @@ export function galleryAlbumOpenFolderBrowse(
   onFailed: (msg: string) => void,
   folderPath: string = ''
 ): void {
-  FolderBrowseNavStore.setPendingPath(folderPath);
+  const trimmed = folderPath.trim();
+  if (trimmed === '/' || trimmed === '\\') {
+    onFailed('无法打开系统根目录');
+    return;
+  }
+  const forceRouter = FolderBrowseNavStore.pendingForceRouter;
+  FolderBrowseNavStore.pendingForceRouter = false;
+  FolderBrowseNavStore.setPending(trimmed, trimmed.length > 0);
   const param: GalleryAlbumNavigationParam = { baseUrl: baseUrl };
-  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_FOLDER, param)) {
+  // 分类相册若是独立 Router 页，Home 的 NavPathStack 仍可能存活。
+  // 此时绝不能把文件夹页压到当前页下面，否则界面仍停在媒体宫格。
+  if (!forceRouter && GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_FOLDER, param)) {
     return;
   }
   uiCtx.getRouter().pushUrl({
     url: 'pages/FolderBrowsePage',
-    params: { baseUrl: baseUrl, folderPath: folderPath }
+    params: { baseUrl: baseUrl, folderPath: trimmed }
   }).catch((_e: Error): void => {
     FolderBrowseNavStore.consumePendingPath();
+    FolderBrowseNavStore.consumeLockToEntry();
     onFailed('打开文件夹失败');
   });
 }

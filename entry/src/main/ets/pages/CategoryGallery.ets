@@ -35,6 +35,7 @@ import {
 import { GalleryPreviewOpeningMask } from '../album/GalleryPreviewOpeningMask';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { galleryAlbumOpenFolderBrowse } from '../album/galleryAlbumTab/GalleryAlbumRootSurfaceController';
+import { FolderBrowseNavStore } from './folderBrowsePage/FolderBrowseNavStore';
 import {
   gallerySlideAutoScrollIsRunning,
   gallerySlideAutoScrollOnListDidScroll
@@ -303,6 +304,9 @@ struct CategoryGallery {
     if (folderPath.length === 0) {
       this.toast('无法跳转到文件夹视图');
       return;
+    }
+    if (!this.albumNavigationMode) {
+      FolderBrowseNavStore.pendingForceRouter = true;
     }
     galleryAlbumOpenFolderBrowse(this.getUIContext(), this.baseUrl, (msg: string): void => {
       this.toast(msg);
