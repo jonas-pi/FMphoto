@@ -25,6 +25,7 @@ import {
   galleryVideoLanPrefetchBufferedMs,
   galleryVideoLanPrefetchFileSize,
   isGalleryVideoLanPrefetchForUrl,
+  isGalleryVideoLanPrefetchPlayable,
   scheduleGalleryVideoLanPrefetch,
   stopGalleryVideoLanPrefetch,
   waitGalleryVideoLanPrefetchPlayable
@@ -154,7 +155,7 @@ export struct GalleryAuthVideo {
   @State private durationMs: number = 0;
   @State private dragRatio: number = 0;
   @State private draggingSeek: boolean = false;
-  /** 缓冲条进度 0~1，由 CACHED_DURATION + 播放位置得到 */
+  /** 缓冲条进度 0~1。内网原片跟本地已下前缀；其它片源跟播放器缓存。 */
   @State private bufferProgress: number = 0;
   /** 初值读全局记忆，避免 LazyForEach 新实例首帧仍画 1.0x/原始 再闪一下 */
   @State private speedRate: number = LAST_VIDEO_SPEED_RATE;
@@ -350,10 +351,8 @@ export struct GalleryAuthVideo {
           'playbackInfo pos=%{public}s dur=%{public}s cachedMs=%{public}s down=%{public}s avgDown=%{public}s playing=%{public}s rebuffer=%{public}s',
           `${this.currentMs}`, `${this.durationMs}`, `${this.lastCachedDurationMs}`,
           `${rate}`, `${avg}`, `${this.isPlaying}`, `${this.videoRebuffering}`);
-        if (this.playingFromPrefetch && this.durationMs > 0) {
-          const localEnd = galleryVideoLanPrefetchBufferedMs(this.durationMs);
-          this.bufferEndMs = Math.max(this.bufferEndMs, localEnd);
-          this.commitBufferProgress();
+        if (this.syncBufferFromLanCache()) {
+          return;
         }
       }).catch((e: BusinessError): void => {
         if (gen !== this.playGen) {
@@ -707,15 +706,22 @@ export struct GalleryAuthVideo {
     this.bufferProgress = next;
   }
 
-  private resetBufferToPlayhead(): void {
-    this.lastCachedDurationMs = 0;
-    this.bufferEndMs = Math.max(0, this.currentMs);
+  /** 缓冲条只跟真实缓存：内网原片用已下文件前缀，不跟播放指针。 */
+  private syncBufferFromLanCache(): boolean {
+    if (this.durationMs <= 0 || !isGalleryVideoLanPrefetchForUrl(this.videoUrl)) {
+      return false;
+    }
+    this.bufferEndMs = galleryVideoLanPrefetchBufferedMs(this.durationMs);
     this.commitBufferProgress();
+    return true;
   }
 
-  /** 官方：bufferEnd = max(旧值, 播放位置 + CACHED_DURATION) */
+  /** 官方：bufferEnd = 播放位置 + CACHED_DURATION。有本地文件缓存时不采用，避免 seek 带动缓冲条。 */
   private noteCachedDuration(cachedMs: number): void {
     this.lastCachedDurationMs = Math.max(0, cachedMs);
+    if (this.syncBufferFromLanCache()) {
+      return;
+    }
     if (this.draggingSeek) {
       return;
     }
@@ -984,14 +990,6 @@ export struct GalleryAuthVideo {
     }
   }
 
-  private kickLanVideoPrefetch(): void {
-    if (!this.currentQualityOption().directStream) {
-      stopGalleryVideoLanPrefetch();
-      return;
-    }
-    scheduleGalleryVideoLanPrefetch(this.videoUrl, this.lanPrefetchCacheDir());
-  }
-
   private revealPlaybackChrome(): void {
     this.clearChromeAutoHideTimer();
     setGalleryPreviewToolbarVisible(true);
@@ -1142,12 +1140,25 @@ export struct GalleryAuthVideo {
     }
     const clamped = Math.max(0, Math.min(1, ratio));
     const toMs = Math.floor(this.durationMs * clamped);
+    // 网络直链上 seek 会再开一条 HTTP；缓存已可播则切到 dataSrc，避免同一条视频拉两次。
+    if (!this.playingFromPrefetch && this.canPlayFromLanCache()) {
+      this.pendingRestoreMs = toMs;
+      this.currentMs = toMs;
+      this.userStartedOnce = true;
+      this.playbackEnded = false;
+      this.scheduleStartPlay();
+      return;
+    }
     try {
       p.seek(toMs, media.SeekMode.SEEK_CLOSEST);
       this.currentMs = toMs;
-      this.resetBufferToPlayhead();
     } catch (_e) {
     }
+  }
+
+  private canPlayFromLanCache(): boolean {
+    return this.currentQualityOption().directStream && isGalleryLanBurstEnabled() &&
+      isGalleryVideoLanPrefetchPlayable(this.videoUrl);
   }
 
   private async beginSeekDrag(): Promise<void> {
@@ -1371,8 +1382,6 @@ export struct GalleryAuthVideo {
     this.lastAvTimeUpdateWallMs = 0;
     this.lastCachedDurationMs = 0;
     this.lastCachedDurationWarnMs = 0;
-    this.bufferEndMs = 0;
-    this.bufferProgress = 0;
     this.videoRebuffering = this.pendingQualitySwitch;
     this.stopPlaybackInfoWatch();
     this.clearLoadWatchdog();
@@ -1384,7 +1393,11 @@ export struct GalleryAuthVideo {
       isGalleryVideoLanPrefetchForUrl(this.videoUrl);
     if (!keepLanCache) {
       this.playingFromPrefetch = false;
+      this.bufferEndMs = 0;
+      this.bufferProgress = 0;
       stopGalleryVideoLanPrefetch();
+    } else {
+      this.syncBufferFromLanCache();
     }
 
     if (!this.active || !this.surfaceReady || this.videoUrl.length === 0) {
@@ -1583,13 +1596,17 @@ export struct GalleryAuthVideo {
       if (gen !== this.playGen) { return; }
       if (d > 0 && d !== this.durationMs) {
         this.durationMs = d;
-        this.commitBufferProgress();
+        if (!this.syncBufferFromLanCache()) {
+          this.commitBufferProgress();
+        }
         hilog.info(DOMAIN, TAG, 'durationUpdate %{public}s', `${this.durationMs}`);
         return;
       }
       if (d > 0) {
         this.durationMs = d;
-        this.commitBufferProgress();
+        if (!this.syncBufferFromLanCache()) {
+          this.commitBufferProgress();
+        }
       }
     });
     player.on('bufferingUpdate', (infoType: media.BufferingInfoType, value: number): void => {
@@ -1607,7 +1624,6 @@ export struct GalleryAuthVideo {
       }
       if (infoType === media.BufferingInfoType.BUFFERING_END) {
         this.videoRebuffering = false;
-        this.kickLanVideoPrefetch();
         this.bumpChromeAutoHide();
         hilog.info(DOMAIN, TAG, 'BUFFERING_END pos=%{public}s cachedMs=%{public}s',
           `${this.currentMs}`, `${this.lastCachedDurationMs}`);
@@ -1712,7 +1728,6 @@ export struct GalleryAuthVideo {
         this.playbackEnded = false;
         this.onPlaybackChromeChanged();
         this.scheduleChromeAutoHide();
-        this.kickLanVideoPrefetch();
         this.pendingQualitySwitch = false;
         this.autoRecoverCount = 0;
         if (this.pendingRestoreMs > GALLERY_VIDEO_DEFER_SEEK_MIN_MS && this.durationMs > 0) {

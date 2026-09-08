@@ -79,11 +79,9 @@ export struct GalleryVideoOverlayChrome {
     return Math.round(Math.max(0, Math.min(1, this.progress)) * 100);
   }
 
-  /** 缓冲条至少盖住已播放段，避免 seek 后灰条短于蓝条 */
+  /** 缓冲条只画真实缓存，不跟播放指针。 */
   private bufferFillPercent(): number {
-    const played = Math.max(0, Math.min(1, this.progress));
-    const buffered = Math.max(0, Math.min(1, this.bufferProgress));
-    return Math.round(Math.max(played, buffered) * 100);
+    return Math.round(Math.max(0, Math.min(1, this.bufferProgress)) * 100);
   }
 
   private isCurrentSpeed(rate: number): boolean {

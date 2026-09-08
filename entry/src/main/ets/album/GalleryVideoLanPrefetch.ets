@@ -143,6 +143,10 @@ export function isGalleryVideoLanPrefetchForUrl(url: string): boolean {
   return prefetchUrl.length > 0 && prefetchUrl === url.trim();
 }
 
+export function isGalleryVideoLanPrefetchPlayable(url: string): boolean {
+  return isGalleryVideoLanPrefetchForUrl(url) && isPlayableNow();
+}
+
 export function galleryVideoLanPrefetchFileSize(): number {
   return prefetchTotalBytes > 0 ? prefetchTotalBytes : -1;
 }
@@ -154,11 +158,10 @@ export function galleryVideoLanPrefetchBufferedMs(durationMs: number): number {
   if (prefetchComplete) {
     return durationMs;
   }
-  if (prefetchTotalBytes <= 0) {
+  if (prefetchTotalBytes <= 0 || prefetchHeadBytes <= 0) {
     return 0;
   }
-  const covered = prefetchHeadBytes + prefetchTailGot;
-  const ratio = Math.max(0, Math.min(1, covered / prefetchTotalBytes));
+  const ratio = Math.max(0, Math.min(1, prefetchHeadBytes / prefetchTotalBytes));
   return Math.floor(durationMs * ratio);
 }
 
@@ -248,8 +251,9 @@ export function scheduleGalleryVideoLanPrefetch(directUrl: string, cacheDir: str
   if (!isGalleryLanBurstEnabled() || url.length === 0 || isHlsUrl(url) || cacheDir.length === 0) {
     return;
   }
-  if (prefetchUrl === url && (prefetchHeadReq !== null || prefetchComplete)) {
-    if (prefetchComplete) {
+  // 同一 URL 只拉一次：seek / BUFFERING 再 kick 不得 unlink 从头下。
+  if (prefetchUrl === url) {
+    if (isPlayableNow() || prefetchComplete) {
       notifyPlayableWaiters(true);
     }
     return;
