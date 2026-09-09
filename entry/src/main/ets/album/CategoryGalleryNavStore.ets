@@ -198,6 +198,14 @@ export class CategoryGalleryNavStore {
     return normalized.length > 0 && normalized === CategoryGalleryNavStore.folderPath;
   }
 
+  static isCurrentPerson(personId: string): boolean {
+    if (CategoryGalleryNavStore.sourceKind !== 'person') {
+      return false;
+    }
+    const incoming = personId.trim();
+    return incoming.length > 0 && incoming === CategoryGalleryNavStore.personId.trim();
+  }
+
   private static normalizeFolderPath(folderPath: string): string {
     let normalized = folderPath.trim().replace(/\\/g, '/');
     while (normalized.length > 1 && normalized.endsWith('/')) {

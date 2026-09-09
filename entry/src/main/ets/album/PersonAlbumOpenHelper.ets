@@ -228,6 +228,27 @@ export async function openPersonAlbumById(
   uiCtx: UIContext,
   shouldContinue?: () => boolean
 ): Promise<PersonAlbumOpenResult> {
+  return openPersonAlbumInternal(baseUrl, personId, initialTitle, uiCtx, false, shouldContinue);
+}
+
+/** 独立预览页点人脸：替换当前 Router，避免预览下面再叠一层人物页。 */
+export async function openPersonAlbumReplacingCurrent(
+  baseUrl: string,
+  personId: string,
+  initialTitle: string,
+  uiCtx: UIContext
+): Promise<PersonAlbumOpenResult> {
+  return openPersonAlbumInternal(baseUrl, personId, initialTitle, uiCtx, true);
+}
+
+async function openPersonAlbumInternal(
+  baseUrl: string,
+  personId: string,
+  initialTitle: string,
+  uiCtx: UIContext,
+  replaceCurrentRouter: boolean,
+  shouldContinue?: () => boolean
+): Promise<PersonAlbumOpenResult> {
   if (personId.length === 0) {
     return { ok: false, errorMessage: '人物 ID 无效' };
   }
@@ -285,11 +306,19 @@ export async function openPersonAlbumById(
   if (initialChunk.items.length === 0) {
     return { ok: false, errorMessage: '该人物暂无可预览媒体' };
   }
-  const opened = await CategoryGalleryNavStore.open(baseUrl, title, initialChunk.items, uiCtx, false, {
-    sourceKind: 'person',
-    personId: personId,
-    expectedTotalCount: detailItemCount
-  });
+  const opened = await CategoryGalleryNavStore.open(
+    baseUrl,
+    title,
+    initialChunk.items,
+    uiCtx,
+    false,
+    {
+      sourceKind: 'person',
+      personId: personId,
+      expectedTotalCount: detailItemCount
+    },
+    replaceCurrentRouter
+  );
   if (!opened) {
     return { ok: false, errorMessage: '打开人物媒体失败' };
   }

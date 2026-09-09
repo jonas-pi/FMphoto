@@ -11,7 +11,9 @@ import {
   galleryPreviewJoinPair,
   galleryPreviewMediaKindLabel,
   galleryPreviewPersonInPhotoCacheKey,
+  galleryPreviewPersonInPhotoCanOpen,
   galleryPreviewPersonInPhotoFacePath,
+  galleryPreviewPersonInPhotoHasOpenable,
   galleryPreviewPersonInPhotoMeta,
   galleryPreviewPersonInPhotoName
 } from './GalleryPreviewDetailsLogic';
@@ -43,6 +45,10 @@ export struct GalleryPreviewDetailsSheet {
 
   private personHasMeta(p: PersonInPhotoItem): boolean {
     return galleryPreviewPersonInPhotoMeta(p).length > 0;
+  }
+
+  private hasOpenablePerson(): boolean {
+    return galleryPreviewPersonInPhotoHasOpenable(this.personsInPhoto);
   }
 
   private hasMoreInfo(): boolean {
@@ -134,12 +140,21 @@ export struct GalleryPreviewDetailsSheet {
             Row({ space: 10 }) {
               this.personFaceView(p)
               Column({ space: 2 }) {
-                Text(galleryPreviewPersonInPhotoName(p))
-                  .fontSize(13)
-                  .fontColor($r('app.color.brand_primary'))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
+                if (galleryPreviewPersonInPhotoCanOpen(p)) {
+                  Text(galleryPreviewPersonInPhotoName(p))
+                    .fontSize(13)
+                    .fontColor($r('app.color.brand_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                } else {
+                  Text(galleryPreviewPersonInPhotoName(p))
+                    .fontSize(13)
+                    .fontColor($r('app.color.text_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                }
                 if (this.personHasMeta(p)) {
                   Text(galleryPreviewPersonInPhotoMeta(p))
                     .fontSize(11)
@@ -154,14 +169,22 @@ export struct GalleryPreviewDetailsSheet {
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
+            .hitTestBehavior(galleryPreviewPersonInPhotoCanOpen(p) ? HitTestMode.Default : HitTestMode.None)
             .onClick((): void => {
               this.onPersonClick(p);
             })
           }, (p: PersonInPhotoItem, idx: number) => `pip_${idx}_${p.personId ?? 0}_${p.faceId ?? 0}`)
-          Text(this.personOpening ? '正在打开人物相册…' : '点击打开该人物相册')
-            .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
-            .margin({ top: 2 })
+          if (this.hasOpenablePerson()) {
+            Text(this.personOpening ? '正在打开人物相册…' : '点击打开该人物相册')
+              .fontSize(11)
+              .fontColor($r('app.color.text_secondary'))
+              .margin({ top: 2 })
+          } else {
+            Text('尚未归入人物，无法打开相册')
+              .fontSize(11)
+              .fontColor($r('app.color.text_secondary'))
+              .margin({ top: 2 })
+          }
         }
       }
       .layoutWeight(1)

@@ -13,7 +13,7 @@ import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../a
 import { isLivePhotoItem } from '../../album/livephoto/LivePhotoDetect';
 import { sanitizeMediaTitle, saveLivePhotoToAlbum } from '../../album/livephoto/LivePhotoSaveOps';
 import { materializeLivePhotoPair, unlinkLivePhotoPair } from '../../album/livephoto/LivePhotoSandbox';
-import { openPersonAlbumById } from '../../album/PersonAlbumOpenHelper';
+import { openPersonAlbumReplacingCurrent } from '../../album/PersonAlbumOpenHelper';
 import { AppSession } from '../../auth/AppSession';
 import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
@@ -27,6 +27,7 @@ import {
   galleryPreviewDetailText,
   galleryPreviewNormalizePersonsInPhoto,
   galleryPreviewParentFolderPath,
+  galleryPreviewPersonInPhotoPersonId,
   galleryPreviewQualitySizeLabel,
   galleryPreviewResolveCollectStateFromItem,
   galleryPreviewStarFilled
@@ -557,19 +558,23 @@ export async function galleryPreviewOnPersonInPhotoClick(
   if (host.personOpening) {
     return;
   }
-  const pidRaw = p.personId;
-  const pid = pidRaw !== undefined && pidRaw !== null ? String(pidRaw) : '';
+  const pid = galleryPreviewPersonInPhotoPersonId(p);
   if (pid.length === 0) {
-    host.toast('人物 ID 无效');
     return;
   }
   const nameRaw = galleryPreviewDetailText(p.name);
   const initialTitle = nameRaw.length > 0 ? nameRaw : '未命名';
+  if (GalleryPreviewNavStore.sourceRootId === GALLERY_PREVIEW_SOURCE_CATEGORY_ID &&
+    CategoryGalleryNavStore.isCurrentPerson(pid)) {
+    host.detailsVisible = false;
+    host.routerBack();
+    return;
+  }
   host.detailsVisible = false;
   host.personOpening = true;
   let keepOpening = false;
   try {
-    const r = await openPersonAlbumById(
+    const r = await openPersonAlbumReplacingCurrent(
       host.baseUrl,
       pid,
       initialTitle,

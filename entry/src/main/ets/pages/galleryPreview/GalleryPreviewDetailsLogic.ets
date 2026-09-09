@@ -223,9 +223,37 @@ export function galleryPreviewCompactDisplayPath(fullPath: string): string {
   return galleryPreviewCompactFolderTitle(path);
 }
 
+/** NAS 已聚合成人物才有可打开的 personId；0 / 空视为未归类。 */
+export function galleryPreviewPersonInPhotoPersonId(p: PersonInPhotoItem): string {
+  if (p.personId === undefined || p.personId === null) {
+    return '';
+  }
+  const pid = String(p.personId).trim();
+  if (pid.length <= 0 || pid === '0') {
+    return '';
+  }
+  return pid;
+}
+
+export function galleryPreviewPersonInPhotoCanOpen(p: PersonInPhotoItem): boolean {
+  return galleryPreviewPersonInPhotoPersonId(p).length > 0;
+}
+
+export function galleryPreviewPersonInPhotoHasOpenable(list: PersonInPhotoItem[]): boolean {
+  for (let i = 0; i < list.length; i++) {
+    if (galleryPreviewPersonInPhotoCanOpen(list[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function galleryPreviewPersonInPhotoName(p: PersonInPhotoItem): string {
   const nameRaw = galleryPreviewDetailText(p.name);
-  return nameRaw.length > 0 ? nameRaw : '未命名';
+  if (nameRaw.length > 0) {
+    return nameRaw;
+  }
+  return galleryPreviewPersonInPhotoCanOpen(p) ? '未命名' : '未归类';
 }
 
 export function galleryPreviewPersonInPhotoMeta(p: PersonInPhotoItem): string {
@@ -257,7 +285,7 @@ export function galleryPreviewPersonInPhotoLineText(p: PersonInPhotoItem): strin
   return `${showName} · ${meta}`;
 }
 
-/** 人物列表同款人脸流：优先接口 URL，否则 /p/api/v1/stream/face/{faceId} */
+/** 这张照片检出的人脸裁切：/p/api/v1/stream/face/{faceId}。有 faceId 就能显示，不代表已聚合成人物。 */
 export function galleryPreviewPersonInPhotoFacePath(p: PersonInPhotoItem): string {
   const direct = galleryPreviewDetailText(p.faceUrl);
   if (direct.length > 0) {
@@ -274,11 +302,9 @@ export function galleryPreviewPersonInPhotoFacePath(p: PersonInPhotoItem): strin
 }
 
 export function galleryPreviewPersonInPhotoCacheKey(p: PersonInPhotoItem): string {
-  if (p.personId !== undefined && p.personId !== null) {
-    const pid = String(p.personId).trim();
-    if (pid.length > 0 && pid !== '0') {
-      return `person:${pid}`;
-    }
+  const pid = galleryPreviewPersonInPhotoPersonId(p);
+  if (pid.length > 0) {
+    return `person:${pid}`;
   }
   if (p.faceId !== undefined && p.faceId !== null) {
     const fid = String(p.faceId).trim();
