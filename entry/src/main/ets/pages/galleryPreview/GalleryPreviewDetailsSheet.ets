@@ -1,3 +1,5 @@
+import { FN_MEDIA_BASE_URL } from '../../auth/AppSession';
+import { GalleryNetworkThumb, nasUrl } from '../../album/GalleryAlbumCommon';
 import {
   FnInlineLoading,
   FnStateText
@@ -8,7 +10,10 @@ import {
   galleryPreviewFormatBytes,
   galleryPreviewJoinPair,
   galleryPreviewMediaKindLabel,
-  galleryPreviewPersonInPhotoLineText
+  galleryPreviewPersonInPhotoCacheKey,
+  galleryPreviewPersonInPhotoFacePath,
+  galleryPreviewPersonInPhotoMeta,
+  galleryPreviewPersonInPhotoName
 } from './GalleryPreviewDetailsLogic';
 
 /**
@@ -23,9 +28,22 @@ export struct GalleryPreviewDetailsSheet {
   @Prop personsInPhoto: PersonInPhotoItem[] = [];
   @Prop folderOpening: boolean = false;
   @Prop personOpening: boolean = false;
+  @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
 
   onPersonClick: (p: PersonInPhotoItem) => void = (_: PersonInPhotoItem) => {};
   onFolderClick: () => void = () => {};
+
+  private personFaceUri(p: PersonInPhotoItem): string {
+    const facePath: string = galleryPreviewPersonInPhotoFacePath(p);
+    if (facePath.length <= 0) {
+      return '';
+    }
+    return nasUrl(this.baseUrl, facePath);
+  }
+
+  private personHasMeta(p: PersonInPhotoItem): boolean {
+    return galleryPreviewPersonInPhotoMeta(p).length > 0;
+  }
 
   private hasMoreInfo(): boolean {
     return galleryPreviewDetailText(this.detailsData?.make).length > 0 ||
@@ -76,6 +94,29 @@ export struct GalleryPreviewDetailsSheet {
     }
   }
 
+  @LocalBuilder
+  private personFaceView(p: PersonInPhotoItem) {
+    if (this.personFaceUri(p).length > 0) {
+      GalleryNetworkThumb({
+        uri: this.personFaceUri(p),
+        paused: false,
+        fadeInEnabled: false,
+        cacheIdentity: galleryPreviewPersonInPhotoCacheKey(p),
+        cacheRank: 3
+      })
+        .width(40)
+        .height(40)
+        .borderRadius(999)
+        .clip(true)
+    } else {
+      SymbolGlyph($r('sys.symbol.person_crop_circle_fill'))
+        .fontSize(28)
+        .fontColor([$r('app.color.text_secondary')])
+        .width(40)
+        .height(40)
+    }
+  }
+
   @Builder
   private detailPersonsSection() {
     Row({ space: 10 }) {
@@ -83,24 +124,41 @@ export struct GalleryPreviewDetailsSheet {
         .fontSize(13)
         .fontColor($r('app.color.text_secondary'))
         .width(92)
-      Column({ space: 4 }) {
+      Column({ space: 8 }) {
         if (this.personsInPhoto.length === 0) {
           Text('未识别到人物')
             .fontSize(13)
             .fontColor($r('app.color.text_primary'))
         } else {
-          ForEach(this.personsInPhoto, (p: PersonInPhotoItem, idx: number) => {
-            Text(galleryPreviewPersonInPhotoLineText(p))
-              .fontSize(13)
-              .fontColor($r('app.color.brand_primary'))
-              .maxLines(3)
-              .width('100%')
-              .textAlign(TextAlign.Start)
-              .onClick((): void => {
-                this.onPersonClick(p);
-              })
+          ForEach(this.personsInPhoto, (p: PersonInPhotoItem) => {
+            Row({ space: 10 }) {
+              this.personFaceView(p)
+              Column({ space: 2 }) {
+                Text(galleryPreviewPersonInPhotoName(p))
+                  .fontSize(13)
+                  .fontColor($r('app.color.brand_primary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                if (this.personHasMeta(p)) {
+                  Text(galleryPreviewPersonInPhotoMeta(p))
+                    .fontSize(11)
+                    .fontColor($r('app.color.text_secondary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .onClick((): void => {
+              this.onPersonClick(p);
+            })
           }, (p: PersonInPhotoItem, idx: number) => `pip_${idx}_${p.personId ?? 0}_${p.faceId ?? 0}`)
-          Text(this.personOpening ? '正在打开人物相册…' : '点击姓名打开该人物相册')
+          Text(this.personOpening ? '正在打开人物相册…' : '点击打开该人物相册')
             .fontSize(11)
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 2 })

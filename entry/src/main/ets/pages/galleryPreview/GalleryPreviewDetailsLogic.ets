@@ -1,6 +1,7 @@
 import { isVideoItem, itemFileExt, pickOriginal } from '../../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../../album/livephoto/LivePhotoDetect';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
+import { FN_PHOTO_API_PREFIX } from '../../network/FnPhotoRoutes';
 
 /** 详情路径折叠时，从文件所在目录向上保留的最多层级数（超出则在顶部用 … 省略）。 */
 const GALLERY_PREVIEW_PATH_MAX_TAIL_SEGMENTS: number = 4;
@@ -222,22 +223,70 @@ export function galleryPreviewCompactDisplayPath(fullPath: string): string {
   return galleryPreviewCompactFolderTitle(path);
 }
 
-export function galleryPreviewPersonInPhotoLineText(p: PersonInPhotoItem): string {
+export function galleryPreviewPersonInPhotoName(p: PersonInPhotoItem): string {
   const nameRaw = galleryPreviewDetailText(p.name);
-  const showName = nameRaw.length > 0 ? nameRaw : '未命名';
+  return nameRaw.length > 0 ? nameRaw : '未命名';
+}
+
+export function galleryPreviewPersonInPhotoMeta(p: PersonInPhotoItem): string {
+  const parts: string[] = [];
   const total = p.total;
   if (total !== undefined && Number.isFinite(Number(total))) {
-    const n = Math.max(0, Math.floor(Number(total)));
+    parts.push(`图库共 ${Math.max(0, Math.floor(Number(total)))} 张`);
+  }
+  if (p.isHide === true) {
+    parts.push('已隐藏');
+  }
+  return parts.join(' · ');
+}
+
+export function galleryPreviewPersonInPhotoLineText(p: PersonInPhotoItem): string {
+  const showName = galleryPreviewPersonInPhotoName(p);
+  const meta = galleryPreviewPersonInPhotoMeta(p);
+  if (meta.length <= 0) {
+    return showName;
+  }
+  if (p.total !== undefined && Number.isFinite(Number(p.total))) {
+    const n = Math.max(0, Math.floor(Number(p.total)));
     let line = `${showName}（图库共 ${n} 张）`;
     if (p.isHide === true) {
       line += ' · 已隐藏';
     }
     return line;
   }
-  if (p.isHide === true) {
-    return `${showName} · 已隐藏`;
+  return `${showName} · ${meta}`;
+}
+
+/** 人物列表同款人脸流：优先接口 URL，否则 /p/api/v1/stream/face/{faceId} */
+export function galleryPreviewPersonInPhotoFacePath(p: PersonInPhotoItem): string {
+  const direct = galleryPreviewDetailText(p.faceUrl);
+  if (direct.length > 0) {
+    return direct;
   }
-  return showName;
+  if (p.faceId === undefined || p.faceId === null) {
+    return '';
+  }
+  const idStr = String(p.faceId).trim();
+  if (idStr.length <= 0 || idStr === '0') {
+    return '';
+  }
+  return `${FN_PHOTO_API_PREFIX}/stream/face/${idStr}`;
+}
+
+export function galleryPreviewPersonInPhotoCacheKey(p: PersonInPhotoItem): string {
+  if (p.personId !== undefined && p.personId !== null) {
+    const pid = String(p.personId).trim();
+    if (pid.length > 0 && pid !== '0') {
+      return `person:${pid}`;
+    }
+  }
+  if (p.faceId !== undefined && p.faceId !== null) {
+    const fid = String(p.faceId).trim();
+    if (fid.length > 0 && fid !== '0') {
+      return `face:${fid}`;
+    }
+  }
+  return galleryPreviewPersonInPhotoFacePath(p);
 }
 
 export function galleryPreviewNormalizePersonsInPhoto(raw: Array<Object | null> | undefined): PersonInPhotoItem[] {
@@ -248,7 +297,12 @@ export function galleryPreviewNormalizePersonsInPhoto(raw: Array<Object | null> 
   for (let i = 0; i < raw.length; i++) {
     const el = raw[i];
     if (typeof el === 'object' && el !== null) {
-      out.push(el as PersonInPhotoItem);
+      const item = el as PersonInPhotoItem;
+      const facePath = galleryPreviewPersonInPhotoFacePath(item);
+      if (facePath.length > 0) {
+        item.faceUrl = facePath;
+      }
+      out.push(item);
     }
   }
   return out;

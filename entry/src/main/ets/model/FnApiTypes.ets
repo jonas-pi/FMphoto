@@ -560,7 +560,9 @@ export interface AiPersonDetailData {
 export interface PersonInPhotoItem {
   name?: string;
   personId?: number;
-  faceId?: number;
+  faceId?: number | string;
+  /** 人脸图：接口直出或由 faceId 规范化为 /p/api/v1/stream/face/{id} */
+  faceUrl?: string;
   total?: number;
   bbox?: number[];
   isHide?: boolean;
