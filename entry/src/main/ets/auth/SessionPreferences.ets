@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { createFnWsDeviceId } from '../network/FnWsDeviceId';
+import { loginSecretLooksWrapped, loginSecretOpen, loginSecretSeal } from './LoginSecretStore';
 
 const PREF_NAME = 'fnos_client_prefs';
 
@@ -131,7 +132,7 @@ export function upsertSavedUser(
   return next;
 }
 
-function parseSavedUsersJson(raw: string): LoginSavedUser[] {
+export function parseSavedUsersJson(raw: string): LoginSavedUser[] {
   if (raw.length === 0) {
     return [];
   }
@@ -156,8 +157,12 @@ function parseSavedUsersJson(raw: string): LoginSavedUser[] {
         const rec = el as Record<string, Object | string | number | boolean | undefined | null>;
         username = rec['username'] !== undefined ? String(rec['username']).trim() :
           (rec['u'] !== undefined ? String(rec['u']).trim() : '');
-        password = rec['password'] !== undefined ? String(rec['password']) :
-          (rec['p'] !== undefined ? String(rec['p']) : '');
+        if (rec['s'] !== undefined && String(rec['s']).length > 0) {
+          password = String(rec['s']);
+        } else {
+          password = rec['password'] !== undefined ? String(rec['password']) :
+            (rec['p'] !== undefined ? String(rec['p']) : '');
+        }
         const r = rec['rememberPassword'] !== undefined ? rec['rememberPassword'] : rec['r'];
         remember = r === true || r === 1 || r === '1' || r === 'true';
       }
@@ -234,6 +239,64 @@ async function prefsClear(p: preferences.Preferences): Promise<void> {
   } catch (e) {
     throw new Error(`preferences clear failed: ${String(e)}`);
   }
+}
+
+async function persistSavedUsersSealed(
+  p: preferences.Preferences,
+  users: LoginSavedUser[]
+): Promise<void> {
+  const rows: Record<string, string | boolean>[] = [];
+  for (let i = 0; i < users.length; i++) {
+    const rec: Record<string, string | boolean> = {};
+    rec['username'] = users[i].username;
+    rec['rememberPassword'] = users[i].rememberPassword;
+    let sealed = '';
+    if (users[i].rememberPassword && users[i].password.length > 0) {
+      if (loginSecretLooksWrapped(users[i].password)) {
+        sealed = users[i].password;
+      } else {
+        try {
+          sealed = await loginSecretSeal(users[i].password);
+        } catch (_e) {
+          sealed = '';
+        }
+      }
+    }
+    if (sealed.length > 0) {
+      rec['s'] = sealed;
+    }
+    rows.push(rec);
+  }
+  await prefsPutString(p, K_LOGIN_SAVED_USERS, JSON.stringify(rows));
+}
+
+async function unsealSavedUsers(users: LoginSavedUser[]): Promise<LoginSavedUser[]> {
+  const out: LoginSavedUser[] = [];
+  for (let i = 0; i < users.length; i++) {
+    let password = users[i].password;
+    if (users[i].rememberPassword && password.length > 0) {
+      password = await loginSecretOpen(password);
+    } else {
+      password = '';
+    }
+    const row: LoginSavedUser = {
+      username: users[i].username,
+      password: password,
+      rememberPassword: users[i].rememberPassword
+    };
+    out.push(row);
+  }
+  return out;
+}
+
+function savedUsersNeedReseal(users: LoginSavedUser[]): boolean {
+  for (let i = 0; i < users.length; i++) {
+    if (users[i].rememberPassword && users[i].password.length > 0 &&
+      !loginSecretLooksWrapped(users[i].password)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseTrustedHostsSafe(raw: string): string[] {
@@ -340,7 +403,7 @@ export class SessionPreferences {
     await prefsFlush(p);
   }
 
-  /** 只写登录表单（不含密码、不含会话 token），退出登录后仍可回填。 */
+  /** 写登录表单（不含会话 token）。勾选记住密码时口令经 HUKS 封存后再落盘。 */
   static async saveLoginFormDefaults(ctx: common.UIAbilityContext, d: LoginFormDefaults): Promise<void> {
     const p = await openPrefs(ctx);
     const shared = d.fnIdInput.trim().length > 0 ? d.fnIdInput.trim() :
@@ -353,15 +416,7 @@ export class SessionPreferences {
     await prefsPutString(p, K_USE_HTTPS, d.useHttps ? '1' : '0');
     await prefsPutString(p, K_REMEMBER_PASSWORD, d.rememberPassword ? '1' : '0');
     const users = upsertSavedUser(d.savedUsers, d.username, d.rememberPassword ? d.password : '', d.rememberPassword);
-    const rows: Record<string, string | boolean>[] = [];
-    for (let i = 0; i < users.length; i++) {
-      const rec: Record<string, string | boolean> = {};
-      rec['username'] = users[i].username;
-      rec['password'] = users[i].rememberPassword ? users[i].password : '';
-      rec['rememberPassword'] = users[i].rememberPassword;
-      rows.push(rec);
-    }
-    await prefsPutString(p, K_LOGIN_SAVED_USERS, JSON.stringify(rows));
+    await persistSavedUsersSealed(p, users);
     await prefsDelete(p, K_LAST_PASSWORD);
     await prefsFlush(p);
   }
@@ -411,14 +466,18 @@ export class SessionPreferences {
     const rememberFlag = (await prefsGetString(p, K_REMEMBER_PASSWORD, '0')) === '1';
     const username = await prefsGetString(p, K_ACCOUNT, '');
     let users = parseSavedUsersJson(await prefsGetString(p, K_LOGIN_SAVED_USERS, '[]'));
+    let reseal = leftoverPassword.length > 0 || savedUsersNeedReseal(users);
     if (leftoverPassword.length > 0) {
       if (rememberFlag && username.length > 0) {
         users = upsertSavedUser(users, username, leftoverPassword, true);
-        await prefsPutString(p, K_LOGIN_SAVED_USERS, JSON.stringify(users));
       }
       await prefsDelete(p, K_LAST_PASSWORD);
+    }
+    if (reseal) {
+      await persistSavedUsersSealed(p, users);
       await prefsFlush(p);
     }
+    users = await unsealSavedUsers(users);
     const current = findSavedUser(users, username);
     const rememberPassword = current !== null ? current.rememberPassword : rememberFlag;
     const password = rememberPassword && current !== null ? current.password : '';

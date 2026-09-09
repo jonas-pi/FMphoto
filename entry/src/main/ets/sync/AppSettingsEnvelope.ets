@@ -8,6 +8,7 @@ import {
   SmartCategoryLayout
 } from '../album/SmartCategoryLayoutPreferences';
 import { LoginSavedUser, upsertSavedUser } from '../auth/SessionPreferences';
+import { extractFnId } from '../network/FnConnectApi';
 
 export const APP_SETTINGS_SCHEMA: number = 1;
 export const APP_SETTINGS_QR_PREFIX: string = 'FMPHOTOCFG1:';
@@ -147,6 +148,149 @@ export function emptyLoginConfig(): AppSettingsLogin {
     password: '',
     users: []
   };
+}
+
+function hostKeyFromInput(raw: string): string {
+  let t = raw.trim().toLowerCase();
+  if (t.length === 0) {
+    return '';
+  }
+  if (t.startsWith('http://')) {
+    t = t.substring('http://'.length);
+  } else if (t.startsWith('https://')) {
+    t = t.substring('https://'.length);
+  }
+  let cut = t.length;
+  const slash = t.indexOf('/');
+  const q = t.indexOf('?');
+  const hash = t.indexOf('#');
+  if (slash >= 0 && slash < cut) {
+    cut = slash;
+  }
+  if (q >= 0 && q < cut) {
+    cut = q;
+  }
+  if (hash >= 0 && hash < cut) {
+    cut = hash;
+  }
+  let auth = t.substring(0, cut);
+  if (auth.startsWith('[')) {
+    const end = auth.indexOf(']');
+    if (end > 1) {
+      return auth.substring(1, end);
+    }
+    return '';
+  }
+  let colonCount = 0;
+  for (let i = 0; i < auth.length; i++) {
+    if (auth.charAt(i) === ':') {
+      colonCount++;
+    }
+  }
+  if (colonCount === 1) {
+    const colon = auth.indexOf(':');
+    if (colon > 0 && /^\d+$/.test(auth.substring(colon + 1))) {
+      auth = auth.substring(0, colon);
+    }
+  }
+  if (auth === 'localhost' || auth === '127.0.0.1' || auth === '::1') {
+    return '';
+  }
+  if (auth === 'fnos.net' || auth === 'www.fnos.net' || auth === '5ddd.com' || auth === 'www.5ddd.com') {
+    return '';
+  }
+  return auth;
+}
+
+function pushUniqueToken(out: string[], seen: Set<string>, token: string): void {
+  if (token.length === 0 || seen.has(token)) {
+    return;
+  }
+  seen.add(token);
+  out.push(token);
+}
+
+function addNasTokensFromRaw(out: string[], seen: Set<string>, raw: string): void {
+  const text = raw.trim();
+  if (text.length === 0) {
+    return;
+  }
+  const fnId = extractFnId(text);
+  if (fnId.length > 0) {
+    pushUniqueToken(out, seen, `fn:${fnId.toLowerCase()}`);
+    return;
+  }
+  const host = hostKeyFromInput(text);
+  if (host.length > 0) {
+    pushUniqueToken(out, seen, `host:${host}`);
+  }
+}
+
+export function settingsNasTokensFromParts(
+  fnId: string,
+  domain: string,
+  lan: string,
+  extra: string[]
+): string[] {
+  const seen: Set<string> = new Set<string>();
+  const out: string[] = [];
+  addNasTokensFromRaw(out, seen, fnId);
+  addNasTokensFromRaw(out, seen, domain);
+  addNasTokensFromRaw(out, seen, lan);
+  for (let i = 0; i < extra.length; i++) {
+    addNasTokensFromRaw(out, seen, extra[i]);
+  }
+  return out;
+}
+
+export function settingsNasTokensFromLogin(login: AppSettingsLogin, extra: string[] = []): string[] {
+  return settingsNasTokensFromParts(login.fnId, login.domain, login.lan, extra);
+}
+
+function fnNasTokensOf(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].startsWith('fn:')) {
+      out.push(tokens[i]);
+    }
+  }
+  return out;
+}
+
+function hasSharedToken(a: string[], b: string[]): boolean {
+  for (let i = 0; i < a.length; i++) {
+    for (let j = 0; j < b.length; j++) {
+      if (a[i] === b[j]) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function settingsSameNas(localTokens: string[], remoteTokens: string[]): boolean {
+  if (localTokens.length === 0 || remoteTokens.length === 0) {
+    return false;
+  }
+  const localFn = fnNasTokensOf(localTokens);
+  const remoteFn = fnNasTokensOf(remoteTokens);
+  if (localFn.length > 0 && remoteFn.length > 0) {
+    return hasSharedToken(localFn, remoteFn);
+  }
+  return hasSharedToken(localTokens, remoteTokens);
+}
+
+export function settingsNasMismatchMessage(localTokens: string[], remoteTokens: string[]): string {
+  if (remoteTokens.length === 0) {
+    return '配置未标明来源 NAS，未导入';
+  }
+  if (localTokens.length === 0) {
+    return '当前会话无法识别 NAS，未导入';
+  }
+  if (!settingsSameNas(localTokens, remoteTokens)) {
+    return '配置来自其他 NAS，未导入';
+  }
+  return '';
 }
 
 function parseBoolFlag(raw: Object | string | number | boolean | undefined | null, fallback: boolean): boolean {

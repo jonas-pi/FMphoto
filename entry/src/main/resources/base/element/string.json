@@ -337,6 +337,10 @@
       "value": "二维码"
     },
     {
+      "name": "config_sync_device_code_label",
+      "value": "设备识别码"
+    },
+    {
       "name": "config_sync_scan",
       "value": "扫一扫导入"
     },

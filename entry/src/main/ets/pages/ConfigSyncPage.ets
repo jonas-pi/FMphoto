@@ -30,7 +30,10 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
-import { SessionPreferences, LoginFormDefaults, upsertSavedUser } from '../auth/SessionPreferences';
+import { SessionPreferences, LoginFormDefaults, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
+import { AppSession } from '../auth/AppSession';
+import { extractFnId } from '../network/FnConnectApi';
+import { wsDeviceDisplayCode } from '../network/FnWsDeviceId';
 import {
   smartCategoryCurrentAccount,
   smartCategoryEmptyLayout,
@@ -49,7 +52,9 @@ import {
   loginConfigHasContent,
   parseEnvelopeJson,
   parseQrPayload,
-  serializeEnvelope
+  serializeEnvelope,
+  settingsNasMismatchMessage,
+  settingsNasTokensFromLogin
 } from '../sync/AppSettingsEnvelope';
 import { albumsHomeApplyLayoutFromCtx, albumsHomeSnapshotFromCtx } from '../album/AlbumsHomeTileOrderPreferences';
 import { mediaCategoryApplyOrderKeys, mediaCategorySavedOrder } from '../album/MediaCategoryOrderPreferences';
@@ -110,6 +115,7 @@ struct ConfigSyncPage {
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private qrPixelMap: image.PixelMap | undefined = undefined;
   @State private qrHint: string = '正在生成二维码…';
+  @State private deviceCode: string = '';
   @State private davUrl: string = '';
   @State private davUser: string = '';
   @State private davPassword: string = '';
@@ -254,6 +260,17 @@ struct ConfigSyncPage {
         endpointPref = stored.loginEndpointPreference.trim();
       }
       useHttps = stored.useHttps;
+      if (fnId.length === 0) {
+        const fromRelay = extractFnId(stored.endpointRelayUrl);
+        const fromBase = extractFnId(stored.baseUrl);
+        fnId = fromRelay.length > 0 ? fromRelay : fromBase;
+      }
+      if (domain.length === 0 && stored.endpointPublicDomainUrl.trim().length > 0) {
+        domain = stored.endpointPublicDomainUrl.trim();
+      }
+      if (lan.length === 0 && stored.endpointLanUrl.trim().length > 0) {
+        lan = stored.endpointLanUrl.trim();
+      }
     }
     return {
       fnId: fnId,
@@ -300,6 +317,7 @@ struct ConfigSyncPage {
       const account = smartCategoryCurrentAccount();
       const layout = account.length > 0 ? await this.loadCurrentLayout() : smartCategoryEmptyLayout('');
       const deviceId = await SessionPreferences.ensureWsDeviceId(this.hostContext());
+      this.deviceCode = wsDeviceDisplayCode(deviceId);
       const updatedAt = layoutLocalUpdatedAt(layout) > 0 ? layoutLocalUpdatedAt(layout) : Date.now();
       const login = await this.loadLoginConfig();
       const albumsHome = await this.loadAlbumsHomeSlice();
@@ -352,7 +370,44 @@ struct ConfigSyncPage {
     }
   }
 
+  private nasExtraUrlsFromStored(stored: StoredSession | null): string[] {
+    if (stored === null) {
+      return [];
+    }
+    return [
+      stored.baseUrl,
+      stored.fnIdInput,
+      stored.domainInput,
+      stored.lanInput,
+      stored.endpointPublicUrl,
+      stored.endpointPublicDomainUrl,
+      stored.endpointPublicIpUrl,
+      stored.endpointLanUrl,
+      stored.endpointLanIpv6Url,
+      stored.endpointPublicIpv6Url,
+      stored.endpointRelayUrl
+    ];
+  }
+
+  private async currentNasStored(): Promise<StoredSession | null> {
+    const live = AppSession.getStored();
+    if (live !== null) {
+      return live;
+    }
+    return await SessionPreferences.load(this.hostContext());
+  }
+
   private async applyImportedEnvelope(envelope: AppSettingsEnvelope, force: boolean): Promise<void> {
+    const stored = await this.currentNasStored();
+    const localLogin = await this.loadLoginConfig();
+    const mismatch = settingsNasMismatchMessage(
+      settingsNasTokensFromLogin(localLogin, this.nasExtraUrlsFromStored(stored)),
+      settingsNasTokensFromLogin(envelope.login)
+    );
+    if (mismatch.length > 0) {
+      this.toast(mismatch);
+      return;
+    }
     const loginApplied = await this.persistImportedLogin(envelope.login);
     const account = smartCategoryCurrentAccount();
     if (account.length === 0) {
@@ -500,6 +555,20 @@ struct ConfigSyncPage {
                 .objectFit(ImageFit.Contain)
                 .borderRadius($r('app.float.radius_small'))
                 .backgroundColor(Color.White)
+            }
+
+            if (this.deviceCode.length > 0) {
+              Column({ space: 4 }) {
+                Text($r('app.string.config_sync_device_code_label'))
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+                Text(this.deviceCode)
+                  .fontSize(22)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_primary'))
+                  .letterSpacing(2)
+              }
+              .alignItems(HorizontalAlign.Center)
             }
 
             Text(this.qrHint)
