@@ -391,6 +391,17 @@ function isTerminalWsLoginResult(r: FnWsLoginResult): boolean {
     || r.certificateError === true;
 }
 
+/** 换一条登录地址再试：连接失败或证书问题；密码错 / 2FA 不换路 */
+export function shouldTryNextLoginEndpoint(r: FnWsLoginResult): boolean {
+  if (r.success === true || r.requires2fa === true || r.requires2faSetup === true) {
+    return false;
+  }
+  if (r.certificateError === true) {
+    return true;
+  }
+  return isRetryableRelayWsFailure(r);
+}
+
 /** 仅连接层失败才重试；密码错 / 2FA / 证书不可信不重试 */
 function isRetryableRelayWsFailure(r: FnWsLoginResult): boolean {
   if (isTerminalWsLoginResult(r)) {

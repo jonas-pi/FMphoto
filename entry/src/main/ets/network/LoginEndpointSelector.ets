@@ -69,6 +69,7 @@ export interface LoginEndpointProbeLine {
   label: string;
   address: string;
   baseUrl: string;
+  kind: string;
   ok: boolean;
   latencyMs: number;
   selected: boolean;
@@ -487,6 +488,7 @@ function ensureRelayProbeLine(
     label: endpointLabel(LOGIN_ENDPOINT_PREF_RELAY),
     address: compactProbeAddress(relayUrl),
     baseUrl: relayUrl,
+    kind: LOGIN_ENDPOINT_PREF_RELAY,
     ok,
     latencyMs,
     selected: false
@@ -603,6 +605,59 @@ export function compactProbeAddress(baseUrl: string): string {
   return u;
 }
 
+function normalizeLoginServerKey(baseUrl: string): string {
+  let u = baseUrl.trim();
+  if (u.endsWith('/')) {
+    u = u.substring(0, u.length - 1);
+  }
+  return u;
+}
+
+/**
+ * HTTP 探通不等于 WSS 能握手。登录时先走选中路径，连接失败再按
+ * 内网 → 公网 IP → 域名 → 中继 换路，避免卡在一条 HTTP 可达、WebSocket 不可达的地址。
+ */
+export function orderedWsLoginServers(
+  selected: LoginEndpointSelectionResult,
+  extraRelayUrl: string
+): string[] {
+  const out: string[] = [];
+  const add = (raw: string): void => {
+    const key = normalizeLoginServerKey(raw);
+    if (key.length === 0) {
+      return;
+    }
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] === key) {
+        return;
+      }
+    }
+    out.push(key);
+  };
+  add(selected.server);
+  const rest: LoginEndpointProbeLine[] = [];
+  for (let i = 0; i < selected.probeLines.length; i++) {
+    const line = selected.probeLines[i];
+    if (line.ok) {
+      rest.push(line);
+    }
+  }
+  for (let a = 0; a < rest.length; a++) {
+    for (let b = a + 1; b < rest.length; b++) {
+      if (kindPriority(rest[b].kind) < kindPriority(rest[a].kind)) {
+        const tmp = rest[a];
+        rest[a] = rest[b];
+        rest[b] = tmp;
+      }
+    }
+  }
+  for (let j = 0; j < rest.length; j++) {
+    add(rest[j].baseUrl);
+  }
+  add(extraRelayUrl);
+  return out;
+}
+
 function emptyProbeLines(): LoginEndpointProbeLine[] {
   return [];
 }
@@ -635,6 +690,7 @@ function selectionFromCandidate(
       label,
       address,
       baseUrl: server,
+      kind,
       ok: true,
       latencyMs: 0,
       selected: true
@@ -668,6 +724,7 @@ function selectionFromProbes(
       label: endpointLabel(r.candidate.kind),
       address: compactProbeAddress(r.candidate.baseUrl),
       baseUrl: r.candidate.baseUrl,
+      kind: r.candidate.kind,
       ok: r.ok,
       latencyMs: r.ok ? r.latencyMs : 0,
       selected

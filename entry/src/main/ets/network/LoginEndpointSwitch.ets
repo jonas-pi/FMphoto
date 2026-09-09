@@ -563,7 +563,16 @@ export async function switchStoredLoginEndpoint(
   }
   const nextUrl = await pickUrlForKind(stored, targetKind);
   if (nextUrl.length === 0) {
-    return { ok: false, message: '目标地址无效' };
+    if (targetKind === LOGIN_ENDPOINT_PREF_LAN) {
+      return { ok: false, message: '内网地址不可达，无法切换' };
+    }
+    if (targetKind === LOGIN_ENDPOINT_PREF_PUBLIC) {
+      return { ok: false, message: '公网地址不可达，无法切换' };
+    }
+    if (targetKind === LOGIN_ENDPOINT_PREF_RELAY) {
+      return { ok: false, message: '中继地址不可达，无法切换' };
+    }
+    return { ok: false, message: '目标地址不可达，无法切换' };
   }
   return switchStoredLoginEndpointToUrl(ctx, nextUrl, false);
 }

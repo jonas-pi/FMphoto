@@ -11,12 +11,15 @@ import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
 import {
   LOGIN_ENDPOINT_PREF_AUTO,
+  LOGIN_ENDPOINT_PREF_BANDWIDTH,
+  LOGIN_ENDPOINT_PREF_LATENCY,
+  orderedWsLoginServers,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
 import { extractFnId, isFnId, isFnRelayBaseUrl, lookupFnConnect } from '../network/FnConnectApi';
 import { preferPublicEndpointUrl, resolvePublicDomainToIpBaseUrl } from '../network/PublicDns';
 import { isIpLiteralHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
-import { fnWs2faVerify, fnWsLogin } from '../network/FnWsLogin';
+import { fnWs2faVerify, fnWsLogin, shouldTryNextLoginEndpoint } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
@@ -299,28 +302,32 @@ struct Login {
     await this.persistSessionAndGoHome(ctx, server, user, pass, token, signKeyB64, token, signKeyB64, longToken);
   }
 
-  /** 仅 WebSocket 登录 */
+  /**
+   * 仅 WebSocket 登录。
+   * @returns true 调用方应停止（成功 / 2FA / 证书对话框 / 不可换路的错误）
+   */
   private async attemptLoginWebSocketOnly(
     ctx: common.UIAbilityContext,
     server: string,
     user: string,
-    pass: string
-  ): Promise<void> {
+    pass: string,
+    promptCert: boolean = true
+  ): Promise<boolean> {
     const trusted = CertPolicy.isTrusted(server);
     const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
     const wsRes = await fnWsLogin(server, user, pass, trusted, deviceId);
     if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
-      hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok');
+      hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok %{public}s', server);
       const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
       const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
       await this.finishWsLoginSuccess(ctx, server, user, pass, wsRes.token, sk, lt);
-      return;
+      return true;
     }
     if (wsRes.requires2fa === true) {
       const at = wsRes.accessToken !== undefined ? wsRes.accessToken : '';
       if (at.length === 0) {
         this.errorText = '需要双重验证但未收到挑战令牌，请重试';
-        return;
+        return true;
       }
       this.pendingAccessToken = at;
       this.pendingDeviceId = deviceId;
@@ -331,16 +338,16 @@ struct Login {
       this.otpCode = '';
       this.errorText = '';
       hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login requires 2FA');
-      return;
+      return true;
     }
     if (wsRes.requires2faSetup === true) {
       this.errorText =
         wsRes.message !== undefined && wsRes.message.length > 0
           ? wsRes.message
           : '该账号需在飞牛网页端先绑定双重验证';
-      return;
+      return true;
     }
-    if (wsRes.certificateError === true && !trusted) {
+    if (wsRes.certificateError === true && !trusted && promptCert) {
       try {
         const dlg = await this.getUIContext().getPromptAction().showDialog({
           title: '证书不可信',
@@ -354,20 +361,20 @@ struct Login {
         if (dlg.index === 1) {
           CertPolicy.addTrusted(server);
           CertPolicy.addTrusted(fnWebViewBaseUrl(server));
-          await this.attemptLoginWebSocketOnly(ctx, server, user, pass);
-        } else {
-          this.errorText = '已取消信任证书';
+          return await this.attemptLoginWebSocketOnly(ctx, server, user, pass, true);
         }
+        this.errorText = '已取消信任证书';
       } catch (_e) {
         this.errorText = '已取消信任证书';
       }
-      return;
+      return true;
     }
     this.errorText =
       wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : 'WebSocket 登录失败';
     if (this.errorText.length > 0) {
       hilog.warn(LOGIN_DOMAIN, LOGIN_TAG, 'WS login: %{public}s', this.errorText);
     }
+    return !shouldTryNextLoginEndpoint(wsRes);
   }
 
   private describeLoginError(err: Object | Error | string | undefined | null): string {
@@ -517,7 +524,25 @@ struct Login {
       if (selected.preferredPublicUrl.length > 0) {
         this.pendingEndpointPublicUrl = selected.preferredPublicUrl;
       }
-      await this.attemptLoginWebSocketOnly(ctx, selected.server, this.username.trim(), this.password);
+      let extraRelay = '';
+      if (this.endpointPreference === LOGIN_ENDPOINT_PREF_AUTO
+        || this.endpointPreference === LOGIN_ENDPOINT_PREF_BANDWIDTH
+        || this.endpointPreference === LOGIN_ENDPOINT_PREF_LATENCY
+        || this.endpointPreference.length === 0) {
+        extraRelay = this.pendingEndpointRelayUrl;
+      }
+      const servers = orderedWsLoginServers(selected, extraRelay);
+      const user = this.username.trim();
+      const pass = this.password;
+      for (let i = 0; i < servers.length; i++) {
+        const last = i + 1 >= servers.length;
+        hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'WS login try %{public}d/%{public}d %{public}s',
+          i + 1, servers.length, servers[i]);
+        const stop = await this.attemptLoginWebSocketOnly(ctx, servers[i], user, pass, last);
+        if (stop) {
+          return;
+        }
+      }
     } catch (e) {
       const msg = this.describeLoginError(e);
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'login flow: %{public}s', msg.length > 0 ? msg : 'unknown');
