@@ -1092,7 +1092,30 @@ struct FolderBrowsePage {
           .aspectRatio(1)
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
-          .backgroundColor($r('app.color.gallery_material_surface_bg'))
+          .backgroundColor($r('app.color.folder_shell_bg'))
+        }
+        if (this.liveFolderCoverUri(item.key).length > 0) {
+          Column() {
+            Blank()
+              .layoutWeight(1)
+            Row() {
+              SymbolGlyph($r('sys.symbol.folder_fill'))
+                .fontSize(16)
+                .fontColor([Color.White])
+                .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+              Blank()
+            }
+            .width('100%')
+            .padding({ left: 8, right: 8, bottom: 8 })
+          }
+          .width('100%')
+          .height('100%')
+          .linearGradient({
+            angle: 180,
+            colors: [['#00000000', 0.0], ['#00000000', 0.42], ['#99000000', 1.0]]
+          })
+          .hitTestBehavior(HitTestMode.None)
+          .align(Alignment.TopStart)
         }
         GalleryAlbumSelectionOverlay({
           itemId: folderBrowseSelectionIdOf(item),

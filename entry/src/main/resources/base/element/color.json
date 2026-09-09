@@ -41,6 +41,10 @@
       "value": "#80000000"
     },
     {
+      "name": "folder_shell_bg",
+      "value": "#D4DCE8"
+    },
+    {
       "name": "button_primary_bg",
       "value": "#4A8BFF"
     },
