@@ -17,6 +17,7 @@ import {
   setGalleryPreviewHeroActive
 } from './GallerySharedTransition';
 import { GallerySlideshowStreamStore } from './slideshow/GallerySlideshowStreamStore';
+import { normalizeGalleryListItems } from './GalleryListItemNormalize';
 
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryNav';
@@ -78,7 +79,7 @@ export class GalleryPreviewNavStore {
     }
     GalleryPreviewNavStore.resetSlideshow();
     GalleryPreviewNavStore.baseUrl = baseUrl;
-    GalleryPreviewNavStore.items = items.slice();
+    GalleryPreviewNavStore.items = normalizeGalleryListItems(items.slice());
     GalleryPreviewNavStore.sourceRootId = sourceRootId;
     const n = GalleryPreviewNavStore.items.length;
     GalleryPreviewNavStore.startIndex = n <= 0 ? 0 : Math.max(0, Math.min(startIndex, n - 1));
@@ -146,7 +147,7 @@ export class GalleryPreviewNavStore {
     globalIndices: number[] = []
   ): void {
     GalleryPreviewNavStore.baseUrl = baseUrl;
-    GalleryPreviewNavStore.items = items.slice();
+    GalleryPreviewNavStore.items = normalizeGalleryListItems(items.slice());
     GalleryPreviewNavStore.sourceRootId = GALLERY_PREVIEW_SOURCE_HOME_ID;
     GalleryPreviewNavStore.slideshowGlobalIndices = globalIndices.slice();
     const n = GalleryPreviewNavStore.items.length;

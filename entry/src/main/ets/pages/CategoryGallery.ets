@@ -90,7 +90,12 @@ import {
   categoryGalleryRebuildByFlatItems,
   CategoryGalleryBatchActionsHost
 } from './categoryGallery/CategoryGalleryBatchActions';
-import { CategoryGalleryChrome } from './categoryGallery/CategoryGalleryChrome';
+import { GalleryGridChrome } from '../album/galleryList/GalleryGridChrome';
+import {
+  GalleryListBackStep,
+  galleryListPopOrRouterBack,
+  galleryListTryConsumeOverlays
+} from '../album/galleryList/GalleryListBack';
 import {
   gallerySlideshowLaunchForItems,
   gallerySlideshowLaunchForPerson,
@@ -246,29 +251,29 @@ struct CategoryGallery {
   }
 
   private navigateBack(): void {
-    if (this.choiceSheetVisible) {
-      this.completeChoice(-1);
+    const overlaySteps: GalleryListBackStep[] = [
+      new GalleryListBackStep(this.choiceSheetVisible, (): void => {
+        this.completeChoice(-1);
+      }),
+      new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
+        this.completeLivePhotoSave('cancel');
+      }),
+      new GalleryListBackStep(this.slideshowSettingsVisible, (): void => {
+        this.dismissSlideshowSettings();
+      }),
+      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+        this.dismissMoreMenu();
+      }),
+      new GalleryListBackStep(this.selectionMode, (): void => {
+        this.exitCgSelection();
+      })
+    ];
+    if (galleryListTryConsumeOverlays(overlaySteps)) {
       return;
     }
-    if (this.liveSaveSheetVisible) {
-      this.completeLivePhotoSave('cancel');
-      return;
-    }
-    if (this.slideshowSettingsVisible) {
-      this.dismissSlideshowSettings();
-      return;
-    }
-    if (this.moreMenuExpanded) {
-      this.dismissMoreMenu();
-      return;
-    }
-    if (this.selectionMode) {
-      this.exitCgSelection();
-      return;
-    }
-    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+    galleryListPopOrRouterBack(this.albumNavigationMode, (): void => {
       this.getUIContext().getRouter().back();
-    }
+    });
   }
 
   private usesMoreMenuMode(): boolean {
@@ -1538,15 +1543,16 @@ struct CategoryGallery {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
           // 顶栏走文档流，不要 Stack 浮层。HdsNavigation 叠在全屏上会把宫格命中区盖住，松手后滑不动、点不动。
-          CategoryGalleryChrome({
+          GalleryGridChrome({
             selectionMode: this.selectionMode,
             selectedCount: this.selectedCount,
             title: this.title,
+            fallbackTitle: '媒体分类',
             totalCount: this.totalCount,
             topSafeInsetVp: this.systemTopInsetVp,
-            personAlbumMode: this.usesMoreMenuMode(),
+            useMoreMenu: this.usesMoreMenuMode(),
             moreMenuExpanded: this.moreMenuExpanded,
-            showJumpToFolderView: this.canJumpToFolderView(),
+            showJumpToFolder: this.canJumpToFolderView(),
             scrollerList: [this.listScroller],
             onCancelSelection: (): void => {
               this.exitCgSelection();
@@ -1569,7 +1575,7 @@ struct CategoryGallery {
             onOpenSlideshowFromMore: (): void => {
               this.openSlideshowSettings();
             },
-            onJumpToFolderView: (): void => {
+            onJumpToFolder: (): void => {
               this.jumpToFolderView();
             }
           })

@@ -14,6 +14,10 @@ import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryPreviewSessionPrefs } from '../album/GalleryPreviewSessionPrefs';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
+import {
+  GalleryListBackStep,
+  galleryListTryConsumeOverlays
+} from '../album/galleryList/GalleryListBack';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
   addGalleryPreviewDismissListener,
@@ -202,16 +206,18 @@ struct GalleryPreview {
   }
 
   onBackPress(): boolean {
-    if (this.choiceSheetVisible) {
-      this.completeChoice(-1);
-      return true;
-    }
-    if (this.liveSaveSheetVisible) {
-      this.completeLivePhotoSave('cancel');
-      return true;
-    }
-    if (this.detailsVisible) {
-      this.closeDetailsPanel();
+    const overlaySteps: GalleryListBackStep[] = [
+      new GalleryListBackStep(this.choiceSheetVisible, (): void => {
+        this.completeChoice(-1);
+      }),
+      new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
+        this.completeLivePhotoSave('cancel');
+      }),
+      new GalleryListBackStep(this.detailsVisible, (): void => {
+        this.closeDetailsPanel();
+      })
+    ];
+    if (galleryListTryConsumeOverlays(overlaySteps)) {
       return true;
     }
     this.navigateBack();

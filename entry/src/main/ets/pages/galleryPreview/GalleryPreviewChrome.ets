@@ -33,10 +33,8 @@ import {
   FN_BOTTOM_DOCK_LABEL_SIZE_VP,
   FN_BOTTOM_DOCK_SIDE_PADDING_VP,
   FN_FLOATING_TOP_CONTROL_SIZE_VP,
-  FN_HDS_CAPSULE_JELLY_VP,
   FN_HDS_NAV_CHROME_HEIGHT_VP
 } from '../../common/FnUiCommon';
-import { FnHdsOverlayCapsule } from '../../common/FnHdsOverlayCapsule';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
@@ -107,6 +105,8 @@ export struct GalleryPreviewChrome {
   onDelete: () => void = () => {};
   onBottomBarHeightChange: (height: number) => void = (_: number) => {};
   private chromeOpacityUpdater: GalleryPreviewOpacityUpdater = new GalleryPreviewOpacityUpdater();
+  private skipOriginalClick: boolean = false;
+  private lastOriginalToggleAt: number = 0;
   private readonly onDismissProgress = (_progress: number): void => {
     this.syncChromeOpacity();
   };
@@ -182,22 +182,42 @@ export struct GalleryPreviewChrome {
       $r('sys.symbol.picture_fill') : $r('sys.symbol.picture');
   }
 
-  private originalChipRight(): number {
-    // 详情钮在最右；原图视觉 40vp 对齐菜单圆钮，HdsTabs 外圈果冻再往里收。
-    return 64 - FN_HDS_CAPSULE_JELLY_VP;
+  private originalHitRight(): number {
+    // 盖住顶栏「原图」菜单圆钮：详情在右，原图在它左侧一格。
+    return 64;
   }
 
-  private originalChipTop(): number {
-    return (FN_HDS_NAV_CHROME_HEIGHT_VP - FN_FLOATING_TOP_CONTROL_SIZE_VP) / 2 -
-      FN_HDS_CAPSULE_JELLY_VP;
+  private originalHitTop(): number {
+    return (FN_HDS_NAV_CHROME_HEIGHT_VP - FN_FLOATING_TOP_CONTROL_SIZE_VP) / 2;
   }
 
-  private originalFontColor(): ResourceColor {
-    return this.originalLocked ? $r('sys.color.ohos_id_color_activated') : this.fgColor;
+  private onOriginalMenuClick(): void {
+    if (this.skipOriginalClick) {
+      this.skipOriginalClick = false;
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastOriginalToggleAt < 200) {
+      return;
+    }
+    this.lastOriginalToggleAt = now;
+    this.onLoadOriginal();
   }
 
   private buildTopMenuItems(): HdsNavigationMenuItemOptions[] {
     const items: HdsNavigationMenuItemOptions[] = [];
+    if (this.showOriginalAction) {
+      const originalContent: HdsNavigationIconOptions = {
+        label: '原图',
+        icon: this.originalIcon(),
+        type: IconStyleMode.NORMAL,
+        isEnabled: this.toolbarVisible,
+        action: (): void => {
+          this.onOriginalMenuClick();
+        }
+      };
+      items.push(this.topMenuItem(originalContent));
+    }
     const detailsContent: HdsNavigationIconOptions = {
       label: '详情',
       icon: $r('sys.symbol.info_circle'),
@@ -619,27 +639,25 @@ export struct GalleryPreviewChrome {
 
         if (this.showOriginalAction) {
           Stack({ alignContent: Alignment.TopEnd }) {
-            FnHdsOverlayCapsule({
-              barWidth: FN_FLOATING_TOP_CONTROL_SIZE_VP,
-              barHeight: FN_FLOATING_TOP_CONTROL_SIZE_VP,
-              useSymbol: true,
-              symbol: this.originalIcon(),
-              fontSizeValue: 17,
-              fontColorValue: this.originalFontColor(),
-              enableLongPress: true,
-              onBarClick: (): void => {
-                this.onLoadOriginal();
-              },
-              onBarLongPress: (): void => {
-                playGalleryLongPressMenuHaptic();
-                this.onLockOriginal();
-              }
-            })
+            Row()
+              .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+              .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
               .margin({
-                top: this.topSafeInsetVp + this.originalChipTop(),
-                right: this.originalChipRight()
+                top: this.topSafeInsetVp + this.originalHitTop(),
+                right: this.originalHitRight()
               })
               .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Default : HitTestMode.None)
+              .onClick((): void => {
+                this.onOriginalMenuClick();
+              })
+              .gesture(
+                LongPressGesture({ repeat: false })
+                  .onAction((): void => {
+                    this.skipOriginalClick = true;
+                    playGalleryLongPressMenuHaptic();
+                    this.onLockOriginal();
+                  })
+              )
           }
           .width('100%')
           .height('100%')

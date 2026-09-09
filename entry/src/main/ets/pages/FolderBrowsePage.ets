@@ -107,7 +107,12 @@ import {
   folderBrowseSelectionIdOf,
   folderBrowseStackWithinRoot
 } from './folderBrowsePage/FolderBrowseLogic';
-import { FolderBrowseChrome } from './folderBrowsePage/FolderBrowseChrome';
+import { GalleryGridChrome } from '../album/galleryList/GalleryGridChrome';
+import {
+  GalleryListBackStep,
+  galleryListPopOrRouterBack,
+  galleryListTryConsumeOverlays
+} from '../album/galleryList/GalleryListBack';
 import { FolderBrowseNavStore } from './folderBrowsePage/FolderBrowseNavStore';
 import {
   folderBrowseConfirmBatchDelete,
@@ -200,24 +205,24 @@ struct FolderBrowsePage {
   }
 
   private handleBack(): void {
-    if (this.liveSaveSheetVisible) {
-      this.completeLivePhotoSave('cancel');
-      return;
-    }
-    if (this.choiceSheetVisible) {
-      this.completeChoice(-1);
-      return;
-    }
-    if (this.slideshowSettingsVisible) {
-      this.dismissSlideshowSettings();
-      return;
-    }
-    if (this.moreMenuExpanded) {
-      this.dismissMoreMenu();
-      return;
-    }
-    if (this.selectionMode) {
-      this.exitSelection();
+    const overlaySteps: GalleryListBackStep[] = [
+      new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
+        this.completeLivePhotoSave('cancel');
+      }),
+      new GalleryListBackStep(this.choiceSheetVisible, (): void => {
+        this.completeChoice(-1);
+      }),
+      new GalleryListBackStep(this.slideshowSettingsVisible, (): void => {
+        this.dismissSlideshowSettings();
+      }),
+      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+        this.dismissMoreMenu();
+      }),
+      new GalleryListBackStep(this.selectionMode, (): void => {
+        this.exitSelection();
+      })
+    ];
+    if (galleryListTryConsumeOverlays(overlaySteps)) {
       return;
     }
     // 返回只离开本页；目录上一级交给顶栏按钮，避免从详情路径进来后被一层层退回。
@@ -225,9 +230,9 @@ struct FolderBrowsePage {
   }
 
   private navigateOut(): void {
-    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+    galleryListPopOrRouterBack(this.albumNavigationMode, (): void => {
       this.getUIContext().getRouter().back();
-    }
+    });
   }
 
   aboutToAppear(): void {
@@ -1331,13 +1336,16 @@ struct FolderBrowsePage {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
-        FolderBrowseChrome({
+        GalleryGridChrome({
           selectionMode: this.selectionMode,
           selectedCount: this.selectedCount,
           title: this.title,
+          fallbackTitle: '文件夹',
           totalCount: this.totalCount(),
           topSafeInsetVp: this.systemTopInsetVp,
+          useMoreMenu: true,
           moreMenuExpanded: this.moreMenuExpanded,
+          showGoUp: true,
           canGoUp: this.canGoUpFolder,
           scrollerList: [this.listScroller],
           onCancelSelection: (): void => {

@@ -78,7 +78,12 @@ import {
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../album/GalleryGridSlideTouch';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
-import { RecycleBinChrome } from './recycleBinPage/RecycleBinChrome';
+import { GalleryGridChrome } from '../album/galleryList/GalleryGridChrome';
+import {
+  GalleryListBackStep,
+  galleryListPopOrRouterBack,
+  galleryListTryConsumeOverlays
+} from '../album/galleryList/GalleryListBack';
 import {
   GALLERY_SELECTION_SCOPE_RECYCLE,
   GalleryAlbumSelectionOverlay,
@@ -171,16 +176,18 @@ struct RecycleBinPage {
   private albumBackHandlerToken: number = 0;
 
   onBackPress(): boolean {
-    if (this.choiceSheetVisible) {
-      this.completeChoice(-1);
-      return true;
-    }
-    if (this.liveSaveSheetVisible) {
-      this.completeLivePhotoSave('cancel');
-      return true;
-    }
-    if (this.selectionMode) {
-      this.exitSelection();
+    const overlaySteps: GalleryListBackStep[] = [
+      new GalleryListBackStep(this.choiceSheetVisible, (): void => {
+        this.completeChoice(-1);
+      }),
+      new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
+        this.completeLivePhotoSave('cancel');
+      }),
+      new GalleryListBackStep(this.selectionMode, (): void => {
+        this.exitSelection();
+      })
+    ];
+    if (galleryListTryConsumeOverlays(overlaySteps)) {
       return true;
     }
     this.navigateBack();
@@ -188,9 +195,9 @@ struct RecycleBinPage {
   }
 
   private navigateBack(): void {
-    if (!this.albumNavigationMode || !GalleryAlbumNavigation.pop()) {
+    galleryListPopOrRouterBack(this.albumNavigationMode, (): void => {
       this.getUIContext().getRouter().back();
-    }
+    });
   }
 
   private vpToPx(value: number): number {
@@ -762,10 +769,14 @@ struct RecycleBinPage {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
-      RecycleBinChrome({
+      GalleryGridChrome({
         selectionMode: this.selectionMode,
         selectedCount: this.selectedCount,
+        title: '回收站',
+        fallbackTitle: '回收站',
+        showCountSubtitle: false,
         topSafeInsetVp: this.systemTopInsetVp,
+        useMoreMenu: false,
         scrollerList: [this.listScroller],
         onCancelSelection: (): void => {
           this.exitSelection();
