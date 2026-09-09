@@ -358,6 +358,38 @@ export interface RecycleBinListData {
   now?: number;
 }
 
+/** `GET /p/api/v1/repeat-photo/list` 单组（官方 similar 页：id / photos / datetimes / recommendedIndex） */
+export class RepeatPhotoGroup {
+  id: string = '';
+  photos: GalleryListItem[] = [];
+  datetimes: string[] = [];
+  recommendedIndex: number = 0;
+}
+
+/** `GET /p/api/v1/repeat-photo/list` 的 data */
+export class RepeatPhotoListData {
+  list: RepeatPhotoGroup[] = [];
+  count: number = 0;
+  /** 官方字段：`similar` 相似 / `repeat` 完全重复 */
+  strategy: string = '';
+}
+
+/** `GET /p/api/v1/task-panel/list` 里 repeat-photo 任务进度 */
+export class RepeatPhotoTaskProgress {
+  running: boolean = false;
+  taskId: string = '';
+  name: string = '';
+  successCount: number = 0;
+  total: number = 0;
+  percent: number = 0;
+  error: string = '';
+}
+
+/** `POST /p/api/v1/repeat-photo/merge` 返回 data */
+export class RepeatPhotoMergeData {
+  recycledCount: number = 0;
+}
+
 /** POST /p/api/v1/magic-search/do 请求体（官方 Lc：keyword + antiFilters；有正向筛选时补 filters） */
 export interface MagicSearchDoBody {
   keyword: string;

@@ -12,6 +12,7 @@ import {
   GALLERY_ALBUM_ROUTE_MAP,
   GALLERY_ALBUM_ROUTE_PERSON,
   GALLERY_ALBUM_ROUTE_RECYCLE,
+  GALLERY_ALBUM_ROUTE_REPEAT,
   GALLERY_ALBUM_ROUTE_SMART
 } from '../album/GalleryAlbumNavigation';
 import { CategoryGalleryNavigationContent } from './CategoryGallery';
@@ -19,6 +20,7 @@ import { FolderBrowsePageNavigationContent } from './FolderBrowsePage';
 import { MapPageNavigationContent } from './MapPage';
 import { PersonPageNavigationContent } from './PersonPage';
 import { RecycleBinPageNavigationContent } from './RecycleBinPage';
+import { RepeatPhotoPageNavigationContent } from './RepeatPhotoPage';
 import { SmartCategoryPageNavigationContent } from './SmartCategoryPage';
 import { MePanel } from './MePanel';
 import { galleryTryConsumeAlbumBack } from '../album/GalleryAlbumHardwareBack';
@@ -494,6 +496,8 @@ struct Home {
         MapPageNavigationContent()
       } else if (name === GALLERY_ALBUM_ROUTE_RECYCLE) {
         RecycleBinPageNavigationContent()
+      } else if (name === GALLERY_ALBUM_ROUTE_REPEAT) {
+        RepeatPhotoPageNavigationContent()
       } else if (name === GALLERY_ALBUM_ROUTE_FOLDER) {
         FolderBrowsePageNavigationContent()
       }

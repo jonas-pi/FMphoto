@@ -6,6 +6,7 @@ import { FnHttpClientSearchOps } from './FnHttpClientSearchOps';
 import { FnHttpClientFolderOps } from './FnHttpClientFolderOps';
 import { FnHttpClientAlbumMetaOps } from './FnHttpClientAlbumMetaOps';
 import { FnHttpClientRecycleOps } from './FnHttpClientRecycleOps';
+import { FnHttpClientRepeatOps } from './FnHttpClientRepeatOps';
 import {
   AiPersonData,
   AiPersonDetailData,
@@ -26,6 +27,10 @@ import {
   PersonInPhotoData,
   PhotoFolderListData,
   RecycleBinListData,
+  RepeatPhotoGroup,
+  RepeatPhotoListData,
+  RepeatPhotoMergeData,
+  RepeatPhotoTaskProgress,
   SearchFilterListData,
   SmartCategoryData,
   UserAlbumData
@@ -46,6 +51,7 @@ export class FnHttpClientGalleryOps {
   private readonly folder: FnHttpClientFolderOps;
   private readonly albumMeta: FnHttpClientAlbumMetaOps;
   private readonly recycle: FnHttpClientRecycleOps;
+  private readonly repeat: FnHttpClientRepeatOps;
 
   constructor(host: FnHttpClientGalleryHost) {
     this.media = new FnHttpClientMediaAssetOps(host);
@@ -55,6 +61,7 @@ export class FnHttpClientGalleryOps {
     this.folder = new FnHttpClientFolderOps(host);
     this.albumMeta = new FnHttpClientAlbumMetaOps(host);
     this.recycle = new FnHttpClientRecycleOps(host);
+    this.repeat = new FnHttpClientRepeatOps(host);
   }
 
   static clearAssetBufferCache(): void {
@@ -390,5 +397,37 @@ export class FnHttpClientGalleryOps {
 
   async restoreRecycleBinPhotos(ids: number[], timeoutMs: number = 30000): Promise<FnClientResult<Object>> {
     return this.recycle.restoreRecycleBinPhotos(ids, timeoutMs);
+  }
+
+  async getRepeatPhotoList(offset: number, size: number, timeoutMs: number = 20000): Promise<FnClientResult<RepeatPhotoListData>> {
+    return this.repeat.getRepeatPhotoList(offset, size, timeoutMs);
+  }
+
+  async getRepeatPhotoGroup(groupId: string, timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoGroup>> {
+    return this.repeat.getRepeatPhotoGroup(groupId, timeoutMs);
+  }
+
+  async getTaskPanelList(timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoTaskProgress>> {
+    return this.repeat.getTaskPanelList(timeoutMs);
+  }
+
+  async startRepeatPhotoCheck(checkSimilarity: boolean, timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
+    return this.repeat.startRepeatPhotoCheck(checkSimilarity, timeoutMs);
+  }
+
+  async keepRepeatPhoto(photoId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.repeat.keepRepeatPhoto(photoId, timeoutMs);
+  }
+
+  async excludeRepeatPhoto(photoId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.repeat.excludeRepeatPhoto(photoId, timeoutMs);
+  }
+
+  async excludeRepeatPhotoGroup(groupId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.repeat.excludeRepeatPhotoGroup(groupId, timeoutMs);
+  }
+
+  async mergeRepeatPhotos(groupId: string, timeoutMs: number = 30000): Promise<FnClientResult<RepeatPhotoMergeData>> {
+    return this.repeat.mergeRepeatPhotos(groupId, timeoutMs);
   }
 }

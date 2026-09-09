@@ -338,6 +338,7 @@ import {
   galleryAlbumOnHomeSurfaceChanged,
   galleryAlbumOpenPersonPage,
   galleryAlbumOpenRecycleBinPage,
+  galleryAlbumOpenRepeatPhotoPage,
   galleryAlbumOpenSearchPanel,
   galleryAlbumOpenSmartCategoryPage,
   galleryAlbumResetRootSurfaceSwitchTransforms,
@@ -2346,6 +2347,10 @@ export struct GalleryAlbumTab {
     galleryAlbumOpenRecycleBinPage(this.asRootSurfaceHost());
   }
 
+  private openRepeatPhotoPage(): void {
+    galleryAlbumOpenRepeatPhotoPage(this.asRootSurfaceHost());
+  }
+
   private openPersonPage(): void {
     galleryAlbumOpenPersonPage(this.asRootSurfaceHost());
   }
@@ -2957,6 +2962,9 @@ export struct GalleryAlbumTab {
           },
           onOpenRecycleBin: (): void => {
             this.openRecycleBinPage();
+          },
+          onOpenRepeatPhoto: (): void => {
+            this.openRepeatPhotoPage();
           },
           albumsHomeEditCommitSignal: this.albumsHomeEditCommitSignal,
           albumsHomeEditCancelSignal: this.albumsHomeEditCancelSignal,

@@ -59,6 +59,10 @@ import {
   PersonInPhotoData,
   PhotoFolderListData,
   RecycleBinListData,
+  RepeatPhotoGroup,
+  RepeatPhotoListData,
+  RepeatPhotoMergeData,
+  RepeatPhotoTaskProgress,
   SearchFilterListData,
   SmartCategoryData,
   UserAlbumData,
@@ -1233,6 +1237,38 @@ export class FnHttpClient {
 
   async restoreRecycleBinPhotos(ids: number[], timeoutMs: number = 30000): Promise<FnClientResult<Object>> {
     return this.galleryOps.restoreRecycleBinPhotos(ids, timeoutMs);
+  }
+
+  async getRepeatPhotoList(offset: number, size: number, timeoutMs: number = 20000): Promise<FnClientResult<RepeatPhotoListData>> {
+    return this.galleryOps.getRepeatPhotoList(offset, size, timeoutMs);
+  }
+
+  async getRepeatPhotoGroup(groupId: string, timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoGroup>> {
+    return this.galleryOps.getRepeatPhotoGroup(groupId, timeoutMs);
+  }
+
+  async getTaskPanelList(timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoTaskProgress>> {
+    return this.galleryOps.getTaskPanelList(timeoutMs);
+  }
+
+  async startRepeatPhotoCheck(checkSimilarity: boolean, timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.startRepeatPhotoCheck(checkSimilarity, timeoutMs);
+  }
+
+  async keepRepeatPhoto(photoId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.keepRepeatPhoto(photoId, timeoutMs);
+  }
+
+  async excludeRepeatPhoto(photoId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.excludeRepeatPhoto(photoId, timeoutMs);
+  }
+
+  async excludeRepeatPhotoGroup(groupId: string, timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.excludeRepeatPhotoGroup(groupId, timeoutMs);
+  }
+
+  async mergeRepeatPhotos(groupId: string, timeoutMs: number = 30000): Promise<FnClientResult<RepeatPhotoMergeData>> {
+    return this.galleryOps.mergeRepeatPhotos(groupId, timeoutMs);
   }
 
   async uploadPhotoByUri(uri: string, timeoutMs: number = 120000, albumUploadDirHint?: string): Promise<FnClientResult<Object>> {

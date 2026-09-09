@@ -14,6 +14,7 @@ import {
   GALLERY_ALBUM_ROUTE_MAP,
   GALLERY_ALBUM_ROUTE_PERSON,
   GALLERY_ALBUM_ROUTE_RECYCLE,
+  GALLERY_ALBUM_ROUTE_REPEAT,
   GALLERY_ALBUM_ROUTE_SMART
 } from '../GalleryAlbumNavigation';
 import { FolderBrowseNavStore } from '../../pages/folderBrowsePage/FolderBrowseNavStore';
@@ -218,6 +219,19 @@ export function galleryAlbumOpenRecycleBinPage(host: GalleryAlbumRootSurfaceHost
     params: { baseUrl: host.baseUrl }
   }).catch((_e: Error): void => {
     host.toast('打开回收站失败');
+  });
+}
+
+export function galleryAlbumOpenRepeatPhotoPage(host: GalleryAlbumRootSurfaceHost): void {
+  const param: GalleryAlbumNavigationParam = { baseUrl: host.baseUrl };
+  if (GalleryAlbumNavigation.push(GALLERY_ALBUM_ROUTE_REPEAT, param)) {
+    return;
+  }
+  host.getUIContext().getRouter().pushUrl({
+    url: 'pages/RepeatPhotoPage',
+    params: { baseUrl: host.baseUrl }
+  }).catch((_e: Error): void => {
+    host.toast('打开重复检查失败');
   });
 }
 

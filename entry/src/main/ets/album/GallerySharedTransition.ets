@@ -15,6 +15,7 @@ export const GALLERY_PREVIEW_SOURCE_HOME_ID: string = 'gallery_preview_source_ho
 export const GALLERY_PREVIEW_SOURCE_CATEGORY_ID: string = 'gallery_preview_source_category';
 export const GALLERY_PREVIEW_SOURCE_RECYCLE_ID: string = 'gallery_preview_source_recycle';
 export const GALLERY_PREVIEW_SOURCE_FOLDER_ID: string = 'gallery_preview_source_folder';
+export const GALLERY_PREVIEW_SOURCE_REPEAT_ID: string = 'gallery_preview_source_repeat';
 
 /** 官方一镜到底示例多用 Friction；过短的 EaseInOut 容易在宽高跳变时显得卡、像逃逸 */
 export const GALLERY_SHARED_TRANSITION_DURATION: number = 260;

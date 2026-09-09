@@ -71,6 +71,29 @@ export const GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES: string[] = [
 export const GALLERY_FOLDER_COVER_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/folder_view/cover`;
 /** 回收站列表：签名 path 与 gallery 系列一致为 /p/api/v1/... */
 export const RECYCLE_BIN_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/recycle-bin/list`;
+/** 重复/相似检查列表 */
+export const REPEAT_PHOTO_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/list`;
+export const REPEAT_PHOTO_LIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/repeat-photo/list`,
+  '/api/v1/repeat-photo/list'
+];
+/** 单组详情 */
+export const REPEAT_PHOTO_GROUP_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/group`;
+export const REPEAT_PHOTO_GROUP_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/repeat-photo/group`,
+  '/api/v1/repeat-photo/group'
+];
+/** 任务面板（扫描进度） */
+export const TASK_PANEL_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/task-panel/list`;
+export const TASK_PANEL_LIST_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/task-panel/list`,
+  '/api/v1/task-panel/list'
+];
+/** 启动重复/相似扫描 */
+export const REPEAT_PHOTO_CHECK_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/check`;
+export const REPEAT_PHOTO_KEEP_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/keep`;
+export const REPEAT_PHOTO_EXCLUDE_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/exclude`;
+export const REPEAT_PHOTO_MERGE_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/merge`;
 /** 照片中人物识别：GET /p/api/v1/ai-person/personInPhoto?id=xxx */
 export const PERSON_IN_PHOTO_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/ai-person/personInPhoto`;
 export const PERSON_IN_PHOTO_PATH_CANDIDATES: string[] = [

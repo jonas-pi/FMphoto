@@ -103,6 +103,7 @@ export struct GalleryAlbumAlbumsHomeView {
   onOpenRecentAdded: () => void = () => {};
   onOpenCollect: () => void = () => {};
   onOpenRecycleBin: () => void = () => {};
+  onOpenRepeatPhoto: () => void = () => {};
   onAlbumsHomeEditModeChange: (active: boolean) => void = (_: boolean) => {};
 
   @Prop @Watch('onEditCommitSignalChanged') albumsHomeEditCommitSignal: number = 0;
@@ -1550,6 +1551,10 @@ export struct GalleryAlbumAlbumsHomeView {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(24)
           .fontColor([$r('app.color.text_secondary')])
+      } else if (kind === 'repeat') {
+        SymbolGlyph($r('sys.symbol.square_on_square_fill'))
+          .fontSize(24)
+          .fontColor([$r('app.color.text_secondary')])
       } else {
         Text(monogram)
           .fontSize(18)
@@ -1621,6 +1626,8 @@ export struct GalleryAlbumAlbumsHomeView {
   @Builder
   private recycleShortcutGroup() {
     Column() {
+      this.shortcutRow('repeat', '重', '检查重复', this.onOpenRepeatPhoto)
+      this.shortcutDivider()
       this.shortcutRow('recycle', '回', '回收站', this.onOpenRecycleBin, true)
     }
     .width('100%')

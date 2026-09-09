@@ -11,6 +11,7 @@
     "pages/PersonPage",
     "pages/MapPage",
     "pages/RecycleBinPage",
+    "pages/RepeatPhotoPage",
     "pages/FolderBrowsePage",
     "pages/Settings",
     "pages/ConfigSyncPage"

@@ -11,6 +11,7 @@ export const GALLERY_ALBUM_ROUTE_PERSON: string = 'galleryAlbumPerson';
 export const GALLERY_ALBUM_ROUTE_SMART: string = 'galleryAlbumSmart';
 export const GALLERY_ALBUM_ROUTE_MAP: string = 'galleryAlbumMap';
 export const GALLERY_ALBUM_ROUTE_RECYCLE: string = 'galleryAlbumRecycle';
+export const GALLERY_ALBUM_ROUTE_REPEAT: string = 'galleryAlbumRepeat';
 export const GALLERY_ALBUM_ROUTE_FOLDER: string = 'galleryAlbumFolder';
 
 export class GalleryAlbumNavigationParam {
