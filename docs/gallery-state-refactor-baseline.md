@@ -10,7 +10,7 @@ Slideshow timer、Swiper、`changeIndex(50ms)` 不在阶段 1 用巨型 Host moc
 
 - 禁止新增 `asXxxHost()` 和页面内 HostBridge。
 - 新能力进入已有 Session / Coordinator / 窄 Port。
-- Category / Folder / Recycle / Video 本轮只禁新增，不迁移。
+- AuthVideo 仍只禁新增，不迁移。
 - Coordinator 只编排跨领域命令，不暴露通用 getter/setter。
 
 ## GalleryAlbumTab
@@ -147,4 +147,18 @@ Album：启动/缓存恢复、快滑与 scrub、下拉刷新、搜索输入法�
 
 Preview：共享转场、Swiper/缩放/下滑退出、详情拖拽、图/视频/Live、原图、收藏下载分享删除、幻灯片定时与补货、旋转、返回键覆盖层优先级。
 
+Category / Folder / Recycle：划选批量、共享转场进 Preview、Live Photo sheet；Category 流式同步/返回再进；Folder 进目录/上一级/分页；Recycle 多选恢复。
+
 回滚：任一领域出现请求次数、DataSource 通知类型、组件 key、滚动位置、输入法、转场、媒体生命周期差异，回滚该领域，不叠加修补。
+
+## 三网格 Session（已迁）
+
+规则与 Album/Preview 相同：页面只绑定；`selectedIds` / 划选 Map / timer / resolver 单份在 Session；Host 会话级缓存；`@State` 不搬家。`cgPageActive` 必须仍是普通字段语义。
+
+入口：
+
+- [CategoryGallery.ets](../entry/src/main/ets/pages/CategoryGallery.ets) → [CategoryGallerySession.ets](../entry/src/main/ets/pages/categoryGallery/CategoryGallerySession.ets)
+- [FolderBrowsePage.ets](../entry/src/main/ets/pages/FolderBrowsePage.ets) → [FolderBrowseSession.ets](../entry/src/main/ets/pages/folderBrowsePage/FolderBrowseSession.ets)
+- [RecycleBinPage.ets](../entry/src/main/ets/pages/RecycleBinPage.ets) → [RecycleBinSession.ets](../entry/src/main/ets/pages/recycleBinPage/RecycleBinSession.ets)
+
+默认值门禁：[entry/src/test/GalleryGridStateBaseline.test.ets](../entry/src/test/GalleryGridStateBaseline.test.ets)（recycle `selectedIds` 为 `number[]`，`cgPageActive` 默认 `false`）。

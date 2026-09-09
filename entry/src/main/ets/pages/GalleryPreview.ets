@@ -55,7 +55,7 @@ import {
 import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
 import { gallerySlideshowStableItemKey } from '../album/slideshow/GallerySlideshowMedia';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
-import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
+import { isGifItem, isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
 import {
   askLivePhotoSaveChoice,
@@ -133,7 +133,8 @@ import {
   galleryPreviewResumeSlideshowAfterDetails,
   galleryPreviewScheduleSlideshowPrefetch,
   galleryPreviewShouldPauseSlideshow,
-  galleryPreviewSlideshowGlobalIndexAt
+  galleryPreviewSlideshowGlobalIndexAt,
+  galleryPreviewSlideshowWaitsForMediaEnd
 } from './galleryPreview/GalleryPreviewSlideshowRuntime';
 import {
   galleryPreviewPlaceholderFromPx,
@@ -494,6 +495,18 @@ struct GalleryPreview {
     return item !== null && isVideoItem(item);
   }
 
+  private currentSlideshowWaitsForMediaEnd(): boolean {
+    const item = this.currentItem();
+    if (item === null) {
+      return false;
+    }
+    return galleryPreviewSlideshowWaitsForMediaEnd(
+      isVideoItem(item),
+      isGifItem(item),
+      isLivePhotoItem(item)
+    );
+  }
+
   private currentItemId(): string {
     const item = this.currentItem();
     if (item === null || item.id === undefined || item.id === null) {
@@ -818,6 +831,7 @@ struct GalleryPreview {
 
       currentItem(): GalleryListItem | null { return self.currentItem(); }
       currentItemIsVideo(): boolean { return self.currentItemIsVideo(); }
+      currentSlideshowWaitsForMediaEnd(): boolean { return self.currentSlideshowWaitsForMediaEnd(); }
     }
     this.slideshowHostCache = new GalleryPreviewSlideshowHostBridge();
     return this.slideshowHostCache;
@@ -1128,27 +1142,6 @@ struct GalleryPreview {
         })
       }
 
-      GalleryPreviewInlineDetails({
-        expandedHeight: galleryDetailsMediumHeightVp(this.previewViewportH),
-        visible: this.detailsVisible,
-        panelBg: this.pageBg(),
-        detailsLoading: this.detailsLoading,
-        detailsError: this.detailsError,
-        detailsData: this.detailsData,
-        personsInPhoto: this.personsInPhoto,
-        folderOpening: this.folderOpening,
-        personOpening: this.personOpening,
-        onClose: (): void => {
-          this.closeDetailsPanel();
-        },
-        onPersonClick: (p: PersonInPhotoItem): void => {
-          void this.onPersonInPhotoClick(p);
-        },
-        onFolderClick: (): void => {
-          this.openFolderFromDetailPath();
-        }
-      })
-
       GalleryPreviewChrome({
         titleText: this.titleCounter(),
         toolbarBg: this.toolbarBg(),
@@ -1194,6 +1187,27 @@ struct GalleryPreview {
         },
         onBottomBarHeightChange: (height: number): void => {
           this.bottomBarHeight = height;
+        }
+      })
+
+      GalleryPreviewInlineDetails({
+        expandedHeight: galleryDetailsMediumHeightVp(this.previewViewportH),
+        visible: this.detailsVisible,
+        panelBg: this.pageBg(),
+        detailsLoading: this.detailsLoading,
+        detailsError: this.detailsError,
+        detailsData: this.detailsData,
+        personsInPhoto: this.personsInPhoto,
+        folderOpening: this.folderOpening,
+        personOpening: this.personOpening,
+        onClose: (): void => {
+          this.closeDetailsPanel();
+        },
+        onPersonClick: (p: PersonInPhotoItem): void => {
+          void this.onPersonInPhotoClick(p);
+        },
+        onFolderClick: (): void => {
+          this.openFolderFromDetailPath();
         }
       })
 
@@ -1406,10 +1420,11 @@ struct GalleryPreviewInlineDetails {
       .backgroundColor(this.panelBg)
       .attributeModifier(this.translateUpdater)
       .enabled(this.visible)
+      .hitTestBehavior(this.visible ? HitTestMode.Default : HitTestMode.None)
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(HitTestMode.Transparent)
+    .hitTestBehavior(this.visible ? HitTestMode.Transparent : HitTestMode.None)
   }
 }
 

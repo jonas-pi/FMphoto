@@ -791,17 +791,6 @@ export struct GalleryAlbumAlbumsHomeView {
     })
   }
 
-  private restoreGridHeightVp(): number {
-    const cols = 3;
-    const count = Math.max(1, this.restoreCards.length);
-    const rows = Math.ceil(count / cols);
-    const gap = ALBUMS_HOME_MEDIA_GRID_GAP_VP;
-    const width = this.mediaGridWidthVp > 8 ? this.mediaGridWidthVp : 332;
-    const cellW = Math.max(1, (width - gap * (cols - 1)) / cols);
-    const itemH = cellW + ALBUMS_HOME_MEDIA_CARD_TEXT_VP;
-    return rows * itemH + Math.max(0, rows - 1) * gap;
-  }
-
   @Builder
   private babyCoverStreamMask() {
     Column() {
@@ -858,33 +847,32 @@ export struct GalleryAlbumAlbumsHomeView {
   @Builder
   private restoreSheetBuilder() {
     Column() {
-      Scroll() {
-        Grid() {
-          ForEach(this.restoreCards, (item: AlbumsHomeRestoreCard) => {
-            GridItem() {
-              this.restoreCardCell(item)
-            }
-            .width('100%')
-          }, (item: AlbumsHomeRestoreCard) => `restore_${item.key}`)
-        }
-        .columnsTemplate(fnRepeatFrTemplate(3))
-        .columnsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
-        .rowsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
-        .width('100%')
-        .height(this.restoreGridHeightVp())
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.None)
+      // 半模态 MEDIUM 高于少量板块时，外层 Scroll 默认 Alignment.Center 会把宫格垂直居中。
+      // Grid 自己占满内容区并从顶部排布行，剩余空白留在下方。
+      Grid() {
+        ForEach(this.restoreCards, (item: AlbumsHomeRestoreCard) => {
+          GridItem() {
+            this.restoreCardCell(item)
+          }
+          .width('100%')
+        }, (item: AlbumsHomeRestoreCard) => `restore_${item.key}`)
       }
+      .columnsTemplate(fnRepeatFrTemplate(3))
+      .columnsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
+      .rowsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
       .width('100%')
-      .height('100%')
+      .layoutWeight(1)
       .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
       .nestedScroll({
         scrollForward: NestedScrollMode.PARENT_FIRST,
-        scrollBackward: NestedScrollMode.PARENT_FIRST
+        scrollBackward: NestedScrollMode.SELF_FIRST
       })
     }
     .width('100%')
     .height('100%')
+    .justifyContent(FlexAlign.Start)
+    .alignItems(HorizontalAlign.Start)
     .padding({ left: 16, right: 16, top: 8, bottom: 24 })
     .backgroundColor(Color.Transparent)
   }

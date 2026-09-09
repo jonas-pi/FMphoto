@@ -55,11 +55,9 @@ import {
   galleryGridShouldUpdateSecondaryPan,
   galleryGridShouldUpdateSequencePan,
   GalleryGridSlideTouchHost,
-  GalleryGridSlideTouchSession,
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../album/GalleryGridSlideTouch';
 import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
-import { FnListDataSource } from '../common/FnListDataSource';
 import {
   FN_WINDOW_WIDTH_BP_KEY,
   fnAdaptiveGridColumns,
@@ -149,6 +147,7 @@ import {
   categoryGalleryStopStoreObserver,
   categoryGallerySyncFromNavStore
 } from './categoryGallery/CategoryGalleryDataSync';
+import { CategoryGallerySession } from './categoryGallery/CategoryGallerySession';
 
 const CATEGORY_GALLERY_CONTENT_INSET_TOP_VP: number = 68;
 
@@ -171,12 +170,8 @@ struct CategoryGallery {
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
   @StorageProp(GALLERY_PREVIEW_HERO_ACTIVE_KEY) private previewHeroActive: boolean = false;
-  private flatItems: GalleryListItem[] = [];
-  private groupOffsets: number[] = [];
-  private handledDeleteSyncVersion: number = 0;
 
   @State private selectionMode: boolean = false;
-  private selectedIds: string[] = [];
   @State private selectedCount: number = 0;
   @State private cgSlideGestureActive: boolean = false;
   @State private cgScrollEnabled: boolean = true;
@@ -193,47 +188,17 @@ struct CategoryGallery {
   @State private slideshowSettingsVisible: boolean = false;
   @State private slideshowPreparing: boolean = false;
 
-  private cgLongPressIgnoreUntil: number = 0;
-  /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
-  private listScroller: Scroller = new Scroller();
-  private listBlocks: Array<CategoryGalleryListBlock> = [];
-  private listBlockSource: FnListDataSource<CategoryGalleryListBlock> =
-    new FnListDataSource<CategoryGalleryListBlock>();
-  private cgThumbHitBounds: Map<string, CgThumbHitRect> = new Map();
-  private cgSlideRefX: number = 0;
-  private cgSlideRefY: number = 0;
-  private cgSlideHasRef: boolean = false;
-  private cgSlideAnchorFlat: number = -1;
-  private cgSlideUnionBase: string[] = [];
-  private cgSlideLastEndFlat: number = -1;
-  private cgSlideLastAppliedEndFlat: number = -99999;
-  private cgObservedStoreVersion: number = -1;
-  private cgPendingStoreSync: boolean = false;
-  private cgStorePollTimer: number = -1;
-  private cgThumbResumeTimer: number = -1;
-  private cgDeferredBackgroundLoadTimer: number = -1;
-  private cgDeferredSnapshotApplyTimer: number = -1;
-  private cgLastSnapshotApplyAtMs: number = 0;
-  /**
-   * 页面活动标记必须使用普通字段，不能使用 @State。
-   * 它只用于阻止已排入事件队列的定时器/网络回调在组件销毁后继续修改响应式状态。
-   */
-  private cgPageActive: boolean = false;
-  /** 与主时间线共用的划选触摸会话，首次长按松手也必须能解锁滚动 */
-  private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
-  /** 本页打开时的会话 token，仅同步属于自己的 NavStore 更新。 */
-  private pageSessionToken: number = -1;
-  private pageSourceKind: string = '';
-  private pageCategoryKey: string = '';
-  private pageFolderPath: string = '';
-  private pageUseCreatedAtGrouping: boolean = false;
-  private slideshowRequestSeq: number = 0;
+  private session: CategoryGallerySession = new CategoryGallerySession();
+  private slideTouchHostCache: GalleryGridSlideTouchHost | undefined = undefined;
+  private selectionHostCache: CategoryGallerySelectionHost | undefined = undefined;
+  private dataSyncHostCache: CategoryGalleryDataSyncHost | undefined = undefined;
+  private batchHostCache: CategoryGalleryBatchActionsHost | undefined = undefined;
   private albumBackHandlerToken: number = 0;
 
   private recycleThumbCache(aggressive: boolean = false): void {
     const recentAddedAggressive = this.isRecentAddedStreamingMode() &&
-      (aggressive || this.cgBackgroundLoading || this.flatItems.length > 360);
-    trimThumbPixCacheForList(this.flatItems.length, aggressive || recentAddedAggressive);
+      (aggressive || this.cgBackgroundLoading || this.session.sync.flatItems.length > 360);
+    trimThumbPixCacheForList(this.session.sync.flatItems.length, aggressive || recentAddedAggressive);
   }
 
   onBackPress(): boolean {
@@ -242,7 +207,7 @@ struct CategoryGallery {
   }
 
   onPageHide(): void {
-    this.cgPageActive = false;
+    this.session.guard.cgPageActive = false;
     this.stopStoreObserver();
     this.clearCgThumbResumeTimer();
     this.clearCgDeferredBackgroundLoadTimer();
@@ -299,12 +264,12 @@ struct CategoryGallery {
   }
 
   private canJumpToFolderView(): boolean {
-    return this.pageSourceKind === 'folder' && this.pageFolderPath.trim().length > 0;
+    return this.session.sync.pageSourceKind === 'folder' && this.session.sync.pageFolderPath.trim().length > 0;
   }
 
   private jumpToFolderView(): void {
     this.dismissMoreMenu();
-    const folderPath = this.pageFolderPath.trim();
+    const folderPath = this.session.sync.pageFolderPath.trim();
     if (folderPath.length === 0) {
       this.toast('无法跳转到文件夹视图');
       return;
@@ -332,17 +297,17 @@ struct CategoryGallery {
 
   /** 已画到屏幕上的列表；媒体分类等续拉场景只作兜底，不能当人物/搜索的全集 */
   private categorySlideshowItems(): GalleryListItem[] {
-    if (this.pageSessionToken === CategoryGalleryNavStore.currentToken()) {
+    if (this.session.sync.pageSessionToken === CategoryGalleryNavStore.currentToken()) {
       const storeItems = CategoryGalleryNavStore.items;
-      if (storeItems.length > this.flatItems.length) {
+      if (storeItems.length > this.session.sync.flatItems.length) {
         return storeItems;
       }
     }
-    return this.flatItems;
+    return this.session.sync.flatItems;
   }
 
   private categorySlideshowScope(): GallerySlideshowScope {
-    if (this.pageSessionToken === CategoryGalleryNavStore.currentToken()) {
+    if (this.session.sync.pageSessionToken === CategoryGalleryNavStore.currentToken()) {
       if (CategoryGalleryNavStore.sourceKind === 'person') {
         const personId = CategoryGalleryNavStore.personId.trim();
         if (personId.length > 0) {
@@ -378,7 +343,7 @@ struct CategoryGallery {
     if (scope.kind === GallerySlideshowScopeKind.SMART_CATEGORY) {
       return true;
     }
-    return this.categorySlideshowItems().length > 0 || this.pageCategoryKey.length > 0;
+    return this.categorySlideshowItems().length > 0 || this.session.sync.pageCategoryKey.length > 0;
   }
 
   private sleepMs(ms: number): Promise<void> {
@@ -394,7 +359,7 @@ struct CategoryGallery {
     this.ensureCategoryBackgroundLoad();
     let spins = 0;
     while (isActive() && spins < 6000) {
-      if (this.pageSessionToken !== CategoryGalleryNavStore.currentToken()) {
+      if (this.session.sync.pageSessionToken !== CategoryGalleryNavStore.currentToken()) {
         return;
       }
       if (!CategoryGalleryNavStore.backgroundLoading && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
@@ -410,8 +375,8 @@ struct CategoryGallery {
       return;
     }
     this.slideshowPreparing = true;
-    const seq = ++this.slideshowRequestSeq;
-    const isActive = (): boolean => seq === this.slideshowRequestSeq;
+    const seq = ++this.session.guard.slideshowRequestSeq;
+    const isActive = (): boolean => seq === this.session.guard.slideshowRequestSeq;
     const scope = this.categorySlideshowScope();
     const toast = (msg: string): void => {
       this.toast(msg);
@@ -479,17 +444,17 @@ struct CategoryGallery {
   }
 
   private isRecentAddedStreamingMode(): boolean {
-    if (this.pageSourceKind === 'recent' || this.pageSourceKind === 'user-album') {
+    if (this.session.sync.pageSourceKind === 'recent' || this.session.sync.pageSourceKind === 'user-album') {
       return true;
     }
-    return this.pageUseCreatedAtGrouping && this.pageCategoryKey.length === 0;
+    return this.session.sync.pageUseCreatedAtGrouping && this.session.sync.pageCategoryKey.length === 0;
   }
 
   private emptyStateText(): string {
-    if (this.pageSourceKind === 'collect') {
+    if (this.session.sync.pageSourceKind === 'collect') {
       return '收藏夹为空';
     }
-    if (this.pageSourceKind === 'recent') {
+    if (this.session.sync.pageSourceKind === 'recent') {
       return '最近添加为空';
     }
     return '暂无媒体';
@@ -510,7 +475,7 @@ struct CategoryGallery {
   }
 
   onPageShow(): void {
-    this.cgPageActive = true;
+    this.session.guard.cgPageActive = true;
     this.startStoreObserver();
     this.applyDeleteSyncIfNeeded();
     this.syncFromNavStore();
@@ -525,7 +490,7 @@ struct CategoryGallery {
 
   aboutToAppear(): void {
     // 必须先恢复活动状态，后续快照应用和后台加载才允许更新页面。
-    this.cgPageActive = true;
+    this.session.guard.cgPageActive = true;
     // 仅 NavDestination 内的实例使用 Home 内部栈；独立 Router 页必须通过 router.back() 返回。
     this.albumNavigationMode = this.queryNavDestinationInfo() !== undefined &&
       GalleryAlbumNavigation.isAvailable();
@@ -550,15 +515,15 @@ struct CategoryGallery {
 
   aboutToDisappear(): void {
     // 必须作为退出清理的第一步，封住已经进入事件队列、无法再由 clearTimeout 取消的回调。
-    this.cgPageActive = false;
+    this.session.guard.cgPageActive = false;
     GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
-    this.slideshowRequestSeq++;
+    this.session.guard.slideshowRequestSeq++;
     this.stopStoreObserver();
     this.clearCgThumbResumeTimer();
     this.clearCgDeferredBackgroundLoadTimer();
     this.clearCgDeferredSnapshotApplyTimer();
     categoryGalleryEndSlideSelectGesture(this.asSelectionHost());
-    galleryGridResetTouchTracking(this.slideTouch);
+    galleryGridResetTouchTracking(this.session.overlay.slideTouch);
     galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_CATEGORY);
     this.recycleThumbCache(true);
     const client = AppSession.getClient();
@@ -590,14 +555,14 @@ struct CategoryGallery {
       return;
     }
     this.selectionMode = value;
-    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
+    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.session.selection.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
   }
 
   private setSelectedIdsState(value: string[]): void {
-    this.selectedIds = value;
-    const selected = galleryItemsMatchingSelectedIds(this.flatItems, this.selectedIds);
+    this.session.selection.selectedIds = value;
+    const selected = galleryItemsMatchingSelectedIds(this.session.sync.flatItems, this.session.selection.selectedIds);
     this.selectionHasLivePhoto = gallerySelectionContainsLive(selected);
-    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
+    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.session.selection.selectedIds, GALLERY_SELECTION_SCOPE_CATEGORY);
     if (this.selectedCount !== value.length) {
       this.selectedCount = value.length;
     }
@@ -623,6 +588,9 @@ struct CategoryGallery {
   }
 
   private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    if (this.slideTouchHostCache !== undefined) {
+      return this.slideTouchHostCache;
+    }
     const self = this;
     class CategoryGallerySlideTouchHostBridge implements GalleryGridSlideTouchHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -631,17 +599,18 @@ struct CategoryGallery {
       endSlide(): void { self.endCgSlideSelectGesture(); }
       followSlideAtWindowPx(xPx: number, yPx: number): void { self.onCgSlideTouchMoveWindow(xPx, yPx); }
     }
-    return new CategoryGallerySlideTouchHostBridge();
+    this.slideTouchHostCache = new CategoryGallerySlideTouchHostBridge();
+    return this.slideTouchHostCache;
   }
 
   /** 未进多选的触摸/Sequence 长按：进入多选并按窗口坐标起划选 */
   private beginCgFirstSlideAtRow(groupIdx: number, row: RowModel, xPx: number, yPx: number): boolean {
     const rowStart = this.rowGlobalStartFlat(groupIdx, row);
     const fi = this.pickCgFlatForRow(rowStart, xPx, yPx);
-    if (fi < 0 || fi >= this.flatItems.length) {
+    if (fi < 0 || fi >= this.session.sync.flatItems.length) {
       return false;
     }
-    const item = this.flatItems[fi];
+    const item = this.session.sync.flatItems[fi];
     if (!this.selectionMode) {
       this.onCgThumbLongPress(item, fi);
     }
@@ -678,13 +647,13 @@ struct CategoryGallery {
   }
 
   private openItemAtFlat(flatIdx: number): void {
-    if (flatIdx < 0 || flatIdx >= this.flatItems.length) {
+    if (flatIdx < 0 || flatIdx >= this.session.sync.flatItems.length) {
       return;
     }
     GalleryPreviewNavStore.openPreview(
       this.getUIContext(),
       this.baseUrl,
-      this.flatItems,
+      this.session.sync.flatItems,
       flatIdx,
       GALLERY_PREVIEW_SOURCE_CATEGORY_ID
     );
@@ -709,11 +678,11 @@ struct CategoryGallery {
   private rebuildByFlatItems(): void {
     categoryGalleryRebuildByFlatItems(this.asBatchActionsHost());
     this.rebuildListBlocks();
-    this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
-    if (this.heroImageUri.length === 0 && this.flatItems.length > 0) {
-      this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.flatItems[0]));
+    this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.session.sync.flatItems.length);
+    if (this.heroImageUri.length === 0 && this.session.sync.flatItems.length > 0) {
+      this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.session.sync.flatItems[0]));
     }
-    this.recycleThumbCache(this.cgBackgroundLoading || this.flatItems.length > 720);
+    this.recycleThumbCache(this.cgBackgroundLoading || this.session.sync.flatItems.length > 720);
   }
 
   private applyDeleteSyncIfNeeded(): void {
@@ -721,22 +690,22 @@ struct CategoryGallery {
   }
 
   private clearCgThumbResumeTimer(): void {
-    if (this.cgThumbResumeTimer >= 0) {
-      clearTimeout(this.cgThumbResumeTimer);
-      this.cgThumbResumeTimer = -1;
+    if (this.session.overlay.cgThumbResumeTimer >= 0) {
+      clearTimeout(this.session.overlay.cgThumbResumeTimer);
+      this.session.overlay.cgThumbResumeTimer = -1;
     }
   }
 
   private clearCgDeferredBackgroundLoadTimer(): void {
-    if (this.cgDeferredBackgroundLoadTimer >= 0) {
-      clearTimeout(this.cgDeferredBackgroundLoadTimer);
-      this.cgDeferredBackgroundLoadTimer = -1;
+    if (this.session.sync.cgDeferredBackgroundLoadTimer >= 0) {
+      clearTimeout(this.session.sync.cgDeferredBackgroundLoadTimer);
+      this.session.sync.cgDeferredBackgroundLoadTimer = -1;
     }
   }
 
   private rebuildListBlocks(): void {
-    this.listBlocks = categoryGalleryBuildListBlocks(this.groups, this.columnsPerRow, this.groupOffsets);
-    this.listBlockSource.reloadAll(this.listBlocks);
+    this.session.sync.listBlocks = categoryGalleryBuildListBlocks(this.groups, this.columnsPerRow, this.session.sync.groupOffsets);
+    this.session.sync.listBlockSource.reloadAll(this.session.sync.listBlocks);
   }
 
   private applyNavStoreSnapshot(): void {
@@ -768,14 +737,14 @@ struct CategoryGallery {
   }
 
   private ensureCategoryBackgroundLoad(): void {
-    const token = this.pageSessionToken;
-    if (!this.cgPageActive || token < 0 || token !== CategoryGalleryNavStore.currentToken()) {
+    const token = this.session.sync.pageSessionToken;
+    if (!this.session.guard.cgPageActive || token < 0 || token !== CategoryGalleryNavStore.currentToken()) {
       return;
     }
     if (CategoryGalleryNavStore.backgroundLoading) {
       return;
     }
-    if (this.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
+    if (this.session.sync.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder()) {
       return;
     }
     void this.loadRemainingCategoryItems(token);
@@ -783,14 +752,14 @@ struct CategoryGallery {
 
   private scheduleCategoryBackgroundLoad(): void {
     this.clearCgDeferredBackgroundLoadTimer();
-    if (!this.cgPageActive ||
-      (this.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder())) {
+    if (!this.session.guard.cgPageActive ||
+      (this.session.sync.pageCategoryKey.length === 0 && !CategoryGalleryNavStore.hasPrefetchedRemainder())) {
       return;
     }
-    const delayMs = this.pageCategoryKey === 'photo' ? 240 : 96;
-    this.cgDeferredBackgroundLoadTimer = setTimeout((): void => {
-      this.cgDeferredBackgroundLoadTimer = -1;
-      if (!this.cgPageActive) {
+    const delayMs = this.session.sync.pageCategoryKey === 'photo' ? 240 : 96;
+    this.session.sync.cgDeferredBackgroundLoadTimer = setTimeout((): void => {
+      this.session.sync.cgDeferredBackgroundLoadTimer = -1;
+      if (!this.session.guard.cgPageActive) {
         return;
       }
       this.ensureCategoryBackgroundLoad();
@@ -802,7 +771,7 @@ struct CategoryGallery {
       this.cgScrollEnabled = true;
     }
     if (!this.cgSlideGestureActive) {
-      this.cgThumbHitBounds.clear();
+      this.session.selection.cgThumbHitBounds.clear();
     }
     if (scrollState !== ScrollState.Idle) {
       this.clearCgThumbResumeTimer();
@@ -818,21 +787,21 @@ struct CategoryGallery {
       if (!this.cgThumbLoadingPaused) {
         this.cgThumbLoadingPaused = true;
       }
-      this.recycleThumbCache(this.isRecentAddedStreamingMode() || this.flatItems.length > 720);
+      this.recycleThumbCache(this.isRecentAddedStreamingMode() || this.session.sync.flatItems.length > 720);
       return;
     }
     this.clearCgThumbResumeTimer();
-    const resumeDelayMs = this.isRecentAddedStreamingMode() && (this.cgBackgroundLoading || this.flatItems.length > 720)
+    const resumeDelayMs = this.isRecentAddedStreamingMode() && (this.cgBackgroundLoading || this.session.sync.flatItems.length > 720)
       ? CATEGORY_GALLERY_RECENT_STREAM_IDLE_RESUME_MS
       : CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS;
-    this.cgThumbResumeTimer = setTimeout((): void => {
-      this.cgThumbResumeTimer = -1;
-      if (!this.cgPageActive) {
+    this.session.overlay.cgThumbResumeTimer = setTimeout((): void => {
+      this.session.overlay.cgThumbResumeTimer = -1;
+      if (!this.session.guard.cgPageActive) {
         return;
       }
       this.cgThumbLoadingPaused = false;
-      this.recycleThumbCache(this.isRecentAddedStreamingMode() && this.flatItems.length > 720);
-      if (this.cgPendingStoreSync) {
+      this.recycleThumbCache(this.isRecentAddedStreamingMode() && this.session.sync.flatItems.length > 720);
+      if (this.session.sync.cgPendingStoreSync) {
         if (this.isRecentAddedStreamingMode()) {
           this.scheduleCgDeferredSnapshotApply(48);
         } else {
@@ -843,6 +812,9 @@ struct CategoryGallery {
   }
 
   private asSelectionHost(): CategoryGallerySelectionHost {
+    if (this.selectionHostCache !== undefined) {
+      return this.selectionHostCache;
+    }
     const self = this;
     class CategoryGallerySelectionHostBridge implements CategoryGallerySelectionHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -850,11 +822,11 @@ struct CategoryGallery {
       get baseUrl(): string { return self.baseUrl; }
       set baseUrl(v: string) { self.baseUrl = v; }
 
-      get flatItems(): GalleryListItem[] { return self.flatItems; }
-      set flatItems(v: GalleryListItem[]) { self.flatItems = v; }
+      get flatItems(): GalleryListItem[] { return self.session.sync.flatItems; }
+      set flatItems(v: GalleryListItem[]) { self.session.sync.flatItems = v; }
 
-      get groupOffsets(): number[] { return self.groupOffsets; }
-      set groupOffsets(v: number[]) { self.groupOffsets = v; }
+      get groupOffsets(): number[] { return self.session.sync.groupOffsets; }
+      set groupOffsets(v: number[]) { self.session.sync.groupOffsets = v; }
 
       get columnsPerRow(): number { return self.columnsPerRow; }
       set columnsPerRow(v: number) { self.columnsPerRow = fnClampGridColumns(v); }
@@ -862,11 +834,11 @@ struct CategoryGallery {
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.setSelectionModeState(v); }
 
-      get selectedIds(): string[] { return self.selectedIds; }
+      get selectedIds(): string[] { return self.session.selection.selectedIds; }
       set selectedIds(v: string[]) { self.setSelectedIdsState(v); }
 
-      get listScroller(): Scroller { return self.listScroller; }
-      set listScroller(v: Scroller) { self.listScroller = v; }
+      get listScroller(): Scroller { return self.session.overlay.listScroller; }
+      set listScroller(v: Scroller) { self.session.overlay.listScroller = v; }
 
       get listDomId(): string { return CATEGORY_GALLERY_LIST_DOM_ID; }
       set listDomId(_v: string) {}
@@ -877,41 +849,39 @@ struct CategoryGallery {
       get cgScrollEnabled(): boolean { return self.cgScrollEnabled; }
       set cgScrollEnabled(v: boolean) { self.cgScrollEnabled = v; }
 
-      get cgLongPressIgnoreUntil(): number { return self.cgLongPressIgnoreUntil; }
-      set cgLongPressIgnoreUntil(v: number) { self.cgLongPressIgnoreUntil = v; }
+      get cgLongPressIgnoreUntil(): number { return self.session.selection.cgLongPressIgnoreUntil; }
+      set cgLongPressIgnoreUntil(v: number) { self.session.selection.cgLongPressIgnoreUntil = v; }
 
-      get cgThumbHitBounds(): Map<string, CgThumbHitRect> { return self.cgThumbHitBounds; }
-      set cgThumbHitBounds(v: Map<string, CgThumbHitRect>) { self.cgThumbHitBounds = v; }
+      get cgThumbHitBounds(): Map<string, CgThumbHitRect> { return self.session.selection.cgThumbHitBounds; }
+      set cgThumbHitBounds(v: Map<string, CgThumbHitRect>) { self.session.selection.cgThumbHitBounds = v; }
 
-      get cgSlideRefX(): number { return self.cgSlideRefX; }
-      set cgSlideRefX(v: number) { self.cgSlideRefX = v; }
+      get cgSlideRefX(): number { return self.session.selection.cgSlideRefX; }
+      set cgSlideRefX(v: number) { self.session.selection.cgSlideRefX = v; }
 
-      get cgSlideRefY(): number { return self.cgSlideRefY; }
-      set cgSlideRefY(v: number) { self.cgSlideRefY = v; }
+      get cgSlideRefY(): number { return self.session.selection.cgSlideRefY; }
+      set cgSlideRefY(v: number) { self.session.selection.cgSlideRefY = v; }
 
-      get cgSlideHasRef(): boolean { return self.cgSlideHasRef; }
-      set cgSlideHasRef(v: boolean) { self.cgSlideHasRef = v; }
+      get cgSlideHasRef(): boolean { return self.session.selection.cgSlideHasRef; }
+      set cgSlideHasRef(v: boolean) { self.session.selection.cgSlideHasRef = v; }
 
-      get cgSlideAnchorFlat(): number { return self.cgSlideAnchorFlat; }
-      set cgSlideAnchorFlat(v: number) { self.cgSlideAnchorFlat = v; }
+      get cgSlideAnchorFlat(): number { return self.session.selection.cgSlideAnchorFlat; }
+      set cgSlideAnchorFlat(v: number) { self.session.selection.cgSlideAnchorFlat = v; }
 
-      get cgSlideUnionBase(): string[] { return self.cgSlideUnionBase; }
-      set cgSlideUnionBase(v: string[]) { self.cgSlideUnionBase = v; }
+      get cgSlideUnionBase(): string[] { return self.session.selection.cgSlideUnionBase; }
+      set cgSlideUnionBase(v: string[]) { self.session.selection.cgSlideUnionBase = v; }
 
-      get cgSlideLastEndFlat(): number { return self.cgSlideLastEndFlat; }
-      set cgSlideLastEndFlat(v: number) { self.cgSlideLastEndFlat = v; }
+      get cgSlideLastEndFlat(): number { return self.session.selection.cgSlideLastEndFlat; }
+      set cgSlideLastEndFlat(v: number) { self.session.selection.cgSlideLastEndFlat = v; }
 
-      get cgSlideLastAppliedEndFlat(): number { return self.cgSlideLastAppliedEndFlat; }
-      set cgSlideLastAppliedEndFlat(v: number) { self.cgSlideLastAppliedEndFlat = v; }
+      get cgSlideLastAppliedEndFlat(): number { return self.session.selection.cgSlideLastAppliedEndFlat; }
+      set cgSlideLastAppliedEndFlat(v: number) { self.session.selection.cgSlideLastAppliedEndFlat = v; }
 
       toast(msg: string): void { self.toast(msg); }
       openItemAtFlat(flatIdx: number): void { self.openItemAtFlat(flatIdx); }
     }
-    return new CategoryGallerySelectionHostBridge();
+    this.selectionHostCache = new CategoryGallerySelectionHostBridge();
+    return this.selectionHostCache;
   }
-
-  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
-  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
 
   private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
     return askLivePhotoSaveChoice(
@@ -925,7 +895,7 @@ struct CategoryGallery {
       return Promise.resolve(false);
     }
     return new Promise<boolean>((resolve: (ok: boolean) => void) => {
-      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+      this.session.overlay.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
         resolve(choice === 'privilege');
       };
       this.liveSaveSheetVisible = true;
@@ -933,8 +903,8 @@ struct CategoryGallery {
   }
 
   private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
-    const resolver = this.liveSaveResolver;
-    this.liveSaveResolver = undefined;
+    const resolver = this.session.overlay.liveSaveResolver;
+    this.session.overlay.liveSaveResolver = undefined;
     this.liveSaveSheetVisible = false;
     if (resolver !== undefined) {
       resolver(choice);
@@ -977,14 +947,14 @@ struct CategoryGallery {
     return new Promise<number>((resolve: (index: number) => void) => {
       this.choiceSheetTitle = title;
       this.choiceSheetButtons = buttons;
-      this.choiceSheetResolver = resolve;
+      this.session.overlay.choiceSheetResolver = resolve;
       this.choiceSheetVisible = true;
     });
   }
 
   private completeChoice(index: number): void {
-    const resolver = this.choiceSheetResolver;
-    this.choiceSheetResolver = undefined;
+    const resolver = this.session.overlay.choiceSheetResolver;
+    this.session.overlay.choiceSheetResolver = undefined;
     this.choiceSheetVisible = false;
     if (resolver !== undefined) {
       resolver(index);
@@ -992,25 +962,28 @@ struct CategoryGallery {
   }
 
   private asDataSyncHost(): CategoryGalleryDataSyncHost {
+    if (this.dataSyncHostCache !== undefined) {
+      return this.dataSyncHostCache;
+    }
     const self = this;
     class CategoryGalleryDataSyncHostBridge implements CategoryGalleryDataSyncHost {
-      get cgPageActive(): boolean { return self.cgPageActive; }
-      set cgPageActive(v: boolean) { self.cgPageActive = v; }
+      get cgPageActive(): boolean { return self.session.guard.cgPageActive; }
+      set cgPageActive(v: boolean) { self.session.guard.cgPageActive = v; }
 
-      get pageSessionToken(): number { return self.pageSessionToken; }
-      set pageSessionToken(v: number) { self.pageSessionToken = v; }
+      get pageSessionToken(): number { return self.session.sync.pageSessionToken; }
+      set pageSessionToken(v: number) { self.session.sync.pageSessionToken = v; }
 
-      get pageSourceKind(): string { return self.pageSourceKind; }
-      set pageSourceKind(v: string) { self.pageSourceKind = v; }
+      get pageSourceKind(): string { return self.session.sync.pageSourceKind; }
+      set pageSourceKind(v: string) { self.session.sync.pageSourceKind = v; }
 
-      get pageCategoryKey(): string { return self.pageCategoryKey; }
-      set pageCategoryKey(v: string) { self.pageCategoryKey = v; }
+      get pageCategoryKey(): string { return self.session.sync.pageCategoryKey; }
+      set pageCategoryKey(v: string) { self.session.sync.pageCategoryKey = v; }
 
-      get pageFolderPath(): string { return self.pageFolderPath; }
-      set pageFolderPath(v: string) { self.pageFolderPath = v; }
+      get pageFolderPath(): string { return self.session.sync.pageFolderPath; }
+      set pageFolderPath(v: string) { self.session.sync.pageFolderPath = v; }
 
-      get pageUseCreatedAtGrouping(): boolean { return self.pageUseCreatedAtGrouping; }
-      set pageUseCreatedAtGrouping(v: boolean) { self.pageUseCreatedAtGrouping = v; }
+      get pageUseCreatedAtGrouping(): boolean { return self.session.sync.pageUseCreatedAtGrouping; }
+      set pageUseCreatedAtGrouping(v: boolean) { self.session.sync.pageUseCreatedAtGrouping = v; }
 
       get baseUrl(): string { return self.baseUrl; }
       set baseUrl(v: string) { self.baseUrl = v; }
@@ -1027,8 +1000,8 @@ struct CategoryGallery {
       get columnsPerRow(): number { return self.columnsPerRow; }
       set columnsPerRow(v: number) { self.columnsPerRow = v; }
 
-      get flatItems(): GalleryListItem[] { return self.flatItems; }
-      set flatItems(v: GalleryListItem[]) { self.flatItems = v; }
+      get flatItems(): GalleryListItem[] { return self.session.sync.flatItems; }
+      set flatItems(v: GalleryListItem[]) { self.session.sync.flatItems = v; }
 
       get totalCount(): number { return self.totalCount; }
       set totalCount(v: number) { self.totalCount = v; }
@@ -1036,17 +1009,17 @@ struct CategoryGallery {
       get cgBackgroundLoading(): boolean { return self.cgBackgroundLoading; }
       set cgBackgroundLoading(v: boolean) { self.cgBackgroundLoading = v; }
 
-      get listBlocks(): CategoryGalleryListBlock[] { return self.listBlocks; }
-      set listBlocks(v: CategoryGalleryListBlock[]) { self.listBlocks = v; }
+      get listBlocks(): CategoryGalleryListBlock[] { return self.session.sync.listBlocks; }
+      set listBlocks(v: CategoryGalleryListBlock[]) { self.session.sync.listBlocks = v; }
 
-      get cgObservedStoreVersion(): number { return self.cgObservedStoreVersion; }
-      set cgObservedStoreVersion(v: number) { self.cgObservedStoreVersion = v; }
+      get cgObservedStoreVersion(): number { return self.session.sync.cgObservedStoreVersion; }
+      set cgObservedStoreVersion(v: number) { self.session.sync.cgObservedStoreVersion = v; }
 
-      get cgPendingStoreSync(): boolean { return self.cgPendingStoreSync; }
-      set cgPendingStoreSync(v: boolean) { self.cgPendingStoreSync = v; }
+      get cgPendingStoreSync(): boolean { return self.session.sync.cgPendingStoreSync; }
+      set cgPendingStoreSync(v: boolean) { self.session.sync.cgPendingStoreSync = v; }
 
-      get cgLastSnapshotApplyAtMs(): number { return self.cgLastSnapshotApplyAtMs; }
-      set cgLastSnapshotApplyAtMs(v: number) { self.cgLastSnapshotApplyAtMs = v; }
+      get cgLastSnapshotApplyAtMs(): number { return self.session.sync.cgLastSnapshotApplyAtMs; }
+      set cgLastSnapshotApplyAtMs(v: number) { self.session.sync.cgLastSnapshotApplyAtMs = v; }
 
       get cgSlideGestureActive(): boolean { return self.cgSlideGestureActive; }
       set cgSlideGestureActive(v: boolean) { self.cgSlideGestureActive = v; }
@@ -1054,24 +1027,28 @@ struct CategoryGallery {
       get cgThumbLoadingPaused(): boolean { return self.cgThumbLoadingPaused; }
       set cgThumbLoadingPaused(v: boolean) { self.cgThumbLoadingPaused = v; }
 
-      get cgDeferredSnapshotApplyTimer(): number { return self.cgDeferredSnapshotApplyTimer; }
-      set cgDeferredSnapshotApplyTimer(v: number) { self.cgDeferredSnapshotApplyTimer = v; }
+      get cgDeferredSnapshotApplyTimer(): number { return self.session.sync.cgDeferredSnapshotApplyTimer; }
+      set cgDeferredSnapshotApplyTimer(v: number) { self.session.sync.cgDeferredSnapshotApplyTimer = v; }
 
-      get cgStorePollTimer(): number { return self.cgStorePollTimer; }
-      set cgStorePollTimer(v: number) { self.cgStorePollTimer = v; }
+      get cgStorePollTimer(): number { return self.session.sync.cgStorePollTimer; }
+      set cgStorePollTimer(v: number) { self.session.sync.cgStorePollTimer = v; }
 
-      get cgDeferredBackgroundLoadTimer(): number { return self.cgDeferredBackgroundLoadTimer; }
-      set cgDeferredBackgroundLoadTimer(v: number) { self.cgDeferredBackgroundLoadTimer = v; }
+      get cgDeferredBackgroundLoadTimer(): number { return self.session.sync.cgDeferredBackgroundLoadTimer; }
+      set cgDeferredBackgroundLoadTimer(v: number) { self.session.sync.cgDeferredBackgroundLoadTimer = v; }
 
       resolvedColumns(): number { return self.resolvedColumns(); }
       rebuildByFlatItems(): void { self.rebuildByFlatItems(); }
       recycleThumbCache(aggressive: boolean): void { self.recycleThumbCache(aggressive); }
       isRecentAddedStreamingMode(): boolean { return self.isRecentAddedStreamingMode(); }
     }
-    return new CategoryGalleryDataSyncHostBridge();
+    this.dataSyncHostCache = new CategoryGalleryDataSyncHostBridge();
+    return this.dataSyncHostCache;
   }
 
   private asBatchActionsHost(): CategoryGalleryBatchActionsHost {
+    if (this.batchHostCache !== undefined) {
+      return this.batchHostCache;
+    }
     const self = this;
     class CategoryGalleryBatchActionsHostBridge implements CategoryGalleryBatchActionsHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -1085,19 +1062,19 @@ struct CategoryGallery {
       get groups(): DayGroup[] { return self.groups; }
       set groups(v: DayGroup[]) { self.groups = v; }
 
-      get flatItems(): GalleryListItem[] { return self.flatItems; }
-      set flatItems(v: GalleryListItem[]) { self.flatItems = v; }
+      get flatItems(): GalleryListItem[] { return self.session.sync.flatItems; }
+      set flatItems(v: GalleryListItem[]) { self.session.sync.flatItems = v; }
 
-      get groupOffsets(): number[] { return self.groupOffsets; }
-      set groupOffsets(v: number[]) { self.groupOffsets = v; }
+      get groupOffsets(): number[] { return self.session.sync.groupOffsets; }
+      set groupOffsets(v: number[]) { self.session.sync.groupOffsets = v; }
 
-      get handledDeleteSyncVersion(): number { return self.handledDeleteSyncVersion; }
-      set handledDeleteSyncVersion(v: number) { self.handledDeleteSyncVersion = v; }
+      get handledDeleteSyncVersion(): number { return self.session.guard.handledDeleteSyncVersion; }
+      set handledDeleteSyncVersion(v: number) { self.session.guard.handledDeleteSyncVersion = v; }
 
       get columnsPerRow(): number { return self.columnsPerRow; }
       set columnsPerRow(v: number) { self.columnsPerRow = fnClampGridColumns(v); }
 
-      get selectedIds(): string[] { return self.selectedIds; }
+      get selectedIds(): string[] { return self.session.selection.selectedIds; }
       set selectedIds(v: string[]) { self.setSelectedIdsState(v); }
 
       get cgBatchDeleting(): boolean { return self.cgBatchDeleting; }
@@ -1111,7 +1088,8 @@ struct CategoryGallery {
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
       askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
-    return new CategoryGalleryBatchActionsHostBridge();
+    this.batchHostCache = new CategoryGalleryBatchActionsHostBridge();
+    return this.batchHostCache;
   }
 
   @Builder
@@ -1171,7 +1149,7 @@ struct CategoryGallery {
       .padding({ left: 2, right: 2, top: 1, bottom: 1 })
       .onTouch((event: TouchEvent): void => {
         galleryGridHandleRowTouch(
-          this.slideTouch,
+          this.session.overlay.slideTouch,
           this.asSlideTouchHost(),
           event,
           (xPx: number, yPx: number): boolean => this.beginCgFirstSlideAtRow(groupIdx, row, xPx, yPx)
@@ -1181,10 +1159,10 @@ struct CategoryGallery {
         GestureGroup(GestureMode.Sequence,
           LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
             .onAction((ev: GestureEvent): void => {
-              if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
+              if (!galleryGridOnSequenceLongPress(this.session.overlay.slideTouch, this.asSlideTouchHost())) {
                 return;
               }
-              galleryGridClearInitialSlide(this.slideTouch);
+              galleryGridClearInitialSlide(this.session.overlay.slideTouch);
               this.endCgSlideSelectGesture();
               const pt = this.readGestureFingerWindow(ev);
               if (pt === null) {
@@ -1193,7 +1171,7 @@ struct CategoryGallery {
               if (!this.beginCgFirstSlideAtRow(groupIdx, row, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
                 return;
               }
-              galleryGridArmInitialSlide(this.slideTouch);
+              galleryGridArmInitialSlide(this.session.overlay.slideTouch);
             }),
           PanGesture({
             fingers: 1,
@@ -1201,16 +1179,16 @@ struct CategoryGallery {
             distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
           })
             .onActionUpdate((ev: GestureEvent): void => {
-              if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
+              if (!galleryGridShouldUpdateSequencePan(this.session.overlay.slideTouch, this.asSlideTouchHost())) {
                 return;
               }
               this.onCgSlidePanUpdate(ev);
             })
             .onActionEnd((): void => {
-              galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
+              galleryGridOnSequencePanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
             })
             .onActionCancel((): void => {
-              galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
+              galleryGridOnSequencePanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
             })
         ),
         PanGesture({
@@ -1219,8 +1197,8 @@ struct CategoryGallery {
           distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
         })
           .onActionStart((ev: GestureEvent): void => {
-            this.slideTouch.secondaryPanDriving = false;
-            if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
+            this.session.overlay.slideTouch.secondaryPanDriving = false;
+            if (!galleryGridCanStartSecondaryPan(this.session.overlay.slideTouch, this.asSlideTouchHost(), ev)) {
               return;
             }
             const pt = this.readGestureFingerWindow(ev);
@@ -1231,28 +1209,28 @@ struct CategoryGallery {
             const xPx = this.vpToPx(pt.x);
             const yPx = this.vpToPx(pt.y);
             const fi = this.pickCgFlatForRow(this.rowGlobalStartFlat(groupIdx, row), xPx, yPx);
-            if (fi < 0 || fi >= this.flatItems.length) {
+            if (fi < 0 || fi >= this.session.sync.flatItems.length) {
               galleryGridSlideLog('cg_sec_start_skip',
                 `reason=no_hit row=${this.rowGlobalStartFlat(groupIdx, row)} flat=${fi}` +
-                  ` xy=${Math.round(xPx)},${Math.round(yPx)} total=${this.flatItems.length}`);
+                  ` xy=${Math.round(xPx)},${Math.round(yPx)} total=${this.session.sync.flatItems.length}`);
               return;
             }
             galleryGridSlideLog('cg_sec_start',
-              `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.selectedIds.length}`);
-            galleryGridOnSecondaryPanStart(this.slideTouch);
+              `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.session.selection.selectedIds.length}`);
+            galleryGridOnSecondaryPanStart(this.session.overlay.slideTouch);
             this.beginCgSlideSelectGesture(ev, fi);
           })
           .onActionUpdate((ev: GestureEvent): void => {
-            if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
+            if (!galleryGridShouldUpdateSecondaryPan(this.session.overlay.slideTouch, this.asSlideTouchHost())) {
               return;
             }
             this.onCgSlidePanUpdate(ev);
           })
           .onActionEnd((): void => {
-            galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
+            galleryGridOnSecondaryPanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
           })
           .onActionCancel((): void => {
-            galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
+            galleryGridOnSecondaryPanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
           })
       ))
     }
@@ -1270,7 +1248,7 @@ struct CategoryGallery {
       return;
     }
     this.columnsPerRow = next;
-    if (this.flatItems.length > 0) {
+    if (this.session.sync.flatItems.length > 0) {
       this.rebuildByFlatItems();
     }
   }
@@ -1321,7 +1299,7 @@ struct CategoryGallery {
             useMoreMenu: this.usesMoreMenuMode(),
             moreMenuExpanded: this.moreMenuExpanded,
             showJumpToFolder: this.canJumpToFolderView(),
-            scrollerList: [this.listScroller],
+            scrollerList: [this.session.overlay.listScroller],
             onCancelSelection: (): void => {
               this.exitCgSelection();
             },
@@ -1357,8 +1335,8 @@ struct CategoryGallery {
           } else {
             Stack({ alignContent: Alignment.Bottom }) {
               Column() {
-                List({ scroller: this.listScroller }) {
-                  LazyForEach(this.listBlockSource, (block: CategoryGalleryListBlock) => {
+                List({ scroller: this.session.overlay.listScroller }) {
+                  LazyForEach(this.session.sync.listBlockSource, (block: CategoryGalleryListBlock) => {
                     if (block.isHeader) {
                       this.dayHeaderListItem(block.label ?? '')
                     } else if (block.row !== undefined) {
@@ -1399,7 +1377,7 @@ struct CategoryGallery {
                 .divider({ strokeWidth: 0 })
                 .enableScrollInteraction(this.cgScrollEnabled)
                 .onTouch((event: TouchEvent): void => {
-                  galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
+                  galleryGridHandleListTouch(this.session.overlay.slideTouch, this.asSlideTouchHost(), event);
                 })
                 .onDidScroll((offset: number, scrollState: ScrollState): void => {
                   gallerySlideAutoScrollOnListDidScroll(offset, scrollState);

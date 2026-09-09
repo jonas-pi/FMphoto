@@ -33,13 +33,18 @@ Dependency rules:
 
 `CategoryGallery` organization:
 
-- [pages/CategoryGallery.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/CategoryGallery.ets): page shell, selection state binding, and grouped grid assembly
-- `pages/categoryGallery/`: grouped-list view data, selection controller, batch actions, and top chrome modules
+- [pages/CategoryGallery.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/CategoryGallery.ets): page shell, state binding, and grouped grid assembly
+- `pages/categoryGallery/`: Session runtime, grouped-list view data, selection controller, batch actions, and top chrome modules
+
+`FolderBrowsePage` organization:
+
+- [pages/FolderBrowsePage.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/FolderBrowsePage.ets): page shell, state binding, cached host adapters, and mixed folder/media grid
+- `pages/folderBrowsePage/`: Session runtime, path/data loader, selection controller, and batch actions
 
 `RecycleBinPage` organization:
 
-- [pages/RecycleBinPage.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/RecycleBinPage.ets): page shell, state binding, host bridge wiring, and recycle-bin grid assembly
-- `pages/recycleBinPage/`: recycle-bin selection controller, batch actions, chrome, and batch bar modules
+- [pages/RecycleBinPage.ets](/D:/Users/picha/Desktop/project/FMphoto/entry/src/main/ets/pages/RecycleBinPage.ets): page shell, state binding, cached host adapters, and recycle-bin grid assembly
+- `pages/recycleBinPage/`: Session runtime, recycle-bin selection controller, batch actions, chrome, and batch bar modules
 
 Refactor rule for future phases:
 
@@ -49,8 +54,8 @@ Refactor rule for future phases:
 HostBridge / 状态所有权（图库收敛）：
 
 - 禁止新增 `asXxxHost()` 和页面内 HostBridge。新能力进入已有 Session、Coordinator 或窄 Port。
-- `searchQuery`、`gallerySelectedIds`、滚动/加载热路径不得进入父页响应式树。
+- `searchQuery`、`gallerySelectedIds`、网格 `selectedIds`、滚动/加载热路径不得进入父页响应式树。
 - 每个状态字段只有一份存储；禁止 Session 与页面镜像双写。
 - Coordinator 只暴露跨领域命令，不做成新的状态总线。
-- CategoryGallery / FolderBrowse / RecycleBin / AuthVideo 本轮只禁新增 HostBridge，不迁移。
+- GalleryAlbumTab / GalleryPreview / CategoryGallery / FolderBrowse / RecycleBin 运行态已进 Session；AuthVideo 仍只禁新增 HostBridge，不迁移。
 - 字段、默认值、写入点和副作用基线见 [docs/gallery-state-refactor-baseline.md](../../../../docs/gallery-state-refactor-baseline.md)。

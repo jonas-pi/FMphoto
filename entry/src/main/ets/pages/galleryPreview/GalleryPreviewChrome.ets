@@ -94,6 +94,8 @@ export struct GalleryPreviewChrome {
   @Prop topSafeInsetVp: number = 0;
   @Prop bottomSafeInsetVp: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  /** 详情高度是模块变量，不进响应式树；跨过阈值时才写 @State，用来卸掉仍会吃点击的 HdsTabs。 */
+  @State private detailsSheetOpen: boolean = false;
 
   onBack: () => void = () => {};
   onLoadOriginal: () => void = () => {};
@@ -112,11 +114,13 @@ export struct GalleryPreviewChrome {
   };
   private readonly onDetailsProgress = (): void => {
     this.syncChromeOpacity();
+    this.syncDetailsSheetOpen();
   };
 
   aboutToAppear(): void {
     addGalleryPreviewDismissListener(this.onDismissProgress);
     addGalleryPreviewDetailsFitListener(this.onDetailsProgress);
+    this.syncDetailsSheetOpen();
     this.syncChromeOpacity();
     this.notifyBottomDockHeight();
   }
@@ -134,8 +138,15 @@ export struct GalleryPreviewChrome {
     return this.darkMaterial ? '#80FFFFFF' : '#805B6675';
   }
 
+  private syncDetailsSheetOpen(): void {
+    const open: boolean = getGalleryPreviewDetailsSheetHeight() >= 4;
+    if (open !== this.detailsSheetOpen) {
+      this.detailsSheetOpen = open;
+    }
+  }
+
   private chromeInteractive(): boolean {
-    return this.toolbarVisible && !this.detailsCover && getGalleryPreviewDetailsSheetHeight() < 4;
+    return this.toolbarVisible && !this.detailsCover && !this.detailsSheetOpen;
   }
 
   private chromeOpacity(): number {
@@ -385,7 +396,7 @@ export struct GalleryPreviewChrome {
   }
 
   private onPreviewHdsAction(index: number): void {
-    if (!this.toolbarVisible) {
+    if (!this.chromeInteractive()) {
       return;
     }
     if (this.showVideoPlayingDock()) {
@@ -670,23 +681,26 @@ export struct GalleryPreviewChrome {
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
 
       Stack({ alignContent: Alignment.Bottom }) {
-        if (this.canUseHds()) {
-          this.previewBottomHdsTabs()
-        } else {
-          Row() {
-            this.previewBottomFallbackTabs()
+        // HdsTabs 浮层栏在 HitTestMode.None / 透明时仍会吃点击，详情展开时直接不挂载。
+        if (this.chromeInteractive()) {
+          if (this.canUseHds()) {
+            this.previewBottomHdsTabs()
+          } else {
+            Row() {
+              this.previewBottomFallbackTabs()
+            }
+            .width('100%')
+            .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+            .justifyContent(FlexAlign.Center)
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
+            .hitTestBehavior(HitTestMode.Default)
           }
-          .width('100%')
-          .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
-          .justifyContent(FlexAlign.Center)
-          .alignItems(VerticalAlign.Center)
-          .margin({ bottom: fnBottomDockBottomGap(this.bottomSafeInsetVp) })
-          .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Default : HitTestMode.None)
         }
       }
       .width('100%')
       .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
+      .hitTestBehavior(this.chromeInteractive() ? HitTestMode.Transparent : HitTestMode.None)
       .animation({ duration: FN_UI_FADE_TOGGLE_DURATION, curve: FN_UI_FADE_TOGGLE_CURVE })
     }
     .width('100%')

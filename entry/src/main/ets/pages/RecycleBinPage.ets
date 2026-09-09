@@ -10,7 +10,13 @@ import {
   nasUrl,
   trimThumbPixCacheForList
 } from '../album/GalleryAlbumCommon';
-import { FnListDataSource } from '../common/FnListDataSource';
+import {
+  RecycleBinRowBlock,
+  RecycleBinRowBlockCell,
+  recycleBinBuildRowBlocks
+} from './recycleBinPage/RecycleBinListModel';
+import { RecycleBinSession } from './recycleBinPage/RecycleBinSession';
+import { RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
 import {
   FN_WINDOW_WIDTH_BP_KEY,
   fnAdaptiveGridColumns,
@@ -74,7 +80,6 @@ import {
   galleryGridShouldUpdateSecondaryPan,
   galleryGridShouldUpdateSequencePan,
   GalleryGridSlideTouchHost,
-  GalleryGridSlideTouchSession,
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../album/GalleryGridSlideTouch';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
@@ -110,12 +115,6 @@ import {
   RECYCLE_BIN_LIST_DOM_ID,
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
-import { RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
-import {
-  RecycleBinRowBlock,
-  RecycleBinRowBlockCell,
-  recycleBinBuildRowBlocks
-} from './recycleBinPage/RecycleBinListModel';
 
 const RECYCLE_BIN_BASE_COLUMNS: number = 4;
 
@@ -131,7 +130,6 @@ struct RecycleBinPage {
   @State private error: string = '';
   @State @Watch('onItemsChanged') private items: RecycleBinListItem[] = [];
   @State private selectionMode: boolean = false;
-  private selectedIds: number[] = [];
   @State private selectedCount: number = 0;
   @State private selectionHasLivePhoto: boolean = false;
   @State private liveSaveSheetVisible: boolean = false;
@@ -149,21 +147,10 @@ struct RecycleBinPage {
     WidthBreakpoint.WIDTH_SM;
   @State private columnsPerRow: number = RECYCLE_BIN_BASE_COLUMNS;
 
-  private rbLongPressIgnoreUntil: number = 0;
-  private rbThumbHitBounds: Map<string, RbThumbHitRect> = new Map();
-  private rbSlideRefX: number = 0;
-  private rbSlideRefY: number = 0;
-  private rbSlideHasRef: boolean = false;
-  private rbSlideAnchorFlat: number = -1;
-  private rbSlideUnionBase: number[] = [];
-  private rbSlideLastEndFlat: number = -1;
-  private rbSlideLastAppliedEndFlat: number = -99999;
-  private rbThumbResumeTimer: number = -1;
-  private rbRowBlocks: RecycleBinRowBlock[] = [];
-  private rbRowSource: FnListDataSource<RecycleBinRowBlock> = new FnListDataSource<RecycleBinRowBlock>();
-  private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
-  /** 官方顶栏 bindToScrollable 联动沉浸滚动光感所需的 Scroller。 */
-  private listScroller: Scroller = new Scroller();
+  private session: RecycleBinSession = new RecycleBinSession();
+  private slideTouchHostCache: GalleryGridSlideTouchHost | undefined = undefined;
+  private selectionHostCache: RecycleBinSelectionHost | undefined = undefined;
+  private actionsHostCache: RecycleBinActionsHost | undefined = undefined;
   private albumBackHandlerToken: number = 0;
 
   onBackPress(): boolean {
@@ -241,11 +228,11 @@ struct RecycleBinPage {
     GalleryAlbumNavigation.unregisterBackHandler(this.albumBackHandlerToken);
     this.clearRbThumbResumeTimer();
     recycleBinEndSlideSelectGesture(this.asSelectionHost());
-    galleryGridResetTouchTracking(this.slideTouch);
+    galleryGridResetTouchTracking(this.session.list.slideTouch);
     galleryAlbumSyncSelectionVisualState(false, [], GALLERY_SELECTION_SCOPE_RECYCLE);
     this.recycleThumbCache(true);
-    this.rbRowBlocks = [];
-    this.rbRowSource.reloadAll([]);
+    this.session.list.rbRowBlocks = [];
+    this.session.list.rbRowSource.reloadAll([]);
     const client = AppSession.getClient();
     if (client !== null) {
       client.cancelPendingRequests();
@@ -272,18 +259,18 @@ struct RecycleBinPage {
     this.selectionMode = value;
     galleryAlbumSyncSelectionVisualState(
       this.selectionMode,
-      recycleBinSelectedIdStrings(this.selectedIds),
+      recycleBinSelectedIdStrings(this.session.selection.selectedIds),
       GALLERY_SELECTION_SCOPE_RECYCLE
     );
   }
 
   private setSelectedIdsState(value: number[]): void {
-    this.selectedIds = value;
-    const selected = recycleBinGalleryListForSelection(this.items, this.selectedIds);
+    this.session.selection.selectedIds = value;
+    const selected = recycleBinGalleryListForSelection(this.items, this.session.selection.selectedIds);
     this.selectionHasLivePhoto = gallerySelectionContainsLive(selected);
     galleryAlbumSyncSelectionVisualState(
       this.selectionMode,
-      recycleBinSelectedIdStrings(this.selectedIds),
+      recycleBinSelectedIdStrings(this.session.selection.selectedIds),
       GALLERY_SELECTION_SCOPE_RECYCLE
     );
     if (this.selectedCount !== value.length) {
@@ -334,6 +321,9 @@ struct RecycleBinPage {
   }
 
   private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    if (this.slideTouchHostCache !== undefined) {
+      return this.slideTouchHostCache;
+    }
     const self = this;
     class RecycleBinSlideTouchHostBridge implements GalleryGridSlideTouchHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -342,7 +332,8 @@ struct RecycleBinPage {
       endSlide(): void { self.endRbSlideSelectGesture(); }
       followSlideAtWindowPx(xPx: number, yPx: number): void { self.onRbSlideTouchMoveWindow(xPx, yPx); }
     }
-    return new RecycleBinSlideTouchHostBridge();
+    this.slideTouchHostCache = new RecycleBinSlideTouchHostBridge();
+    return this.slideTouchHostCache;
   }
 
   private beginRbFirstSlideAtRow(rowStart: number, xPx: number, yPx: number): boolean {
@@ -395,8 +386,8 @@ struct RecycleBinPage {
   }
 
   private rebuildRowBlocks(): void {
-    this.rbRowBlocks = this.buildRowBlocks();
-    this.rbRowSource.reloadAll(this.rbRowBlocks);
+    this.session.list.rbRowBlocks = this.buildRowBlocks();
+    this.session.list.rbRowSource.reloadAll(this.session.list.rbRowBlocks);
   }
 
   private rbCellAt(block: RecycleBinRowBlock, col: number): RecycleBinRowBlockCell | undefined {
@@ -455,9 +446,9 @@ struct RecycleBinPage {
   }
 
   private clearRbThumbResumeTimer(): void {
-    if (this.rbThumbResumeTimer >= 0) {
-      clearTimeout(this.rbThumbResumeTimer);
-      this.rbThumbResumeTimer = -1;
+    if (this.session.overlay.rbThumbResumeTimer >= 0) {
+      clearTimeout(this.session.overlay.rbThumbResumeTimer);
+      this.session.overlay.rbThumbResumeTimer = -1;
     }
   }
 
@@ -470,7 +461,7 @@ struct RecycleBinPage {
       this.rbScrollEnabled = true;
     }
     if (!this.rbSlideGestureActive) {
-      this.rbThumbHitBounds.clear();
+      this.session.selection.rbThumbHitBounds.clear();
     }
     if (scrollState !== ScrollState.Idle) {
       this.clearRbThumbResumeTimer();
@@ -489,13 +480,16 @@ struct RecycleBinPage {
       return;
     }
     this.clearRbThumbResumeTimer();
-    this.rbThumbResumeTimer = setTimeout((): void => {
-      this.rbThumbResumeTimer = -1;
+    this.session.overlay.rbThumbResumeTimer = setTimeout((): void => {
+      this.session.overlay.rbThumbResumeTimer = -1;
       this.rbThumbLoadingPaused = false;
     }, 96);
   }
 
   private asSelectionHost(): RecycleBinSelectionHost {
+    if (this.selectionHostCache !== undefined) {
+      return this.selectionHostCache;
+    }
     const self = this;
     class RecycleBinSelectionHostBridge implements RecycleBinSelectionHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -512,11 +506,11 @@ struct RecycleBinPage {
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.setSelectionModeState(v); }
 
-      get selectedIds(): number[] { return self.selectedIds; }
+      get selectedIds(): number[] { return self.session.selection.selectedIds; }
       set selectedIds(v: number[]) { self.setSelectedIdsState(v); }
 
-      get listScroller(): Scroller { return self.listScroller; }
-      set listScroller(v: Scroller) { self.listScroller = v; }
+      get listScroller(): Scroller { return self.session.list.listScroller; }
+      set listScroller(v: Scroller) { self.session.list.listScroller = v; }
 
       get listDomId(): string { return RECYCLE_BIN_LIST_DOM_ID; }
       set listDomId(_v: string) {}
@@ -527,40 +521,38 @@ struct RecycleBinPage {
       get rbScrollEnabled(): boolean { return self.rbScrollEnabled; }
       set rbScrollEnabled(v: boolean) { self.rbScrollEnabled = v; }
 
-      get rbLongPressIgnoreUntil(): number { return self.rbLongPressIgnoreUntil; }
-      set rbLongPressIgnoreUntil(v: number) { self.rbLongPressIgnoreUntil = v; }
+      get rbLongPressIgnoreUntil(): number { return self.session.selection.rbLongPressIgnoreUntil; }
+      set rbLongPressIgnoreUntil(v: number) { self.session.selection.rbLongPressIgnoreUntil = v; }
 
-      get rbThumbHitBounds(): Map<string, RbThumbHitRect> { return self.rbThumbHitBounds; }
-      set rbThumbHitBounds(v: Map<string, RbThumbHitRect>) { self.rbThumbHitBounds = v; }
+      get rbThumbHitBounds(): Map<string, RbThumbHitRect> { return self.session.selection.rbThumbHitBounds; }
+      set rbThumbHitBounds(v: Map<string, RbThumbHitRect>) { self.session.selection.rbThumbHitBounds = v; }
 
-      get rbSlideRefX(): number { return self.rbSlideRefX; }
-      set rbSlideRefX(v: number) { self.rbSlideRefX = v; }
+      get rbSlideRefX(): number { return self.session.selection.rbSlideRefX; }
+      set rbSlideRefX(v: number) { self.session.selection.rbSlideRefX = v; }
 
-      get rbSlideRefY(): number { return self.rbSlideRefY; }
-      set rbSlideRefY(v: number) { self.rbSlideRefY = v; }
+      get rbSlideRefY(): number { return self.session.selection.rbSlideRefY; }
+      set rbSlideRefY(v: number) { self.session.selection.rbSlideRefY = v; }
 
-      get rbSlideHasRef(): boolean { return self.rbSlideHasRef; }
-      set rbSlideHasRef(v: boolean) { self.rbSlideHasRef = v; }
+      get rbSlideHasRef(): boolean { return self.session.selection.rbSlideHasRef; }
+      set rbSlideHasRef(v: boolean) { self.session.selection.rbSlideHasRef = v; }
 
-      get rbSlideAnchorFlat(): number { return self.rbSlideAnchorFlat; }
-      set rbSlideAnchorFlat(v: number) { self.rbSlideAnchorFlat = v; }
+      get rbSlideAnchorFlat(): number { return self.session.selection.rbSlideAnchorFlat; }
+      set rbSlideAnchorFlat(v: number) { self.session.selection.rbSlideAnchorFlat = v; }
 
-      get rbSlideUnionBase(): number[] { return self.rbSlideUnionBase; }
-      set rbSlideUnionBase(v: number[]) { self.rbSlideUnionBase = v; }
+      get rbSlideUnionBase(): number[] { return self.session.selection.rbSlideUnionBase; }
+      set rbSlideUnionBase(v: number[]) { self.session.selection.rbSlideUnionBase = v; }
 
-      get rbSlideLastEndFlat(): number { return self.rbSlideLastEndFlat; }
-      set rbSlideLastEndFlat(v: number) { self.rbSlideLastEndFlat = v; }
+      get rbSlideLastEndFlat(): number { return self.session.selection.rbSlideLastEndFlat; }
+      set rbSlideLastEndFlat(v: number) { self.session.selection.rbSlideLastEndFlat = v; }
 
-      get rbSlideLastAppliedEndFlat(): number { return self.rbSlideLastAppliedEndFlat; }
-      set rbSlideLastAppliedEndFlat(v: number) { self.rbSlideLastAppliedEndFlat = v; }
+      get rbSlideLastAppliedEndFlat(): number { return self.session.selection.rbSlideLastAppliedEndFlat; }
+      set rbSlideLastAppliedEndFlat(v: number) { self.session.selection.rbSlideLastAppliedEndFlat = v; }
 
       toast(msg: string): void { self.toast(msg); }
     }
-    return new RecycleBinSelectionHostBridge();
+    this.selectionHostCache = new RecycleBinSelectionHostBridge();
+    return this.selectionHostCache;
   }
-
-  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
-  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
 
   private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
     return askLivePhotoSaveChoice(
@@ -574,7 +566,7 @@ struct RecycleBinPage {
       return Promise.resolve(false);
     }
     return new Promise<boolean>((resolve: (ok: boolean) => void) => {
-      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+      this.session.overlay.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
         resolve(choice === 'privilege');
       };
       this.liveSaveSheetVisible = true;
@@ -582,8 +574,8 @@ struct RecycleBinPage {
   }
 
   private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
-    const resolver = this.liveSaveResolver;
-    this.liveSaveResolver = undefined;
+    const resolver = this.session.overlay.liveSaveResolver;
+    this.session.overlay.liveSaveResolver = undefined;
     this.liveSaveSheetVisible = false;
     if (resolver !== undefined) {
       resolver(choice);
@@ -616,14 +608,14 @@ struct RecycleBinPage {
     return new Promise<number>((resolve: (index: number) => void) => {
       this.choiceSheetTitle = title;
       this.choiceSheetButtons = buttons;
-      this.choiceSheetResolver = resolve;
+      this.session.overlay.choiceSheetResolver = resolve;
       this.choiceSheetVisible = true;
     });
   }
 
   private completeChoice(index: number): void {
-    const resolver = this.choiceSheetResolver;
-    this.choiceSheetResolver = undefined;
+    const resolver = this.session.overlay.choiceSheetResolver;
+    this.session.overlay.choiceSheetResolver = undefined;
     this.choiceSheetVisible = false;
     if (resolver !== undefined) {
       resolver(index);
@@ -631,6 +623,9 @@ struct RecycleBinPage {
   }
 
   private asActionsHost(): RecycleBinActionsHost {
+    if (this.actionsHostCache !== undefined) {
+      return this.actionsHostCache;
+    }
     const self = this;
     class RecycleBinActionsHostBridge implements RecycleBinActionsHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -656,7 +651,7 @@ struct RecycleBinPage {
       get items(): RecycleBinListItem[] { return self.items; }
       set items(v: RecycleBinListItem[]) { self.items = v; }
 
-      get selectedIds(): number[] { return self.selectedIds; }
+      get selectedIds(): number[] { return self.session.selection.selectedIds; }
       set selectedIds(v: number[]) { self.setSelectedIdsState(v); }
 
       toast(msg: string): void { self.toast(msg); }
@@ -664,7 +659,8 @@ struct RecycleBinPage {
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
       askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
-    return new RecycleBinActionsHostBridge();
+    this.actionsHostCache = new RecycleBinActionsHostBridge();
+    return this.actionsHostCache;
   }
 
   @Builder
@@ -733,7 +729,7 @@ struct RecycleBinPage {
         showCountSubtitle: false,
         topSafeInsetVp: this.systemTopInsetVp,
         useMoreMenu: false,
-        scrollerList: [this.listScroller],
+        scrollerList: [this.session.list.listScroller],
         onCancelSelection: (): void => {
           this.exitSelection();
         },
@@ -773,8 +769,8 @@ struct RecycleBinPage {
       } else {
         Stack({ alignContent: Alignment.Bottom }) {
           Column() {
-            List({ scroller: this.listScroller }) {
-              LazyForEach(this.rbRowSource, (block: RecycleBinRowBlock) => {
+            List({ scroller: this.session.list.listScroller }) {
+              LazyForEach(this.session.list.rbRowSource, (block: RecycleBinRowBlock) => {
                 ListItem() {
                   Row({ space: 2 }) {
                     ForEach(block.cells, (_cell: RecycleBinRowBlockCell, col: number) => {
@@ -785,7 +781,7 @@ struct RecycleBinPage {
                   .padding({ left: 2, right: 2, top: 1, bottom: 1 })
                   .onTouch((event: TouchEvent): void => {
                     galleryGridHandleRowTouch(
-                      this.slideTouch,
+                      this.session.list.slideTouch,
                       this.asSlideTouchHost(),
                       event,
                       (xPx: number, yPx: number): boolean => this.beginRbFirstSlideAtRow(block.rowStart, xPx, yPx)
@@ -795,10 +791,10 @@ struct RecycleBinPage {
                     GestureGroup(GestureMode.Sequence,
                       LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
                         .onAction((ev: GestureEvent): void => {
-                          if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
+                          if (!galleryGridOnSequenceLongPress(this.session.list.slideTouch, this.asSlideTouchHost())) {
                             return;
                           }
-                          galleryGridClearInitialSlide(this.slideTouch);
+                          galleryGridClearInitialSlide(this.session.list.slideTouch);
                           this.endRbSlideSelectGesture();
                           const pt = this.readGestureFingerWindow(ev);
                           if (pt === null) {
@@ -807,7 +803,7 @@ struct RecycleBinPage {
                           if (!this.beginRbFirstSlideAtRow(block.rowStart, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
                             return;
                           }
-                          galleryGridArmInitialSlide(this.slideTouch);
+                          galleryGridArmInitialSlide(this.session.list.slideTouch);
                         }),
                       PanGesture({
                         fingers: 1,
@@ -815,16 +811,16 @@ struct RecycleBinPage {
                         distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
                       })
                         .onActionUpdate((ev: GestureEvent): void => {
-                          if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
+                          if (!galleryGridShouldUpdateSequencePan(this.session.list.slideTouch, this.asSlideTouchHost())) {
                             return;
                           }
                           this.onRbSlidePanUpdate(ev);
                         })
                         .onActionEnd((): void => {
-                          galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
+                          galleryGridOnSequencePanFinish(this.session.list.slideTouch, this.asSlideTouchHost());
                         })
                         .onActionCancel((): void => {
-                          galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
+                          galleryGridOnSequencePanFinish(this.session.list.slideTouch, this.asSlideTouchHost());
                         })
                     ),
                     PanGesture({
@@ -833,8 +829,8 @@ struct RecycleBinPage {
                       distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
                     })
                       .onActionStart((ev: GestureEvent): void => {
-                        this.slideTouch.secondaryPanDriving = false;
-                        if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
+                        this.session.list.slideTouch.secondaryPanDriving = false;
+                        if (!galleryGridCanStartSecondaryPan(this.session.list.slideTouch, this.asSlideTouchHost(), ev)) {
                           return;
                         }
                         const pt = this.readGestureFingerWindow(ev);
@@ -852,21 +848,21 @@ struct RecycleBinPage {
                           return;
                         }
                         galleryGridSlideLog('rb_sec_start',
-                          `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.selectedIds.length}`);
-                        galleryGridOnSecondaryPanStart(this.slideTouch);
+                          `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.session.selection.selectedIds.length}`);
+                        galleryGridOnSecondaryPanStart(this.session.list.slideTouch);
                         this.beginRbSlideSelectGesture(ev, fi);
                       })
                       .onActionUpdate((ev: GestureEvent): void => {
-                        if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
+                        if (!galleryGridShouldUpdateSecondaryPan(this.session.list.slideTouch, this.asSlideTouchHost())) {
                           return;
                         }
                         this.onRbSlidePanUpdate(ev);
                       })
                       .onActionEnd((): void => {
-                        galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
+                        galleryGridOnSecondaryPanFinish(this.session.list.slideTouch, this.asSlideTouchHost());
                       })
                       .onActionCancel((): void => {
-                        galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
+                        galleryGridOnSecondaryPanFinish(this.session.list.slideTouch, this.asSlideTouchHost());
                       })
                   ))
                 }
@@ -890,7 +886,7 @@ struct RecycleBinPage {
             .divider({ strokeWidth: 0 })
             .enableScrollInteraction(this.rbScrollEnabled)
             .onTouch((event: TouchEvent): void => {
-              galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
+              galleryGridHandleListTouch(this.session.list.slideTouch, this.asSlideTouchHost(), event);
             })
             .onDidScroll((offset: number, scrollState: ScrollState): void => {
               gallerySlideAutoScrollOnListDidScroll(offset, scrollState);

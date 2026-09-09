@@ -141,6 +141,34 @@ export function filterGallerySlideshowItems(
   return out;
 }
 
+/**
+ * GIF 单圈时长。ImageSource 延迟有的是毫秒、有的是 GIF 百分之一秒；
+ * 单帧 ≤12 时按百分之一秒放大。
+ */
+export function galleryGifLoopDurationFromDelays(delays: number[]): number {
+  if (delays.length <= 0) {
+    return 0;
+  }
+  let sum = 0;
+  let maxDelay = 0;
+  for (let i = 0; i < delays.length; i++) {
+    const delay = delays[i];
+    if (delay > 0) {
+      sum += delay;
+      if (delay > maxDelay) {
+        maxDelay = delay;
+      }
+    }
+  }
+  if (sum <= 0) {
+    return 0;
+  }
+  if (maxDelay <= 12) {
+    return sum * 10;
+  }
+  return sum;
+}
+
 async function fetchDayPages(
   client: FnHttpClient,
   day: TimelineDayModel,

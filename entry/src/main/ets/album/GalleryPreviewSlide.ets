@@ -34,6 +34,7 @@ import {
 import { common } from '@kit.AbilityKit';
 import { AnimatorResult, curves, display } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
+import { image } from '@kit.ImageKit';
 import { photoAccessHelper, MovingPhotoView, MovingPhotoViewController } from '@kit.MediaLibraryKit';
 import { GalleryAuthVideo } from './GalleryAuthVideo';
 import { AppSession } from '../auth/AppSession';
@@ -89,6 +90,7 @@ import {
   setGalleryPreviewDetailsSheetHeight,
   setGalleryPreviewDismissProgress
 } from './GalleryPreviewVerticalGesture';
+import { galleryGifLoopDurationFromDelays } from './slideshow/GallerySlideshowMedia';
 
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
@@ -142,7 +144,7 @@ export struct GalleryPreviewSlide {
   onOriginalLoaded: () => void = () => {};
   /** 原图加载失败后通知父页面，父页面可提示用户并保持可重试 */
   onOriginalLoadFailed: (msg: string) => void = (_: string) => {};
-  /** 幻灯片：当前视频自然播完，由预览页决定是否切下一张 */
+  /** 幻灯片：当前视频/动图/实况自然播完，由预览页决定是否切下一张 */
   onSlideshowVideoEnded: () => void = () => {};
 
   @State private thumbPix: PixelMap | undefined = undefined;
@@ -189,6 +191,8 @@ export struct GalleryPreviewSlide {
   private liveController: MovingPhotoViewController = new MovingPhotoViewController();
   /** onComplete 后若迟迟没有 onPrepared，超时揭开控件，避免一直盖着静帧 */
   private liveRevealTimer: number = 0;
+  private gifSlideshowTimer: number = 0;
+  private liveSlideshowWatchdog: number = 0;
   private videoOverlayRevealTimer: number = 0;
   private boundItemKey: string = '';
   /** 转场窗口内冻结共享元素 id，避免 active 短暂翻转变成空串 */
@@ -276,6 +280,8 @@ export struct GalleryPreviewSlide {
   }
 
   private disposeTransientMedia(): void {
+    this.clearGifSlideshowTimer();
+    this.clearLiveSlideshowWatchdog();
     this.stopLivePlayback();
     const oldGifPath = this.gifTempPath;
     const oldLive = this.livePair;
@@ -314,6 +320,8 @@ export struct GalleryPreviewSlide {
     }
     if (!this.active) {
       this.resetVerticalDragInstant();
+      this.clearGifSlideshowTimer();
+      this.clearLiveSlideshowWatchdog();
     }
     if (!this.isLive()) {
       return;
@@ -663,6 +671,53 @@ export struct GalleryPreviewSlide {
     }
   }
 
+  private clearGifSlideshowTimer(): void {
+    if (this.gifSlideshowTimer !== 0) {
+      clearTimeout(this.gifSlideshowTimer);
+      this.gifSlideshowTimer = 0;
+    }
+  }
+
+  private clearLiveSlideshowWatchdog(): void {
+    if (this.liveSlideshowWatchdog !== 0) {
+      clearTimeout(this.liveSlideshowWatchdog);
+      this.liveSlideshowWatchdog = 0;
+    }
+  }
+
+  private notifySlideshowMotionEnded(): void {
+    this.clearGifSlideshowTimer();
+    this.clearLiveSlideshowWatchdog();
+    if (!this.autoStartVideo || !this.active) {
+      return;
+    }
+    this.onSlideshowVideoEnded();
+  }
+
+  private armGifSlideshowAdvance(loopMs: number): void {
+    this.clearGifSlideshowTimer();
+    if (!this.autoStartVideo || !this.active) {
+      return;
+    }
+    const waitMs = loopMs > 400 ? loopMs : 5000;
+    this.gifSlideshowTimer = setTimeout((): void => {
+      this.gifSlideshowTimer = 0;
+      this.notifySlideshowMotionEnded();
+    }, waitMs);
+  }
+
+  private async measureGifLoopDurationMs(path: string): Promise<number> {
+    try {
+      const src = image.createImageSource(path);
+      const delayList: Array<number> = await src.getDelayTimeList();
+      const ms = galleryGifLoopDurationFromDelays(delayList);
+      src.release();
+      return ms;
+    } catch (_err) {
+      return 0;
+    }
+  }
+
   private clearVideoOverlayRevealTimer(): void {
     if (this.videoOverlayRevealTimer !== 0) {
       clearTimeout(this.videoOverlayRevealTimer);
@@ -708,6 +763,17 @@ export struct GalleryPreviewSlide {
       this.liveRevealTimer = 0;
       this.liveViewPrepared = true;
     }, 120);
+    if (this.autoStartVideo && this.active) {
+      try {
+        this.liveController.startPlayback();
+      } catch (_e) {
+      }
+      this.clearLiveSlideshowWatchdog();
+      this.liveSlideshowWatchdog = setTimeout((): void => {
+        this.liveSlideshowWatchdog = 0;
+        this.notifySlideshowMotionEnded();
+      }, 12000);
+    }
   }
 
   /**
@@ -801,6 +867,7 @@ export struct GalleryPreviewSlide {
         return;
       }
       if (pair === undefined) {
+        this.armGifSlideshowAdvance(0);
         return;
       }
       this.livePair = pair;
@@ -812,6 +879,7 @@ export struct GalleryPreviewSlide {
         return;
       }
       if (moving === undefined) {
+        this.armGifSlideshowAdvance(0);
         return;
       }
       this.liveController = new MovingPhotoViewController();
@@ -859,6 +927,13 @@ export struct GalleryPreviewSlide {
       }
       this.gifTempPath = tempPath;
       this.gifUri = `file://${tempPath}`;
+      if (this.autoStartVideo && this.active) {
+        const loopMs = await this.measureGifLoopDurationMs(tempPath);
+        if (token !== this.gifLoadToken) {
+          return;
+        }
+        this.armGifSlideshowAdvance(loopMs);
+      }
     } catch (_e) {
     } finally {
       if (token === this.gifLoadToken) {
@@ -1530,7 +1605,7 @@ export struct GalleryPreviewSlide {
           })
             .width('100%')
             .height('100%')
-            .autoPlay(false)
+            .autoPlay(this.autoStartVideo)
             .repeatPlay(false)
             .enableAnalyzer(false)
             .objectFit(ImageFit.Cover)
@@ -1545,6 +1620,7 @@ export struct GalleryPreviewSlide {
             })
             .onFinish((): void => {
               this.onLivePlaybackSettled();
+              this.notifySlideshowMotionEnded();
             })
             .onStop((): void => {
               this.onLivePlaybackSettled();

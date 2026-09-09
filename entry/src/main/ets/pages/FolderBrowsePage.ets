@@ -43,7 +43,6 @@ import {
   gallerySlideshowScopeLabel
 } from '../album/slideshow/GallerySlideshowTypes';
 import { GallerySlideshowSettingsSheet } from '../album/slideshow/GallerySlideshowSettingsSheet';
-import { FnListDataSource } from '../common/FnListDataSource';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnClampGridColumns } from '../common/FnWindowBreakpoint';
 import { FnFullLoadingMask, FnInlineLoading, FnStateText } from '../common/FnUiCommon';
@@ -70,7 +69,6 @@ import {
   galleryGridShouldUpdateSecondaryPan,
   galleryGridShouldUpdateSequencePan,
   GalleryGridSlideTouchHost,
-  GalleryGridSlideTouchSession,
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../album/GalleryGridSlideTouch';
 import {
@@ -104,6 +102,7 @@ import {
   galleryListTryConsumeOverlays
 } from '../album/galleryList/GalleryListBack';
 import { FolderBrowseNavStore } from './folderBrowsePage/FolderBrowseNavStore';
+import { FolderBrowseSession } from './folderBrowsePage/FolderBrowseSession';
 import {
   folderBrowseConfirmBatchDelete,
   folderBrowseConfirmBatchDownload,
@@ -164,36 +163,12 @@ struct FolderBrowsePage {
   @State private choiceSheetButtons: string[] = [];
   @State private fbSlideGestureActive: boolean = false;
   @State private fbScrollEnabled: boolean = true;
-  private readonly rowSource: FnListDataSource<FolderBrowseRowBlock> = new FnListDataSource<FolderBrowseRowBlock>();
-  private listScroller: Scroller = new Scroller();
-  private pathStack: string[] = [];
-  /** 当前所在的相册授权根；空路径仅表示“已配置文件夹”虚拟根层。 */
-  private entryFloorPath: string = '';
-  private lockToEntry: boolean = false;
-  private entryFloorResolved: boolean = true;
-  private allowedRootPaths: string[] = [];
-  private folderChanging: boolean = false;
-  private folders: FolderBrowseFolderItem[] = [];
-  private mediaItems: GalleryListItem[] = [];
-  private selectedIds: string[] = [];
-  private mediaOffset: number = 0;
-  private mediaHasMore: boolean = false;
-  private loadGen: number = 0;
+  private session: FolderBrowseSession = new FolderBrowseSession();
+  private slideTouchHostCache: GalleryGridSlideTouchHost | undefined = undefined;
+  private selectionHostCache: FolderBrowseSelectionHost | undefined = undefined;
+  private dataLoaderHostCache: FolderBrowseDataLoaderHost | undefined = undefined;
+  private batchHostCache: FolderBrowseBatchActionsHost | undefined = undefined;
   private albumBackHandlerToken: number = 0;
-  private thumbResumeTimer: number = -1;
-  private slideshowRequestSeq: number = 0;
-  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
-  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
-  private fbLongPressIgnoreUntil: number = 0;
-  private fbThumbHitBounds: Map<string, FolderBrowseThumbHitRect> = new Map();
-  private fbSlideRefX: number = 0;
-  private fbSlideRefY: number = 0;
-  private fbSlideHasRef: boolean = false;
-  private fbSlideAnchorFlat: number = -1;
-  private fbSlideUnionBase: string[] = [];
-  private fbSlideLastEndFlat: number = -1;
-  private fbSlideLastAppliedEndFlat: number = -99999;
-  private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
 
   onBackPress(): boolean {
     this.handleBack();
@@ -269,11 +244,11 @@ struct FolderBrowsePage {
       }
     }
     const landing = folderBrowseLandingStack(incoming);
-    this.pathStack = landing;
+    this.session.nav.pathStack = landing;
     // 具体路径入口先锁住；loadCurrent 会用相册已配置根目录解析真正安全边界。
-    this.lockToEntry = landing.length > 0;
-    this.entryFloorPath = '';
-    this.entryFloorResolved = !this.lockToEntry;
+    this.session.nav.lockToEntry = landing.length > 0;
+    this.session.nav.entryFloorPath = '';
+    this.session.nav.entryFloorResolved = !this.session.nav.lockToEntry;
     this.syncFolderHierarchyState();
   }
 
@@ -285,34 +260,34 @@ struct FolderBrowsePage {
   }
 
   private currentPath(): string {
-    if (this.pathStack.length === 0) {
+    if (this.session.nav.pathStack.length === 0) {
       return '';
     }
-    return this.pathStack[this.pathStack.length - 1];
+    return this.session.nav.pathStack[this.session.nav.pathStack.length - 1];
   }
 
   private syncFolderHierarchyState(): void {
-    if (this.pathStack.length === 0) {
+    if (this.session.nav.pathStack.length === 0) {
       this.canGoUpFolder = false;
       return;
     }
-    this.canGoUpFolder = !this.lockToEntry ||
-      (this.entryFloorResolved && this.pathStack.length > 1);
+    this.canGoUpFolder = !this.session.nav.lockToEntry ||
+      (this.session.nav.entryFloorResolved && this.session.nav.pathStack.length > 1);
   }
 
   private goUpFolder(): void {
-    if (this.folderChanging || !this.canGoUpFolder || this.pathStack.length === 0) {
+    if (this.session.load.folderChanging || !this.canGoUpFolder || this.session.nav.pathStack.length === 0) {
       return;
     }
-    const nextStack = this.pathStack.slice(0, this.pathStack.length - 1);
-    if (this.lockToEntry && nextStack.length === 0) {
+    const nextStack = this.session.nav.pathStack.slice(0, this.session.nav.pathStack.length - 1);
+    if (this.session.nav.lockToEntry && nextStack.length === 0) {
       return;
     }
-    this.folderChanging = true;
-    this.pathStack = nextStack;
+    this.session.load.folderChanging = true;
+    this.session.nav.pathStack = nextStack;
     this.syncFolderHierarchyState();
     void this.loadCurrent(true).finally((): void => {
-      this.folderChanging = false;
+      this.session.load.folderChanging = false;
     });
   }
 
@@ -322,7 +297,7 @@ struct FolderBrowsePage {
   }
 
   private publishGrid(): void {
-    const next = folderBrowseBuildGrid(this.folders, this.mediaItems);
+    const next = folderBrowseBuildGrid(this.session.nav.folders, this.session.nav.mediaItems);
     this.gridItems = next;
     this.rebuildRowBlocks();
   }
@@ -369,13 +344,13 @@ struct FolderBrowsePage {
       };
       blocks.push(block);
     }
-    this.rowSource.reloadAll(blocks);
+    this.session.overlay.rowSource.reloadAll(blocks);
   }
 
   private clearThumbResumeTimer(): void {
-    if (this.thumbResumeTimer >= 0) {
-      clearTimeout(this.thumbResumeTimer);
-      this.thumbResumeTimer = -1;
+    if (this.session.overlay.thumbResumeTimer >= 0) {
+      clearTimeout(this.session.overlay.thumbResumeTimer);
+      this.session.overlay.thumbResumeTimer = -1;
     }
   }
 
@@ -384,7 +359,7 @@ struct FolderBrowsePage {
       this.fbScrollEnabled = true;
     }
     if (!this.fbSlideGestureActive) {
-      this.fbThumbHitBounds.clear();
+      this.session.selection.fbThumbHitBounds.clear();
     }
     if (scrollState !== ScrollState.Idle) {
       this.clearThumbResumeTimer();
@@ -399,8 +374,8 @@ struct FolderBrowsePage {
       return;
     }
     this.clearThumbResumeTimer();
-    this.thumbResumeTimer = setTimeout((): void => {
-      this.thumbResumeTimer = -1;
+    this.session.overlay.thumbResumeTimer = setTimeout((): void => {
+      this.session.overlay.thumbResumeTimer = -1;
       this.thumbLoadingPaused = false;
     }, 96);
   }
@@ -410,25 +385,25 @@ struct FolderBrowsePage {
   }
 
   private async loadCovers(gen: number, currentPath: string): Promise<void> {
-    if (this.folders.length === 0) {
+    if (this.session.nav.folders.length === 0) {
       return;
     }
-    let names: string[] = folderBrowseCoverDirNames(this.folders, currentPath);
+    let names: string[] = folderBrowseCoverDirNames(this.session.nav.folders, currentPath);
     let allCovers: FolderViewCoverItem[] = await folderBrowseFetchCoverBatch(currentPath, names);
-    if (gen !== this.loadGen) {
+    if (gen !== this.session.load.loadGen) {
       return;
     }
     if (allCovers.length === 0) {
-      names = folderBrowseCoverDirNamesFallback(this.folders, currentPath);
+      names = folderBrowseCoverDirNamesFallback(this.session.nav.folders, currentPath);
       allCovers = await folderBrowseFetchCoverBatch(currentPath, names);
-      if (gen !== this.loadGen) {
+      if (gen !== this.session.load.loadGen) {
         return;
       }
     }
     if (allCovers.length === 0) {
       return;
     }
-    folderBrowseApplyCoverUris(this.folders, allCovers, names);
+    folderBrowseApplyCoverUris(this.session.nav.folders, allCovers, names);
     this.publishGrid();
   }
 
@@ -438,18 +413,18 @@ struct FolderBrowsePage {
 
   private enterFolder(path: string): void {
     const next = path.trim();
-    if (this.folderChanging || next.length === 0 || folderBrowseIsOsRootPath(next)) {
+    if (this.session.load.folderChanging || next.length === 0 || folderBrowseIsOsRootPath(next)) {
       this.toast('无法打开该文件夹');
       return;
     }
-    if (this.lockToEntry) {
+    if (this.session.nav.lockToEntry) {
       if (this.currentPath().length === 0) {
-        if (this.allowedRootPaths.indexOf(next) < 0) {
+        if (this.session.nav.allowedRootPaths.indexOf(next) < 0) {
           this.toast('无权访问该目录');
           return;
         }
-        this.entryFloorPath = next;
-      } else if (!folderBrowsePathAllowed(next, this.entryFloorPath)) {
+        this.session.nav.entryFloorPath = next;
+      } else if (!folderBrowsePathAllowed(next, this.session.nav.entryFloorPath)) {
         this.toast('无权访问该目录');
         return;
       }
@@ -457,23 +432,23 @@ struct FolderBrowsePage {
     if (next === this.currentPath()) {
       return;
     }
-    this.folderChanging = true;
-    this.pathStack = this.pathStack.concat([next]);
+    this.session.load.folderChanging = true;
+    this.session.nav.pathStack = this.session.nav.pathStack.concat([next]);
     this.syncFolderHierarchyState();
     void this.loadCurrent(true).finally((): void => {
-      this.folderChanging = false;
+      this.session.load.folderChanging = false;
     });
   }
 
   private openMedia(index: number): void {
-    if (index < 0 || index >= this.mediaItems.length) {
+    if (index < 0 || index >= this.session.nav.mediaItems.length) {
       this.toast('无法预览该项');
       return;
     }
     GalleryPreviewNavStore.openPreview(
       this.getUIContext(),
       this.baseUrl,
-      this.mediaItems,
+      this.session.nav.mediaItems,
       index,
       GALLERY_PREVIEW_SOURCE_FOLDER_ID
     );
@@ -484,11 +459,11 @@ struct FolderBrowsePage {
       return;
     }
     this.selectionMode = value;
-    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.selectedIds, GALLERY_SELECTION_SCOPE_FOLDER);
+    galleryAlbumSyncSelectionVisualState(this.selectionMode, this.session.selection.selectedIds, GALLERY_SELECTION_SCOPE_FOLDER);
   }
 
   private setSelectedIds(ids: string[]): void {
-    this.selectedIds = ids;
+    this.session.selection.selectedIds = ids;
     this.selectedCount = ids.length;
     this.hasFolderSelected = folderBrowseSelectionHasFolder(ids);
     galleryAlbumSyncSelectionVisualState(this.selectionMode, ids, GALLERY_SELECTION_SCOPE_FOLDER);
@@ -499,7 +474,7 @@ struct FolderBrowsePage {
       return;
     }
     this.setSelectionModeState(true);
-    this.setSelectedIds(this.selectedIds);
+    this.setSelectedIds(this.session.selection.selectedIds);
   }
 
   private exitSelection(): void {
@@ -527,7 +502,7 @@ struct FolderBrowsePage {
   }
 
   private canStartSlideshow(): boolean {
-    return this.mediaItems.length > 0 || this.mediaHasMore;
+    return this.session.nav.mediaItems.length > 0 || this.session.load.mediaHasMore;
   }
 
   private openSlideshowSettings(): void {
@@ -553,10 +528,10 @@ struct FolderBrowsePage {
 
   private async waitForAllMedia(isActive: () => boolean): Promise<void> {
     let guard = 0;
-    while (this.mediaHasMore && isActive() && guard < 40) {
-      const before = this.mediaOffset;
+    while (this.session.load.mediaHasMore && isActive() && guard < 40) {
+      const before = this.session.load.mediaOffset;
       await this.loadMoreMedia();
-      if (this.mediaOffset <= before) {
+      if (this.session.load.mediaOffset <= before) {
         break;
       }
       guard++;
@@ -568,8 +543,8 @@ struct FolderBrowsePage {
       return;
     }
     this.slideshowPreparing = true;
-    const seq = ++this.slideshowRequestSeq;
-    const isActive = (): boolean => seq === this.slideshowRequestSeq;
+    const seq = ++this.session.overlay.slideshowRequestSeq;
+    const isActive = (): boolean => seq === this.session.overlay.slideshowRequestSeq;
     try {
       await this.waitForAllMedia(isActive);
       if (!isActive()) {
@@ -578,7 +553,7 @@ struct FolderBrowsePage {
       await gallerySlideshowLaunchForItems(
         this.getUIContext(),
         this.baseUrl,
-        this.mediaItems,
+        this.session.nav.mediaItems,
         config,
         (msg: string): void => {
           this.toast(msg);
@@ -598,8 +573,8 @@ struct FolderBrowsePage {
 
   private removeMediaByIds(ids: string[]): void {
     const next: GalleryListItem[] = [];
-    for (let i = 0; i < this.mediaItems.length; i++) {
-      const id: string = folderBrowseMediaId(this.mediaItems[i]);
+    for (let i = 0; i < this.session.nav.mediaItems.length; i++) {
+      const id: string = folderBrowseMediaId(this.session.nav.mediaItems[i]);
       let drop = false;
       for (let j = 0; j < ids.length; j++) {
         if (ids[j] === id) {
@@ -610,10 +585,10 @@ struct FolderBrowsePage {
       if (drop) {
         continue;
       }
-      next.push(this.mediaItems[i]);
+      next.push(this.session.nav.mediaItems[i]);
     }
-    this.mediaItems = next;
-    this.mediaOffset = this.mediaItems.length;
+    this.session.nav.mediaItems = next;
+    this.session.load.mediaOffset = this.session.nav.mediaItems.length;
     this.publishGrid();
   }
 
@@ -626,6 +601,9 @@ struct FolderBrowsePage {
   }
 
   private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    if (this.slideTouchHostCache !== undefined) {
+      return this.slideTouchHostCache;
+    }
     const self = this;
     class FolderBrowseSlideTouchHostBridge implements GalleryGridSlideTouchHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -636,10 +614,14 @@ struct FolderBrowsePage {
         folderBrowseOnSlideTouchMoveWindow(self.asSelectionHost(), xPx, yPx);
       }
     }
-    return new FolderBrowseSlideTouchHostBridge();
+    this.slideTouchHostCache = new FolderBrowseSlideTouchHostBridge();
+    return this.slideTouchHostCache;
   }
 
   private asSelectionHost(): FolderBrowseSelectionHost {
+    if (this.selectionHostCache !== undefined) {
+      return this.selectionHostCache;
+    }
     const self = this;
     class FolderBrowseSelectionHostBridge implements FolderBrowseSelectionHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -656,11 +638,11 @@ struct FolderBrowsePage {
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.setSelectionModeState(v); }
 
-      get selectedIds(): string[] { return self.selectedIds; }
+      get selectedIds(): string[] { return self.session.selection.selectedIds; }
       set selectedIds(v: string[]) { self.setSelectedIds(v); }
 
-      get listScroller(): Scroller { return self.listScroller; }
-      set listScroller(v: Scroller) { self.listScroller = v; }
+      get listScroller(): Scroller { return self.session.overlay.listScroller; }
+      set listScroller(v: Scroller) { self.session.overlay.listScroller = v; }
 
       get listDomId(): string { return FOLDER_BROWSE_LIST_DOM_ID; }
       set listDomId(_v: string) {}
@@ -671,38 +653,39 @@ struct FolderBrowsePage {
       get fbScrollEnabled(): boolean { return self.fbScrollEnabled; }
       set fbScrollEnabled(v: boolean) { self.fbScrollEnabled = v; }
 
-      get fbLongPressIgnoreUntil(): number { return self.fbLongPressIgnoreUntil; }
-      set fbLongPressIgnoreUntil(v: number) { self.fbLongPressIgnoreUntil = v; }
+      get fbLongPressIgnoreUntil(): number { return self.session.selection.fbLongPressIgnoreUntil; }
+      set fbLongPressIgnoreUntil(v: number) { self.session.selection.fbLongPressIgnoreUntil = v; }
 
-      get fbThumbHitBounds(): Map<string, FolderBrowseThumbHitRect> { return self.fbThumbHitBounds; }
-      set fbThumbHitBounds(v: Map<string, FolderBrowseThumbHitRect>) { self.fbThumbHitBounds = v; }
+      get fbThumbHitBounds(): Map<string, FolderBrowseThumbHitRect> { return self.session.selection.fbThumbHitBounds; }
+      set fbThumbHitBounds(v: Map<string, FolderBrowseThumbHitRect>) { self.session.selection.fbThumbHitBounds = v; }
 
-      get fbSlideRefX(): number { return self.fbSlideRefX; }
-      set fbSlideRefX(v: number) { self.fbSlideRefX = v; }
+      get fbSlideRefX(): number { return self.session.selection.fbSlideRefX; }
+      set fbSlideRefX(v: number) { self.session.selection.fbSlideRefX = v; }
 
-      get fbSlideRefY(): number { return self.fbSlideRefY; }
-      set fbSlideRefY(v: number) { self.fbSlideRefY = v; }
+      get fbSlideRefY(): number { return self.session.selection.fbSlideRefY; }
+      set fbSlideRefY(v: number) { self.session.selection.fbSlideRefY = v; }
 
-      get fbSlideHasRef(): boolean { return self.fbSlideHasRef; }
-      set fbSlideHasRef(v: boolean) { self.fbSlideHasRef = v; }
+      get fbSlideHasRef(): boolean { return self.session.selection.fbSlideHasRef; }
+      set fbSlideHasRef(v: boolean) { self.session.selection.fbSlideHasRef = v; }
 
-      get fbSlideAnchorFlat(): number { return self.fbSlideAnchorFlat; }
-      set fbSlideAnchorFlat(v: number) { self.fbSlideAnchorFlat = v; }
+      get fbSlideAnchorFlat(): number { return self.session.selection.fbSlideAnchorFlat; }
+      set fbSlideAnchorFlat(v: number) { self.session.selection.fbSlideAnchorFlat = v; }
 
-      get fbSlideUnionBase(): string[] { return self.fbSlideUnionBase; }
-      set fbSlideUnionBase(v: string[]) { self.fbSlideUnionBase = v; }
+      get fbSlideUnionBase(): string[] { return self.session.selection.fbSlideUnionBase; }
+      set fbSlideUnionBase(v: string[]) { self.session.selection.fbSlideUnionBase = v; }
 
-      get fbSlideLastEndFlat(): number { return self.fbSlideLastEndFlat; }
-      set fbSlideLastEndFlat(v: number) { self.fbSlideLastEndFlat = v; }
+      get fbSlideLastEndFlat(): number { return self.session.selection.fbSlideLastEndFlat; }
+      set fbSlideLastEndFlat(v: number) { self.session.selection.fbSlideLastEndFlat = v; }
 
-      get fbSlideLastAppliedEndFlat(): number { return self.fbSlideLastAppliedEndFlat; }
-      set fbSlideLastAppliedEndFlat(v: number) { self.fbSlideLastAppliedEndFlat = v; }
+      get fbSlideLastAppliedEndFlat(): number { return self.session.selection.fbSlideLastAppliedEndFlat; }
+      set fbSlideLastAppliedEndFlat(v: number) { self.session.selection.fbSlideLastAppliedEndFlat = v; }
 
       toast(msg: string): void { self.toast(msg); }
       openMedia(index: number): void { self.openMedia(index); }
       enterFolder(path: string): void { self.enterFolder(path); }
     }
-    return new FolderBrowseSelectionHostBridge();
+    this.selectionHostCache = new FolderBrowseSelectionHostBridge();
+    return this.selectionHostCache;
   }
 
   private beginFirstSlideAtRow(rowStart: number, xPx: number, yPx: number): boolean {
@@ -719,10 +702,13 @@ struct FolderBrowsePage {
   }
 
   private asDataLoaderHost(): FolderBrowseDataLoaderHost {
+    if (this.dataLoaderHostCache !== undefined) {
+      return this.dataLoaderHostCache;
+    }
     const self = this;
     class FolderBrowseDataLoaderHostBridge implements FolderBrowseDataLoaderHost {
-      get loadGen(): number { return self.loadGen; }
-      set loadGen(v: number) { self.loadGen = v; }
+      get loadGen(): number { return self.session.load.loadGen; }
+      set loadGen(v: number) { self.session.load.loadGen = v; }
 
       get loading(): boolean { return self.loading; }
       set loading(v: boolean) { self.loading = v; }
@@ -736,32 +722,32 @@ struct FolderBrowsePage {
       get selectionMode(): boolean { return self.selectionMode; }
       set selectionMode(v: boolean) { self.selectionMode = v; }
 
-      get folders(): FolderBrowseFolderItem[] { return self.folders; }
-      set folders(v: FolderBrowseFolderItem[]) { self.folders = v; }
+      get folders(): FolderBrowseFolderItem[] { return self.session.nav.folders; }
+      set folders(v: FolderBrowseFolderItem[]) { self.session.nav.folders = v; }
 
-      get mediaItems(): GalleryListItem[] { return self.mediaItems; }
-      set mediaItems(v: GalleryListItem[]) { self.mediaItems = v; }
+      get mediaItems(): GalleryListItem[] { return self.session.nav.mediaItems; }
+      set mediaItems(v: GalleryListItem[]) { self.session.nav.mediaItems = v; }
 
-      get mediaOffset(): number { return self.mediaOffset; }
-      set mediaOffset(v: number) { self.mediaOffset = v; }
+      get mediaOffset(): number { return self.session.load.mediaOffset; }
+      set mediaOffset(v: number) { self.session.load.mediaOffset = v; }
 
-      get mediaHasMore(): boolean { return self.mediaHasMore; }
-      set mediaHasMore(v: boolean) { self.mediaHasMore = v; }
+      get mediaHasMore(): boolean { return self.session.load.mediaHasMore; }
+      set mediaHasMore(v: boolean) { self.session.load.mediaHasMore = v; }
 
-      get lockToEntry(): boolean { return self.lockToEntry; }
-      set lockToEntry(v: boolean) { self.lockToEntry = v; }
+      get lockToEntry(): boolean { return self.session.nav.lockToEntry; }
+      set lockToEntry(v: boolean) { self.session.nav.lockToEntry = v; }
 
-      get entryFloorResolved(): boolean { return self.entryFloorResolved; }
-      set entryFloorResolved(v: boolean) { self.entryFloorResolved = v; }
+      get entryFloorResolved(): boolean { return self.session.nav.entryFloorResolved; }
+      set entryFloorResolved(v: boolean) { self.session.nav.entryFloorResolved = v; }
 
-      get allowedRootPaths(): string[] { return self.allowedRootPaths; }
-      set allowedRootPaths(v: string[]) { self.allowedRootPaths = v; }
+      get allowedRootPaths(): string[] { return self.session.nav.allowedRootPaths; }
+      set allowedRootPaths(v: string[]) { self.session.nav.allowedRootPaths = v; }
 
-      get entryFloorPath(): string { return self.entryFloorPath; }
-      set entryFloorPath(v: string) { self.entryFloorPath = v; }
+      get entryFloorPath(): string { return self.session.nav.entryFloorPath; }
+      set entryFloorPath(v: string) { self.session.nav.entryFloorPath = v; }
 
-      get pathStack(): string[] { return self.pathStack; }
-      set pathStack(v: string[]) { self.pathStack = v; }
+      get pathStack(): string[] { return self.session.nav.pathStack; }
+      set pathStack(v: string[]) { self.session.nav.pathStack = v; }
 
       currentPath(): string { return self.currentPath(); }
       syncTitle(): void { self.syncTitle(); }
@@ -771,10 +757,14 @@ struct FolderBrowsePage {
       syncFolderHierarchyState(): void { self.syncFolderHierarchyState(); }
       loadCovers(gen: number, currentPath: string): void { void self.loadCovers(gen, currentPath); }
     }
-    return new FolderBrowseDataLoaderHostBridge();
+    this.dataLoaderHostCache = new FolderBrowseDataLoaderHostBridge();
+    return this.dataLoaderHostCache;
   }
 
   private asBatchActionsHost(): FolderBrowseBatchActionsHost {
+    if (this.batchHostCache !== undefined) {
+      return this.batchHostCache;
+    }
     const self = this;
     class FolderBrowseBatchActionsHostBridge implements FolderBrowseBatchActionsHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -782,10 +772,10 @@ struct FolderBrowsePage {
       get baseUrl(): string { return self.baseUrl; }
       set baseUrl(v: string) { self.baseUrl = v; }
 
-      get mediaItems(): GalleryListItem[] { return self.mediaItems; }
-      set mediaItems(v: GalleryListItem[]) { self.mediaItems = v; }
+      get mediaItems(): GalleryListItem[] { return self.session.nav.mediaItems; }
+      set mediaItems(v: GalleryListItem[]) { self.session.nav.mediaItems = v; }
 
-      get selectedIds(): string[] { return self.selectedIds; }
+      get selectedIds(): string[] { return self.session.selection.selectedIds; }
       set selectedIds(v: string[]) { self.setSelectedIds(v); }
 
       get batchDeleting(): boolean { return self.batchDeleting; }
@@ -800,7 +790,8 @@ struct FolderBrowsePage {
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
       askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
-    return new FolderBrowseBatchActionsHostBridge();
+    this.batchHostCache = new FolderBrowseBatchActionsHostBridge();
+    return this.batchHostCache;
   }
 
   private askLivePhotoSave(): Promise<LivePhotoSaveChoice> {
@@ -815,7 +806,7 @@ struct FolderBrowsePage {
       return Promise.resolve(false);
     }
     return new Promise<boolean>((resolve: (ok: boolean) => void) => {
-      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+      this.session.overlay.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
         resolve(choice === 'privilege');
       };
       this.liveSaveSheetVisible = true;
@@ -823,8 +814,8 @@ struct FolderBrowsePage {
   }
 
   private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
-    const resolver = this.liveSaveResolver;
-    this.liveSaveResolver = undefined;
+    const resolver = this.session.overlay.liveSaveResolver;
+    this.session.overlay.liveSaveResolver = undefined;
     this.liveSaveSheetVisible = false;
     if (resolver !== undefined) {
       resolver(choice);
@@ -838,14 +829,14 @@ struct FolderBrowsePage {
     return new Promise<number>((resolve: (index: number) => void) => {
       this.choiceSheetTitle = title;
       this.choiceSheetButtons = buttons;
-      this.choiceSheetResolver = resolve;
+      this.session.overlay.choiceSheetResolver = resolve;
       this.choiceSheetVisible = true;
     });
   }
 
   private completeChoice(index: number): void {
-    const resolver = this.choiceSheetResolver;
-    this.choiceSheetResolver = undefined;
+    const resolver = this.session.overlay.choiceSheetResolver;
+    this.session.overlay.choiceSheetResolver = undefined;
     this.choiceSheetVisible = false;
     if (resolver !== undefined) {
       resolver(index);
@@ -1102,7 +1093,7 @@ struct FolderBrowsePage {
       .padding({ left: 10, right: 10, top: 1, bottom: 1 })
       .onTouch((event: TouchEvent): void => {
         galleryGridHandleRowTouch(
-          this.slideTouch,
+          this.session.overlay.slideTouch,
           this.asSlideTouchHost(),
           event,
           (xPx: number, yPx: number): boolean => this.beginFirstSlideAtRow(block.rowStart, xPx, yPx)
@@ -1112,10 +1103,10 @@ struct FolderBrowsePage {
         GestureGroup(GestureMode.Sequence,
           LongPressGesture({ repeat: false, duration: GALLERY_GRID_SEQUENCE_LONG_PRESS_MS })
             .onAction((ev: GestureEvent): void => {
-              if (!galleryGridOnSequenceLongPress(this.slideTouch, this.asSlideTouchHost())) {
+              if (!galleryGridOnSequenceLongPress(this.session.overlay.slideTouch, this.asSlideTouchHost())) {
                 return;
               }
-              galleryGridClearInitialSlide(this.slideTouch);
+              galleryGridClearInitialSlide(this.session.overlay.slideTouch);
               folderBrowseEndSlideSelectGesture(this.asSelectionHost());
               const pt: FolderBrowseFingerWindowPoint | null = folderBrowseReadGestureFingerWindow(ev);
               if (pt === null) {
@@ -1124,7 +1115,7 @@ struct FolderBrowsePage {
               if (!this.beginFirstSlideAtRow(block.rowStart, this.vpToPx(pt.x), this.vpToPx(pt.y))) {
                 return;
               }
-              galleryGridArmInitialSlide(this.slideTouch);
+              galleryGridArmInitialSlide(this.session.overlay.slideTouch);
             }),
           PanGesture({
             fingers: 1,
@@ -1132,16 +1123,16 @@ struct FolderBrowsePage {
             distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
           })
             .onActionUpdate((ev: GestureEvent): void => {
-              if (!galleryGridShouldUpdateSequencePan(this.slideTouch, this.asSlideTouchHost())) {
+              if (!galleryGridShouldUpdateSequencePan(this.session.overlay.slideTouch, this.asSlideTouchHost())) {
                 return;
               }
               folderBrowseOnSlidePanUpdate(this.asSelectionHost(), ev);
             })
             .onActionEnd((): void => {
-              galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
+              galleryGridOnSequencePanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
             })
             .onActionCancel((): void => {
-              galleryGridOnSequencePanFinish(this.slideTouch, this.asSlideTouchHost());
+              galleryGridOnSequencePanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
             })
         ),
         PanGesture({
@@ -1150,8 +1141,8 @@ struct FolderBrowsePage {
           distance: GALLERY_SLIDE_PAN_DISTANCE_VP_ACTIVE
         })
           .onActionStart((ev: GestureEvent): void => {
-            this.slideTouch.secondaryPanDriving = false;
-            if (!galleryGridCanStartSecondaryPan(this.slideTouch, this.asSlideTouchHost(), ev)) {
+            this.session.overlay.slideTouch.secondaryPanDriving = false;
+            if (!galleryGridCanStartSecondaryPan(this.session.overlay.slideTouch, this.asSlideTouchHost(), ev)) {
               return;
             }
             const pt: FolderBrowseFingerWindowPoint | null = folderBrowseReadGestureFingerWindow(ev);
@@ -1169,21 +1160,21 @@ struct FolderBrowsePage {
               return;
             }
             galleryGridSlideLog('fb_sec_start',
-              `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.selectedIds.length}`);
-            galleryGridOnSecondaryPanStart(this.slideTouch);
+              `flat=${fi} xy=${Math.round(xPx)},${Math.round(yPx)} selected=${this.session.selection.selectedIds.length}`);
+            galleryGridOnSecondaryPanStart(this.session.overlay.slideTouch);
             folderBrowseBeginSlideSelectGesture(this.asSelectionHost(), ev, fi);
           })
           .onActionUpdate((ev: GestureEvent): void => {
-            if (!galleryGridShouldUpdateSecondaryPan(this.slideTouch, this.asSlideTouchHost())) {
+            if (!galleryGridShouldUpdateSecondaryPan(this.session.overlay.slideTouch, this.asSlideTouchHost())) {
               return;
             }
             folderBrowseOnSlidePanUpdate(this.asSelectionHost(), ev);
           })
           .onActionEnd((): void => {
-            galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
+            galleryGridOnSecondaryPanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
           })
           .onActionCancel((): void => {
-            galleryGridOnSecondaryPanFinish(this.slideTouch, this.asSlideTouchHost());
+            galleryGridOnSecondaryPanFinish(this.session.overlay.slideTouch, this.asSlideTouchHost());
           })
       ))
     }
@@ -1204,7 +1195,7 @@ struct FolderBrowsePage {
           moreMenuExpanded: this.moreMenuExpanded,
           showGoUp: true,
           canGoUp: this.canGoUpFolder,
-          scrollerList: [this.listScroller],
+          scrollerList: [this.session.overlay.listScroller],
           onCancelSelection: (): void => {
             this.exitSelection();
           },
@@ -1241,8 +1232,8 @@ struct FolderBrowsePage {
         } else {
           Stack({ alignContent: Alignment.Bottom }) {
             Column() {
-              List({ scroller: this.listScroller }) {
-                LazyForEach(this.rowSource, (block: FolderBrowseRowBlock) => {
+              List({ scroller: this.session.overlay.listScroller }) {
+                LazyForEach(this.session.overlay.rowSource, (block: FolderBrowseRowBlock) => {
                   this.rowListItem(block)
                 }, (block: FolderBrowseRowBlock) => block.key)
                 ListItem() {
@@ -1263,7 +1254,7 @@ struct FolderBrowsePage {
               .divider({ strokeWidth: 0 })
               .enableScrollInteraction(this.fbScrollEnabled)
               .onTouch((event: TouchEvent): void => {
-                galleryGridHandleListTouch(this.slideTouch, this.asSlideTouchHost(), event);
+                galleryGridHandleListTouch(this.session.overlay.slideTouch, this.asSlideTouchHost(), event);
               })
               .onReachEnd((): void => {
                 void this.loadMoreMedia();

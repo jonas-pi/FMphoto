@@ -25,7 +25,8 @@ import {
   galleryPreviewDetailsVisibleSideEffects,
   galleryPreviewIndexAfterDelete
 } from '../main/ets/pages/galleryPreview/GalleryPreviewActions';
-import { galleryPreviewShouldPauseSlideshowFlags } from '../main/ets/pages/galleryPreview/GalleryPreviewSlideshowRuntime';
+import { galleryPreviewShouldPauseSlideshowFlags, galleryPreviewSlideshowWaitsForMediaEnd } from '../main/ets/pages/galleryPreview/GalleryPreviewSlideshowRuntime';
+import { galleryGifLoopDurationFromDelays } from '../main/ets/album/slideshow/GallerySlideshowMedia';
 import {
   GalleryAlbumLoadRuntime,
   GalleryAlbumModeRuntime,
@@ -280,6 +281,19 @@ export default function galleryStateBaselineTest() {
       expect(galleryPreviewShouldPauseSlideshowFlags(false, false, false, true, false, false)).assertTrue();
       expect(galleryPreviewShouldPauseSlideshowFlags(false, false, false, false, true, false)).assertTrue();
       expect(galleryPreviewShouldPauseSlideshowFlags(false, false, false, false, false, true)).assertTrue();
+    });
+
+    it('preview_slideshow_waits_for_motion_media', 0, () => {
+      expect(galleryPreviewSlideshowWaitsForMediaEnd(true, false, false)).assertTrue();
+      expect(galleryPreviewSlideshowWaitsForMediaEnd(false, true, false)).assertTrue();
+      expect(galleryPreviewSlideshowWaitsForMediaEnd(false, false, true)).assertTrue();
+      expect(galleryPreviewSlideshowWaitsForMediaEnd(false, false, false)).assertFalse();
+    });
+
+    it('gif_loop_duration_from_delays', 0, () => {
+      expect(galleryGifLoopDurationFromDelays([])).assertEqual(0);
+      expect(galleryGifLoopDurationFromDelays([10, 10, 10])).assertEqual(300);
+      expect(galleryGifLoopDurationFromDelays([100, 100])).assertEqual(200);
     });
 
     it('album_session_runtime_defaults', 0, () => {

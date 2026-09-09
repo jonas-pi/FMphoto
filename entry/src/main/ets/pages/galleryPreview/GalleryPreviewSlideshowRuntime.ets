@@ -28,6 +28,7 @@ export interface GalleryPreviewSlideshowHost {
   deleting: boolean;
   currentItem(): GalleryListItem | null;
   currentItemIsVideo(): boolean;
+  currentSlideshowWaitsForMediaEnd(): boolean;
 }
 
 export function galleryPreviewClearSlideshowTimer(host: GalleryPreviewSlideshowHost): void {
@@ -72,6 +73,15 @@ export function galleryPreviewShouldPauseSlideshow(host: GalleryPreviewSlideshow
     host.sharing,
     host.deleting
   );
+}
+
+/** 视频 / 动图 / 实况由媒体播完再切，不走固定间隔。 */
+export function galleryPreviewSlideshowWaitsForMediaEnd(
+  isVideo: boolean,
+  isGif: boolean,
+  isLive: boolean
+): boolean {
+  return isVideo || isGif || isLive;
 }
 
 export function galleryPreviewAdvanceSlideshow(host: GalleryPreviewSlideshowHost): void {
@@ -227,7 +237,7 @@ export function galleryPreviewArmSlideshowTimer(host: GalleryPreviewSlideshowHos
   if (host.detailsVisible) {
     return;
   }
-  if (host.currentItemIsVideo()) {
+  if (host.currentSlideshowWaitsForMediaEnd()) {
     return;
   }
   host.slideshowTimerId = setTimeout((): void => {
@@ -236,7 +246,7 @@ export function galleryPreviewArmSlideshowTimer(host: GalleryPreviewSlideshowHos
       galleryPreviewArmSlideshowTimer(host);
       return;
     }
-    if (host.currentItemIsVideo()) {
+    if (host.currentSlideshowWaitsForMediaEnd()) {
       return;
     }
     galleryPreviewAdvanceSlideshow(host);
