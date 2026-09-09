@@ -49,6 +49,8 @@ const ALBUMS_HOME_SMART_GRID_GAP_VP: number = 4;
 const ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP: number = 10;
 /** 封面下方标题+数量+间距，用于宫格自适应高度 */
 const ALBUMS_HOME_MEDIA_CARD_TEXT_VP: number = 62;
+/** 宝宝相册封面底部遮罩高度，只盖住下沿一小段 */
+const ALBUMS_HOME_BABY_MASK_HEIGHT_VP: number = 26;
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
 
@@ -801,25 +803,29 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   @Builder
+  private babyCoverStreamMask() {
+    Column() {
+      Text('宝宝')
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+    }
+    .width('100%')
+    .height(ALBUMS_HOME_BABY_MASK_HEIGHT_VP)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor('#B3000000')
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
   private restoreCardCell(item: AlbumsHomeRestoreCard) {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.TopEnd }) {
-        Stack() {
+        Stack({ alignContent: Alignment.Bottom }) {
           this.mediaThumb(item.coverUri, item.title.slice(0, 1))
           if (item.baby) {
-            Text('宝宝')
-              .fontSize(10)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(Color.White)
-              .padding({ left: 6, right: 6, top: 3, bottom: 3 })
-              .borderRadius({
-                topLeft: 10,
-                topRight: 0,
-                bottomLeft: 0,
-                bottomRight: ALBUMS_HOME_MEDIA_CARD_RADIUS_VP
-              })
-              .backgroundColor('#99000000')
-              .align(Alignment.BottomEnd)
+            this.babyCoverStreamMask()
           }
         }
         .width('100%')
@@ -1418,22 +1424,10 @@ export struct GalleryAlbumAlbumsHomeView {
   private userAlbumCard(item: UserAlbumItem) {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.TopEnd }) {
-        Stack() {
+        Stack({ alignContent: Alignment.Bottom }) {
           this.mediaThumb(this.userAlbumCoverUri(item), userAlbumName(item).slice(0, 1))
           if (userAlbumIsBaby(item)) {
-            Text('宝宝')
-              .fontSize(10)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(Color.White)
-              .padding({ left: 6, right: 6, top: 3, bottom: 3 })
-              .borderRadius({
-                topLeft: 10,
-                topRight: 0,
-                bottomLeft: 0,
-                bottomRight: ALBUMS_HOME_MEDIA_CARD_RADIUS_VP
-              })
-              .backgroundColor('#99000000')
-              .align(Alignment.BottomEnd)
+            this.babyCoverStreamMask()
           }
         }
         .width('100%')
