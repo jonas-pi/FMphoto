@@ -581,6 +581,10 @@ struct MePanel {
     }
     .width('100%')
     .height('100%')
+    .padding({
+      left: $r('sys.float.ohos_id_max_padding_start'),
+      right: $r('sys.float.ohos_id_max_padding_end')
+    })
     .backgroundColor(Color.Transparent)
   }
 

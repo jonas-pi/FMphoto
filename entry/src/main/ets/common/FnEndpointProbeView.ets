@@ -2,7 +2,8 @@
  * 登录页与「我的」共用的路径探测结果展示。
  * 当前连接做成独立卡片，其他路径两行排布，避免地址和延迟挤在一行。
  * 同类条目用 List + ListItem（arkts-layout-development-create-list）；
- * 半模态内 List 配 nestedScroll PARENT_FIRST / SELF_FIRST（arkts-sheet-page）。
+ * 半模态内 List 配 nestedScroll PARENT_FIRST / SELF_FIRST（arkts-sheet-page）；
+ * 滚动条用 BarState.Off（官方默认 Auto，半模态/系统相册同类面板关掉常驻条）。
  */
 import { LoginEndpointProbeLine, LoginEndpointSelectionResult } from '../network/LoginEndpointSelector';
 
@@ -132,6 +133,16 @@ export struct FnEndpointProbeView {
 
   private latencyColor(ok: boolean): ResourceColor {
     return ok ? $r('app.color.brand_primary') : $r('app.color.text_secondary');
+  }
+
+  private sheetContentPadding(): Padding {
+    if (this.useCardStyle) {
+      return { left: 12, right: 12, top: 12, bottom: 12 };
+    }
+    if (this.fillSheet) {
+      return { left: 0, right: 0, top: 8, bottom: 16 };
+    }
+    return { left: 16, right: 16, top: 8, bottom: 16 };
   }
 
   @Builder
@@ -297,7 +308,7 @@ export struct FnEndpointProbeView {
             startMargin: 0,
             endMargin: 0
           })
-          .scrollBar(this.fillSheet ? BarState.Auto : BarState.Off)
+          .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
           .nestedScroll({
             scrollForward: NestedScrollMode.PARENT_FIRST,
@@ -307,9 +318,7 @@ export struct FnEndpointProbeView {
       }
       .width('100%')
       .layoutWeight(this.fillSheet ? 1 : 0)
-      .padding(this.useCardStyle ?
-        { left: 12, right: 12, top: 12, bottom: 12 } :
-        { left: 16, right: 16, top: 8, bottom: 16 })
+      .padding(this.sheetContentPadding())
       .borderRadius(this.useCardStyle ? $r('app.float.radius_medium') : 0)
       .backgroundColor(this.useCardStyle ? $r('app.color.card_background') : Color.Transparent)
       .alignItems(HorizontalAlign.Start)

@@ -220,10 +220,7 @@ struct FolderBrowsePage {
       this.exitSelection();
       return;
     }
-    if (this.canGoUpFolder) {
-      this.goUpFolder();
-      return;
-    }
+    // 返回只离开本页；目录上一级交给顶栏按钮，避免从详情路径进来后被一层层退回。
     this.navigateOut();
   }
 

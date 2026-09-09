@@ -70,7 +70,7 @@ export struct FolderBrowseChrome {
     }
     const upContent: HdsNavigationIconOptions = {
       label: '上一级',
-      icon: $r('sys.symbol.arrow_up'),
+      icon: $r('sys.symbol.arrow_up_to_line'),
       type: IconStyleMode.NORMAL,
       isEnabled: this.canGoUp,
       action: (): void => {

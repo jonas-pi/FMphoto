@@ -3,7 +3,7 @@
  * Home 的 NavDestination 不把 param 传进页面，因此用中转站，避免只能从根目录进。
  *
  * lockToEntry：从媒体目录「跳转到文件夹视图」时为 true。
- * 此时返回不得越过进入时的目标文件夹，更不能走到 NAS/系统根。
+ * 上一级不得越过授权根，更不能走到 NAS/系统根；返回键始终离开本页。
  *
  * forceRouter：当前页已是独立 Router 时，禁止把文件夹页压进 Home 内部栈。
  */
