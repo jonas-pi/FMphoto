@@ -31,7 +31,6 @@ import {
   GALLERY_VERTICAL_VELOCITY_THRESHOLD,
   getGalleryPreviewDetailsFitNormVel,
   getGalleryPreviewDetailsSheetHeight,
-  getGalleryPreviewDismissProgress,
   isGalleryPreviewDetailsAvoidAnimating,
   removeGalleryPreviewDismissListener,
   removeGalleryPreviewDetailsFitListener,
@@ -55,7 +54,6 @@ import {
 } from '../album/slideshow/GallerySlideshowStreamStore';
 import { GallerySlideshowPlaylistEntry } from '../album/slideshow/GallerySlideshowTypes';
 import { gallerySlideshowStableItemKey } from '../album/slideshow/GallerySlideshowMedia';
-import { slideshowLogAppend, slideshowLogPage, slideshowLogPrefetch } from '../album/slideshow/GallerySlideshowTrace';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../model/FnApiTypes';
 import { isVideoItem, trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import { isLivePhotoItem } from '../album/livephoto/LivePhotoDetect';
@@ -118,6 +116,27 @@ import {
   resetGalleryPreviewVideoChrome,
   restoreGalleryPreviewPortrait
 } from './galleryPreview/GalleryPreviewVideoStore';
+import {
+  GalleryPreviewSlideshowHost,
+  galleryPreviewAdvanceSlideshow,
+  galleryPreviewAppendSlideshowEntries,
+  galleryPreviewArmSlideshowTimer,
+  galleryPreviewClearSlideshowPrefetchTimer,
+  galleryPreviewClearSlideshowTimer,
+  galleryPreviewLogSlideshowPage,
+  galleryPreviewMaybePrefetchSlideshowItems,
+  galleryPreviewOnSlideshowVideoEnded,
+  galleryPreviewPauseSlideshowForDetails,
+  galleryPreviewResumeSlideshowAfterDetails,
+  galleryPreviewScheduleSlideshowPrefetch,
+  galleryPreviewShouldPauseSlideshow,
+  galleryPreviewSlideshowGlobalIndexAt
+} from './galleryPreview/GalleryPreviewSlideshowRuntime';
+import {
+  galleryPreviewPlaceholderFromPx,
+  galleryPreviewScrimDisplayOpacity,
+  galleryPreviewShouldPlayHeroScrim
+} from './galleryPreview/GalleryPreviewHeroRuntime';
 
 @Entry
 @Component
@@ -245,10 +264,17 @@ struct GalleryPreview {
     GalleryAlbumNavigation.setSuspended(true);
     this.sourcePageSnapshot = GalleryPreviewNavStore.sourcePageSnapshot;
     const uiCtx = this.getUIContext();
-    this.sourcePlaceholderX = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderX);
-    this.sourcePlaceholderY = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderY);
-    this.sourcePlaceholderW = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderW);
-    this.sourcePlaceholderH = uiCtx.px2vp(GalleryPreviewNavStore.sourcePlaceholderH);
+    const placeholder = galleryPreviewPlaceholderFromPx(
+      (px: number): number => uiCtx.px2vp(px),
+      GalleryPreviewNavStore.sourcePlaceholderX,
+      GalleryPreviewNavStore.sourcePlaceholderY,
+      GalleryPreviewNavStore.sourcePlaceholderW,
+      GalleryPreviewNavStore.sourcePlaceholderH
+    );
+    this.sourcePlaceholderX = placeholder.x;
+    this.sourcePlaceholderY = placeholder.y;
+    this.sourcePlaceholderW = placeholder.w;
+    this.sourcePlaceholderH = placeholder.h;
     this.baseUrl = GalleryPreviewNavStore.baseUrl;
     this.previewItems = GalleryPreviewNavStore.items.slice();
     this.itemSource.reloadAll(this.previewItems);
@@ -294,228 +320,55 @@ struct GalleryPreview {
   }
 
   private clearSlideshowTimer(): void {
-    if (this.slideshowTimerId >= 0) {
-      clearTimeout(this.slideshowTimerId);
-      this.slideshowTimerId = -1;
-    }
+    galleryPreviewClearSlideshowTimer(this.asSlideshowHost());
   }
 
   private clearSlideshowPrefetchTimer(): void {
-    if (this.slideshowPrefetchTimer >= 0) {
-      clearTimeout(this.slideshowPrefetchTimer);
-      this.slideshowPrefetchTimer = -1;
-    }
+    galleryPreviewClearSlideshowPrefetchTimer(this.asSlideshowHost());
   }
 
   private scheduleSlideshowPrefetch(): void {
-    this.clearSlideshowPrefetchTimer();
-    this.slideshowPrefetchTimer = setTimeout((): void => {
-      this.slideshowPrefetchTimer = -1;
-      this.maybePrefetchSlideshowItems();
-    }, 0);
+    galleryPreviewScheduleSlideshowPrefetch(this.asSlideshowHost());
   }
 
   private shouldPauseSlideshow(): boolean {
-    return this.pinchGestureActive || this.previewZoomLocked || this.detailsVisible ||
-      this.downloading || this.sharing || this.deleting;
+    return galleryPreviewShouldPauseSlideshow(this.asSlideshowHost());
   }
 
   private advanceSlideshow(): void {
-    if (!this.slideshowEnabled) {
-      return;
-    }
-    if (this.swiperIndex + 1 < this.totalCount) {
-      const next = this.swiperIndex + 1;
-      this.swiperIndex = next;
-      this.swiperCtrl.changeIndex(next, true);
-      this.maybePrefetchSlideshowItems();
-      return;
-    }
-    if (GallerySlideshowStreamStore.isActive()) {
-      void GallerySlideshowStreamStore.prefetchAppend((entries: GallerySlideshowPlaylistEntry[]): void => {
-        if (entries.length === 0) {
-          this.clearSlideshowTimer();
-          return;
-        }
-        this.appendSlideshowEntries(entries);
-        const next = this.swiperIndex + 1;
-        if (next < this.totalCount) {
-          this.swiperIndex = next;
-          this.swiperCtrl.changeIndex(next, true);
-          this.maybePrefetchSlideshowItems();
-        } else {
-          this.clearSlideshowTimer();
-        }
-      });
-      return;
-    }
-    // 没有更多不重复的片子：停在最后一张，不要绕回第一张
-    this.clearSlideshowTimer();
+    galleryPreviewAdvanceSlideshow(this.asSlideshowHost());
   }
 
   private maybePrefetchSlideshowItems(): void {
-    if (!this.slideshowEnabled || !GallerySlideshowStreamStore.isActive()) {
-      return;
-    }
-    const remaining = this.totalCount - this.swiperIndex - 1;
-    if (!GallerySlideshowStreamStore.shouldPrefetch(remaining)) {
-      return;
-    }
-    slideshowLogPrefetch(remaining, this.swiperIndex, this.totalCount, 0);
-    void GallerySlideshowStreamStore.prefetchAppend((entries: GallerySlideshowPlaylistEntry[]): void => {
-      this.appendSlideshowEntries(entries);
-    });
+    galleryPreviewMaybePrefetchSlideshowItems(this.asSlideshowHost());
   }
 
   private appendSlideshowEntries(entries: GallerySlideshowPlaylistEntry[]): void {
-    if (entries.length === 0) {
-      return;
-    }
-    const seenKeys: Set<string> = new Set();
-    const seenGlobals: Set<number> = new Set();
-    for (let i = 0; i < this.previewItems.length; i++) {
-      const key = gallerySlideshowStableItemKey(this.previewItems[i]);
-      if (key.length > 0) {
-        seenKeys.add(key);
-      }
-    }
-    for (let i = 0; i < this.slideshowGlobalIndices.length; i++) {
-      seenGlobals.add(this.slideshowGlobalIndices[i]);
-    }
-    const unique: GallerySlideshowPlaylistEntry[] = [];
-    let dropGlobal = 0;
-    let dropKey = 0;
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (seenGlobals.has(entry.globalIndex)) {
-        dropGlobal++;
-        continue;
-      }
-      const key = gallerySlideshowStableItemKey(entry.item);
-      if (key.length > 0 && seenKeys.has(key)) {
-        dropKey++;
-        continue;
-      }
-      unique.push(entry);
-      seenGlobals.add(entry.globalIndex);
-      if (key.length > 0) {
-        seenKeys.add(key);
-      }
-    }
-    if (unique.length === 0) {
-      slideshowLogAppend(entries.length, 0, dropGlobal, dropKey, this.previewItems.length,
-        this.slideshowGlobalIndices.length);
-      return;
-    }
-    const items: GalleryListItem[] = [];
-    for (let i = 0; i < unique.length; i++) {
-      items.push(unique[i].item);
-      this.slideshowGlobalIndices.push(unique[i].globalIndex);
-    }
-    // itemSource.items 与 previewItems 是同一引用，appendItems 已经 push，这里不能再 push
-    const before = this.previewItems.length;
-    this.itemSource.appendItems(items);
-    if (this.previewItems.length === before) {
-      for (let i = 0; i < items.length; i++) {
-        this.previewItems.push(items[i]);
-      }
-    }
-    this.totalCount = this.previewItems.length;
-    GallerySlideshowStreamStore.rememberEntries(unique);
-    slideshowLogAppend(entries.length, unique.length, dropGlobal, dropKey, this.previewItems.length,
-      this.slideshowGlobalIndices.length);
+    galleryPreviewAppendSlideshowEntries(this.asSlideshowHost(), entries);
   }
 
-  /** 记录当前页：标题回退、全局下标顺延、稳定键重复 */
   private logSlideshowPage(): void {
-    if (!this.slideshowEnabled) {
-      return;
-    }
-    const item = this.currentItem();
-    const key = item !== null ? gallerySlideshowStableItemKey(item) : '';
-    const globalIdx = this.slideshowGlobalIndexAt(this.swiperIndex);
-    const fallback = globalIdx < 0;
-    const sequential = globalIdx >= 0 && this.lastLoggedSlideshowGlobal >= 0 &&
-      globalIdx === this.lastLoggedSlideshowGlobal + 1;
-    const duplicateKey = key.length > 0 && key === this.lastLoggedSlideshowKey;
-    slideshowLogPage(
-      this.swiperIndex,
-      globalIdx,
-      key,
-      this.previewItems.length,
-      this.slideshowGlobalIndices.length,
-      fallback,
-      sequential,
-      duplicateKey
-    );
-    this.lastLoggedSlideshowGlobal = globalIdx;
-    this.lastLoggedSlideshowKey = key;
+    galleryPreviewLogSlideshowPage(this.asSlideshowHost());
   }
 
   private slideshowGlobalIndexAt(playlistIdx: number): number {
-    if (playlistIdx < 0 || playlistIdx >= this.slideshowGlobalIndices.length) {
-      return -1;
-    }
-    return this.slideshowGlobalIndices[playlistIdx];
+    return galleryPreviewSlideshowGlobalIndexAt(this.asSlideshowHost(), playlistIdx);
   }
 
   private armSlideshowTimer(): void {
-    this.clearSlideshowTimer();
-    if (!this.slideshowEnabled || this.slideshowIntervalMs <= 0) {
-      return;
-    }
-    if (this.totalCount <= 1 && !GallerySlideshowStreamStore.isActive()) {
-      return;
-    }
-    // 详情打开时真正停表，关详情后再重新计时
-    if (this.detailsVisible) {
-      return;
-    }
-    // 视频播着时不按间隔切页，等播完或手动划走
-    if (this.currentItemIsVideo()) {
-      return;
-    }
-    this.slideshowTimerId = setTimeout((): void => {
-      this.slideshowTimerId = -1;
-      if (this.shouldPauseSlideshow()) {
-        this.armSlideshowTimer();
-        return;
-      }
-      if (this.currentItemIsVideo()) {
-        return;
-      }
-      this.advanceSlideshow();
-      this.armSlideshowTimer();
-    }, this.slideshowIntervalMs);
+    galleryPreviewArmSlideshowTimer(this.asSlideshowHost());
   }
 
-  /** 打开详情：清掉当前间隔，避免后台空转到期后又切页 */
   private pauseSlideshowForDetails(): void {
-    this.clearSlideshowTimer();
+    galleryPreviewPauseSlideshowForDetails(this.asSlideshowHost());
   }
 
-  /** 关闭详情：若视频已在详情里播完则立刻切页，否则重新开始当前间隔 */
   private resumeSlideshowAfterDetails(): void {
-    if (!this.slideshowEnabled) {
-      return;
-    }
-    if (this.slideshowAdvancePending) {
-      this.slideshowAdvancePending = false;
-      this.advanceSlideshow();
-    }
-    this.armSlideshowTimer();
+    galleryPreviewResumeSlideshowAfterDetails(this.asSlideshowHost());
   }
 
   private onSlideshowVideoEnded(): void {
-    if (!this.slideshowEnabled) {
-      return;
-    }
-    if (this.shouldPauseSlideshow()) {
-      this.slideshowAdvancePending = true;
-      return;
-    }
-    this.advanceSlideshow();
-    this.armSlideshowTimer();
+    galleryPreviewOnSlideshowVideoEnded(this.asSlideshowHost());
   }
 
   aboutToDisappear(): void {
@@ -625,7 +478,7 @@ struct GalleryPreview {
   }
 
   private playHeroScrimEnterIfNeeded(): void {
-    if (this.slideshowEnabled || this.heroScrimEntered) {
+    if (!galleryPreviewShouldPlayHeroScrim(this.slideshowEnabled, this.heroScrimEntered)) {
       return;
     }
     this.heroScrimEntered = true;
@@ -904,6 +757,75 @@ struct GalleryPreview {
 
   private shareCurrentImage(): void {
     galleryPreviewShareCurrentImage(this.asActionsHost());
+  }
+
+  private asSlideshowHost(): GalleryPreviewSlideshowHost {
+    const self = this;
+    class GalleryPreviewSlideshowHostBridge implements GalleryPreviewSlideshowHost {
+      get slideshowEnabled(): boolean { return self.slideshowEnabled; }
+      set slideshowEnabled(v: boolean) { self.slideshowEnabled = v; }
+
+      get slideshowIntervalMs(): number { return self.slideshowIntervalMs; }
+      set slideshowIntervalMs(v: number) { self.slideshowIntervalMs = v; }
+
+      get slideshowLibraryTotal(): number { return self.slideshowLibraryTotal; }
+      set slideshowLibraryTotal(v: number) { self.slideshowLibraryTotal = v; }
+
+      get slideshowGlobalIndices(): number[] { return self.slideshowGlobalIndices; }
+      set slideshowGlobalIndices(v: number[]) { self.slideshowGlobalIndices = v; }
+
+      get slideshowTimerId(): number { return self.slideshowTimerId; }
+      set slideshowTimerId(v: number) { self.slideshowTimerId = v; }
+
+      get slideshowAdvancePending(): boolean { return self.slideshowAdvancePending; }
+      set slideshowAdvancePending(v: boolean) { self.slideshowAdvancePending = v; }
+
+      get slideshowPrefetchTimer(): number { return self.slideshowPrefetchTimer; }
+      set slideshowPrefetchTimer(v: number) { self.slideshowPrefetchTimer = v; }
+
+      get lastLoggedSlideshowGlobal(): number { return self.lastLoggedSlideshowGlobal; }
+      set lastLoggedSlideshowGlobal(v: number) { self.lastLoggedSlideshowGlobal = v; }
+
+      get lastLoggedSlideshowKey(): string { return self.lastLoggedSlideshowKey; }
+      set lastLoggedSlideshowKey(v: string) { self.lastLoggedSlideshowKey = v; }
+
+      get swiperIndex(): number { return self.swiperIndex; }
+      set swiperIndex(v: number) { self.swiperIndex = v; }
+
+      get totalCount(): number { return self.totalCount; }
+      set totalCount(v: number) { self.totalCount = v; }
+
+      get previewItems(): GalleryListItem[] { return self.previewItems; }
+      set previewItems(v: GalleryListItem[]) { self.previewItems = v; }
+
+      get itemSource(): PreviewItemsDataSource { return self.itemSource; }
+      set itemSource(v: PreviewItemsDataSource) { self.itemSource = v; }
+
+      get swiperCtrl(): SwiperController { return self.swiperCtrl; }
+      set swiperCtrl(v: SwiperController) { self.swiperCtrl = v; }
+
+      get pinchGestureActive(): boolean { return self.pinchGestureActive; }
+      set pinchGestureActive(v: boolean) { self.pinchGestureActive = v; }
+
+      get previewZoomLocked(): boolean { return self.previewZoomLocked; }
+      set previewZoomLocked(v: boolean) { self.previewZoomLocked = v; }
+
+      get detailsVisible(): boolean { return self.detailsVisible; }
+      set detailsVisible(v: boolean) { self.detailsVisible = v; }
+
+      get downloading(): boolean { return self.downloading; }
+      set downloading(v: boolean) { self.downloading = v; }
+
+      get sharing(): boolean { return self.sharing; }
+      set sharing(v: boolean) { self.sharing = v; }
+
+      get deleting(): boolean { return self.deleting; }
+      set deleting(v: boolean) { self.deleting = v; }
+
+      currentItem(): GalleryListItem | null { return self.currentItem(); }
+      currentItemIsVideo(): boolean { return self.currentItemIsVideo(); }
+    }
+    return new GalleryPreviewSlideshowHostBridge();
   }
 
   private asActionsHost(): GalleryPreviewActionsHost {
@@ -1513,7 +1435,7 @@ struct GalleryPreviewScrim {
   }
 
   private applyScrimOpacity(): void {
-    const opacity = this.baseOpacity * (1 - getGalleryPreviewDismissProgress());
+    const opacity = galleryPreviewScrimDisplayOpacity(this.baseOpacity);
     this.opacityUpdater.apply(opacity);
   }
 

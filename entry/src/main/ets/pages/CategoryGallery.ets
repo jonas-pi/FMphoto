@@ -4,7 +4,6 @@
  */
 import { UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryListItem } from '../model/FnApiTypes';
 import {
   GalleryNetworkThumb,
@@ -129,29 +128,29 @@ import {
   CategoryGallerySelectionHost
 } from './categoryGallery/CategoryGallerySelectionController';
 import {
-  buildCategoryGalleryViewData,
   CgThumbHitRect,
   DayGroup,
   RowModel
 } from './categoryGallery/CategoryGalleryTypes';
-
-interface CategoryGalleryListBlock {
-  key: string;
-  isHeader: boolean;
-  groupIdx: number;
-  label?: string;
-  row?: RowModel;
-}
+import {
+  CategoryGalleryListBlock,
+  categoryGalleryBuildListBlocks
+} from './categoryGallery/CategoryGalleryListModel';
+import {
+  CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS,
+  CATEGORY_GALLERY_RECENT_STREAM_IDLE_RESUME_MS,
+  CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS,
+  CategoryGalleryDataSyncHost,
+  categoryGalleryApplyNavStoreSnapshot,
+  categoryGalleryClearDeferredSnapshotApplyTimer,
+  categoryGalleryLoadRemainingItems,
+  categoryGalleryScheduleDeferredSnapshotApply,
+  categoryGalleryStartStoreObserver,
+  categoryGalleryStopStoreObserver,
+  categoryGallerySyncFromNavStore
+} from './categoryGallery/CategoryGalleryDataSync';
 
 const CATEGORY_GALLERY_CONTENT_INSET_TOP_VP: number = 68;
-const CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS: number = 240;
-const CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS: number = 96;
-const CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS: number = 160;
-const CATEGORY_GALLERY_RECENT_STREAM_MIN_APPEND_DELTA: number = 288;
-const CATEGORY_GALLERY_RECENT_STREAM_MIN_APPLY_GAP_MS: number = 180;
-const CATEGORY_GALLERY_RECENT_STREAM_IDLE_RESUME_MS: number = 180;
-const DOMAIN = 0xFF00;
-const TAG = 'GalleryDiag';
 
 @Entry
 @Component
@@ -735,245 +734,37 @@ struct CategoryGallery {
     }
   }
 
-  private clearCgDeferredSnapshotApplyTimer(): void {
-    if (this.cgDeferredSnapshotApplyTimer >= 0) {
-      clearTimeout(this.cgDeferredSnapshotApplyTimer);
-      this.cgDeferredSnapshotApplyTimer = -1;
-    }
-  }
-
-  private scheduleCgDeferredSnapshotApply(delayMs: number = CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS): void {
-    if (!this.cgPageActive || !this.isRecentAddedStreamingMode()) {
-      return;
-    }
-    this.clearCgDeferredSnapshotApplyTimer();
-    this.cgDeferredSnapshotApplyTimer = setTimeout((): void => {
-      this.cgDeferredSnapshotApplyTimer = -1;
-      if (!this.cgPageActive) {
-        return;
-      }
-      if (this.cgSlideGestureActive || this.cgThumbLoadingPaused) {
-        this.cgPendingStoreSync = true;
-        this.scheduleCgDeferredSnapshotApply(CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS);
-        return;
-      }
-      if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
-        this.cgPendingStoreSync = false;
-        return;
-      }
-      this.applyNavStoreSnapshot();
-      if (!this.cgBackgroundLoading) {
-        this.recycleThumbCache(false);
-      }
-    }, Math.max(48, Math.floor(delayMs)));
-  }
-
-  private buildListBlocks(): Array<CategoryGalleryListBlock> {
-    const blocks: Array<CategoryGalleryListBlock> = [];
-    for (let groupIdx = 0; groupIdx < this.groups.length; groupIdx++) {
-      const group = this.groups[groupIdx];
-      if (group.label.length > 0) {
-        blocks.push({
-          key: `h_${group.sortKey}`,
-          isHeader: true,
-          groupIdx: groupIdx,
-          label: group.label
-        });
-      }
-      for (let rowIdx = 0; rowIdx < group.rows.length; rowIdx++) {
-        const row = group.rows[rowIdx];
-        const cellKeys: string[] = [];
-        const cols = fnClampGridColumns(this.columnsPerRow);
-        for (let col = 0; col < cols; col++) {
-          const item = this.rowCellAt(row, col);
-          if (item === undefined) {
-            cellKeys.push(`empty_${col}`);
-            continue;
-          }
-          const id = this.itemIdOf(item);
-          if (id.length > 0) {
-            cellKeys.push(`id_${id}`);
-            continue;
-          }
-          cellKeys.push(`flat_${this.flatPos(groupIdx, row.startIdx + col)}`);
-        }
-        blocks.push({
-          key: `r_${group.sortKey}_${row.startIdx}_${cellKeys.join('__')}`,
-          isHeader: false,
-          groupIdx: groupIdx,
-          row: row
-        });
-      }
-    }
-    return blocks;
-  }
-
   private rebuildListBlocks(): void {
-    this.listBlocks = this.buildListBlocks();
+    this.listBlocks = categoryGalleryBuildListBlocks(this.groups, this.columnsPerRow, this.groupOffsets);
     this.listBlockSource.reloadAll(this.listBlocks);
   }
 
   private applyNavStoreSnapshot(): void {
-    if (!this.cgPageActive) {
-      return;
-    }
-    this.clearCgDeferredSnapshotApplyTimer();
-    this.pageSessionToken = CategoryGalleryNavStore.sessionToken;
-    this.pageSourceKind = CategoryGalleryNavStore.sourceKind;
-    this.pageCategoryKey = CategoryGalleryNavStore.categoryKey;
-    this.pageFolderPath = CategoryGalleryNavStore.folderPath;
-    this.pageUseCreatedAtGrouping = CategoryGalleryNavStore.useCreatedAtGrouping;
-    this.baseUrl = CategoryGalleryNavStore.baseUrl;
-    this.title = CategoryGalleryNavStore.title;
-    this.heroImageUri = CategoryGalleryNavStore.heroImageUri;
-    this.baseColumnsPerRow = fnClampGridColumns(CategoryGalleryNavStore.columnsPerRow);
-    this.columnsPerRow = this.resolvedColumns();
-    this.flatItems = CategoryGalleryNavStore.items.slice();
-    this.totalCount = Math.max(CategoryGalleryNavStore.expectedTotalCount, this.flatItems.length);
-    this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
-    this.rebuildByFlatItems();
-    this.cgObservedStoreVersion = CategoryGalleryNavStore.version;
-    this.cgPendingStoreSync = false;
-    this.cgLastSnapshotApplyAtMs = Date.now();
-    if (this.isRecentAddedStreamingMode()) {
-      hilog.warn(
-        DOMAIN,
-        TAG,
-        'applyNavStoreSnapshot title=%{public}s flatItems=%{public}d totalCount=%{public}d storeItems=%{public}d listBlocks=%{public}d storeVersion=%{public}d backgroundLoading=%{public}s',
-        this.title,
-        this.flatItems.length,
-        this.totalCount,
-        CategoryGalleryNavStore.items.length,
-        this.listBlocks.length,
-        CategoryGalleryNavStore.version,
-        this.cgBackgroundLoading ? 'true' : 'false'
-      );
-    }
-    if (this.heroImageUri.length === 0 && this.flatItems.length > 0) {
-      this.heroImageUri = nasUrl(this.baseUrl, pickThumb(this.flatItems[0]));
-    }
-  }
-
-  private appendCategoryItemsDeduped(
-    token: number,
-    seenIds: Set<string>,
-    incoming: GalleryListItem[],
-    pendingAppendItems: GalleryListItem[]
-  ): GalleryListItem[] {
-    const appendItems: GalleryListItem[] = [];
-    for (let i = 0; i < incoming.length; i++) {
-      const one = incoming[i];
-      const id = this.itemIdOf(one);
-      if (id.length > 0 && seenIds.has(id)) {
-        continue;
-      }
-      if (id.length > 0) {
-        seenIds.add(id);
-      }
-      appendItems.push(one);
-    }
-    if (appendItems.length <= 0) {
-      return pendingAppendItems;
-    }
-    return pendingAppendItems.concat(appendItems);
+    categoryGalleryApplyNavStoreSnapshot(this.asDataSyncHost());
   }
 
   private async loadRemainingCategoryItems(token: number): Promise<void> {
-    if (!this.cgPageActive || token !== this.pageSessionToken) {
-      return;
-    }
-    const categoryKey = this.pageCategoryKey;
-    const hasPrefetch = CategoryGalleryNavStore.hasPrefetchedRemainder();
-    if (categoryKey.length === 0 && !hasPrefetch) {
-      return;
-    }
-    const client = AppSession.getClient();
-    if (client === null) {
-      return;
-    }
-    CategoryGalleryNavStore.setBackgroundLoading(token, true);
-    const seenIds: Set<string> = new Set<string>();
-    for (let i = 0; i < this.flatItems.length; i++) {
-      seenIds.add(this.itemIdOf(this.flatItems[i]));
-    }
-    const pageSize = 200;
-    let pendingAppendItems: GalleryListItem[] = [];
-    const flushPendingAppendItems = (): void => {
-      if (!this.cgPageActive || pendingAppendItems.length <= 0) {
-        return;
-      }
-      CategoryGalleryNavStore.appendItems(token, pendingAppendItems);
-      pendingAppendItems = [];
-    };
-    hilog.warn(
-      DOMAIN,
-      TAG,
-      'loadRemaining start token=%{public}d key=%{public}s flat=%{public}d prefetched=%{public}d searchFetched=%{public}d expected=%{public}d',
-      token,
-      categoryKey,
-      this.flatItems.length,
-      CategoryGalleryNavStore.prefetchedRemainder.length,
-      CategoryGalleryNavStore.searchFetchedCount,
-      CategoryGalleryNavStore.expectedTotalCount
-    );
-    try {
-      while (this.cgPageActive &&
-        token === CategoryGalleryNavStore.currentToken() &&
-        CategoryGalleryNavStore.hasPrefetchedRemainder()) {
-        const batch = CategoryGalleryNavStore.takePrefetchedBatch(CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS);
-        if (batch.length <= 0) {
-          break;
-        }
-        pendingAppendItems = this.appendCategoryItemsDeduped(token, seenIds, batch, pendingAppendItems);
-        if (pendingAppendItems.length >= CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS) {
-          flushPendingAppendItems();
-        }
-      }
-      flushPendingAppendItems();
-      if (categoryKey.length === 0) {
-        return;
-      }
-      let offset = Math.max(CategoryGalleryNavStore.searchFetchedCount, CategoryGalleryNavStore.items.length);
-      while (this.cgPageActive && token === CategoryGalleryNavStore.currentToken()) {
-        const res = await client.getCategoryPhotos(categoryKey, pageSize, offset);
-        if (!this.cgPageActive || token !== CategoryGalleryNavStore.currentToken()) {
-          break;
-        }
-        if (!res.success || res.data === undefined || res.data.length === 0) {
-          hilog.warn(
-            DOMAIN,
-            TAG,
-            'loadRemaining api stop key=%{public}s offset=%{public}d ok=%{public}s count=%{public}d msg=%{public}s',
-            categoryKey,
-            offset,
-            res.success ? 'true' : 'false',
-            res.data !== undefined ? res.data.length : 0,
-            res.message ?? ''
-          );
-          break;
-        }
-        const incoming = res.data;
-        pendingAppendItems = this.appendCategoryItemsDeduped(token, seenIds, incoming, pendingAppendItems);
-        if (pendingAppendItems.length >= CATEGORY_GALLERY_BACKGROUND_APPEND_BATCH_ITEMS) {
-          flushPendingAppendItems();
-        }
-        offset += incoming.length > 0 ? incoming.length : pageSize;
-        if (incoming.length < pageSize) {
-          break;
-        }
-      }
-      flushPendingAppendItems();
-      hilog.warn(
-        DOMAIN,
-        TAG,
-        'loadRemaining done token=%{public}d total=%{public}d expected=%{public}d',
-        token,
-        CategoryGalleryNavStore.items.length,
-        CategoryGalleryNavStore.expectedTotalCount
-      );
-    } finally {
-      CategoryGalleryNavStore.setBackgroundLoading(token, false);
-    }
+    await categoryGalleryLoadRemainingItems(this.asDataSyncHost(), token);
+  }
+
+  private clearCgDeferredSnapshotApplyTimer(): void {
+    categoryGalleryClearDeferredSnapshotApplyTimer(this.asDataSyncHost());
+  }
+
+  private scheduleCgDeferredSnapshotApply(delayMs: number = CATEGORY_GALLERY_RECENT_STREAM_DEFER_MS): void {
+    categoryGalleryScheduleDeferredSnapshotApply(this.asDataSyncHost(), delayMs);
+  }
+
+  private stopStoreObserver(): void {
+    categoryGalleryStopStoreObserver(this.asDataSyncHost());
+  }
+
+  private startStoreObserver(): void {
+    categoryGalleryStartStoreObserver(this.asDataSyncHost());
+  }
+
+  private syncFromNavStore(): void {
+    categoryGallerySyncFromNavStore(this.asDataSyncHost());
   }
 
   private ensureCategoryBackgroundLoad(): void {
@@ -1004,109 +795,6 @@ struct CategoryGallery {
       }
       this.ensureCategoryBackgroundLoad();
     }, delayMs);
-  }
-
-  private stopStoreObserver(): void {
-    if (this.cgStorePollTimer >= 0) {
-      clearInterval(this.cgStorePollTimer);
-      this.cgStorePollTimer = -1;
-    }
-    this.cgPendingStoreSync = false;
-  }
-
-  private startStoreObserver(): void {
-    if (!this.cgPageActive) {
-      return;
-    }
-    this.stopStoreObserver();
-    this.cgStorePollTimer = setInterval((): void => {
-      if (!this.cgPageActive) {
-        return;
-      }
-      this.syncFromNavStore();
-    }, CATEGORY_GALLERY_STORE_SYNC_INTERVAL_MS);
-  }
-
-  private syncFromNavStore(): void {
-    if (!this.cgPageActive || this.pageSessionToken !== CategoryGalleryNavStore.sessionToken) {
-      return;
-    }
-    if (this.cgObservedStoreVersion === CategoryGalleryNavStore.version) {
-      return;
-    }
-    const recentAddedStreaming = this.isRecentAddedStreamingMode();
-    const navStoreHasAppendItems = CategoryGalleryNavStore.items.length > this.flatItems.length;
-    const allowAppendSyncWhilePaused = false;
-    const appendDelta = Math.max(0, CategoryGalleryNavStore.items.length - this.flatItems.length);
-    const applyGapMs = Date.now() - this.cgLastSnapshotApplyAtMs;
-    const shouldCoalesceRecentAppend =
-      recentAddedStreaming &&
-      navStoreHasAppendItems &&
-      CategoryGalleryNavStore.backgroundLoading &&
-      (appendDelta < CATEGORY_GALLERY_RECENT_STREAM_MIN_APPEND_DELTA ||
-        applyGapMs < CATEGORY_GALLERY_RECENT_STREAM_MIN_APPLY_GAP_MS);
-    if (recentAddedStreaming) {
-      hilog.warn(
-        DOMAIN,
-        TAG,
-        'syncFromNavStore storeVersion=%{public}d observedVersion=%{public}d storeItems=%{public}d flatItems=%{public}d navStoreHasAppend=%{public}s paused=%{public}s slideActive=%{public}s allowAppendWhilePaused=%{public}s',
-        CategoryGalleryNavStore.version,
-        this.cgObservedStoreVersion,
-        CategoryGalleryNavStore.items.length,
-        this.flatItems.length,
-        navStoreHasAppendItems ? 'true' : 'false',
-        this.cgThumbLoadingPaused ? 'true' : 'false',
-        this.cgSlideGestureActive ? 'true' : 'false',
-        allowAppendSyncWhilePaused ? 'true' : 'false'
-      );
-    }
-    if (this.cgSlideGestureActive || (this.cgThumbLoadingPaused && (!allowAppendSyncWhilePaused || !navStoreHasAppendItems))) {
-      this.totalCount = Math.max(
-        CategoryGalleryNavStore.expectedTotalCount,
-        this.totalCount,
-        this.flatItems.length,
-        CategoryGalleryNavStore.items.length
-      );
-      this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
-      this.cgPendingStoreSync = true;
-      if (recentAddedStreaming) {
-        this.scheduleCgDeferredSnapshotApply();
-        hilog.warn(
-          DOMAIN,
-          TAG,
-          'syncDeferred totalCount=%{public}d backgroundLoading=%{public}s pending=%{public}s',
-          this.totalCount,
-          this.cgBackgroundLoading ? 'true' : 'false',
-          this.cgPendingStoreSync ? 'true' : 'false'
-        );
-      }
-      return;
-    }
-    if (shouldCoalesceRecentAppend) {
-      this.totalCount = Math.max(
-        CategoryGalleryNavStore.expectedTotalCount,
-        this.totalCount,
-        this.flatItems.length,
-        CategoryGalleryNavStore.items.length
-      );
-      this.cgBackgroundLoading = CategoryGalleryNavStore.backgroundLoading;
-      this.cgPendingStoreSync = true;
-      this.scheduleCgDeferredSnapshotApply();
-      hilog.warn(
-        DOMAIN,
-        TAG,
-        'syncCoalesced totalCount=%{public}d appendDelta=%{public}d applyGapMs=%{public}d pending=%{public}s',
-        this.totalCount,
-        appendDelta,
-        applyGapMs,
-        this.cgPendingStoreSync ? 'true' : 'false'
-      );
-      return;
-    }
-    this.applyNavStoreSnapshot();
-    if (!this.cgBackgroundLoading) {
-      this.recycleThumbCache(false);
-    }
   }
 
   private onListScrollStateChange(scrollState: ScrollState): void {
@@ -1301,6 +989,86 @@ struct CategoryGallery {
     if (resolver !== undefined) {
       resolver(index);
     }
+  }
+
+  private asDataSyncHost(): CategoryGalleryDataSyncHost {
+    const self = this;
+    class CategoryGalleryDataSyncHostBridge implements CategoryGalleryDataSyncHost {
+      get cgPageActive(): boolean { return self.cgPageActive; }
+      set cgPageActive(v: boolean) { self.cgPageActive = v; }
+
+      get pageSessionToken(): number { return self.pageSessionToken; }
+      set pageSessionToken(v: number) { self.pageSessionToken = v; }
+
+      get pageSourceKind(): string { return self.pageSourceKind; }
+      set pageSourceKind(v: string) { self.pageSourceKind = v; }
+
+      get pageCategoryKey(): string { return self.pageCategoryKey; }
+      set pageCategoryKey(v: string) { self.pageCategoryKey = v; }
+
+      get pageFolderPath(): string { return self.pageFolderPath; }
+      set pageFolderPath(v: string) { self.pageFolderPath = v; }
+
+      get pageUseCreatedAtGrouping(): boolean { return self.pageUseCreatedAtGrouping; }
+      set pageUseCreatedAtGrouping(v: boolean) { self.pageUseCreatedAtGrouping = v; }
+
+      get baseUrl(): string { return self.baseUrl; }
+      set baseUrl(v: string) { self.baseUrl = v; }
+
+      get title(): string { return self.title; }
+      set title(v: string) { self.title = v; }
+
+      get heroImageUri(): string { return self.heroImageUri; }
+      set heroImageUri(v: string) { self.heroImageUri = v; }
+
+      get baseColumnsPerRow(): number { return self.baseColumnsPerRow; }
+      set baseColumnsPerRow(v: number) { self.baseColumnsPerRow = v; }
+
+      get columnsPerRow(): number { return self.columnsPerRow; }
+      set columnsPerRow(v: number) { self.columnsPerRow = v; }
+
+      get flatItems(): GalleryListItem[] { return self.flatItems; }
+      set flatItems(v: GalleryListItem[]) { self.flatItems = v; }
+
+      get totalCount(): number { return self.totalCount; }
+      set totalCount(v: number) { self.totalCount = v; }
+
+      get cgBackgroundLoading(): boolean { return self.cgBackgroundLoading; }
+      set cgBackgroundLoading(v: boolean) { self.cgBackgroundLoading = v; }
+
+      get listBlocks(): CategoryGalleryListBlock[] { return self.listBlocks; }
+      set listBlocks(v: CategoryGalleryListBlock[]) { self.listBlocks = v; }
+
+      get cgObservedStoreVersion(): number { return self.cgObservedStoreVersion; }
+      set cgObservedStoreVersion(v: number) { self.cgObservedStoreVersion = v; }
+
+      get cgPendingStoreSync(): boolean { return self.cgPendingStoreSync; }
+      set cgPendingStoreSync(v: boolean) { self.cgPendingStoreSync = v; }
+
+      get cgLastSnapshotApplyAtMs(): number { return self.cgLastSnapshotApplyAtMs; }
+      set cgLastSnapshotApplyAtMs(v: number) { self.cgLastSnapshotApplyAtMs = v; }
+
+      get cgSlideGestureActive(): boolean { return self.cgSlideGestureActive; }
+      set cgSlideGestureActive(v: boolean) { self.cgSlideGestureActive = v; }
+
+      get cgThumbLoadingPaused(): boolean { return self.cgThumbLoadingPaused; }
+      set cgThumbLoadingPaused(v: boolean) { self.cgThumbLoadingPaused = v; }
+
+      get cgDeferredSnapshotApplyTimer(): number { return self.cgDeferredSnapshotApplyTimer; }
+      set cgDeferredSnapshotApplyTimer(v: number) { self.cgDeferredSnapshotApplyTimer = v; }
+
+      get cgStorePollTimer(): number { return self.cgStorePollTimer; }
+      set cgStorePollTimer(v: number) { self.cgStorePollTimer = v; }
+
+      get cgDeferredBackgroundLoadTimer(): number { return self.cgDeferredBackgroundLoadTimer; }
+      set cgDeferredBackgroundLoadTimer(v: number) { self.cgDeferredBackgroundLoadTimer = v; }
+
+      resolvedColumns(): number { return self.resolvedColumns(); }
+      rebuildByFlatItems(): void { self.rebuildByFlatItems(); }
+      recycleThumbCache(aggressive: boolean): void { self.recycleThumbCache(aggressive); }
+      isRecentAddedStreamingMode(): boolean { return self.isRecentAddedStreamingMode(); }
+    }
+    return new CategoryGalleryDataSyncHostBridge();
   }
 
   private asBatchActionsHost(): CategoryGalleryBatchActionsHost {

@@ -1,11 +1,8 @@
 import { UIContext } from '@kit.ArkUI';
-import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
+import { FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import {
-  FnClientResult,
   FolderViewCoverItem,
-  GalleryListItem,
-  PhotoFolderListData,
-  PhotoFolderListItem
+  GalleryListItem
 } from '../model/FnApiTypes';
 import {
   GalleryNetworkThumb,
@@ -78,11 +75,8 @@ import {
 } from '../album/GalleryGridSlideTouch';
 import {
   FOLDER_BROWSE_BASE_COLUMNS,
-  FOLDER_BROWSE_COVER_BATCH,
-  FOLDER_BROWSE_KIND_FOLDER,
   FOLDER_BROWSE_KIND_MEDIA,
   FOLDER_BROWSE_LIST_DOM_ID,
-  FOLDER_BROWSE_PAGE_SIZE,
   FolderBrowseFolderItem,
   FolderBrowseGridItem,
   FolderBrowseFingerWindowPoint,
@@ -92,20 +86,16 @@ import {
 } from './folderBrowsePage/FolderBrowseTypes';
 import {
   folderBrowseApplyCoverUris,
-  folderBrowseAuthorizedRoot,
   folderBrowseBuildGrid,
   folderBrowseCoverDirNames,
   folderBrowseCoverDirNamesFallback,
-  folderBrowseFoldersFromList,
   folderBrowseIsOsRootPath,
   folderBrowseLabelOf,
   folderBrowseLandingStack,
   folderBrowseMediaId,
   folderBrowsePathAllowed,
-  folderBrowsePermissionMessage,
   folderBrowseSelectionHasFolder,
-  folderBrowseSelectionIdOf,
-  folderBrowseStackWithinRoot
+  folderBrowseSelectionIdOf
 } from './folderBrowsePage/FolderBrowseLogic';
 import { GalleryGridChrome } from '../album/galleryList/GalleryGridChrome';
 import {
@@ -119,6 +109,12 @@ import {
   folderBrowseConfirmBatchDownload,
   FolderBrowseBatchActionsHost
 } from './folderBrowsePage/FolderBrowseBatchActions';
+import {
+  folderBrowseFetchCoverBatch,
+  folderBrowseLoadCurrent,
+  folderBrowseLoadMoreMedia,
+  FolderBrowseDataLoaderHost
+} from './folderBrowsePage/FolderBrowseDataLoader';
 import {
   folderBrowseBeginSlideSelectGesture,
   folderBrowseBeginSlideSelectGestureAtWindowPx,
@@ -410,157 +406,7 @@ struct FolderBrowsePage {
   }
 
   private async loadCurrent(reset: boolean): Promise<void> {
-    const gen = ++this.loadGen;
-    this.syncTitle();
-    this.error = '';
-    if (reset) {
-      if (this.selectionMode) {
-        this.exitSelection();
-      }
-      this.loading = true;
-      this.folders = [];
-      this.mediaItems = [];
-      this.mediaOffset = 0;
-      this.mediaHasMore = false;
-      this.publishGrid();
-    }
-    const client = AppSession.getClient();
-    if (client === null) {
-      this.loading = false;
-      this.error = '未登录';
-      return;
-    }
-    const path = this.currentPath();
-    if (this.lockToEntry && !this.entryFloorResolved) {
-      const rootRes = await client.getPhotoFolderList(20000);
-      if (gen !== this.loadGen) {
-        return;
-      }
-      if (!rootRes.success || rootRes.data === undefined) {
-        this.loading = false;
-        this.error = folderBrowsePermissionMessage(rootRes.message ?? '无法确认文件夹访问范围');
-        return;
-      }
-      const rootRaw: PhotoFolderListItem[] = rootRes.data.list ?? rootRes.data.items ?? [];
-      const rootFolders = folderBrowseFoldersFromList(rootRaw);
-      this.allowedRootPaths = rootFolders.map((item: FolderBrowseFolderItem): string => item.path);
-      const authorizedRoot = folderBrowseAuthorizedRoot(path, rootFolders);
-      const safeStack = folderBrowseStackWithinRoot(path, authorizedRoot);
-      if (authorizedRoot.length === 0 || safeStack.length === 0) {
-        this.loading = false;
-        this.error = '该路径不在已授权的相册文件夹内';
-        return;
-      }
-      this.entryFloorPath = authorizedRoot;
-      this.entryFloorResolved = true;
-      // '' 是安全的虚拟根层，展示 photo/folder/list 返回的 Document、照片等已配置目录。
-      this.pathStack = [''].concat(safeStack);
-      this.syncFolderHierarchyState();
-    }
-    if (folderBrowseIsOsRootPath(path) ||
-      (this.lockToEntry && path.length > 0 && !folderBrowsePathAllowed(path, this.entryFloorPath))) {
-      this.loading = false;
-      this.navigateOut();
-      return;
-    }
-    try {
-      let folderRes: FnClientResult<PhotoFolderListData>;
-      if (path.length === 0) {
-        folderRes = await client.getPhotoFolderList(20000);
-      } else {
-        folderRes = await client.getFolderViewFolderList(path, false, 2, 20000);
-      }
-      if (gen !== this.loadGen) {
-        return;
-      }
-      if (!folderRes.success || folderRes.data === undefined) {
-        this.error = folderBrowsePermissionMessage(folderRes.message ?? '文件夹列表加载失败');
-        this.loading = false;
-        return;
-      }
-      const rawFolders: PhotoFolderListItem[] = folderRes.data.list ?? folderRes.data.items ?? [];
-      const listed = folderBrowseFoldersFromList(rawFolders);
-      if (path.length === 0) {
-        this.allowedRootPaths = listed.map((item: FolderBrowseFolderItem): string => item.path);
-        this.folders = listed;
-      } else if (this.lockToEntry) {
-        const kept: FolderBrowseFolderItem[] = [];
-        for (let i = 0; i < listed.length; i++) {
-          const folder = listed[i];
-          if (folder.path !== this.entryFloorPath &&
-            folderBrowsePathAllowed(folder.path, this.entryFloorPath)) {
-            kept.push(folder);
-          }
-        }
-        this.folders = kept;
-      } else {
-        this.folders = listed;
-      }
-
-      if (path.length > 0) {
-        const fileRes = await client.getFolderViewFileList(path, FOLDER_BROWSE_PAGE_SIZE, 0, false, 2, 20000);
-        if (gen !== this.loadGen) {
-          return;
-        }
-        if (!fileRes.success || fileRes.data === undefined) {
-          this.error = folderBrowsePermissionMessage(fileRes.message ?? '文件夹媒体加载失败');
-          this.loading = false;
-          this.publishGrid();
-          void this.loadCovers(gen, path);
-          return;
-        }
-        this.mediaItems = fileRes.data.slice();
-        this.mediaOffset = this.mediaItems.length;
-        this.mediaHasMore = fileRes.data.length >= FOLDER_BROWSE_PAGE_SIZE;
-      } else {
-        this.mediaItems = [];
-        this.mediaOffset = 0;
-        this.mediaHasMore = false;
-      }
-
-      if (this.folders.length === 0 && this.mediaItems.length === 0) {
-        this.error = path.length === 0 ? '文件夹列表为空' : '文件夹为空';
-      }
-      this.publishGrid();
-      this.loading = false;
-      void this.loadCovers(gen, path);
-    } catch (e) {
-      if (gen !== this.loadGen) {
-        return;
-      }
-      this.error = String(e) || '文件夹加载异常';
-      this.loading = false;
-    }
-  }
-
-  private async fetchCoverBatch(
-    currentPath: string,
-    names: string[]
-  ): Promise<FolderViewCoverItem[]> {
-    const allCovers: FolderViewCoverItem[] = [];
-    const client = AppSession.getClient();
-    if (client === null || names.length === 0) {
-      return allCovers;
-    }
-    let offset = 0;
-    while (offset < names.length) {
-      const end = Math.min(offset + FOLDER_BROWSE_COVER_BATCH, names.length);
-      const batch: string[] = [];
-      for (let i = offset; i < end; i++) {
-        batch.push(names[i]);
-      }
-      const res = await client.getFolderViewCover(currentPath, batch, 20000);
-      if (res.success && res.data !== undefined) {
-        const coverList: FolderViewCoverItem[] = res.data.list !== undefined
-          ? res.data.list
-          : (res.data.items !== undefined ? res.data.items : []);
-        for (let i = 0; i < coverList.length; i++) {
-          allCovers.push(coverList[i]);
-        }
-      }
-      offset = end;
-    }
-    return allCovers;
+    await folderBrowseLoadCurrent(this.asDataLoaderHost(), reset);
   }
 
   private async loadCovers(gen: number, currentPath: string): Promise<void> {
@@ -568,13 +414,13 @@ struct FolderBrowsePage {
       return;
     }
     let names: string[] = folderBrowseCoverDirNames(this.folders, currentPath);
-    let allCovers: FolderViewCoverItem[] = await this.fetchCoverBatch(currentPath, names);
+    let allCovers: FolderViewCoverItem[] = await folderBrowseFetchCoverBatch(currentPath, names);
     if (gen !== this.loadGen) {
       return;
     }
     if (allCovers.length === 0) {
       names = folderBrowseCoverDirNamesFallback(this.folders, currentPath);
-      allCovers = await this.fetchCoverBatch(currentPath, names);
+      allCovers = await folderBrowseFetchCoverBatch(currentPath, names);
       if (gen !== this.loadGen) {
         return;
       }
@@ -587,52 +433,7 @@ struct FolderBrowsePage {
   }
 
   private async loadMoreMedia(): Promise<void> {
-    const path = this.currentPath();
-    if (this.loading || this.loadingMore || !this.mediaHasMore || path.length === 0) {
-      return;
-    }
-    const client = AppSession.getClient();
-    if (client === null) {
-      return;
-    }
-    const gen = this.loadGen;
-    this.loadingMore = true;
-    try {
-      const res = await client.getFolderViewFileList(
-        path,
-        FOLDER_BROWSE_PAGE_SIZE,
-        this.mediaOffset,
-        false,
-        2,
-        20000
-      );
-      if (gen !== this.loadGen) {
-        return;
-      }
-      if (!res.success || res.data === undefined) {
-        return;
-      }
-      const next = res.data;
-      if (next.length === 0) {
-        this.mediaHasMore = false;
-        return;
-      }
-      const merged: GalleryListItem[] = [];
-      for (let i = 0; i < this.mediaItems.length; i++) {
-        merged.push(this.mediaItems[i]);
-      }
-      for (let i = 0; i < next.length; i++) {
-        merged.push(next[i]);
-      }
-      this.mediaItems = merged;
-      this.mediaOffset = this.mediaItems.length;
-      this.mediaHasMore = next.length >= FOLDER_BROWSE_PAGE_SIZE;
-      this.publishGrid();
-    } finally {
-      if (gen === this.loadGen) {
-        this.loadingMore = false;
-      }
-    }
+    await folderBrowseLoadMoreMedia(this.asDataLoaderHost());
   }
 
   private enterFolder(path: string): void {
@@ -915,6 +716,62 @@ struct FolderBrowsePage {
     }
     folderBrowseBeginSlideSelectGestureAtWindowPx(this.asSelectionHost(), fi, xPx, yPx);
     return true;
+  }
+
+  private asDataLoaderHost(): FolderBrowseDataLoaderHost {
+    const self = this;
+    class FolderBrowseDataLoaderHostBridge implements FolderBrowseDataLoaderHost {
+      get loadGen(): number { return self.loadGen; }
+      set loadGen(v: number) { self.loadGen = v; }
+
+      get loading(): boolean { return self.loading; }
+      set loading(v: boolean) { self.loading = v; }
+
+      get loadingMore(): boolean { return self.loadingMore; }
+      set loadingMore(v: boolean) { self.loadingMore = v; }
+
+      get error(): string { return self.error; }
+      set error(v: string) { self.error = v; }
+
+      get selectionMode(): boolean { return self.selectionMode; }
+      set selectionMode(v: boolean) { self.selectionMode = v; }
+
+      get folders(): FolderBrowseFolderItem[] { return self.folders; }
+      set folders(v: FolderBrowseFolderItem[]) { self.folders = v; }
+
+      get mediaItems(): GalleryListItem[] { return self.mediaItems; }
+      set mediaItems(v: GalleryListItem[]) { self.mediaItems = v; }
+
+      get mediaOffset(): number { return self.mediaOffset; }
+      set mediaOffset(v: number) { self.mediaOffset = v; }
+
+      get mediaHasMore(): boolean { return self.mediaHasMore; }
+      set mediaHasMore(v: boolean) { self.mediaHasMore = v; }
+
+      get lockToEntry(): boolean { return self.lockToEntry; }
+      set lockToEntry(v: boolean) { self.lockToEntry = v; }
+
+      get entryFloorResolved(): boolean { return self.entryFloorResolved; }
+      set entryFloorResolved(v: boolean) { self.entryFloorResolved = v; }
+
+      get allowedRootPaths(): string[] { return self.allowedRootPaths; }
+      set allowedRootPaths(v: string[]) { self.allowedRootPaths = v; }
+
+      get entryFloorPath(): string { return self.entryFloorPath; }
+      set entryFloorPath(v: string) { self.entryFloorPath = v; }
+
+      get pathStack(): string[] { return self.pathStack; }
+      set pathStack(v: string[]) { self.pathStack = v; }
+
+      currentPath(): string { return self.currentPath(); }
+      syncTitle(): void { self.syncTitle(); }
+      exitSelection(): void { self.exitSelection(); }
+      publishGrid(): void { self.publishGrid(); }
+      navigateOut(): void { self.navigateOut(); }
+      syncFolderHierarchyState(): void { self.syncFolderHierarchyState(); }
+      loadCovers(gen: number, currentPath: string): void { void self.loadCovers(gen, currentPath); }
+    }
+    return new FolderBrowseDataLoaderHostBridge();
   }
 
   private asBatchActionsHost(): FolderBrowseBatchActionsHost {

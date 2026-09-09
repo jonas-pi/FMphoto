@@ -3,7 +3,6 @@ import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryNetworkThumb, nasUrl, pickThumb } from '../album/GalleryAlbumCommon';
-import { normalizeGalleryListItem, galleryListFromData } from '../album/GalleryListItemNormalize';
 import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnInlineLoading } from '../common/FnUiCommon';
@@ -13,238 +12,57 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { CertPolicy } from '../network/CertPolicy';
 import { FN_PHOTO_H5_MAP, fnPhotoH5Url } from '../network/FnPhotoRoutes';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
   fnWebDefaultUserAgent,
-  fnWebLocalStorageSecretInjectScript,
   injectFnWebCookies
 } from '../network/FnWebCookies';
 import {
-  GalleryGetListData,
-  GalleryListItem,
-  MapPreviewAllPointData,
-  MapPreviewAllPointItem,
   MapPreviewBoundaryData,
-  MapPreviewCenterData,
-  MapTimelineData,
-  MapTimelineItem
+  MapPreviewCenterData
 } from '../model/FnApiTypes';
 
-type MapLooseRecord = Record<string, Object | string | number | boolean | undefined | null>;
+import {
+  MapFetchResult,
+  MapLatLon,
+  PhotoMapBounds,
+  PhotoMapMarker,
+  PhotoMapPoint,
+  mapBoundsFromData,
+  mapCenterFromData,
+  mapClampLat,
+  mapClampLon,
+  mapFetchMarkerPhotos,
+  mapLoadPointsForBounds,
+  mapOpenMarkerTitle
+} from './map/MapPageData';
+import {
+  MAP_DEFAULT_HEIGHT_VP,
+  MAP_DEFAULT_WIDTH_VP,
+  MAP_GRID_LINE_SLOTS,
+  MAP_MARKER_SIZE_VP,
+  MAP_MIN_VP_PER_DEGREE,
+  mapClampScale,
+  mapFitBounds,
+  mapFormatCoord,
+  mapGridLatitude,
+  mapGridLongitude,
+  mapGridStepDegrees,
+  mapScreenX,
+  mapScreenY,
+  mapUpdateMarkerProjection,
+  mapVisibleBounds
+} from './map/MapPageNativeProjection';
+import {
+  isFnOsLoginUrl,
+  mapHandleOfficialWebSslError,
+  mapOfficialWebBootstrapScript,
+  mapOfficialWebHideChromeScript,
+  mapOfficialWebScriptRules
+} from './map/MapPageWebBridge';
 
-interface PhotoMapBounds {
-  north: number;
-  east: number;
-  south: number;
-  west: number;
-}
-
-interface PhotoMapPoint {
-  key: string;
-  lat: number;
-  lon: number;
-  count: number;
-  coverRel: string;
-  poster?: GalleryListItem;
-  embedded: GalleryListItem[];
-}
-
-interface PhotoMapMarker {
-  key: string;
-  x: number;
-  y: number;
-  lat: number;
-  lon: number;
-  count: number;
-  coverRel: string;
-  bounds: PhotoMapBounds;
-  embedded: GalleryListItem[];
-}
-
-interface MapFetchResult {
-  items: GalleryListItem[];
-  total: number;
-  message: string;
-}
-
-interface MapLatLon {
-  lat: number;
-  lon: number;
-}
-
-const MAP_PAGE_LIMIT = 220;
-const MAP_MARKER_GRID_VP = 92;
-const MAP_MARKER_SIZE_VP = 62;
-const MAP_MIN_VP_PER_DEGREE = 1.2;
-const MAP_MAX_VP_PER_DEGREE = 6400;
-const MAP_DEFAULT_WIDTH_VP = 360;
-const MAP_DEFAULT_HEIGHT_VP = 720;
-const MAP_GRID_LINE_SLOTS: number[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-const MAP_GRID_STEPS: number[] = [
-  0.001, 0.002, 0.005,
-  0.01, 0.02, 0.05,
-  0.1, 0.2, 0.5,
-  1, 2, 5,
-  10, 20, 30,
-  45, 90
-];
 const MAP_CONTENT_BG = '#FF101820';
-
-function mapAsRecord(value: Object | string | number | boolean | undefined | null): MapLooseRecord | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return null;
-  }
-  return value as MapLooseRecord;
-}
-
-function mapTrimmedString(value: Object | string | number | boolean | undefined | null): string {
-  if (typeof value === 'string') {
-    return value.trim();
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value).trim();
-  }
-  return '';
-}
-
-function mapReadString(raw: MapLooseRecord, keys: string[]): string {
-  for (let i = 0; i < keys.length; i++) {
-    const text = mapTrimmedString(raw[keys[i]]);
-    if (text.length > 0 && text !== 'null') {
-      return text;
-    }
-  }
-  return '';
-}
-
-function mapReadNumber(raw: MapLooseRecord, keys: string[]): number {
-  for (let i = 0; i < keys.length; i++) {
-    const value = raw[keys[i]];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === 'string') {
-      const n = Number(value.trim());
-      if (Number.isFinite(n)) {
-        return n;
-      }
-    }
-  }
-  return Number.NaN;
-}
-
-function mapPointCount(raw: MapLooseRecord): number {
-  const n = mapReadNumber(raw, ['count', 'itemCount', 'item_count', 'photoCount', 'photo_count', 'total']);
-  return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 1;
-}
-
-function mapItemsFromListData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  return galleryListFromData(data);
-}
-
-function mapTimelineItemsFromData(data: MapTimelineData | undefined): MapTimelineItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  return data.list ?? data.items ?? data.records ?? data.rows ?? data.points ?? data.markers ?? data.clusters ?? [];
-}
-
-function mapPreviewPointsFromData(data: MapPreviewAllPointData | undefined): MapPreviewAllPointItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  return data.list ?? data.items ?? data.records ?? data.rows ?? data.points ?? data.markers ?? data.clusters ?? [];
-}
-
-function mapPad2(value: number): string {
-  return value < 10 ? `0${value}` : `${value}`;
-}
-
-function mapDayRange(year: number, month: number, day: number): string[] {
-  return [
-    `${year}:${mapPad2(month)}:${mapPad2(day)} 00:00:00`,
-    `${year}:${mapPad2(month)}:${mapPad2(day)} 23:59:59`
-  ];
-}
-
-function mapTimelineRange(item: MapTimelineItem): string[] {
-  const raw = item as MapLooseRecord;
-  const directStart = mapReadString(raw, ['start_time', 'startTime']);
-  const directEnd = mapReadString(raw, ['end_time', 'endTime']);
-  if (directStart.length > 0 && directEnd.length > 0) {
-    return [directStart, directEnd];
-  }
-  const year = mapReadNumber(raw, ['year']);
-  const month = mapReadNumber(raw, ['month']);
-  const day = mapReadNumber(raw, ['day']);
-  if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day) && day > 0) {
-    return mapDayRange(Math.floor(year), Math.floor(month), Math.floor(day));
-  }
-  if (Number.isFinite(year) && Number.isFinite(month) && month > 0) {
-    const y = Math.floor(year);
-    const m = Math.floor(month);
-    const last = new Date(y, m, 0).getDate();
-    return [`${y}:${mapPad2(m)}:01 00:00:00`, `${y}:${mapPad2(m)}:${mapPad2(last)} 23:59:59`];
-  }
-  if (Number.isFinite(year)) {
-    const y = Math.floor(year);
-    return [`${y}:01:01 00:00:00`, `${y}:12:31 23:59:59`];
-  }
-  return ['', ''];
-}
-
-function mapBoundsToParams(bounds: PhotoMapBounds): Record<string, string | number | boolean> {
-  const params: Record<string, string | number | boolean> = {};
-  params['north'] = bounds.north;
-  params['east'] = bounds.east;
-  params['south'] = bounds.south;
-  params['west'] = bounds.west;
-  params['lonVert'] = 0;
-  params['isBlank'] = false;
-  return params;
-}
-
-function mapClampLat(value: number): number {
-  return Math.max(-85, Math.min(85, value));
-}
-
-function mapClampLon(value: number): number {
-  return Math.max(-180, Math.min(180, value));
-}
-
-function mapClampScale(value: number): number {
-  return Math.max(MAP_MIN_VP_PER_DEGREE, Math.min(MAP_MAX_VP_PER_DEGREE, value));
-}
-
-/** 飞牛 H5 在业务码 401 时会整页跳到 /login；该页再登一次会覆盖会话并循环 */
-function isFnOsLoginUrl(url: string): boolean {
-  const raw = url.trim();
-  if (raw.length === 0) {
-    return false;
-  }
-  const noHash = raw.split('#')[0];
-  const scheme = noHash.indexOf('://');
-  const pathStart = scheme >= 0 ? noHash.indexOf('/', scheme + 3) : 0;
-  const pathAndQuery = pathStart >= 0 ? noHash.substring(pathStart) : noHash;
-  const path = pathAndQuery.split('?')[0].toLowerCase();
-  return path === '/login';
-}
-
-function escapeRegexLiteral(value: string): string {
-  const specials = '.*+?^${}()|[]\\';
-  let out = '';
-  for (let i = 0; i < value.length; i++) {
-    const ch = value.charAt(i);
-    if (specials.indexOf(ch) >= 0) {
-      out += `\\${ch}`;
-    } else {
-      out += ch;
-    }
-  }
-  return out;
-}
 
 @Entry
 @Component
@@ -375,25 +193,16 @@ struct MapPage {
   }
 
   private officialWebHideChromeScript(): string {
-    return `(function(){function hide(){try{document.documentElement.style.paddingTop='0';document.body.style.paddingTop='0';var sels=['header','.header','.app-header','.page-header','.top-header','.layout-header','.nav-header','[class*="Header"]','[class*="header"]','[class*="top-bar"]','[class*="topBar"]','[class*="app-bar"]','[class*="navbar"]','[class*="nav-bar"]'];sels.forEach(function(sel){document.querySelectorAll(sel).forEach(function(el){var st=window.getComputedStyle(el);if(st.position==='fixed'||st.position==='sticky'||el.tagName==='HEADER'){el.style.setProperty('display','none','important');}});});document.querySelectorAll('*').forEach(function(el){if(el.childElementCount>0)return;var t=(el.textContent||'').trim();if(t==='飞牛相册'&&el.offsetHeight>0&&el.offsetHeight<80){var p=el.parentElement;for(var i=0;i<4&&p;i++){if(p.offsetHeight>0&&p.offsetHeight<120){p.style.setProperty('display','none','important');break;}p=p.parentElement;}}});}catch(e){}}hide();try{new MutationObserver(hide).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}setTimeout(hide,300);setTimeout(hide,1000);})();`;
+    return mapOfficialWebHideChromeScript();
   }
 
   private officialWebBootstrapScript(): string {
-    let script = '';
-    if (this.webSecretB64.length > 0) {
-      script += fnWebLocalStorageSecretInjectScript(this.webSecretB64);
-    }
-    // Cookie 只走 WebCookieManager，避免每次进 /p/map 都覆盖 H5 登录刚写入的 fnos-token
-    script += this.officialWebHideChromeScript();
-    return script;
+    return mapOfficialWebBootstrapScript(this.webSecretB64);
   }
 
   /** 仅在 NAS 照片 H5（/p/...）注入，避免登录页和腾讯地图 iframe 被改写 */
   private officialWebScriptRules(): string[] {
-    if (this.webBaseUrl.length <= 0) {
-      return [];
-    }
-    return [`${escapeRegexLiteral(this.webBaseUrl)}/p`];
+    return mapOfficialWebScriptRules(this.webBaseUrl);
   }
 
   private mapPageSubtitle(): string {
@@ -496,66 +305,18 @@ struct MapPage {
   }
 
   private onOfficialWebSslError(event: OnSslErrorEventReceiveEvent): void {
-    try {
-      if (CertPolicy.isTrusted(this.webBaseUrl) || CertPolicy.isTrusted(this.baseUrl)) {
-        event.handler.handleConfirm();
-        return;
-      }
-      event.handler.handleCancel();
-    } catch (_e) {
+    if (mapHandleOfficialWebSslError(event, this.webBaseUrl, this.baseUrl)) {
+      return;
     }
     this.switchToNativeMapFallback('官方地图证书未信任，已切换到原生位置视图');
   }
 
   private centerFromData(data: MapPreviewCenterData | undefined): MapLatLon | null {
-    if (data === undefined || data === null) {
-      return null;
-    }
-    const raw = data as MapLooseRecord;
-    const lat = mapReadNumber(raw, ['lat', 'latitude', 'centerLat', 'centerLatitude']);
-    const lon = mapReadNumber(raw, ['lon', 'lng', 'longitude', 'centerLng', 'centerLongitude']);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      return null;
-    }
-    return { lat: mapClampLat(lat), lon: mapClampLon(lon) };
+    return mapCenterFromData(data);
   }
 
   private boundsFromData(data: MapPreviewBoundaryData | undefined): PhotoMapBounds | null {
-    if (data === undefined || data === null) {
-      return null;
-    }
-    const raw = data as MapLooseRecord;
-    let south = mapReadNumber(raw, ['minLat', 'south']);
-    let north = mapReadNumber(raw, ['maxLat', 'north']);
-    let west = mapReadNumber(raw, ['minLon', 'minLng', 'west']);
-    let east = mapReadNumber(raw, ['maxLon', 'maxLng', 'east']);
-    const sw = mapAsRecord(raw['southWest']);
-    const ne = mapAsRecord(raw['northEast']);
-    if ((!Number.isFinite(south) || !Number.isFinite(west)) && sw !== null) {
-      south = mapReadNumber(sw, ['lat', 'latitude']);
-      west = mapReadNumber(sw, ['lon', 'lng', 'longitude']);
-    }
-    if ((!Number.isFinite(north) || !Number.isFinite(east)) && ne !== null) {
-      north = mapReadNumber(ne, ['lat', 'latitude']);
-      east = mapReadNumber(ne, ['lon', 'lng', 'longitude']);
-    }
-    if (!Number.isFinite(south) || !Number.isFinite(north) ||
-      !Number.isFinite(west) || !Number.isFinite(east)) {
-      return null;
-    }
-    const out: PhotoMapBounds = {
-      south: mapClampLat(Math.min(south, north)),
-      north: mapClampLat(Math.max(south, north)),
-      west: mapClampLon(Math.min(west, east)),
-      east: mapClampLon(Math.max(west, east))
-    };
-    if (out.south === out.north && out.west === out.east) {
-      out.south = mapClampLat(out.south - 0.05);
-      out.north = mapClampLat(out.north + 0.05);
-      out.west = mapClampLon(out.west - 0.05);
-      out.east = mapClampLon(out.east + 0.05);
-    }
-    return out;
+    return mapBoundsFromData(data);
   }
 
   private async loadInitialData(): Promise<void> {
@@ -622,25 +383,15 @@ struct MapPage {
   }
 
   private fitBounds(bounds: PhotoMapBounds): void {
-    const lonSpan = Math.max(0.05, bounds.east - bounds.west);
-    const latSpan = Math.max(0.05, bounds.north - bounds.south);
-    const usableW = Math.max(180, this.viewWidthVp - 80);
-    const usableH = Math.max(220, this.viewHeightVp - 210);
-    this.centerLat = mapClampLat((bounds.north + bounds.south) / 2);
-    this.centerLon = mapClampLon((bounds.east + bounds.west) / 2);
-    this.vpPerDegree = mapClampScale(Math.min(usableW / lonSpan, usableH / latSpan));
+    const fitted = mapFitBounds(bounds, this.viewWidthVp, this.viewHeightVp);
+    this.centerLat = fitted.centerLat;
+    this.centerLon = fitted.centerLon;
+    this.vpPerDegree = fitted.vpPerDegree;
     this.updateMarkerProjection();
   }
 
   private visibleBounds(): PhotoMapBounds {
-    const halfLon = Math.max(0.05, this.viewWidthVp / Math.max(MAP_MIN_VP_PER_DEGREE, this.vpPerDegree) / 2);
-    const halfLat = Math.max(0.05, this.viewHeightVp / Math.max(MAP_MIN_VP_PER_DEGREE, this.vpPerDegree) / 2);
-    return {
-      north: mapClampLat(this.centerLat + halfLat),
-      south: mapClampLat(this.centerLat - halfLat),
-      east: mapClampLon(this.centerLon + halfLon),
-      west: mapClampLon(this.centerLon - halfLon)
-    };
+    return mapVisibleBounds(this.viewWidthVp, this.viewHeightVp, this.centerLat, this.centerLon, this.vpPerDegree);
   }
 
   private async loadPointsForBounds(bounds: PhotoMapBounds, append: boolean): Promise<void> {
@@ -649,218 +400,25 @@ struct MapPage {
       this.error = '未登录';
       return;
     }
-    const out: PhotoMapPoint[] = append ? this.points.slice() : [];
-    const latParts = Math.max(1, Math.ceil(Math.max(0.01, bounds.north - bounds.south) / 45));
-    const lonParts = Math.max(1, Math.ceil(Math.max(0.01, bounds.east - bounds.west) / 60));
-    for (let latIdx = 0; latIdx < latParts; latIdx++) {
-      for (let lonIdx = 0; lonIdx < lonParts; lonIdx++) {
-        const south = bounds.south + latIdx * 45;
-        const north = Math.min(south + 45, bounds.north);
-        const west = bounds.west + lonIdx * 60;
-        const east = Math.min(west + 60, bounds.east);
-        const res = await client.getMapPreviewAllPoint(north, east, south, west, 0, 20000);
-        if (!res.success || res.data === undefined) {
-          continue;
-        }
-        const items = mapPreviewPointsFromData(res.data);
-        for (let i = 0; i < items.length; i++) {
-          const point = this.pointFromApiItem(items[i]);
-          if (point !== null) {
-            out.push(point);
-          }
-        }
-      }
-    }
-    this.points = this.mergePoints(out);
+    this.points = await mapLoadPointsForBounds(bounds, this.points, append);
     this.pointCount = this.points.length;
     this.updateMarkerProjection();
   }
 
-  private mergePoints(points: PhotoMapPoint[]): PhotoMapPoint[] {
-    const mapByKey: Map<string, PhotoMapPoint> = new Map();
-    for (let i = 0; i < points.length; i++) {
-      const item = points[i];
-      const key = `${item.lat.toFixed(6)},${item.lon.toFixed(6)}`;
-      const old = mapByKey.get(key);
-      if (old === undefined) {
-        mapByKey.set(key, item);
-      } else {
-        old.count = Math.max(old.count, item.count);
-        if (old.coverRel.length <= 0) {
-          old.coverRel = item.coverRel;
-        }
-        if (old.embedded.length <= 0 && item.embedded.length > 0) {
-          old.embedded = item.embedded;
-        }
-      }
-    }
-    return Array.from(mapByKey.values());
-  }
-
-  private pointFromApiItem(item: MapPreviewAllPointItem): PhotoMapPoint | null {
-    const raw = item as MapLooseRecord;
-    const lat = mapReadNumber(raw, ['lat', 'latitude']);
-    const lon = mapReadNumber(raw, ['lon', 'lng', 'longitude']);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
-      lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      return null;
-    }
-    const poster = mapAsRecord(raw['poster']);
-    let coverRel = mapReadString(raw, ['cover', 'posterUrl', 'thumb', 'thumbnail']);
-    let posterItem: GalleryListItem | undefined = undefined;
-    if (poster !== null) {
-      posterItem = poster as GalleryListItem;
-      if (coverRel.length <= 0) {
-        coverRel = this.coverFromPoster(poster);
-      }
-    }
-    const embedded = this.embeddedPhotos(item);
-    if (posterItem !== undefined && embedded.length === 0) {
-      embedded.push(this.posterToGalleryItem(posterItem));
-    }
-    return {
-      key: `${lat.toFixed(6)},${lon.toFixed(6)}`,
-      lat: lat,
-      lon: lon,
-      count: mapPointCount(raw),
-      coverRel: coverRel,
-      poster: posterItem,
-      embedded: embedded
-    };
-  }
-
-  private coverFromPoster(raw: MapLooseRecord): string {
-    const direct = mapReadString(raw, ['thumb', 'cover', 'poster', 'url', 'src']);
-    if (direct.length > 0) {
-      return direct;
-    }
-    const id = mapReadString(raw, ['id']);
-    const uuid = mapReadString(raw, ['photoUUID', 'uuid']);
-    if (id.length > 0 && uuid.length > 0) {
-      return `/p/api/v1/stream/p/t/${id}/m/${uuid}`;
-    }
-    return '';
-  }
-
-  private posterToGalleryItem(item: GalleryListItem): GalleryListItem {
-    return normalizeGalleryListItem(item);
-  }
-
-  private embeddedPhotos(item: MapPreviewAllPointItem): GalleryListItem[] {
-    const arr = item.list ?? item.items ?? item.photos ?? item.records ?? [];
-    const out: GalleryListItem[] = [];
-    for (let i = 0; i < arr.length; i++) {
-      const one = arr[i];
-      if (typeof one === 'object' && one !== null) {
-        out.push(normalizeGalleryListItem(one as GalleryListItem));
-      }
-    }
-    return out;
-  }
-
   private screenX(lon: number): number {
-    return this.viewWidthVp / 2 + (lon - this.centerLon) * this.vpPerDegree;
+    return mapScreenX(lon, this.viewWidthVp, this.centerLon, this.vpPerDegree);
   }
 
   private screenY(lat: number): number {
-    return this.viewHeightVp / 2 + (this.centerLat - lat) * this.vpPerDegree;
+    return mapScreenY(lat, this.viewHeightVp, this.centerLat, this.vpPerDegree);
   }
 
   private updateMarkerProjection(): void {
-    if (this.points.length === 0 || this.viewWidthVp <= 1 || this.viewHeightVp <= 1) {
-      this.markers = [];
-      return;
-    }
-    const buckets: Map<string, PhotoMapMarker> = new Map();
-    const margin = MAP_MARKER_SIZE_VP * 2;
-    for (let i = 0; i < this.points.length; i++) {
-      const point = this.points[i];
-      const x = this.screenX(point.lon);
-      const y = this.screenY(point.lat);
-      if (x < -margin || x > this.viewWidthVp + margin || y < -margin || y > this.viewHeightVp + margin) {
-        continue;
-      }
-      const bx = Math.floor(x / MAP_MARKER_GRID_VP);
-      const by = Math.floor(y / MAP_MARKER_GRID_VP);
-      const key = `${bx}_${by}`;
-      let marker = buckets.get(key);
-      if (marker === undefined) {
-        marker = {
-          key: key,
-          x: x - MAP_MARKER_SIZE_VP / 2,
-          y: y - MAP_MARKER_SIZE_VP / 2,
-          lat: point.lat,
-          lon: point.lon,
-          count: point.count,
-          coverRel: point.coverRel,
-          bounds: { north: point.lat, east: point.lon, south: point.lat, west: point.lon },
-          embedded: point.embedded
-        };
-        buckets.set(key, marker);
-      } else {
-        marker.count += point.count;
-        marker.lat = (marker.lat + point.lat) / 2;
-        marker.lon = (marker.lon + point.lon) / 2;
-        marker.bounds.north = Math.max(marker.bounds.north, point.lat);
-        marker.bounds.south = Math.min(marker.bounds.south, point.lat);
-        marker.bounds.east = Math.max(marker.bounds.east, point.lon);
-        marker.bounds.west = Math.min(marker.bounds.west, point.lon);
-        marker.x = this.screenX(marker.lon) - MAP_MARKER_SIZE_VP / 2;
-        marker.y = this.screenY(marker.lat) - MAP_MARKER_SIZE_VP / 2;
-        if (marker.coverRel.length <= 0) {
-          marker.coverRel = point.coverRel;
-        }
-        if (marker.embedded.length < MAP_PAGE_LIMIT && point.embedded.length > 0) {
-          marker.embedded = marker.embedded.concat(point.embedded);
-        }
-      }
-    }
-    this.markers = Array.from(buckets.values());
+    this.markers = mapUpdateMarkerProjection(this.points, this.viewWidthVp, this.viewHeightVp, this.centerLat, this.centerLon, this.vpPerDegree);
   }
 
   private async fetchMarkerPhotos(marker: PhotoMapMarker): Promise<MapFetchResult> {
-    const client = AppSession.getClient();
-    if (client === null) {
-      return { items: [], total: 0, message: '未登录' };
-    }
-    const params = mapBoundsToParams(marker.bounds);
-    const timeline = await client.getMapTimeline(params, 20000);
-    let photos: GalleryListItem[] = [];
-    if (timeline.success && timeline.data !== undefined) {
-      const ranges = mapTimelineItemsFromData(timeline.data);
-      for (let i = 0; i < ranges.length && photos.length < MAP_PAGE_LIMIT; i++) {
-        const range = mapTimelineRange(ranges[i]);
-        if (range[0].length <= 0 || range[1].length <= 0) {
-          continue;
-        }
-        const res = await client.getMapPhotoList(
-          range[0],
-          range[1],
-          Math.min(80, MAP_PAGE_LIMIT - photos.length),
-          0,
-          params,
-          20000
-        );
-        if (res.success && res.data !== undefined) {
-          photos = photos.concat(mapItemsFromListData(res.data));
-        }
-      }
-    }
-    if (photos.length === 0) {
-      const direct = await client.getMapPhotoListByBounds(params, MAP_PAGE_LIMIT, 0, 20000);
-      if (direct.success && direct.data !== undefined) {
-        photos = mapItemsFromListData(direct.data);
-      }
-    }
-    if (photos.length === 0 && marker.embedded.length > 0) {
-      photos = marker.embedded;
-    }
-    const expectedTotal = Math.max(marker.count, photos.length);
-    return {
-      items: photos,
-      total: expectedTotal,
-      message: photos.length > 0 ? '' : '该位置暂无可预览媒体'
-    };
+    return mapFetchMarkerPhotos(marker);
   }
 
   private async openMarker(marker: PhotoMapMarker): Promise<void> {
@@ -875,7 +433,7 @@ struct MapPage {
         return;
       }
       const firstThumb = pickThumb(loaded.items[0]);
-      const title = marker.count > 1 ? `地图位置 ${marker.count} 项` : '地图位置';
+      const title = mapOpenMarkerTitle(marker.count);
       const ok = await CategoryGalleryNavStore.open(
         this.baseUrl,
         title,
@@ -961,37 +519,19 @@ struct MapPage {
   }
 
   private gridStepDegrees(): number {
-    const target = 110 / Math.max(MAP_MIN_VP_PER_DEGREE, this.vpPerDegree);
-    for (let i = 0; i < MAP_GRID_STEPS.length; i++) {
-      if (MAP_GRID_STEPS[i] >= target) {
-        return MAP_GRID_STEPS[i];
-      }
-    }
-    return 180;
+    return mapGridStepDegrees(this.vpPerDegree);
   }
 
   private gridLongitude(slot: number): number {
-    const step = this.gridStepDegrees();
-    const leftLon = this.centerLon - this.viewWidthVp / 2 / Math.max(MAP_MIN_VP_PER_DEGREE, this.vpPerDegree);
-    return Math.floor(leftLon / step) * step + slot * step;
+    return mapGridLongitude(slot, this.centerLon, this.viewWidthVp, this.vpPerDegree);
   }
 
   private gridLatitude(slot: number): number {
-    const step = this.gridStepDegrees();
-    const topLat = this.centerLat + this.viewHeightVp / 2 / Math.max(MAP_MIN_VP_PER_DEGREE, this.vpPerDegree);
-    return Math.floor(topLat / step) * step - slot * step;
+    return mapGridLatitude(slot, this.centerLat, this.viewHeightVp, this.vpPerDegree);
   }
 
   private formatCoord(value: number, lat: boolean): string {
-    const abs = Math.abs(value);
-    const suffix = lat ? (value >= 0 ? 'N' : 'S') : (value >= 0 ? 'E' : 'W');
-    if (abs >= 10) {
-      return `${abs.toFixed(0)}°${suffix}`;
-    }
-    if (abs >= 1) {
-      return `${abs.toFixed(1)}°${suffix}`;
-    }
-    return `${abs.toFixed(2)}°${suffix}`;
+    return mapFormatCoord(value, lat);
   }
 
   @Builder

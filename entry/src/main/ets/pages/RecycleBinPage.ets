@@ -111,22 +111,13 @@ import {
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
 import { RbThumbHitRect } from './recycleBinPage/RecycleBinTypes';
+import {
+  RecycleBinRowBlock,
+  RecycleBinRowBlockCell,
+  recycleBinBuildRowBlocks
+} from './recycleBinPage/RecycleBinListModel';
 
 const RECYCLE_BIN_BASE_COLUMNS: number = 4;
-
-interface RecycleBinRowBlockCell {
-  flatIdx: number;
-  item?: RecycleBinListItem;
-  thumbRel: string;
-  numericId: number;
-}
-
-interface RecycleBinRowBlock {
-  key: string;
-  rowIdx: number;
-  rowStart: number;
-  cells: RecycleBinRowBlockCell[];
-}
 
 @Entry
 @Component
@@ -400,42 +391,7 @@ struct RecycleBinPage {
   }
 
   private buildRowBlocks(): RecycleBinRowBlock[] {
-    const blocks: RecycleBinRowBlock[] = [];
-    const cols = this.columnsPerRow;
-    const rowCount = Math.ceil(this.items.length / cols);
-    for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
-      const rowStart = rowIdx * cols;
-      const cells: RecycleBinRowBlockCell[] = [];
-      let cellSig = '';
-      for (let col = 0; col < cols; col++) {
-        const flatIdx = rowStart + col;
-        if (flatIdx >= this.items.length) {
-          cells.push({
-            flatIdx: -1,
-            thumbRel: '',
-            numericId: -1
-          });
-          cellSig += `_sk${col}`;
-          continue;
-        }
-        const item = this.items[flatIdx];
-        const numericId = this.numericIdOf(item);
-        cells.push({
-          flatIdx,
-          item,
-          thumbRel: this.thumbRelOf(item),
-          numericId
-        });
-        cellSig += numericId >= 0 ? `_id${numericId}` : `_idx${flatIdx}`;
-      }
-      blocks.push({
-        key: `rbrow_${rowIdx}${cellSig}`,
-        rowIdx,
-        rowStart,
-        cells
-      });
-    }
-    return blocks;
+    return recycleBinBuildRowBlocks(this.items, this.columnsPerRow);
   }
 
   private rebuildRowBlocks(): void {

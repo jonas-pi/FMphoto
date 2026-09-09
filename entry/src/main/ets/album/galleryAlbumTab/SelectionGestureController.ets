@@ -1,294 +1,49 @@
-import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
-import { GalleryFlowNode, GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
+import { GalleryFlowNode } from '../GalleryFlowDataSource';
+import { GalleryFingerWindowPoint } from './GalleryAlbumTabTypes';
+import { SelectionGestureControllerHost } from './SelectionGestureHost';
 import {
-  isVideoItem,
-  nasUrl,
-  pickThumb,
-  prefetchThumbPix
-} from '../GalleryAlbumCommon';
+  selectionApplyGallerySlideRowRangeSelection as applyGallerySlideRowRangeSelectionImpl,
+  selectionBeginGallerySlideSelectGesture as beginGallerySlideSelectGestureImpl,
+  selectionBeginGallerySlideSelectGestureAtWindowPx as beginGallerySlideSelectGestureAtWindowPxImpl,
+  selectionEndGallerySlideSelectGesture as endGallerySlideSelectGestureImpl,
+  selectionHitGalleryThumbDomPx as hitGalleryThumbDomPxImpl,
+  selectionIsGalleryIdSelected as isGalleryIdSelectedImpl,
+  selectionOnGallerySlidePanUpdate as onGallerySlidePanUpdateImpl,
+  selectionOnGallerySlideTouchMoveWindow as onGallerySlideTouchMoveWindowImpl,
+  selectionOnGalleryThumbLongPress as onGalleryThumbLongPressImpl,
+  selectionOnGalleryThumbTap as onGalleryThumbTapImpl,
+  selectionOnSearchThumbTap as onSearchThumbTapImpl,
+  selectionPanOffsetVpToPx as panOffsetVpToPxImpl,
+  selectionPickGalleryThumbFlatForRowOrCache as pickGalleryThumbFlatForRowOrCacheImpl,
+  selectionPickGalleryThumbFlatUnderPoint as pickGalleryThumbFlatUnderPointImpl,
+  selectionPickGalleryThumbFlatUnderPointForSlide as pickGalleryThumbFlatUnderPointForSlideImpl,
+  selectionReadGestureFingerWindow as readGestureFingerWindowImpl,
+  selectionResolveSlidePointerWindowPx as resolveSlidePointerWindowPxImpl,
+  selectionToggleGallerySelectedId as toggleGallerySelectedIdImpl
+} from './SelectionGestureMainFlow';
 import {
-  gallerySlideAutoScrollDirection,
-  gallerySlideAutoScrollStop,
-  gallerySlideAutoScrollUpdate,
-  gallerySlideAutoScrollVelocityVpS,
-  GallerySlideAutoScrollSession
-} from '../GallerySlideAutoScroll';
-import {
-  GALLERY_SLIDE_DOM_BUDGET_PER_FRAME,
-  GALLERY_SLIDE_FLOW_ROW_RADIUS,
-  pickIndexedFlatForSlidePointer,
-  pickSlideEndFlatFromRowBand
-} from '../GallerySlidePick';
-import { GalleryPreviewNavStore } from '../GalleryPreviewNavStore';
-import { playGalleryEnterSelectionHaptic } from '../GallerySelectionHaptic';
-import { galleryGridSlideLog } from '../GalleryGridSlideTouch';
-import {
-  GalleryFingerCoordCompat,
-  GalleryFingerWindowPoint,
-  GalleryThumbHitRect
-} from './GalleryAlbumTabTypes';
+  selectionHitSearchThumbDomPx as hitSearchThumbDomPxImpl,
+  selectionPickSearchThumbFlatForRow as pickSearchThumbFlatForRowImpl,
+  selectionPickSearchThumbFlatUnderPoint as pickSearchThumbFlatUnderPointImpl,
+  selectionRecordSearchThumbRect as recordSearchThumbRectImpl,
+  selectionSearchThumbDomId as searchThumbDomIdImpl
+} from './SelectionGestureSearchGrid';
 
-export interface SelectionGestureControllerHost {
-  getUIContext(): UIContext;
-  baseUrl: string;
-  inSearchMode: boolean;
-  gallerySelectionMode: boolean;
-  galleryTimelineRefreshing: boolean;
-  gallerySlideGestureActive: boolean;
-  galleryMainListScrollEnabled: boolean;
-  gallerySlideAnchorFlat: number;
-  gallerySlideUnionBase: string[];
-  gallerySlideLastEndFlat: number;
-  gallerySlideLastAppliedEndFlat: number;
-  gallerySlideLastApplyMs: number;
-  gallerySlidePendingEndFlat: number;
-  galleryMainListDomId: string;
-  gallerySlideAutoScrollTimer: number;
-  gallerySlideAutoScrollVelocityVp: number;
-  gallerySlideAutoScrollPointerX: number;
-  gallerySlideAutoScrollPointerY: number;
-  gallerySlideAutoScrollTopInsetVp: number;
-  gallerySlideAutoScrollBottomInsetVp: number;
-  galleryLongPressIgnoreClickUntil: number;
-  gallerySlideRefX: number;
-  gallerySlideRefY: number;
-  gallerySlideHasRef: boolean;
-  searchResults: GalleryListItem[];
-  searchGridColumns: number;
-  galleryGridColumns: number;
-  scrollerRef: Scroller;
-  searchScroller: Scroller;
-  searchListDomId: string;
-  flowDataSource: GalleryWaterFlowDataSource;
-  galleryThumbHitBounds: Map<string, GalleryThumbHitRect>;
-  searchThumbHitBounds: Map<string, GalleryThumbHitRect>;
-  listVisibleFirstNodeIdx: number;
-  listVisibleLastNodeIdx: number;
-  gallerySelectedIds: string[];
-  itemIdOf(item: GalleryListItem): string;
-  flatItems(): GalleryListItem[];
-  galleryThumbDomId(photoId: string): string;
-  recordGalleryThumbRectFromDom(photoId: string, domId: string): void;
-  setGallerySelectedIdsState(ids: string[]): void;
-  toast(msg: string): void;
-  openPreview(flatIndex: number): void;
-  resolveGalleryFlatIndexForOpenPreview(item: GalleryListItem, hintFlat: number): number;
-}
-
-const gallerySlideAutoScrollSession: GallerySlideAutoScrollSession = new GallerySlideAutoScrollSession();
-let gallerySlideLastPrefetchFlat: number = -1;
-let gallerySlideLastPrefetchDirection: number = 0;
-
-/**
- * 只预取手指前方 2～6 行，窗口随贴边速度增大。
- * 请求进入公共限并发队列，结果只写 PixelMap LRU，不在滚动回调里改 UI。
- */
-function selectionPrefetchSlideDirection(host: SelectionGestureControllerHost, anchorFlat: number): void {
-  const direction = gallerySlideAutoScrollDirection();
-  if (direction === 0 || anchorFlat < 0) {
-    return;
-  }
-  const columns = Math.max(1, host.inSearchMode ? host.searchGridColumns : host.galleryGridColumns);
-  if (direction === gallerySlideLastPrefetchDirection &&
-    Math.abs(anchorFlat - gallerySlideLastPrefetchFlat) < columns) {
-    return;
-  }
-  gallerySlideLastPrefetchFlat = anchorFlat;
-  gallerySlideLastPrefetchDirection = direction;
-  const rows = Math.max(2, Math.min(6, Math.ceil(Math.abs(gallerySlideAutoScrollVelocityVpS()) / 200)));
-  const items = host.inSearchMode ? host.searchResults : host.flatItems();
-  const count = columns * rows;
-  for (let step = 1; step <= count; step++) {
-    const index = anchorFlat + direction * step;
-    if (index < 0 || index >= items.length) {
-      break;
-    }
-    const item = items[index];
-    prefetchThumbPix(nasUrl(host.baseUrl, pickThumb(item)), isVideoItem(item));
-  }
-}
-
-interface SelectionGalleryFlowSlot {
-  flowIndex: number;
-  slotIndex: number;
-  node: GalleryFlowNode;
-}
-
-function pickSearchThumbFlatUnderPointForSlide(
-  host: SelectionGestureControllerHost,
-  xPx: number,
-  yPx: number
-): number {
-  return pickIndexedFlatForSlidePointer(
-    xPx,
-    yPx,
-    host.searchResults.length,
-    host.gallerySlideLastEndFlat,
-    host.gallerySlideAnchorFlat,
-    (ax: number, ay: number): number => selectionPickSearchThumbFlatUnderPoint(host, ax, ay),
-    (fi: number) => host.searchThumbHitBounds.get(`${fi}`),
-    (fi: number, ax: number, ay: number): boolean => selectionHitSearchThumbDomPx(host, fi, ax, ay),
-    (fi: number): void => {
-      selectionRecordSearchThumbRect(host, fi);
-    }
-  );
-}
-
-function selectionSameIdsInOrder(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function collectGalleryIdsInFlatRange(host: SelectionGestureControllerHost, lo: number, hi: number): string[] {
-  let a = lo;
-  let b = hi;
-  if (a > b) {
-    const t = a;
-    a = b;
-    b = t;
-  }
-  const out: string[] = [];
-  const all = host.flatItems();
-  if (all.length === 0) {
-    return out;
-  }
-  const lo2 = Math.max(0, a);
-  const hi2 = Math.min(b, all.length - 1);
-  if (lo2 > hi2) {
-    return out;
-  }
-  for (let fi = lo2; fi <= hi2; fi++) {
-    const id = host.itemIdOf(all[fi]);
-    if (id.length > 0) {
-      out.push(id);
-    }
-  }
-  return out;
-}
-
-function collectSearchIdsInFlatRange(host: SelectionGestureControllerHost, lo: number, hi: number): string[] {
-  let a = lo;
-  let b = hi;
-  if (a > b) {
-    const t = a;
-    a = b;
-    b = t;
-  }
-  const out: string[] = [];
-  const n = host.searchResults.length;
-  for (let fi = a; fi <= b && fi < n; fi++) {
-    const id = host.itemIdOf(host.searchResults[fi]);
-    if (id.length > 0) {
-      out.push(id);
-    }
-  }
-  return out;
-}
+export { SelectionGestureControllerHost };
 
 export function selectionReadGestureFingerWindow(
-  _host: SelectionGestureControllerHost,
+  host: SelectionGestureControllerHost,
   ev: GestureEvent
 ): GalleryFingerWindowPoint | null {
-  const fl = ev.fingerList;
-  if (fl === undefined || fl.length < 1) {
-    return null;
-  }
-  const f0 = fl[0] as GalleryFingerCoordCompat;
-  const x = f0.windowX ?? f0.globalX ?? f0.screenX ?? f0.displayX ?? f0.x;
-  const y = f0.windowY ?? f0.globalY ?? f0.screenY ?? f0.displayY ?? f0.y;
-  if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
-    return null;
-  }
-  return { x: x, y: y };
-}
-
-function selectionVpToPx(host: SelectionGestureControllerHost, value: number): number {
-  try {
-    return host.getUIContext().vp2px(value);
-  } catch (_e) {
-    return value;
-  }
-}
-
-function selectionPxToVp(host: SelectionGestureControllerHost, value: number): number {
-  try {
-    return host.getUIContext().px2vp(value);
-  } catch (_e) {
-    return value;
-  }
+  return readGestureFingerWindowImpl(host, ev);
 }
 
 export function selectionPanOffsetVpToPx(
   host: SelectionGestureControllerHost,
-  deltaVp: number
+  offsetVp: number
 ): number {
-  const probePx = 100;
-  const probeVp = selectionPxToVp(host, probePx);
-  if (probeVp < 0.0001) {
-    return deltaVp;
-  }
-  return deltaVp * (probePx / probeVp);
-}
-
-function selectionBeginGallerySlideSelectGestureCore(
-  host: SelectionGestureControllerHost,
-  item: GalleryListItem,
-  anchorFlat: number,
-  refX: number | null,
-  refY: number | null
-): void {
-  galleryGridSlideLog(
-    host.inSearchMode ? 'search_begin' : 'main_begin',
-    `anchor=${anchorFlat} sel=${host.gallerySelectionMode ? '1' : '0'} scroll=${host.galleryMainListScrollEnabled ? '1' : '0'}`
-  );
-  host.gallerySlideGestureActive = true;
-  host.galleryMainListScrollEnabled = false;
-  host.gallerySlideAnchorFlat = anchorFlat >= 0 ? anchorFlat : -1;
-  host.gallerySlideUnionBase = host.gallerySelectedIds.slice();
-  host.gallerySlideLastEndFlat = host.gallerySlideAnchorFlat;
-  host.gallerySlideLastAppliedEndFlat = -99999;
-  host.gallerySlideLastApplyMs = 0;
-  host.gallerySlidePendingEndFlat = host.gallerySlideAnchorFlat;
-  const anchorId = host.itemIdOf(item);
-  if (host.inSearchMode) {
-    selectionRecordSearchThumbRect(host, anchorFlat);
-  } else if (anchorId.length > 0) {
-    host.recordGalleryThumbRectFromDom(anchorId, host.galleryThumbDomId(anchorId));
-  }
-  if (refX !== null && refY !== null) {
-    host.gallerySlideRefX = refX;
-    host.gallerySlideRefY = refY;
-    host.gallerySlideHasRef = true;
-  } else if (host.inSearchMode) {
-    const rs = host.searchThumbHitBounds.get(`${anchorFlat}`);
-    if (rs !== undefined) {
-      host.gallerySlideRefX = (rs.left + rs.right) * 0.5;
-      host.gallerySlideRefY = (rs.top + rs.bottom) * 0.5;
-      host.gallerySlideHasRef = true;
-    } else {
-      host.gallerySlideHasRef = false;
-    }
-  } else if (anchorId.length > 0) {
-    const r = host.galleryThumbHitBounds.get(anchorId);
-    if (r !== undefined) {
-      host.gallerySlideRefX = (r.left + r.right) * 0.5;
-      host.gallerySlideRefY = (r.top + r.bottom) * 0.5;
-      host.gallerySlideHasRef = true;
-    } else {
-      host.gallerySlideHasRef = false;
-    }
-  } else {
-    host.gallerySlideHasRef = false;
-  }
-  selectionApplyGallerySlideRowRangeSelection(host, host.gallerySlideLastEndFlat);
+  return panOffsetVpToPxImpl(host, offsetVp);
 }
 
 export function selectionBeginGallerySlideSelectGesture(
@@ -297,18 +52,7 @@ export function selectionBeginGallerySlideSelectGesture(
   item: GalleryListItem,
   anchorFlat: number
 ): void {
-  const win = selectionReadGestureFingerWindow(host, ev);
-  if (win !== null) {
-    selectionBeginGallerySlideSelectGestureCore(
-      host,
-      item,
-      anchorFlat,
-      selectionVpToPx(host, win.x),
-      selectionVpToPx(host, win.y)
-    );
-    return;
-  }
-  selectionBeginGallerySlideSelectGestureCore(host, item, anchorFlat, null, null);
+  beginGallerySlideSelectGestureImpl(host, ev, item, anchorFlat);
 }
 
 export function selectionBeginGallerySlideSelectGestureAtWindowPx(
@@ -318,128 +62,18 @@ export function selectionBeginGallerySlideSelectGestureAtWindowPx(
   xPx: number,
   yPx: number
 ): void {
-  selectionBeginGallerySlideSelectGestureCore(host, item, anchorFlat, xPx, yPx);
+  beginGallerySlideSelectGestureAtWindowPxImpl(host, item, anchorFlat, xPx, yPx);
 }
 
 export function selectionEndGallerySlideSelectGesture(host: SelectionGestureControllerHost): void {
-  selectionStopGallerySlideAutoScroll(host);
-  const pendingEndFlat = host.gallerySlidePendingEndFlat;
-  if (pendingEndFlat >= 0 && pendingEndFlat !== host.gallerySlideLastAppliedEndFlat) {
-    selectionApplyGallerySlideRowRangeSelection(host, pendingEndFlat);
-  }
-  if (!host.gallerySlideGestureActive && host.galleryMainListScrollEnabled) {
-    galleryGridSlideLog(host.inSearchMode ? 'search_end_skip' : 'main_end_skip',
-      `slide=${host.gallerySlideGestureActive ? '1' : '0'} scroll=${host.galleryMainListScrollEnabled ? '1' : '0'}`);
-    return;
-  }
-  galleryGridSlideLog(host.inSearchMode ? 'search_end' : 'main_end',
-    `slide=${host.gallerySlideGestureActive ? '1' : '0'} scroll=${host.galleryMainListScrollEnabled ? '1' : '0'}`);
-  host.gallerySlideGestureActive = false;
-  host.gallerySlideHasRef = false;
-  host.gallerySlideAnchorFlat = -1;
-  host.gallerySlideUnionBase = [];
-  host.gallerySlideLastEndFlat = -1;
-  host.gallerySlideLastAppliedEndFlat = -99999;
-  host.gallerySlideLastApplyMs = 0;
-  host.gallerySlidePendingEndFlat = -1;
-  host.galleryMainListScrollEnabled = true;
-}
-
-function selectionBindSlideAutoScroll(host: SelectionGestureControllerHost): GallerySlideAutoScrollSession {
-  gallerySlideAutoScrollSession.uiContext = host.getUIContext();
-  gallerySlideAutoScrollSession.scroller = host.inSearchMode ? host.searchScroller : host.scrollerRef;
-  gallerySlideAutoScrollSession.listDomId = host.inSearchMode ? host.searchListDomId : host.galleryMainListDomId;
-  gallerySlideAutoScrollSession.topInsetVp = host.inSearchMode ? 0 : host.gallerySlideAutoScrollTopInsetVp;
-  gallerySlideAutoScrollSession.bottomInsetVp = host.inSearchMode ? 0 : host.gallerySlideAutoScrollBottomInsetVp;
-  gallerySlideAutoScrollSession.isActive = (): boolean => host.gallerySlideGestureActive;
-  gallerySlideAutoScrollSession.shiftHitBoundsY = (dyPx: number): void => {
-    selectionShiftThumbHitBoundsY(host.galleryThumbHitBounds, dyPx);
-    selectionShiftThumbHitBoundsY(host.searchThumbHitBounds, dyPx);
-  };
-  gallerySlideAutoScrollSession.followPointer = (xPx: number, yPx: number, cacheOnly: boolean): void => {
-    selectionFollowSlidePointer(host, xPx, yPx, cacheOnly);
-  };
-  return gallerySlideAutoScrollSession;
-}
-
-function selectionResolveSlideMissFlat(
-  host: SelectionGestureControllerHost,
-  yPx: number
-): number {
-  if (host.inSearchMode) {
-    return pickSlideEndFlatFromRowBand(
-      yPx,
-      host.searchResults.length,
-      host.gallerySlideAnchorFlat,
-      (fi: number) => host.searchThumbHitBounds.get(`${fi}`)
-    );
-  }
-  return selectionPickGallerySlideMissFlat(host, yPx);
-}
-
-function selectionFollowSlidePointer(
-  host: SelectionGestureControllerHost,
-  xPx: number,
-  yPx: number,
-  cacheOnly: boolean = false
-): void {
-  if (!host.gallerySlideGestureActive) {
-    return;
-  }
-  let hitFlat = -1;
-  if (cacheOnly) {
-    hitFlat = host.inSearchMode
-      ? selectionPickSearchThumbFlatUnderPoint(host, xPx, yPx)
-      : selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
-  } else {
-    hitFlat = host.inSearchMode
-      ? pickSearchThumbFlatUnderPointForSlide(host, xPx, yPx)
-      : selectionPickGalleryThumbFlatUnderPointForSlide(host, xPx, yPx);
-  }
-  if (hitFlat < 0) {
-    hitFlat = selectionResolveSlideMissFlat(host, yPx);
-  }
-  if (hitFlat >= 0) {
-    host.gallerySlideLastEndFlat = hitFlat;
-  }
-  const targetEndFlat = host.gallerySlideLastEndFlat >= 0 ? host.gallerySlideLastEndFlat : host.gallerySlideAnchorFlat;
-  if (targetEndFlat < 0) {
-    return;
-  }
-  selectionPrefetchSlideDirection(host, targetEndFlat);
-  host.gallerySlidePendingEndFlat = targetEndFlat;
-  selectionApplyGallerySlideRowRangeSelection(host, targetEndFlat);
-}
-
-function selectionStopGallerySlideAutoScroll(_host: SelectionGestureControllerHost): void {
-  gallerySlideAutoScrollStop();
-}
-
-function selectionUpdateGallerySlideAutoScroll(
-  host: SelectionGestureControllerHost,
-  xPx: number,
-  yPx: number
-): void {
-  host.gallerySlideAutoScrollPointerX = xPx;
-  host.gallerySlideAutoScrollPointerY = yPx;
-  gallerySlideAutoScrollUpdate(selectionBindSlideAutoScroll(host), xPx, yPx);
+  endGallerySlideSelectGestureImpl(host);
 }
 
 export function selectionResolveSlidePointerWindowPx(
   host: SelectionGestureControllerHost,
   ev: GestureEvent
 ): GalleryFingerWindowPoint | null {
-  const win = selectionReadGestureFingerWindow(host, ev);
-  if (win !== null) {
-    return { x: selectionVpToPx(host, win.x), y: selectionVpToPx(host, win.y) };
-  }
-  if (host.gallerySlideHasRef) {
-    return {
-      x: host.gallerySlideRefX + selectionPanOffsetVpToPx(host, ev.offsetX),
-      y: host.gallerySlideRefY + selectionPanOffsetVpToPx(host, ev.offsetY)
-    };
-  }
-  return null;
+  return resolveSlidePointerWindowPxImpl(host, ev);
 }
 
 export function selectionHitGalleryThumbDomPx(
@@ -448,91 +82,7 @@ export function selectionHitGalleryThumbDomPx(
   xPx: number,
   yPx: number
 ): boolean {
-  if (photoId.length === 0) {
-    return false;
-  }
-  try {
-    const domId = host.galleryThumbDomId(photoId);
-    const info = host.getUIContext().getComponentUtils().getRectangleById(domId);
-    const left = info.windowOffset.x as number;
-    const top = info.windowOffset.y as number;
-    const w = info.size.width as number;
-    const h = info.size.height as number;
-    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
-      return false;
-    }
-    return xPx >= left && xPx <= left + w && yPx >= top && yPx <= top + h;
-  } catch (_e) {
-    return false;
-  }
-}
-
-function selectionRectContainsPx(rect: GalleryThumbHitRect, xPx: number, yPx: number): boolean {
-  return xPx >= rect.left && xPx <= rect.right && yPx >= rect.top && yPx <= rect.bottom;
-}
-
-function selectionShiftThumbHitBoundsY(
-  bounds: Map<string, GalleryThumbHitRect>,
-  dyPx: number
-): void {
-  if (!Number.isFinite(dyPx) || Math.abs(dyPx) < 0.5) {
-    return;
-  }
-  bounds.forEach((rect: GalleryThumbHitRect): void => {
-    rect.top += dyPx;
-    rect.bottom += dyPx;
-  });
-}
-
-function selectionCachedGalleryThumbHitValidPx(
-  host: SelectionGestureControllerHost,
-  photoId: string,
-  xPx: number,
-  yPx: number
-): boolean {
-  const cached = host.galleryThumbHitBounds.get(photoId);
-  return cached !== undefined && selectionRectContainsPx(cached, xPx, yPx);
-}
-
-function selectionGalleryFlowScanRange(host: SelectionGestureControllerHost): number[] {
-  const n = host.flowDataSource.totalCount();
-  if (n <= 0) {
-    return [0, -1];
-  }
-  let first = host.listVisibleFirstNodeIdx;
-  let last = host.listVisibleLastNodeIdx;
-  if (last < first || first < 0) {
-    return [0, n - 1];
-  }
-  return [Math.max(0, first - 1), Math.min(n - 1, last + 1)];
-}
-
-function selectionPickGalleryThumbFlatFromCacheOnly(
-  host: SelectionGestureControllerHost,
-  xPx: number,
-  yPx: number
-): number {
-  const range = selectionGalleryFlowScanRange(host);
-  for (let i = range[1]; i >= range[0]; i--) {
-    const node = host.flowDataSource.getData(i);
-    if (node.kind !== 'row') {
-      continue;
-    }
-    for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
-      const slot = node.rowSlotItems[k];
-      if (slot === null || slot === undefined) {
-        continue;
-      }
-      const id = host.itemIdOf(slot);
-      if (id.length === 0) {
-        continue;
-      }
-      if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
-        return node.rowSlotFlatIndices[k];
-      }
-    }
-  }
-  return -1;
+  return hitGalleryThumbDomPxImpl(host, photoId, xPx, yPx);
 }
 
 export function selectionPickGalleryThumbFlatUnderPoint(
@@ -540,37 +90,7 @@ export function selectionPickGalleryThumbFlatUnderPoint(
   xPx: number,
   yPx: number
 ): number {
-  if (host.inSearchMode) {
-    return selectionPickSearchThumbFlatUnderPoint(host, xPx, yPx);
-  }
-  const fromCache = selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
-  if (fromCache >= 0) {
-    return fromCache;
-  }
-  const range = selectionGalleryFlowScanRange(host);
-  let domBudget = GALLERY_SLIDE_DOM_BUDGET_PER_FRAME;
-  for (let i = range[0]; i <= range[1] && domBudget > 0; i++) {
-    const node = host.flowDataSource.getData(i);
-    if (node.kind !== 'row') {
-      continue;
-    }
-    for (let k = node.rowSlotItems.length - 1; k >= 0 && domBudget > 0; k--) {
-      const slot = node.rowSlotItems[k];
-      if (slot === null || slot === undefined) {
-        continue;
-      }
-      const id = host.itemIdOf(slot);
-      if (id.length === 0) {
-        continue;
-      }
-      domBudget--;
-      if (selectionHitGalleryThumbDomPx(host, id, xPx, yPx)) {
-        host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
-        return node.rowSlotFlatIndices[k];
-      }
-    }
-  }
-  return -1;
+  return pickGalleryThumbFlatUnderPointImpl(host, xPx, yPx);
 }
 
 export function selectionPickGalleryThumbFlatUnderPointForSlide(
@@ -578,79 +98,7 @@ export function selectionPickGalleryThumbFlatUnderPointForSlide(
   xPx: number,
   yPx: number
 ): number {
-  const fromCache = selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
-  if (fromCache >= 0) {
-    return fromCache;
-  }
-  const fromGeom = selectionEstimateGalleryFlatFromPointer(host, xPx, yPx);
-  if (fromGeom >= 0) {
-    const slot = selectionFindGalleryFlowSlot(host, fromGeom);
-    if (slot !== null) {
-      const item = slot.node.rowSlotItems[slot.slotIndex];
-      if (item !== null && item !== undefined) {
-        const id = host.itemIdOf(item);
-        if (id.length > 0) {
-          const cached = host.galleryThumbHitBounds.get(id);
-          if (cached !== undefined) {
-            if (selectionRectContainsPx(cached, xPx, yPx)) {
-              return fromGeom;
-            }
-          } else if (selectionHitGalleryThumbDomPx(host, id, xPx, yPx)) {
-            host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
-            return fromGeom;
-          }
-        }
-      }
-    }
-  }
-  const seed = host.gallerySlideLastEndFlat >= 0 ? host.gallerySlideLastEndFlat : host.gallerySlideAnchorFlat;
-  const nFlow = host.flowDataSource.totalCount();
-  let domBudget = GALLERY_SLIDE_DOM_BUDGET_PER_FRAME;
-  let centerRi = -1;
-  if (seed >= 0) {
-    const seedSlot = selectionFindGalleryFlowSlot(host, seed);
-    if (seedSlot !== null) {
-      centerRi = seedSlot.flowIndex;
-    }
-  }
-  if (centerRi < 0) {
-    return -1;
-  }
-  for (let delta = 0; delta <= GALLERY_SLIDE_FLOW_ROW_RADIUS && domBudget > 0; delta++) {
-    const indices: number[] = [centerRi + delta];
-    if (delta > 0) {
-      indices.push(centerRi - delta);
-    }
-    for (let t = 0; t < indices.length && domBudget > 0; t++) {
-      const ri = indices[t];
-      if (ri < 0 || ri >= nFlow) {
-        continue;
-      }
-      const node = host.flowDataSource.getData(ri);
-      if (node.kind !== 'row') {
-        continue;
-      }
-      for (let k = node.rowSlotItems.length - 1; k >= 0 && domBudget > 0; k--) {
-        const slot = node.rowSlotItems[k];
-        if (slot === null || slot === undefined) {
-          continue;
-        }
-        const id = host.itemIdOf(slot);
-        if (id.length === 0) {
-          continue;
-        }
-        if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
-          return node.rowSlotFlatIndices[k];
-        }
-        domBudget--;
-        if (selectionHitGalleryThumbDomPx(host, id, xPx, yPx)) {
-          host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
-          return node.rowSlotFlatIndices[k];
-        }
-      }
-    }
-  }
-  return -1;
+  return pickGalleryThumbFlatUnderPointForSlideImpl(host, xPx, yPx);
 }
 
 export function selectionPickGalleryThumbFlatForRowOrCache(
@@ -659,347 +107,21 @@ export function selectionPickGalleryThumbFlatForRowOrCache(
   xPx: number,
   yPx: number
 ): number {
-  if (node.kind !== 'row') {
-    return -1;
-  }
-  for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
-    const slot = node.rowSlotItems[k];
-    if (slot === null || slot === undefined) {
-      continue;
-    }
-    const id = host.itemIdOf(slot);
-    if (id.length === 0) {
-      continue;
-    }
-    if (selectionCachedGalleryThumbHitValidPx(host, id, xPx, yPx)) {
-      return node.rowSlotFlatIndices[k];
-    }
-    if (selectionHitGalleryThumbDomPx(host, id, xPx, yPx)) {
-      host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
-      return node.rowSlotFlatIndices[k];
-    }
-  }
-  return selectionPickGalleryThumbFlatFromCacheOnly(host, xPx, yPx);
-}
-
-function selectionFindGalleryFlowSlot(
-  host: SelectionGestureControllerHost,
-  flatIdx: number
-): SelectionGalleryFlowSlot | null {
-  if (flatIdx < 0) {
-    return null;
-  }
-  const total = host.flowDataSource.totalCount();
-  for (let i = 0; i < total; i++) {
-    const node = host.flowDataSource.getData(i);
-    if (node.kind !== 'row') {
-      continue;
-    }
-    for (let k = 0; k < node.rowSlotFlatIndices.length; k++) {
-      if (node.rowSlotFlatIndices[k] === flatIdx) {
-        return {
-          flowIndex: i,
-          slotIndex: k,
-          node: node
-        };
-      }
-    }
-  }
-  return null;
-}
-
-function selectionGetGalleryFlowSlotRect(
-  host: SelectionGestureControllerHost,
-  slot: SelectionGalleryFlowSlot
-): GalleryThumbHitRect | null {
-  const item = slot.node.rowSlotItems[slot.slotIndex];
-  if (item === null || item === undefined) {
-    return null;
-  }
-  const id = host.itemIdOf(item);
-  if (id.length === 0) {
-    return null;
-  }
-  let rect = host.galleryThumbHitBounds.get(id);
-  if (rect !== undefined) {
-    return rect;
-  }
-  host.recordGalleryThumbRectFromDom(id, host.galleryThumbDomId(id));
-  rect = host.galleryThumbHitBounds.get(id);
-  return rect === undefined ? null : rect;
-}
-
-function selectionClampInt(value: number, min: number, max: number): number {
-  if (value < min) {
-    return min;
-  }
-  if (value > max) {
-    return max;
-  }
-  return value;
-}
-
-function selectionFirstLoadedFlatInRow(node: GalleryFlowNode): number {
-  for (let k = 0; k < node.rowSlotItems.length; k++) {
-    if (node.rowSlotItems[k] !== null && node.rowSlotItems[k] !== undefined && node.rowSlotFlatIndices[k] >= 0) {
-      return node.rowSlotFlatIndices[k];
-    }
-  }
-  return -1;
-}
-
-function selectionLastLoadedFlatInRow(node: GalleryFlowNode): number {
-  for (let k = node.rowSlotItems.length - 1; k >= 0; k--) {
-    if (node.rowSlotItems[k] !== null && node.rowSlotItems[k] !== undefined && node.rowSlotFlatIndices[k] >= 0) {
-      return node.rowSlotFlatIndices[k];
-    }
-  }
-  return -1;
-}
-
-function selectionGetGalleryRowVerticalBand(
-  host: SelectionGestureControllerHost,
-  node: GalleryFlowNode
-): GalleryThumbHitRect | null {
-  let top: number = Number.POSITIVE_INFINITY;
-  let bottom: number = Number.NEGATIVE_INFINITY;
-  let left: number = 0;
-  let right: number = 0;
-  let found: boolean = false;
-  for (let k = 0; k < node.rowSlotItems.length; k++) {
-    const slot = node.rowSlotItems[k];
-    if (slot === null || slot === undefined) {
-      continue;
-    }
-    const id = host.itemIdOf(slot);
-    if (id.length === 0) {
-      continue;
-    }
-    const rect = host.galleryThumbHitBounds.get(id);
-    if (rect === undefined) {
-      continue;
-    }
-    if (!found) {
-      left = rect.left;
-      right = rect.right;
-      found = true;
-    }
-    if (rect.top < top) {
-      top = rect.top;
-    }
-    if (rect.bottom > bottom) {
-      bottom = rect.bottom;
-    }
-    if (rect.left < left) {
-      left = rect.left;
-    }
-    if (rect.right > right) {
-      right = rect.right;
-    }
-  }
-  if (!found || !Number.isFinite(top) || !Number.isFinite(bottom) || bottom < top) {
-    return null;
-  }
-  return { left, top, right, bottom };
-}
-
-/** 手指落在行尾空位、日期标题或行间时，对齐到该行（或已划过的上一行）边界项。 */
-function selectionPickGallerySlideMissFlat(host: SelectionGestureControllerHost, yPx: number): number {
-  const range = selectionGalleryFlowScanRange(host);
-  let inBandFirst: number = -1;
-  let inBandLast: number = -1;
-  let aboveLast: number = -1;
-  let belowFirst: number = -1;
-  for (let i = range[0]; i <= range[1]; i++) {
-    const node = host.flowDataSource.getData(i);
-    if (node.kind !== 'row') {
-      continue;
-    }
-    const firstFlat = selectionFirstLoadedFlatInRow(node);
-    const lastFlat = selectionLastLoadedFlatInRow(node);
-    if (firstFlat < 0 || lastFlat < 0) {
-      continue;
-    }
-    const band = selectionGetGalleryRowVerticalBand(host, node);
-    if (band === null) {
-      continue;
-    }
-    if (yPx >= band.top && yPx <= band.bottom) {
-      if (inBandFirst < 0) {
-        inBandFirst = firstFlat;
-      }
-      inBandLast = lastFlat;
-    } else if (band.bottom < yPx) {
-      aboveLast = lastFlat;
-    } else if (band.top > yPx && belowFirst < 0) {
-      belowFirst = firstFlat;
-    }
-  }
-  const anchor = host.gallerySlideAnchorFlat;
-  if (inBandLast >= 0) {
-    return anchor <= inBandLast ? inBandLast : inBandFirst;
-  }
-  if (aboveLast >= 0 && belowFirst >= 0) {
-    return anchor <= aboveLast ? aboveLast : belowFirst;
-  }
-  if (aboveLast >= 0) {
-    return aboveLast;
-  }
-  return belowFirst;
-}
-
-function selectionPickLoadedFlatInRowNearSlot(node: GalleryFlowNode, slotIndex: number): number {
-  const count = node.rowSlotFlatIndices.length;
-  if (count <= 0) {
-    return -1;
-  }
-  const start = selectionClampInt(slotIndex, 0, count - 1);
-  for (let delta = 0; delta < count; delta++) {
-    const right = start + delta;
-    if (right < count && node.rowSlotItems[right] !== null && node.rowSlotItems[right] !== undefined &&
-      node.rowSlotFlatIndices[right] >= 0) {
-      return node.rowSlotFlatIndices[right];
-    }
-    const left = start - delta;
-    if (left >= 0 && left !== right && node.rowSlotItems[left] !== null && node.rowSlotItems[left] !== undefined &&
-      node.rowSlotFlatIndices[left] >= 0) {
-      return node.rowSlotFlatIndices[left];
-    }
-  }
-  return -1;
-}
-
-function selectionEstimateGalleryFlatFromRowColDelta(
-  host: SelectionGestureControllerHost,
-  seedFlat: number,
-  colDelta: number,
-  rowDelta: number
-): number {
-  if (seedFlat < 0) {
-    return -1;
-  }
-  if (colDelta === 0 && rowDelta === 0) {
-    return seedFlat;
-  }
-  const seedSlot = selectionFindGalleryFlowSlot(host, seedFlat);
-  if (seedSlot === null) {
-    return -1;
-  }
-  const rowFlowIndices: number[] = [];
-  let seedRowOrdinal = -1;
-  const total = host.flowDataSource.totalCount();
-  for (let i = 0; i < total; i++) {
-    const node = host.flowDataSource.getData(i);
-    if (node.kind !== 'row') {
-      continue;
-    }
-    if (i === seedSlot.flowIndex) {
-      seedRowOrdinal = rowFlowIndices.length;
-    }
-    rowFlowIndices.push(i);
-  }
-  if (seedRowOrdinal < 0 || rowFlowIndices.length <= 0) {
-    return -1;
-  }
-  const targetRowOrdinal = selectionClampInt(seedRowOrdinal + rowDelta, 0, rowFlowIndices.length - 1);
-  const targetNode = host.flowDataSource.getData(rowFlowIndices[targetRowOrdinal]);
-  const targetSlot = selectionClampInt(
-    seedSlot.slotIndex + colDelta,
-    0,
-    Math.max(0, targetNode.rowSlotFlatIndices.length - 1)
-  );
-  return selectionPickLoadedFlatInRowNearSlot(targetNode, targetSlot);
-}
-
-function selectionEstimateGalleryFlatFromPointer(
-  host: SelectionGestureControllerHost,
-  xPx: number,
-  yPx: number
-): number {
-  if (host.inSearchMode) {
-    return -1;
-  }
-  const seed = host.gallerySlideLastEndFlat >= 0 ? host.gallerySlideLastEndFlat : host.gallerySlideAnchorFlat;
-  const seedSlot = selectionFindGalleryFlowSlot(host, seed);
-  if (seedSlot === null) {
-    return -1;
-  }
-  const seedRect = selectionGetGalleryFlowSlotRect(host, seedSlot);
-  if (seedRect === null) {
-    return -1;
-  }
-  const itemWidth = Math.max(1, seedRect.right - seedRect.left);
-  const itemHeight = Math.max(1, seedRect.bottom - seedRect.top);
-  const cx = (seedRect.left + seedRect.right) * 0.5;
-  const cy = (seedRect.top + seedRect.bottom) * 0.5;
-  const colDelta = Math.round((xPx - cx) / itemWidth);
-  const rowDelta = Math.round((yPx - cy) / itemHeight);
-  return selectionEstimateGalleryFlatFromRowColDelta(host, seed, colDelta, rowDelta);
-}
-
-function selectionEstimateGalleryFlatFromPanOffset(
-  host: SelectionGestureControllerHost,
-  ev: GestureEvent
-): number {
-  if (host.inSearchMode || host.gallerySlideAnchorFlat < 0) {
-    return -1;
-  }
-  if (!Number.isFinite(ev.offsetX) || !Number.isFinite(ev.offsetY)) {
-    return -1;
-  }
-  const anchorSlot = selectionFindGalleryFlowSlot(host, host.gallerySlideAnchorFlat);
-  if (anchorSlot === null) {
-    return -1;
-  }
-  const anchorRect = selectionGetGalleryFlowSlotRect(host, anchorSlot);
-  if (anchorRect === null) {
-    return -1;
-  }
-  const itemWidth = Math.max(1, anchorRect.right - anchorRect.left);
-  const itemHeight = Math.max(1, anchorRect.bottom - anchorRect.top);
-  const dxPx = selectionPanOffsetVpToPx(host, ev.offsetX);
-  const dyPx = selectionPanOffsetVpToPx(host, ev.offsetY);
-  if (!Number.isFinite(dxPx) || !Number.isFinite(dyPx)) {
-    return -1;
-  }
-  const colDelta = Math.round(dxPx / itemWidth);
-  const rowDelta = Math.round(dyPx / itemHeight);
-  return selectionEstimateGalleryFlatFromRowColDelta(host, host.gallerySlideAnchorFlat, colDelta, rowDelta);
+  return pickGalleryThumbFlatForRowOrCacheImpl(host, node, xPx, yPx);
 }
 
 export function selectionSearchThumbDomId(
-  _host: SelectionGestureControllerHost,
+  host: SelectionGestureControllerHost,
   flatIdx: number
 ): string {
-  return `sg_${flatIdx}`;
+  return searchThumbDomIdImpl(host, flatIdx);
 }
 
 export function selectionRecordSearchThumbRect(
   host: SelectionGestureControllerHost,
   flatIdx: number
 ): void {
-  if (flatIdx < 0 || flatIdx >= host.searchResults.length) {
-    return;
-  }
-  try {
-    const info = host.getUIContext().getComponentUtils().getRectangleById(selectionSearchThumbDomId(host, flatIdx));
-    const x = info.windowOffset.x as number;
-    const y = info.windowOffset.y as number;
-    const w = info.size.width as number;
-    const h = info.size.height as number;
-    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
-      host.searchThumbHitBounds.delete(`${flatIdx}`);
-      return;
-    }
-    const rect: GalleryThumbHitRect = {
-      left: x,
-      top: y,
-      right: x + w,
-      bottom: y + h
-    };
-    host.searchThumbHitBounds.set(`${flatIdx}`, rect);
-  } catch (_e) {
-  }
+  recordSearchThumbRectImpl(host, flatIdx);
 }
 
 export function selectionHitSearchThumbDomPx(
@@ -1008,32 +130,7 @@ export function selectionHitSearchThumbDomPx(
   xPx: number,
   yPx: number
 ): boolean {
-  if (flatIdx < 0 || flatIdx >= host.searchResults.length) {
-    return false;
-  }
-  try {
-    const info = host.getUIContext().getComponentUtils().getRectangleById(selectionSearchThumbDomId(host, flatIdx));
-    const left = info.windowOffset.x as number;
-    const top = info.windowOffset.y as number;
-    const w = info.size.width as number;
-    const h = info.size.height as number;
-    if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) {
-      return false;
-    }
-    return xPx >= left && xPx <= left + w && yPx >= top && yPx <= top + h;
-  } catch (_e) {
-    return false;
-  }
-}
-
-function selectionCachedSearchThumbHitValidPx(
-  host: SelectionGestureControllerHost,
-  flatIdx: number,
-  xPx: number,
-  yPx: number
-): boolean {
-  const cached = host.searchThumbHitBounds.get(`${flatIdx}`);
-  return cached !== undefined && selectionRectContainsPx(cached, xPx, yPx);
+  return hitSearchThumbDomPxImpl(host, flatIdx, xPx, yPx);
 }
 
 export function selectionPickSearchThumbFlatUnderPoint(
@@ -1041,16 +138,7 @@ export function selectionPickSearchThumbFlatUnderPoint(
   xPx: number,
   yPx: number
 ): number {
-  const n = host.searchResults.length;
-  if (host.searchThumbHitBounds.size === 0 || n <= 0) {
-    return -1;
-  }
-  for (let i = n - 1; i >= 0; i--) {
-    if (selectionCachedSearchThumbHitValidPx(host, i, xPx, yPx)) {
-      return i;
-    }
-  }
-  return -1;
+  return pickSearchThumbFlatUnderPointImpl(host, xPx, yPx);
 }
 
 export function selectionPickSearchThumbFlatForRow(
@@ -1059,107 +147,21 @@ export function selectionPickSearchThumbFlatForRow(
   xPx: number,
   yPx: number
 ): number {
-  const n = host.searchResults.length;
-  const columnsPerRow = Math.max(1, Math.floor(host.searchGridColumns));
-  const fromCache = selectionPickSearchThumbFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= rowStart && fromCache < rowStart + columnsPerRow && fromCache < n) {
-    return fromCache;
-  }
-  for (let k = columnsPerRow - 1; k >= 0; k--) {
-    const fi = rowStart + k;
-    if (fi >= n) {
-      continue;
-    }
-    if (selectionCachedSearchThumbHitValidPx(host, fi, xPx, yPx)) {
-      return fi;
-    }
-    if (selectionHitSearchThumbDomPx(host, fi, xPx, yPx)) {
-      selectionRecordSearchThumbRect(host, fi);
-      return fi;
-    }
-  }
-  return -1;
+  return pickSearchThumbFlatForRowImpl(host, rowStart, xPx, yPx);
 }
 
 export function selectionApplyGallerySlideRowRangeSelection(
   host: SelectionGestureControllerHost,
   endFlat: number
 ): void {
-  if (host.gallerySlideAnchorFlat < 0) {
-    return;
-  }
-  const ef = endFlat >= 0 ? endFlat : host.gallerySlideAnchorFlat;
-  if (host.gallerySlideGestureActive && ef === host.gallerySlideLastAppliedEndFlat) {
-    return;
-  }
-  let lo = host.gallerySlideAnchorFlat;
-  let hi = ef;
-  if (lo > hi) {
-    const t = lo;
-    lo = hi;
-    hi = t;
-  }
-  const rangeIds = host.inSearchMode
-    ? collectSearchIdsInFlatRange(host, lo, hi)
-    : collectGalleryIdsInFlatRange(host, lo, hi);
-  const seen = new Set<string>();
-  const next: string[] = [];
-  for (let i = 0; i < host.gallerySlideUnionBase.length; i++) {
-    const id = host.gallerySlideUnionBase[i];
-    if (id.length > 0 && !seen.has(id)) {
-      seen.add(id);
-      next.push(id);
-    }
-  }
-  for (let i = 0; i < rangeIds.length; i++) {
-    const id = rangeIds[i];
-    if (id.length > 0 && !seen.has(id)) {
-      seen.add(id);
-      next.push(id);
-    }
-  }
-  if (next.length === 0 && host.gallerySlideGestureActive && host.gallerySelectedIds.length > 0) {
-    return;
-  }
-  host.gallerySlideLastAppliedEndFlat = ef;
-  host.gallerySlideLastApplyMs = Date.now();
-  host.gallerySlidePendingEndFlat = ef;
-  if (!selectionSameIdsInOrder(next, host.gallerySelectedIds)) {
-    host.setGallerySelectedIdsState(next);
-  }
+  applyGallerySlideRowRangeSelectionImpl(host, endFlat);
 }
 
 export function selectionOnGallerySlidePanUpdate(
   host: SelectionGestureControllerHost,
   ev: GestureEvent
 ): void {
-  if (!host.gallerySlideGestureActive) {
-    return;
-  }
-  const pt = selectionResolveSlidePointerWindowPx(host, ev);
-  if (pt === null) {
-    selectionStopGallerySlideAutoScroll(host);
-    return;
-  }
-  selectionUpdateGallerySlideAutoScroll(host, pt.x, pt.y);
-  let hitFlat = host.inSearchMode ?
-    pickSearchThumbFlatUnderPointForSlide(host, pt.x, pt.y) :
-    selectionPickGalleryThumbFlatUnderPointForSlide(host, pt.x, pt.y);
-  if (hitFlat < 0) {
-    hitFlat = selectionResolveSlideMissFlat(host, pt.y);
-  }
-  if (hitFlat < 0 && !host.inSearchMode) {
-    hitFlat = selectionEstimateGalleryFlatFromPanOffset(host, ev);
-  }
-  if (hitFlat >= 0) {
-    host.gallerySlideLastEndFlat = hitFlat;
-  }
-  const targetEndFlat = host.gallerySlideLastEndFlat >= 0 ? host.gallerySlideLastEndFlat : host.gallerySlideAnchorFlat;
-  if (targetEndFlat < 0) {
-    return;
-  }
-  host.gallerySlidePendingEndFlat = targetEndFlat;
-  selectionApplyGallerySlideRowRangeSelection(host, targetEndFlat);
+  onGallerySlidePanUpdateImpl(host, ev);
 }
 
 export function selectionOnGallerySlideTouchMoveWindow(
@@ -1167,64 +169,28 @@ export function selectionOnGallerySlideTouchMoveWindow(
   xPx: number,
   yPx: number
 ): void {
-  if (!host.gallerySlideGestureActive) {
-    return;
-  }
-  selectionUpdateGallerySlideAutoScroll(host, xPx, yPx);
-  selectionFollowSlidePointer(host, xPx, yPx);
+  onGallerySlideTouchMoveWindowImpl(host, xPx, yPx);
 }
 
 export function selectionIsGalleryIdSelected(
   host: SelectionGestureControllerHost,
   id: string
 ): boolean {
-  return id.length > 0 && host.gallerySelectedIds.indexOf(id) >= 0;
+  return isGalleryIdSelectedImpl(host, id);
 }
 
 export function selectionToggleGallerySelectedId(
   host: SelectionGestureControllerHost,
   id: string
 ): void {
-  if (id.length === 0) {
-    return;
-  }
-  const idx = host.gallerySelectedIds.indexOf(id);
-  if (idx >= 0) {
-    const next: string[] = [];
-    for (let i = 0; i < host.gallerySelectedIds.length; i++) {
-      if (i !== idx) {
-        next.push(host.gallerySelectedIds[i]);
-      }
-    }
-    host.setGallerySelectedIdsState(next);
-  } else {
-    const next: string[] = host.gallerySelectedIds.slice();
-    next.push(id);
-    host.setGallerySelectedIdsState(next);
-  }
+  toggleGallerySelectedIdImpl(host, id);
 }
 
 export function selectionOnGalleryThumbLongPress(
   host: SelectionGestureControllerHost,
   item: GalleryListItem
 ): void {
-  const id = host.itemIdOf(item);
-  if (id.length === 0) {
-    host.toast('该媒体无 ID，无法多选');
-    return;
-  }
-  if (host.gallerySlideGestureActive) {
-    return;
-  }
-  host.galleryLongPressIgnoreClickUntil = Date.now() + 500;
-  if (!host.gallerySelectionMode) {
-    playGalleryEnterSelectionHaptic();
-    host.gallerySelectionMode = true;
-    host.galleryTimelineRefreshing = false;
-    host.setGallerySelectedIdsState([id]);
-  } else {
-    selectionToggleGallerySelectedId(host, id);
-  }
+  onGalleryThumbLongPressImpl(host, item);
 }
 
 export function selectionOnGalleryThumbTap(
@@ -1232,18 +198,7 @@ export function selectionOnGalleryThumbTap(
   item: GalleryListItem,
   flatIndex: number
 ): void {
-  if (Date.now() < host.galleryLongPressIgnoreClickUntil) {
-    return;
-  }
-  if (host.gallerySelectionMode) {
-    const id = host.itemIdOf(item);
-    if (id.length > 0) {
-      selectionToggleGallerySelectedId(host, id);
-    }
-    return;
-  }
-  const idx = host.resolveGalleryFlatIndexForOpenPreview(item, flatIndex);
-  host.openPreview(idx);
+  onGalleryThumbTapImpl(host, item, flatIndex);
 }
 
 export function selectionOnSearchThumbTap(
@@ -1251,18 +206,5 @@ export function selectionOnSearchThumbTap(
   item: GalleryListItem,
   flatIndex: number
 ): void {
-  if (Date.now() < host.galleryLongPressIgnoreClickUntil) {
-    return;
-  }
-  if (host.gallerySelectionMode) {
-    const id = host.itemIdOf(item);
-    if (id.length > 0) {
-      selectionToggleGallerySelectedId(host, id);
-    }
-    return;
-  }
-  if (flatIndex < 0 || flatIndex >= host.searchResults.length) {
-    return;
-  }
-  GalleryPreviewNavStore.openPreview(host.getUIContext(), host.baseUrl, host.searchResults, flatIndex);
+  onSearchThumbTapImpl(host, item, flatIndex);
 }
