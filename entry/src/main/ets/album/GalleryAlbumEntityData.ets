@@ -2,7 +2,8 @@ import {
   AiPersonItem,
   GalleryListItem,
   MediaCategoryItem,
-  SmartCategoryItem
+  SmartCategoryItem,
+  UserAlbumItem
 } from '../model/FnApiTypes';
 
 type LooseGalleryCoverRecord = Record<string, Object | string | number | undefined | null>;
@@ -448,4 +449,91 @@ export function collectPersonItems(raw: Array<AiPersonItem | object | null | und
     }
   }
   return out;
+}
+
+export function userAlbumId(item: UserAlbumItem): string {
+  const id = item.albumId ?? item.id;
+  if (id === undefined || id === null) {
+    return '';
+  }
+  return String(id).trim();
+}
+
+export function userAlbumName(item: UserAlbumItem): string {
+  const name = item.albumName ?? item.name;
+  if (name === undefined) {
+    return '未命名相册';
+  }
+  const t = name.trim();
+  return t.length > 0 ? t : '未命名相册';
+}
+
+export function userAlbumCover(item: UserAlbumItem): string {
+  const cover = item.posterUrl ?? item.cover;
+  if (cover === undefined) {
+    return '';
+  }
+  return cover.trim();
+}
+
+export function userAlbumIsBaby(item: UserAlbumItem): boolean {
+  const raw = item.category ?? item.albumType;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return Math.floor(raw) === 1;
+  }
+  if (typeof raw === 'string') {
+    const n = Number(raw);
+    return Number.isFinite(n) && Math.floor(n) === 1;
+  }
+  return false;
+}
+
+export function userAlbumCount(item: UserAlbumItem): number {
+  const totalRaw = item.itemCount;
+  if (totalRaw !== undefined && Number.isFinite(Number(totalRaw))) {
+    return Math.max(0, Math.floor(Number(totalRaw)));
+  }
+  const photoRaw = item.photoCount;
+  const videoRaw = item.videoCount;
+  const photo = photoRaw !== undefined && Number.isFinite(Number(photoRaw))
+    ? Math.max(0, Math.floor(Number(photoRaw)))
+    : 0;
+  const video = videoRaw !== undefined && Number.isFinite(Number(videoRaw))
+    ? Math.max(0, Math.floor(Number(videoRaw)))
+    : 0;
+  return photo + video;
+}
+
+export function userAlbumSubtitle(item: UserAlbumItem): string {
+  const count = userAlbumCount(item);
+  if (userAlbumIsBaby(item)) {
+    return count > 0 ? `宝宝相册 · ${count}` : '宝宝相册';
+  }
+  return `${count}`;
+}
+
+/** 共享给我的相册第一期不展示；自己创建后分享出去的仍保留。 */
+export function userAlbumIsIncomingShared(item: UserAlbumItem): boolean {
+  return item.isOwner === false;
+}
+
+export function collectUserAlbumItems(raw: Array<UserAlbumItem | object | null | undefined>): UserAlbumItem[] {
+  const babies: UserAlbumItem[] = [];
+  const normals: UserAlbumItem[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const el = raw[i];
+    if (typeof el !== 'object' || el === null) {
+      continue;
+    }
+    const item = el as UserAlbumItem;
+    if (userAlbumId(item).length === 0 || userAlbumIsIncomingShared(item)) {
+      continue;
+    }
+    if (userAlbumIsBaby(item)) {
+      babies.push(item);
+    } else {
+      normals.push(item);
+    }
+  }
+  return babies.concat(normals);
 }

@@ -96,6 +96,8 @@ export interface GalleryListItem {
   name?: string;
   title?: string;
   id?: string;
+  /** 用户相册 / 部分目录接口用 photoId，与 id 同义 */
+  photoId?: string;
   guid?: string;
   filename?: string;
   /** v2 search/results 等与 Web 一致常用 `fileName`（大写 N），与 filename 并存 */
@@ -508,6 +510,36 @@ export interface AiPersonData {
   list?: AiPersonItem[];
   items?: AiPersonItem[];
   records?: AiPersonItem[];
+}
+
+/**
+ * GET /p/api/v1/album/list 单条。
+ * category/albumType：0 普通相册，1 宝宝相册。封面 posterUrl；数量 itemCount 或 photoCount+videoCount。
+ */
+export interface UserAlbumItem {
+  id?: string | number;
+  albumId?: string | number;
+  name?: string;
+  albumName?: string;
+  category?: number | string;
+  albumType?: number | string;
+  posterUrl?: string;
+  cover?: string;
+  itemCount?: number | string;
+  photoCount?: number | string;
+  videoCount?: number | string;
+  displayType?: number | string;
+  shared?: boolean;
+  ownerId?: string | number;
+  ownerName?: string;
+  isOwner?: boolean;
+}
+
+/** GET /p/api/v1/album/list 返回 data */
+export interface UserAlbumData {
+  list?: UserAlbumItem[];
+  items?: UserAlbumItem[];
+  records?: UserAlbumItem[];
 }
 
 /** GET /p/api/v1/ai-person/detail 返回 data */

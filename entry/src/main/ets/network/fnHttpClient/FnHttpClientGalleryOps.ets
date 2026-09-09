@@ -82,8 +82,11 @@ import {
   SearchFilterListData,
   SearchFilterListNode,
   SmartCategoryData,
-  SmartCategoryItem
+  SmartCategoryItem,
+  UserAlbumData,
+  UserAlbumItem
 } from '../../model/FnApiTypes';
+import { normalizeGalleryListItems } from '../../album/GalleryListItemNormalize';
 
 /** HLS 鉴权探针结果：分别记录 m3u8 与首个 TS 分片在“按路径 authx / 仅 Cookie”两种请求头下的响应码 */
 export interface GalleryHlsAuthProbe {
@@ -1881,6 +1884,173 @@ export class FnHttpClientGalleryOps {
   }
 
   /**
+   * 用户相册列表：GET /p/api/v1/album/list?sort_direction=desc&sort_by=date_time&offset=0&limit=1000
+   */
+  async getUserAlbumList(timeoutMs: number = 20000): Promise<FnClientResult<UserAlbumData>> {
+    try {
+      const params: Record<string, string | number | boolean> = {};
+      params['sort_direction'] = 'desc';
+      params['sort_by'] = 'date_time';
+      params['offset'] = 0;
+      params['limit'] = 1000;
+      const qs = buildGallerySortedQuery(params);
+      const signPath = `${FN_PHOTO_API_PREFIX}/album/list`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/album/list?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<UserAlbumData>(pathCandidates, gallerySign, timeoutMs, 3);
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '相册列表加载失败' };
+      }
+      const normList = FnHttpClientGalleryOps.userAlbumItemsFromData(res.data as Object);
+      return { success: true, data: { list: normList } };
+    } catch (e) {
+      return { success: false, message: String(e) || '相册列表加载异常' };
+    }
+  }
+
+  /**
+   * 用户相册时间线：普通 GET /p/api/v1/album/normal/timeline，宝宝 GET /p/api/v1/album/baby/timeline
+   */
+  async getUserAlbumTimeline(
+    albumId: string,
+    isBaby: boolean,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryTimelineData>> {
+    try {
+      if (albumId.length === 0) {
+        return { success: false, message: 'albumId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['albumId'] = albumId;
+      if (!isBaby) {
+        params['sortBy'] = 'date_time';
+        params['sortDirection'] = 'desc';
+      }
+      const qs = buildGallerySortedQuery(params);
+      const sub = isBaby ? 'baby' : 'normal';
+      const signPath = `${FN_PHOTO_API_PREFIX}/album/${sub}/timeline`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/album/${sub}/timeline?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<GalleryTimelineData>(pathCandidates, gallerySign, timeoutMs, 3);
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '相册时间线加载失败' };
+      }
+      return { success: true, data: res.data };
+    } catch (e) {
+      return { success: false, message: String(e) || '相册时间线加载异常' };
+    }
+  }
+
+  /**
+   * 用户相册按日列表：普通 GET /p/api/v1/album/normal/getList，宝宝 GET /p/api/v1/album/baby/getList
+   */
+  async getUserAlbumPhotoList(
+    albumId: string,
+    isBaby: boolean,
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    try {
+      if (albumId.length === 0) {
+        return { success: false, message: 'albumId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['albumId'] = albumId;
+      params['startTime'] = startTime;
+      params['endTime'] = endTime;
+      params['offset'] = offset;
+      params['limit'] = limit;
+      if (!isBaby) {
+        params['sortDirection'] = 'desc';
+      }
+      const qs = buildGallerySortedQuery(params);
+      const sub = isBaby ? 'baby' : 'normal';
+      const signPath = `${FN_PHOTO_API_PREFIX}/album/${sub}/getList`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/album/${sub}/getList?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+        pathCandidates, gallerySign, timeoutMs, 3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '相册照片加载失败' };
+      }
+      const payload = res.data as GalleryGetListData | GalleryListItem[];
+      if (Array.isArray(payload)) {
+        return { success: true, data: { list: payload } };
+      }
+      return { success: true, data: payload as GalleryGetListData };
+    } catch (e) {
+      return { success: false, message: String(e) || '相册照片加载异常' };
+    }
+  }
+
+  /**
+   * 用户相册平铺列表兜底：GET /p/api/v1/album/photos
+   */
+  async getUserAlbumPhotos(
+    albumId: string,
+    offset: number,
+    limit: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    try {
+      if (albumId.length === 0) {
+        return { success: false, message: 'albumId 不能为空' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['album_id'] = albumId;
+      params['sort_by'] = 'date_time';
+      params['sort_direction'] = 'desc';
+      params['offset'] = offset;
+      params['limit'] = limit;
+      const qs = buildGallerySortedQuery(params);
+      const signPath = `${FN_PHOTO_API_PREFIX}/album/photos`;
+      const pathCandidates: string[] = [
+        `${signPath}?${qs}`,
+        `/api/v1/album/photos?${qs}`
+      ];
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: signPath,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<GalleryGetListData | GalleryListItem[]>(
+        pathCandidates, gallerySign, timeoutMs, 3
+      );
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '相册照片加载失败' };
+      }
+      const payload = res.data as GalleryGetListData | GalleryListItem[];
+      if (Array.isArray(payload)) {
+        return { success: true, data: { list: payload } };
+      }
+      return { success: true, data: payload as GalleryGetListData };
+    } catch (e) {
+      return { success: false, message: String(e) || '相册照片加载异常' };
+    }
+  }
+
+  /**
    * 从接口 data 字段提取分类数组，尝试多种键名。
    * 每条原始记录都经过 normalizeCategoryItem 做字段名映射。
    */
@@ -2215,6 +2385,83 @@ export class FnHttpClientGalleryOps {
       const raw = FnHttpClientGalleryOps.asLooseJsonRecord(el);
       if (raw !== null) {
         result.push(FnHttpClientGalleryOps.normalizeAiPersonItem(raw));
+      }
+    }
+    return result;
+  }
+
+  private static normalizeUserAlbumItem(
+    raw: Record<string, Object | string | number | boolean | undefined | null>
+  ): UserAlbumItem {
+    const idText = FnHttpClientGalleryOps.readFirstString(raw, ['albumId', 'id', 'album_id']);
+    const nameText = FnHttpClientGalleryOps.readFirstString(raw, ['albumName', 'name', 'title']);
+    const poster = FnHttpClientGalleryOps.readFirstString(raw, ['posterUrl', 'poster_url', 'cover', 'coverUrl']);
+    const categoryRaw = raw['category'] ?? raw['albumType'] ?? raw['album_type'];
+    let category: number | undefined = undefined;
+    if (typeof categoryRaw === 'number' && Number.isFinite(categoryRaw)) {
+      category = Math.floor(categoryRaw);
+    } else if (typeof categoryRaw === 'string' && categoryRaw.length > 0) {
+      const n = Number(categoryRaw);
+      if (Number.isFinite(n)) {
+        category = Math.floor(n);
+      }
+    }
+    const photo = FnHttpClientGalleryOps.readFirstNonNegativeNumber(raw, ['photoCount', 'photo_count']);
+    const video = FnHttpClientGalleryOps.readFirstNonNegativeNumber(raw, ['videoCount', 'video_count']);
+    let itemCount = FnHttpClientGalleryOps.readFirstNonNegativeNumber(raw, ['itemCount', 'item_count', 'count', 'total']);
+    if (itemCount < 0 && (photo >= 0 || video >= 0)) {
+      itemCount = Math.max(0, photo) + Math.max(0, video);
+    }
+    const sharedVal = raw['shared'];
+    const shared = sharedVal === true || sharedVal === 1 || sharedVal === '1' || sharedVal === 'true';
+    const ownerFlag = raw['isOwner'] ?? raw['is_owner'];
+    let isOwner: boolean | undefined = undefined;
+    if (typeof ownerFlag === 'boolean') {
+      isOwner = ownerFlag;
+    }
+    const item: UserAlbumItem = {
+      id: idText.length > 0 ? idText : undefined,
+      albumId: idText.length > 0 ? idText : undefined,
+      name: nameText.length > 0 ? nameText : undefined,
+      albumName: nameText.length > 0 ? nameText : undefined,
+      category: category,
+      albumType: category,
+      posterUrl: poster.length > 0 ? poster : undefined,
+      cover: poster.length > 0 ? poster : undefined,
+      itemCount: itemCount >= 0 ? itemCount : undefined,
+      photoCount: photo >= 0 ? photo : undefined,
+      videoCount: video >= 0 ? video : undefined,
+      shared: shared,
+      ownerName: FnHttpClientGalleryOps.readFirstString(raw, ['ownerName', 'owner_name']),
+      isOwner: isOwner
+    };
+    const ownerIdText = FnHttpClientGalleryOps.readFirstString(raw, ['ownerId', 'owner_id']);
+    if (ownerIdText.length > 0) {
+      item.ownerId = ownerIdText;
+    }
+    return item;
+  }
+
+  private static userAlbumItemsFromData(dataObj: Object | undefined): UserAlbumItem[] {
+    if (dataObj === undefined || dataObj === null) {
+      return [];
+    }
+    let rawArr: Object[];
+    if (Array.isArray(dataObj)) {
+      rawArr = dataObj as Object[];
+    } else {
+      const d = dataObj as Record<string, Object | undefined>;
+      const found = d['list'] ?? d['items'] ?? d['records'] ?? d['rows'] ?? d['data'] ?? d['result'];
+      if (!Array.isArray(found)) {
+        return [];
+      }
+      rawArr = found as Object[];
+    }
+    const result: UserAlbumItem[] = [];
+    for (let i = 0; i < rawArr.length; i++) {
+      const raw = FnHttpClientGalleryOps.asLooseJsonRecord(rawArr[i]);
+      if (raw !== null) {
+        result.push(FnHttpClientGalleryOps.normalizeUserAlbumItem(raw));
       }
     }
     return result;
@@ -2575,37 +2822,11 @@ export class FnHttpClientGalleryOps {
   }
 
   /**
-   * folder_view/getFileList 常见只返回 id + photoUUID + filePath 等基础字段，
-   * 不带 additional.thumbnail。这里补齐缩略图/原图路径，供网格与预览共用。
+   * folder_view/getFileList 常见只返回 id + photoUUID。
+   * 缩略图/原图走与主图库相同的 normalizeGalleryListItems。
    */
   private static normalizeFolderViewItems(items: GalleryListItem[]): GalleryListItem[] {
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i] as Record<string, string | number | Object | undefined>;
-      const idVal = it['id'];
-      const uuidVal = it['photoUUID'];
-      if (idVal === undefined || idVal === null || uuidVal === undefined || uuidVal === null) {
-        continue;
-      }
-      const id = String(idVal).trim();
-      const uuid = String(uuidVal).trim();
-      if (id.length === 0 || uuid.length === 0) {
-        continue;
-      }
-      // 1) 顶层 thumb / originalUrl 兜底（GalleryAlbumCommon.pickThumb/pickOriginal 会读取）
-      const thumbNow = it['thumb'];
-      if (thumbNow === undefined || String(thumbNow).trim().length === 0) {
-        // 目录视图优先使用 m 档，避免跳转后缩略图明显发糊
-        it['thumb'] = `${FN_PHOTO_API_PREFIX}/stream/p/t/${id}/m/${uuid}`;
-      }
-      const origNow = it['originalUrl'];
-      if (origNow === undefined || String(origNow).trim().length === 0) {
-        it['originalUrl'] = `${FN_PHOTO_API_PREFIX}/stream/p/t/${id}/o/${uuid}`;
-      }
-
-      // 2) 为避免 ArkTS 未类型化对象字面量限制，这里只补顶层字段；
-      //    GalleryAlbumCommon.pickThumb/pickOriginal 已能读取 thumb/originalUrl。
-    }
-    return items;
+    return normalizeGalleryListItems(items);
   }
 
   /**

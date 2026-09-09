@@ -245,3 +245,39 @@ export async function mediaCategoryPersistOrder(
 export async function mediaCategoryPersistOrderFromUi(ui: UIContext, items: MediaCategoryItem[]): Promise<void> {
   await mediaCategoryPersistOrder(abilityContextFromUi(ui), items);
 }
+
+export async function mediaCategorySavedOrder(
+  ctx: common.UIAbilityContext | undefined
+): Promise<string[]> {
+  const account = currentAccount();
+  if (ctx === undefined || account.length === 0) {
+    return [];
+  }
+  const order = await loadOrderLocked(ctx, account);
+  return order.slice();
+}
+
+export async function mediaCategoryApplyOrderKeys(
+  ctx: common.UIAbilityContext | undefined,
+  order: string[]
+): Promise<void> {
+  const account = currentAccount();
+  if (ctx === undefined || account.length === 0) {
+    return;
+  }
+  cachedAccount = account;
+  cachedOrder = order.slice();
+  cacheReady = true;
+  const p = await openPrefs(ctx);
+  if (p === null) {
+    return;
+  }
+  try {
+    const raw = await p.get(K_ORDER_JSON, '') as string;
+    const map = parseStore(raw);
+    map.set(account, cachedOrder);
+    await p.put(K_ORDER_JSON, storeToJson(map));
+    await p.flush();
+  } catch (_e) {
+  }
+}

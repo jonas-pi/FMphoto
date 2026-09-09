@@ -15,6 +15,7 @@ import {
   NasDedupeIndex
 } from './GalleryAutoSyncOfficialFingerprint';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
+import { galleryListFromData } from './GalleryListItemNormalize';
 import { DATE_FEED_BATCH, DAY_MAX_ROUNDS } from './galleryAlbumTab/GalleryAlbumTabConstants';
 import {
   fmtDayEnd,
@@ -31,14 +32,7 @@ const CACHE_TTL_MS: number = 30 * 60 * 1000;
 const NAS_DAY_FETCH_CONCURRENCY: number = 3;
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  const raw = data.list ?? data.items ?? data.photos ?? data.records;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw as GalleryListItem[];
+  return galleryListFromData(data);
 }
 
 function collectTimelineDays(timeline: GalleryTimelineData): TimelineDayModel[] {

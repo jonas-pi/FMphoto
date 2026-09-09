@@ -1,4 +1,4 @@
-import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
+import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem, UserAlbumItem } from '../../model/FnApiTypes';
 import {
   FnInlineLoading,
   FnStateText
@@ -16,10 +16,24 @@ import {
   fnGridColumnIndexes,
   fnRepeatFrTemplate
 } from '../../common/FnWindowBreakpoint';
-import { mediaCategoryMoveItems } from '../MediaCategoryOrderPreferences';
-import { mediaCategoryStableId } from '../GalleryAlbumEntityData';
+import {
+  AlbumsHomeTile,
+  albumsHomeAlbumTileKey,
+  albumsHomeHiddenKeysFromUi,
+  albumsHomeMediaTileKey,
+  albumsHomeMergeMediaOrder,
+  albumsHomeMoveTiles,
+  albumsHomeOrderFromTiles,
+  albumsHomePersistHiddenKeysFromUi,
+  albumsHomePersistTileOrderFromUi,
+  albumsHomeTileKey,
+  albumsHomeTileOrderFromUi,
+  buildAlbumsHomeTiles
+} from '../AlbumsHomeTileOrderPreferences';
+import { userAlbumCount, userAlbumCover, userAlbumIsBaby, userAlbumName } from '../GalleryAlbumEntityData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { playGalleryDragSortHaptic } from '../GallerySelectionHaptic';
+import { fnHdsMediumDetentSheetOptions } from '../../common/FnHdsOverlay';
 
 const ALBUMS_HOME_SECTION_SIDE_PAD_VP: number = 14;
 const ALBUMS_HOME_MEDIA_GRID_GAP_VP: number = 10;
@@ -38,6 +52,14 @@ const ALBUMS_HOME_MEDIA_CARD_TEXT_VP: number = 62;
 const DOMAIN = 0xFF00;
 const TAG = 'GalleryDiag';
 
+class AlbumsHomeRestoreCard {
+  key: string = '';
+  title: string = '';
+  coverUri: string = '';
+  countText: string = '';
+  baby: boolean = false;
+}
+
 @Component
 export struct GalleryAlbumAlbumsHomeView {
   @Prop @Watch('onBaseUrlChanged') baseUrl: string = '';
@@ -52,6 +74,9 @@ export struct GalleryAlbumAlbumsHomeView {
   @Prop personLoading: boolean = false;
   @Prop personError: string = '';
   @Prop @Watch('onPersonItemsChanged') personItems: AiPersonItem[] = [];
+  @Prop userAlbumLoading: boolean = false;
+  @Prop userAlbumError: string = '';
+  @Prop @Watch('onUserAlbumItemsChanged') userAlbumItems: UserAlbumItem[] = [];
   @Prop smartLoading: boolean = false;
   @Prop smartError: string = '';
   @Prop @Watch('onSmartSceneItemsChanged') smartSceneItems: SmartCategoryItem[] = [];
@@ -70,11 +95,16 @@ export struct GalleryAlbumAlbumsHomeView {
   onOpenMediaCategory: (item: MediaCategoryItem) => void = (_: MediaCategoryItem) => {};
   onReorderMediaCategories: (items: MediaCategoryItem[]) => void = (_: MediaCategoryItem[]) => {};
   onOpenPersonPage: () => void = () => {};
+  onOpenUserAlbum: (item: UserAlbumItem) => void = (_: UserAlbumItem) => {};
   onOpenSmartCategoryPage: () => void = () => {};
   onOpenPlacePlaceholder: () => void = () => {};
   onOpenRecentAdded: () => void = () => {};
   onOpenCollect: () => void = () => {};
   onOpenRecycleBin: () => void = () => {};
+  onAlbumsHomeEditModeChange: (active: boolean) => void = (_: boolean) => {};
+
+  @Prop @Watch('onEditCommitSignalChanged') albumsHomeEditCommitSignal: number = 0;
+  @Prop @Watch('onEditCancelSignalChanged') albumsHomeEditCancelSignal: number = 0;
 
   @State private thumbLoadingPaused: boolean = false;
   @State private personPreviewPix: Array<PixelMap | undefined> = [];
@@ -87,7 +117,16 @@ export struct GalleryAlbumAlbumsHomeView {
   private thumbCacheEpoch: number = 0;
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
   @State private mediaReorderActive: boolean = false;
+  @State private mediaDragging: boolean = false;
   @State private mediaGridWidthVp: number = 0;
+  @State private homeTiles: AlbumsHomeTile[] = [];
+  @State private hiddenTileKeys: string[] = [];
+  @State private restoreSheetVisible: boolean = false;
+  @State private restoreCards: AlbumsHomeRestoreCard[] = [];
+  private homeTilesDirty: boolean = false;
+  private suppressTileClick: boolean = false;
+  private editOrderSnapshot: string[] = [];
+  private editHiddenSnapshot: string[] = [];
   private thumbResumeTimer: number = -1;
   private previewRefreshTimer: number = -1;
   private coverPersistTimer: number = -1;
@@ -98,6 +137,8 @@ export struct GalleryAlbumAlbumsHomeView {
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
+    this.rebuildHomeTilesFromProps();
+    void this.loadHomeTileOrder();
     this.scheduleAlbumCoverPersist();
     if (this.personPreviewPix.length <= 0 && this.smartPreviewPix.length <= 0) {
       this.queuePreviewRefresh();
@@ -115,7 +156,7 @@ export struct GalleryAlbumAlbumsHomeView {
 
   private recycleThumbCache(aggressive: boolean = false): void {
     trimThumbPixCacheForList(
-      this.mediaItems.length + this.personItems.length + this.combinedSmartItems().length,
+      this.mediaItems.length + this.personItems.length + this.userAlbumItems.length + this.combinedSmartItems().length,
       aggressive
     );
   }
@@ -361,12 +402,21 @@ export struct GalleryAlbumAlbumsHomeView {
   private onPageShowSignalChanged(): void {
     if (this.pageVisible) {
       this.queueShortcutPreviewRefresh(true);
+      if (!this.mediaReorderActive) {
+        this.homeTilesDirty = false;
+        void this.loadHomeTileOrder();
+      }
     }
   }
 
   private onPersonItemsChanged(): void {
     this.scheduleAlbumCoverPersist();
     this.queuePreviewRefresh();
+  }
+
+  private onUserAlbumItemsChanged(): void {
+    this.scheduleAlbumCoverPersist();
+    this.rebuildHomeTilesFromProps();
   }
 
   private onSmartSceneItemsChanged(): void {
@@ -381,6 +431,7 @@ export struct GalleryAlbumAlbumsHomeView {
 
   private onMediaItemsChanged(): void {
     this.scheduleAlbumCoverPersist();
+    this.rebuildHomeTilesFromProps();
   }
 
   /** 封面/快捷入口走 loadThumbPix 的 PixelMap 不会随 GalleryNetworkThumb 自动刷新 */
@@ -401,6 +452,12 @@ export struct GalleryAlbumAlbumsHomeView {
     const urls: string[] = [];
     for (let i = 0; i < this.mediaItems.length; i++) {
       const cover = this.getMediaCategoryCover(this.mediaItems[i]);
+      if (cover.length > 0) {
+        urls.push(nasUrl(this.baseUrl, cover));
+      }
+    }
+    for (let i = 0; i < this.userAlbumItems.length; i++) {
+      const cover = userAlbumCover(this.userAlbumItems[i]);
       if (cover.length > 0) {
         urls.push(nasUrl(this.baseUrl, cover));
       }
@@ -452,7 +509,7 @@ export struct GalleryAlbumAlbumsHomeView {
 
   private mediaAlbumGridHeightVp(): number {
     const cols = this.mediaGridColumns();
-    const count = this.mediaItems.length;
+    const count = this.homeGridItemCount();
     const rows = Math.max(1, Math.ceil(count / cols));
     const gap = ALBUMS_HOME_MEDIA_GRID_GAP_VP;
     const width = this.mediaGridWidthVp > 8 ? this.mediaGridWidthVp : 332;
@@ -461,21 +518,424 @@ export struct GalleryAlbumAlbumsHomeView {
     return rows * itemH + Math.max(0, rows - 1) * gap;
   }
 
-  private mediaCategoryKey(item: MediaCategoryItem): string {
-    return mediaCategoryStableId(item);
+  private hasTopAlbumCards(): boolean {
+    return this.mediaItems.length > 0 || this.userAlbumItems.length > 0;
   }
 
-  private onMediaCategoryMove(from: number, to: number): void {
-    const next = mediaCategoryMoveItems(this.mediaItems, from, to);
-    if (next === this.mediaItems) {
+  private shouldShowPersonCard(): boolean {
+    return this.personItems.length > 0;
+  }
+
+  private shouldShowSmartCard(): boolean {
+    return this.combinedSmartItems().length > 0;
+  }
+
+  private smartAlbumRowHeightVp(): number {
+    const cols = 3;
+    const gap = ALBUMS_HOME_MEDIA_GRID_GAP_VP;
+    const width = this.mediaGridWidthVp > 8 ? this.mediaGridWidthVp : 332;
+    const cellW = Math.max(1, (width - gap * (cols - 1)) / cols);
+    return cellW + ALBUMS_HOME_MEDIA_CARD_TEXT_VP;
+  }
+
+  private userAlbumCoverUri(item: UserAlbumItem): string {
+    const cover = userAlbumCover(item);
+    return cover.length > 0 ? nasUrl(this.baseUrl, cover) : '';
+  }
+
+  private rebuildHomeTilesFromProps(): void {
+    const order = albumsHomeOrderFromTiles(this.homeTiles);
+    this.homeTiles = buildAlbumsHomeTiles(this.mediaItems, this.userAlbumItems, order, this.hiddenTileKeys);
+  }
+
+  private async loadHomeTileOrder(): Promise<void> {
+    const order = await albumsHomeTileOrderFromUi(this.getUIContext());
+    const hidden = await albumsHomeHiddenKeysFromUi(this.getUIContext());
+    if (this.homeTilesDirty || this.mediaReorderActive) {
       return;
     }
-    this.onReorderMediaCategories(next);
+    this.hiddenTileKeys = hidden;
+    this.homeTiles = buildAlbumsHomeTiles(this.mediaItems, this.userAlbumItems, order, hidden);
+  }
+
+  private onHomeTileMove(from: number, to: number): void {
+    const next = albumsHomeMoveTiles(this.homeTiles, from, to);
+    if (next === this.homeTiles) {
+      return;
+    }
+    this.homeTilesDirty = true;
+    this.homeTiles = next;
+  }
+
+  private homeGridItemCount(): number {
+    return this.homeTiles.length + (this.shouldShowAddTile() ? 1 : 0);
+  }
+
+  private shouldShowAddTile(): boolean {
+    return this.mediaReorderActive || (this.homeTiles.length <= 0 && this.hiddenTileKeys.length > 0);
+  }
+
+  private hiddenTileTitle(key: string): string {
+    for (let i = 0; i < this.mediaItems.length; i++) {
+      if (albumsHomeMediaTileKey(this.mediaItems[i]) === key) {
+        return this.getMediaCategoryTitle(this.mediaItems[i]);
+      }
+    }
+    for (let i = 0; i < this.userAlbumItems.length; i++) {
+      if (albumsHomeAlbumTileKey(this.userAlbumItems[i]) === key) {
+        return userAlbumName(this.userAlbumItems[i]);
+      }
+    }
+    return '未命名板块';
+  }
+
+  private hiddenTileCoverUri(key: string): string {
+    for (let i = 0; i < this.mediaItems.length; i++) {
+      if (albumsHomeMediaTileKey(this.mediaItems[i]) === key) {
+        return nasUrl(this.baseUrl, this.getMediaCategoryCover(this.mediaItems[i]));
+      }
+    }
+    for (let i = 0; i < this.userAlbumItems.length; i++) {
+      if (albumsHomeAlbumTileKey(this.userAlbumItems[i]) === key) {
+        return this.userAlbumCoverUri(this.userAlbumItems[i]);
+      }
+    }
+    return '';
+  }
+
+  private hiddenTileCountText(key: string): string {
+    for (let i = 0; i < this.mediaItems.length; i++) {
+      if (albumsHomeMediaTileKey(this.mediaItems[i]) === key) {
+        return `${this.getMediaCategoryCount(this.mediaItems[i])}`;
+      }
+    }
+    for (let i = 0; i < this.userAlbumItems.length; i++) {
+      if (albumsHomeAlbumTileKey(this.userAlbumItems[i]) === key) {
+        return `${userAlbumCount(this.userAlbumItems[i])}`;
+      }
+    }
+    return '';
+  }
+
+  private hiddenTileIsBaby(key: string): boolean {
+    for (let i = 0; i < this.userAlbumItems.length; i++) {
+      if (albumsHomeAlbumTileKey(this.userAlbumItems[i]) === key) {
+        return userAlbumIsBaby(this.userAlbumItems[i]);
+      }
+    }
+    return false;
+  }
+
+  private toast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 1500 });
+  }
+
+  private hideHomeTileByKey(key: string): void {
+    if (this.homeTiles.length <= 1) {
+      this.toast('至少保留一个板块');
+      return;
+    }
+    const nextHidden: string[] = this.hiddenTileKeys.slice();
+    let already = false;
+    for (let i = 0; i < nextHidden.length; i++) {
+      if (nextHidden[i] === key) {
+        already = true;
+        break;
+      }
+    }
+    if (!already) {
+      nextHidden.push(key);
+    }
+    this.homeTilesDirty = true;
+    this.hiddenTileKeys = nextHidden;
+    this.rebuildHomeTilesFromProps();
+    this.refreshRestoreCards();
+  }
+
+  private buildRestoreCards(): AlbumsHomeRestoreCard[] {
+    const cards: AlbumsHomeRestoreCard[] = [];
+    for (let i = 0; i < this.hiddenTileKeys.length; i++) {
+      const key = this.hiddenTileKeys[i];
+      const card = new AlbumsHomeRestoreCard();
+      card.key = key;
+      card.title = this.hiddenTileTitle(key);
+      card.coverUri = this.hiddenTileCoverUri(key);
+      card.countText = this.hiddenTileCountText(key);
+      card.baby = this.hiddenTileIsBaby(key);
+      cards.push(card);
+    }
+    return cards;
+  }
+
+  private refreshRestoreCards(): void {
+    this.restoreCards = this.buildRestoreCards();
+    if (this.restoreSheetVisible && this.restoreCards.length <= 0) {
+      this.restoreSheetVisible = false;
+    }
+  }
+
+  private openRestoreSheet(): void {
+    this.refreshRestoreCards();
+    if (this.restoreCards.length <= 0) {
+      this.toast('没有已隐藏的板块');
+      return;
+    }
+    this.restoreSheetVisible = true;
+  }
+
+  private restoreHiddenByKey(key: string): void {
+    const nextHidden: string[] = [];
+    for (let i = 0; i < this.hiddenTileKeys.length; i++) {
+      if (this.hiddenTileKeys[i] !== key) {
+        nextHidden.push(this.hiddenTileKeys[i]);
+      }
+    }
+    this.homeTilesDirty = true;
+    this.hiddenTileKeys = nextHidden;
+    this.rebuildHomeTilesFromProps();
+    this.refreshRestoreCards();
+  }
+
+  private snapshotEditLayout(): void {
+    this.editOrderSnapshot = albumsHomeOrderFromTiles(this.homeTiles);
+    this.editHiddenSnapshot = this.hiddenTileKeys.slice();
+  }
+
+  private commitAlbumsHomeEdit(): void {
+    this.restoreSheetVisible = false;
+    this.homeTilesDirty = false;
+    void albumsHomePersistHiddenKeysFromUi(this.getUIContext(), this.hiddenTileKeys);
+    void albumsHomePersistTileOrderFromUi(this.getUIContext(), this.homeTiles);
+    this.onReorderMediaCategories(albumsHomeMergeMediaOrder(this.homeTiles, this.mediaItems));
+    this.setMediaReorderActive(false);
+  }
+
+  private cancelAlbumsHomeEdit(): void {
+    this.restoreSheetVisible = false;
+    this.homeTilesDirty = false;
+    this.hiddenTileKeys = this.editHiddenSnapshot.slice();
+    this.homeTiles = buildAlbumsHomeTiles(
+      this.mediaItems,
+      this.userAlbumItems,
+      this.editOrderSnapshot,
+      this.hiddenTileKeys
+    );
+    this.setMediaReorderActive(false);
+  }
+
+  private onEditCommitSignalChanged(): void {
+    if (this.albumsHomeEditCommitSignal <= 0 || !this.mediaReorderActive) {
+      return;
+    }
+    this.commitAlbumsHomeEdit();
+  }
+
+  private onEditCancelSignalChanged(): void {
+    if (this.albumsHomeEditCancelSignal <= 0 || !this.mediaReorderActive) {
+      return;
+    }
+    this.cancelAlbumsHomeEdit();
+  }
+
+  @Builder
+  private tileCornerButton(tileKey: string, add: boolean) {
+    SymbolGlyph(add ? $r('sys.symbol.plus_circle_fill') : $r('sys.symbol.minus_circle_fill'))
+      .fontSize(24)
+      .fontColor([add ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_warning')])
+      .margin({ top: 4, right: 4 })
+      .align(Alignment.TopEnd)
+      .draggable(false)
+      .onClick((): void => {
+        this.suppressTileClick = true;
+        if (add) {
+          this.restoreHiddenByKey(tileKey);
+          return;
+        }
+        this.hideHomeTileByKey(tileKey);
+      })
+  }
+
+  @Builder
+  private addHiddenTileCell() {
+    Column({ space: 8 }) {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(36)
+          .fontColor([$r('app.color.text_secondary')])
+      }
+      .width('100%')
+      .aspectRatio(1)
+      .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
+      .backgroundColor($r('app.color.gallery_material_surface_bg'))
+      .border({ width: 1, color: $r('app.color.immersive_panel_border') })
+
+      Text('添加')
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      Text(this.hiddenTileKeys.length > 0 ? `${this.hiddenTileKeys.length}` : ' ')
+        .fontSize(11)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
+    .onClick((): void => {
+      this.openRestoreSheet();
+    })
+  }
+
+  private restoreGridHeightVp(): number {
+    const cols = 3;
+    const count = Math.max(1, this.restoreCards.length);
+    const rows = Math.ceil(count / cols);
+    const gap = ALBUMS_HOME_MEDIA_GRID_GAP_VP;
+    const width = this.mediaGridWidthVp > 8 ? this.mediaGridWidthVp : 332;
+    const cellW = Math.max(1, (width - gap * (cols - 1)) / cols);
+    const itemH = cellW + ALBUMS_HOME_MEDIA_CARD_TEXT_VP;
+    return rows * itemH + Math.max(0, rows - 1) * gap;
+  }
+
+  @Builder
+  private restoreCardCell(item: AlbumsHomeRestoreCard) {
+    Column({ space: 8 }) {
+      Stack({ alignContent: Alignment.TopEnd }) {
+        Stack() {
+          this.mediaThumb(item.coverUri, item.title.slice(0, 1))
+          if (item.baby) {
+            Text('宝宝')
+              .fontSize(10)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+              .borderRadius({
+                topLeft: 10,
+                topRight: 0,
+                bottomLeft: 0,
+                bottomRight: ALBUMS_HOME_MEDIA_CARD_RADIUS_VP
+              })
+              .backgroundColor('#99000000')
+              .align(Alignment.BottomEnd)
+          }
+        }
+        .width('100%')
+        .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
+        .clip(true)
+        this.tileCornerButton(item.key, true)
+      }
+      .width('100%')
+
+      Text(item.title)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      Text(item.countText.length > 0 ? item.countText : ' ')
+        .fontSize(11)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
+    .onClick((): void => {
+      this.restoreHiddenByKey(item.key);
+    })
+  }
+
+  @Builder
+  private restoreSheetBuilder() {
+    Column() {
+      Scroll() {
+        Grid() {
+          ForEach(this.restoreCards, (item: AlbumsHomeRestoreCard) => {
+            GridItem() {
+              this.restoreCardCell(item)
+            }
+            .width('100%')
+          }, (item: AlbumsHomeRestoreCard) => `restore_${item.key}`)
+        }
+        .columnsTemplate(fnRepeatFrTemplate(3))
+        .columnsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
+        .rowsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
+        .width('100%')
+        .height(this.restoreGridHeightVp())
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.None)
+      }
+      .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .nestedScroll({
+        scrollForward: NestedScrollMode.PARENT_FIRST,
+        scrollBackward: NestedScrollMode.PARENT_FIRST
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+    .backgroundColor(Color.Transparent)
+  }
+
+  @Builder
+  private homeTileCell(tile: AlbumsHomeTile) {
+    this.homeTileCellInner(tile.kind, tile.media, tile.album)
+  }
+
+  @Builder
+  private homeTileCellInner(kind: string, media: MediaCategoryItem | undefined, album: UserAlbumItem | undefined) {
+    if (kind === 'user-album') {
+      this.userAlbumCardOrBlank(album)
+    } else {
+      this.mediaCategoryCell(media)
+    }
+  }
+
+  @Builder
+  private userAlbumCardOrBlank(item?: UserAlbumItem) {
+    if (item === undefined) {
+      Blank().layoutWeight(1)
+    } else {
+      this.userAlbumCard(item)
+    }
   }
 
   private setMediaReorderActive(active: boolean): void {
-    if (this.mediaReorderActive !== active) {
-      this.mediaReorderActive = active;
+    if (active && !this.mediaReorderActive) {
+      this.snapshotEditLayout();
+      this.mediaReorderActive = true;
+      this.onAlbumsHomeEditModeChange(true);
+      return;
+    }
+    if (!active && this.mediaReorderActive) {
+      this.restoreSheetVisible = false;
+      this.mediaReorderActive = false;
+      this.mediaDragging = false;
+      this.onAlbumsHomeEditModeChange(false);
+      return;
+    }
+    if (!active && this.mediaDragging) {
+      this.mediaDragging = false;
+    }
+  }
+
+  private consumeEditModeCardClick(): boolean {
+    if (this.suppressTileClick) {
+      this.suppressTileClick = false;
+      return true;
+    }
+    return this.mediaReorderActive;
+  }
+
+  private setMediaDragging(dragging: boolean): void {
+    if (this.mediaDragging !== dragging) {
+      this.mediaDragging = dragging;
     }
   }
 
@@ -721,10 +1181,13 @@ export struct GalleryAlbumAlbumsHomeView {
           isVideo: false,
           isGif: false,
           paused: !this.pageVisible || this.thumbLoadingPaused,
-          diskPersistKind: THUMB_DISK_ALBUM_COVER
+          diskPersistKind: THUMB_DISK_ALBUM_COVER,
+          clipRadius: ALBUMS_HOME_MEDIA_CARD_RADIUS_VP
         })
           .width('100%')
           .aspectRatio(1)
+          .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
+          .clip(true)
           .draggable(false)
       } else {
         Column() {
@@ -754,10 +1217,16 @@ export struct GalleryAlbumAlbumsHomeView {
       Blank().layoutWeight(1)
     } else {
       Column({ space: 8 }) {
-        this.mediaThumb(
-          nasUrl(this.baseUrl, this.getMediaCategoryCover(item)),
-          this.getMediaCategoryTitle(item).slice(0, 1)
-        )
+        Stack({ alignContent: Alignment.TopEnd }) {
+          this.mediaThumb(
+            nasUrl(this.baseUrl, this.getMediaCategoryCover(item)),
+            this.getMediaCategoryTitle(item).slice(0, 1)
+          )
+          if (this.mediaReorderActive) {
+            this.tileCornerButton(albumsHomeMediaTileKey(item), false)
+          }
+        }
+        .width('100%')
 
         Text(this.getMediaCategoryTitle(item))
           .fontSize(13)
@@ -775,7 +1244,7 @@ export struct GalleryAlbumAlbumsHomeView {
       .width('100%')
       .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
       .onClick((): void => {
-        if (this.mediaReorderActive) {
+        if (this.consumeEditModeCardClick()) {
           return;
         }
         this.onOpenMediaCategory(item);
@@ -909,7 +1378,7 @@ export struct GalleryAlbumAlbumsHomeView {
       .width('100%')
       .height('100%')
       .objectFit(ImageFit.Cover)
-      .borderRadius(ALBUMS_HOME_SMART_GRID_TILE_RADIUS_VP)
+      .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
       .clip(true)
       .backgroundColor($r('app.color.gallery_material_surface_bg'))
       .border({ width: 1, color: $r('app.color.immersive_panel_border') })
@@ -940,9 +1409,63 @@ export struct GalleryAlbumAlbumsHomeView {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
     }
-    .layoutWeight(1)
+    .width('100%')
     .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
     .onClick(this.onOpenPersonPage)
+  }
+
+  @Builder
+  private userAlbumCard(item: UserAlbumItem) {
+    Column({ space: 8 }) {
+      Stack({ alignContent: Alignment.TopEnd }) {
+        Stack() {
+          this.mediaThumb(this.userAlbumCoverUri(item), userAlbumName(item).slice(0, 1))
+          if (userAlbumIsBaby(item)) {
+            Text('宝宝')
+              .fontSize(10)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+              .borderRadius({
+                topLeft: 10,
+                topRight: 0,
+                bottomLeft: 0,
+                bottomRight: ALBUMS_HOME_MEDIA_CARD_RADIUS_VP
+              })
+              .backgroundColor('#99000000')
+              .align(Alignment.BottomEnd)
+          }
+        }
+        .width('100%')
+        .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
+        .clip(true)
+        if (this.mediaReorderActive) {
+          this.tileCornerButton(albumsHomeAlbumTileKey(item), false)
+        }
+      }
+      .width('100%')
+
+      Text(userAlbumName(item))
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      Text(`${userAlbumCount(item)}`)
+        .fontSize(11)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
+    .onClick((): void => {
+      if (this.consumeEditModeCardClick()) {
+        return;
+      }
+      this.onOpenUserAlbum(item);
+    })
   }
 
   @Builder
@@ -969,7 +1492,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
     }
-    .layoutWeight(1)
+    .width('100%')
     .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
     .onClick(this.onOpenPlacePlaceholder)
   }
@@ -998,7 +1521,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
     }
-    .layoutWeight(1)
+    .width('100%')
     .padding({ bottom: ALBUMS_HOME_MEDIA_CARD_BOTTOM_PAD_VP })
     .onClick(this.onOpenSmartCategoryPage)
   }
@@ -1135,7 +1658,7 @@ export struct GalleryAlbumAlbumsHomeView {
         }
       }
 
-      if (this.mediaLoading && this.mediaItems.length <= 0) {
+      if (this.mediaLoading && !this.hasTopAlbumCards()) {
         ListItem() {
           Column() {
             this.mediaLoadingPlaceholder()
@@ -1143,40 +1666,47 @@ export struct GalleryAlbumAlbumsHomeView {
           .width('100%')
           .padding({ top: 8 })
         }
-      } else if (false && this.mediaLoading && this.mediaItems.length <= 0) {
+      } else if (false && this.mediaLoading && !this.hasTopAlbumCards()) {
         ListItem() {
           FnInlineLoading({ text: '加载媒体分类中...' })
             .width('100%')
             .padding({ top: 28, bottom: 8 })
         }
-      } else if (this.mediaError.length > 0 && this.mediaItems.length <= 0) {
+      } else if (this.mediaError.length > 0 && !this.hasTopAlbumCards()) {
         ListItem() {
           FnStateText({ text: this.mediaError })
         }
-      } else if (this.mediaItems.length > 0) {
+      } else if (this.hasTopAlbumCards()) {
         ListItem() {
           Column() {
             Grid() {
-              ForEach(this.mediaItems, (item: MediaCategoryItem) => {
+              ForEach(this.homeTiles, (tile: AlbumsHomeTile) => {
                 GridItem() {
-                  this.mediaCategoryCell(item)
+                  this.homeTileCell(tile)
                 }
                 .width('100%')
-              }, (item: MediaCategoryItem) => this.mediaCategoryKey(item))
+              }, (tile: AlbumsHomeTile) => albumsHomeTileKey(tile))
                 .onMove((from: number, to: number): void => {
-                  this.onMediaCategoryMove(from, to);
+                  this.onHomeTileMove(from, to);
                 }, {
                 onLongPress: (_index: number): void => {
                   playGalleryDragSortHaptic();
                   this.setMediaReorderActive(true);
                 },
                   onDragStart: (_index: number): void => {
+                    this.setMediaDragging(true);
                     this.setMediaReorderActive(true);
                   },
                   onDrop: (_index: number): void => {
-                    this.setMediaReorderActive(false);
+                    this.setMediaDragging(false);
                   }
                 })
+              if (this.shouldShowAddTile()) {
+                GridItem() {
+                  this.addHiddenTileCell()
+                }
+                .width('100%')
+              }
             }
             .columnsTemplate(fnRepeatFrTemplate(this.mediaGridColumns()))
             .columnsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
@@ -1208,10 +1738,32 @@ export struct GalleryAlbumAlbumsHomeView {
         Column() {
           this.sectionTitle('智能相册')
 
-          Row({ space: ALBUMS_HOME_MEDIA_GRID_GAP_VP }) {
-            this.personModuleCard()
-            this.placeModuleCard()
-            this.smartCategoryModuleCard()
+          Column() {
+            Grid() {
+              if (this.shouldShowPersonCard()) {
+                GridItem() {
+                  this.personModuleCard()
+                }
+                .width('100%')
+              }
+              GridItem() {
+                this.placeModuleCard()
+              }
+              .width('100%')
+              if (this.shouldShowSmartCard()) {
+                GridItem() {
+                  this.smartCategoryModuleCard()
+                }
+                .width('100%')
+              }
+            }
+            .columnsTemplate(fnRepeatFrTemplate(3))
+            .columnsGap(ALBUMS_HOME_MEDIA_GRID_GAP_VP)
+            .width('100%')
+            .height(this.smartAlbumRowHeightVp())
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.None)
+            .enableScrollInteraction(false)
           }
           .width('100%')
           .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP })
@@ -1246,7 +1798,7 @@ export struct GalleryAlbumAlbumsHomeView {
     .height('100%')
     .divider({ strokeWidth: 0 })
     .scrollBar(BarState.Off)
-    .enableScrollInteraction(!this.mediaReorderActive)
+    .enableScrollInteraction(!this.mediaDragging)
     .edgeEffect(EdgeEffect.Spring)
     .onDidScroll((_offset: number, scrollState: ScrollState): void => {
       if (scrollState !== ScrollState.Idle) {
@@ -1258,5 +1810,11 @@ export struct GalleryAlbumAlbumsHomeView {
     .opacity(this.modeSwitchOpacity)
     .translate({ x: this.modeSwitchOffsetY, y: 0 })
     .animation({ duration: FN_TAB_SWITCH_IN_DURATION, curve: FN_TAB_SWITCH_CURVE })
+    .bindSheet(this.restoreSheetVisible, this.restoreSheetBuilder, fnHdsMediumDetentSheetOptions(
+      '添加板块',
+      (): void => {
+        this.restoreSheetVisible = false;
+      }
+    ))
   }
 }

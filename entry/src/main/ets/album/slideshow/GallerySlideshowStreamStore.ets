@@ -2,6 +2,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryGetListData, GalleryListItem } from '../../model/FnApiTypes';
 import { AppSession } from '../../auth/AppSession';
 import { FnHttpClient } from '../../network/FnHttpClient';
+import { galleryListFromData } from '../GalleryListItemNormalize';
 import { DATE_FEED_BATCH } from '../galleryAlbumTab/GalleryAlbumTabConstants';
 import { fmtDayEnd, fmtDayStart, TimelineDayModel } from '../galleryAlbumTab/GalleryAlbumTabTypes';
 import {
@@ -43,14 +44,7 @@ const SEEN_KEY_CAP: number = 1200;
 const RESOLVE_CONCURRENCY: number = 4;
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  const raw = data.list ?? data.items ?? data.photos ?? data.records;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw as GalleryListItem[];
+  return galleryListFromData(data);
 }
 
 function itemSeenKey(item: GalleryListItem): string {

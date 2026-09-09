@@ -12,6 +12,7 @@ import { curves, display, UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import { GalleryPreviewSessionPrefs } from '../album/GalleryPreviewSessionPrefs';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
@@ -150,6 +151,7 @@ struct GalleryPreview {
   @State private bottomBarHeight: number = 80;
   @State private originalShowing: boolean = false;
   @State private originalPreviewEnabled: boolean = false;
+  @State private originalLocked: boolean = false;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
@@ -277,6 +279,8 @@ struct GalleryPreview {
       this.heroScrimEntered = true;
     }
     setGalleryPreviewOpening(false);
+    this.originalLocked = GalleryPreviewSessionPrefs.originalLocked;
+    this.applySessionOriginalIfNeeded();
     if (this.slideshowEnabled) {
       this.logSlideshowPage();
       this.maybePrefetchSlideshowItems();
@@ -735,6 +739,14 @@ struct GalleryPreview {
     setGalleryPreviewDetailsSheetHeight(to);
   }
 
+  private applySessionOriginalIfNeeded(): void {
+    if (this.slideshowEnabled || !this.originalLocked || !this.currentHasOriginal()) {
+      return;
+    }
+    this.originalPreviewEnabled = true;
+    this.loadOriginalToken++;
+  }
+
   private toggleOriginalPreview(): void {
     if (!this.currentHasOriginal()) {
       return;
@@ -746,6 +758,17 @@ struct GalleryPreview {
     }
     this.originalPreviewEnabled = true;
     this.loadOriginalToken++;
+  }
+
+  private toggleOriginalLock(): void {
+    if (!this.currentHasOriginal() && !this.originalLocked) {
+      return;
+    }
+    this.originalLocked = GalleryPreviewSessionPrefs.toggleOriginalLock();
+    if (this.originalLocked && this.currentHasOriginal() && !this.originalPreviewEnabled) {
+      this.originalPreviewEnabled = true;
+      this.loadOriginalToken++;
+    }
   }
 
   private syncCollectStateFromCurrentItem(): void {
@@ -1136,6 +1159,7 @@ struct GalleryPreview {
           setGalleryPreviewDismissProgress(0);
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
+          this.applySessionOriginalIfNeeded();
           setGalleryPreviewToolbarVisible(!this.slideshowEnabled);
           if (!this.currentItemIsVideo()) {
             resetGalleryPreviewVideoChrome();
@@ -1204,8 +1228,9 @@ struct GalleryPreview {
         topSafeInsetVp: this.systemTopInsetVp,
         bottomSafeInsetVp: this.systemBottomInsetVp,
         fgColor: this.fgColor(),
-        showOriginalAction: this.currentHasOriginal(),
+        showOriginalAction: this.currentHasOriginal() || this.originalLocked,
         originalShowing: this.originalPreviewEnabled,
+        originalLocked: this.originalLocked,
         sharing: this.sharing,
         downloading: this.downloading,
         downloadProgressPct: this.downloadProgressPct,
@@ -1219,6 +1244,9 @@ struct GalleryPreview {
         },
         onLoadOriginal: (): void => {
           this.toggleOriginalPreview();
+        },
+        onLockOriginal: (): void => {
+          this.toggleOriginalLock();
         },
         onOpenDetails: (): void => {
           this.openDetailsPanel();

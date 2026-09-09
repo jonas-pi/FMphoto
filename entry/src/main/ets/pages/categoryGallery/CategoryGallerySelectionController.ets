@@ -1,6 +1,7 @@
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import {
+  galleryListItemIdOf,
   isVideoItem,
   nasUrl,
   pickThumb,
@@ -85,10 +86,7 @@ function categoryGalleryPrefetchSlideDirection(host: CategoryGallerySelectionHos
 }
 
 export function categoryGalleryItemIdOf(it: GalleryListItem): string {
-  if (it.id === undefined || it.id === null) {
-    return '';
-  }
-  return String(it.id).trim();
+  return galleryListItemIdOf(it);
 }
 
 export function categoryGalleryFlatPos(

@@ -7,7 +7,8 @@ import {
   GalleryListItem,
   MagicSearchItem,
   MediaCategoryItem,
-  SmartCategoryItem
+  SmartCategoryItem,
+  UserAlbumItem
 } from '../../model/FnApiTypes';
 import { AppSession } from '../../auth/AppSession';
 import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
@@ -26,6 +27,7 @@ import { GalleryAutoSyncLedger } from '../GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from '../GalleryAutoSyncNasIndex';
 import { uploadUriMaybeMovingPhoto } from '../livephoto/LivePhotoUpload';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
+import { openUserAlbumById } from '../UserAlbumOpenHelper';
 import { openMediaCategoryGallery, openingTextForCategory } from '../MediaCategoryOpenHelper';
 import {
   galleryMediaCategoryModeLoader,
@@ -52,7 +54,8 @@ import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
 import {
   categoryTitle,
   personId,
-  personName
+  personName,
+  userAlbumName
 } from './GalleryAlbumModeData';
 import { GALLERY_UPLOAD_RECHECK_MS } from './GalleryAlbumTabConstants';
 
@@ -585,6 +588,39 @@ export async function galleryAlbumOpenPerson(
   } finally {
     if (!keepOpening) {
       host.personOpening = false;
+    }
+  }
+}
+
+export async function galleryAlbumOpenUserAlbum(
+  host: GalleryAlbumModeOrchestratorHost,
+  item: UserAlbumItem
+): Promise<void> {
+  if (host.categoryOpening) {
+    return;
+  }
+  host.categoryOpening = true;
+  host.categoryOpeningText = `打开「${userAlbumName(item)}」…`;
+  const isActive = host.createNavigationGuard();
+  let keepOpening = false;
+  try {
+    const result = await openUserAlbumById(host.baseUrl, item, host.getUIContext(), isActive);
+    if (!isActive()) {
+      return;
+    }
+    if (!result.ok) {
+      if (result.errorMessage.length > 0) {
+        host.toast(result.errorMessage);
+      }
+      return;
+    }
+    keepOpening = true;
+    setTimeout((): void => {
+      host.categoryOpening = false;
+    }, 280);
+  } finally {
+    if (!keepOpening) {
+      host.categoryOpening = false;
     }
   }
 }

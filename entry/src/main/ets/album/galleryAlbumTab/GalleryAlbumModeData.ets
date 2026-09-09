@@ -15,5 +15,12 @@ export {
   personCacheIdentity,
   personId,
   personStatText,
-  collectPersonItems
+  collectPersonItems,
+  userAlbumId,
+  userAlbumName,
+  userAlbumCover,
+  userAlbumCount,
+  userAlbumIsBaby,
+  userAlbumSubtitle,
+  collectUserAlbumItems
 } from '../GalleryAlbumEntityData';

@@ -1,6 +1,6 @@
 /**
  * 跨设备配置信封：二维码与 WebDAV 共用同一份 JSON。
- * 只同步智能分类的关键词与顺序，不含封面 URL / 数量。
+ * 同步智能分类关键词/顺序，以及相册首页宫格排序与隐藏。
  */
 import {
   SMART_CATEGORY_CUSTOM_MAX,
@@ -30,6 +30,13 @@ export interface AppSettingsSmartCategory {
   customOrder: string[];
 }
 
+/** 相册首页宫格：混合排序、隐藏列表、媒体分类相对顺序。 */
+export interface AppSettingsAlbumsHome {
+  tileOrder: string[];
+  hidden: string[];
+  mediaOrder: string[];
+}
+
 /** 登录页可同步字段；勾选保存密码时才带口令。 */
 export interface AppSettingsLogin {
   fnId: string;
@@ -49,6 +56,8 @@ export interface AppSettingsEnvelope {
   deviceId: string;
   account: string;
   smartCategory: AppSettingsSmartCategory;
+  albumsHome: AppSettingsAlbumsHome;
+  albumsHomePresent: boolean;
   login: AppSettingsLogin;
 }
 
@@ -63,6 +72,8 @@ export interface ApplyEnvelopeResult {
   skipped: boolean;
   message: string;
   layout?: SmartCategoryLayout;
+  albumsHomePresent: boolean;
+  albumsHome: AppSettingsAlbumsHome;
 }
 
 function asString(value: Object | string | number | boolean | undefined | null, fallback: string): string {
@@ -101,6 +112,18 @@ function parseStringArray(raw: Object | string | number | boolean | undefined | 
     }
   }
   return out;
+}
+
+function emptyAlbumsHome(): AppSettingsAlbumsHome {
+  return {
+    tileOrder: [],
+    hidden: [],
+    mediaOrder: []
+  };
+}
+
+export function emptyAlbumsHomeConfig(): AppSettingsAlbumsHome {
+  return emptyAlbumsHome();
 }
 
 function emptySmartCategory(): AppSettingsSmartCategory {
@@ -323,6 +346,37 @@ function parseCustomItems(raw: Object | string | number | boolean | undefined | 
   return out;
 }
 
+function parseAlbumsHomeBlock(parsed: LooseJson): AppSettingsAlbumsHomeParse {
+  const full = parsed['albumsHome'] !== undefined ? parsed['albumsHome'] : parsed['ah'];
+  if (full !== undefined && typeof full === 'object' && full !== null && !Array.isArray(full)) {
+    const rec = full as LooseJson;
+    return {
+      present: true,
+      value: {
+        tileOrder: parseStringArray(rec['tileOrder'] !== undefined ? rec['tileOrder'] : rec['to']),
+        hidden: parseStringArray(rec['hidden'] !== undefined ? rec['hidden'] : rec['th']),
+        mediaOrder: parseStringArray(rec['mediaOrder'] !== undefined ? rec['mediaOrder'] : rec['mo'])
+      }
+    };
+  }
+  if (parsed['to'] !== undefined || parsed['th'] !== undefined || parsed['mo'] !== undefined) {
+    return {
+      present: true,
+      value: {
+        tileOrder: parseStringArray(parsed['to']),
+        hidden: parseStringArray(parsed['th']),
+        mediaOrder: parseStringArray(parsed['mo'])
+      }
+    };
+  }
+  return { present: false, value: emptyAlbumsHome() };
+}
+
+interface AppSettingsAlbumsHomeParse {
+  present: boolean;
+  value: AppSettingsAlbumsHome;
+}
+
 function parseSmartCategory(raw: Object | string | number | boolean | undefined | null): AppSettingsSmartCategory {
   if (raw === undefined || raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return emptySmartCategory();
@@ -360,7 +414,8 @@ export function envelopeFromLayout(
   layout: SmartCategoryLayout,
   deviceId: string,
   updatedAt: number,
-  login: AppSettingsLogin = emptyLoginConfig()
+  login: AppSettingsLogin = emptyLoginConfig(),
+  albumsHome: AppSettingsAlbumsHome = emptyAlbumsHome()
 ): AppSettingsEnvelope {
   const custom: AppSettingsCustomItem[] = [];
   for (let i = 0; i < layout.custom.length; i++) {
@@ -384,6 +439,12 @@ export function envelopeFromLayout(
       infoOrder: layout.infoOrder,
       customOrder: layout.customOrder
     },
+    albumsHome: {
+      tileOrder: albumsHome.tileOrder.slice(),
+      hidden: albumsHome.hidden.slice(),
+      mediaOrder: albumsHome.mediaOrder.slice()
+    },
+    albumsHomePresent: true,
     login: login
   };
 }
@@ -408,6 +469,11 @@ export function serializeEnvelope(envelope: AppSettingsEnvelope): string {
   root['deviceId'] = envelope.deviceId;
   root['account'] = envelope.account;
   root['smartCategory'] = smart;
+  const albums: LooseJson = {};
+  albums['tileOrder'] = envelope.albumsHome.tileOrder;
+  albums['hidden'] = envelope.albumsHome.hidden;
+  albums['mediaOrder'] = envelope.albumsHome.mediaOrder;
+  root['albumsHome'] = albums;
   const loginRec: LooseJson = {};
   loginRec['fnId'] = envelope.login.fnId;
   loginRec['domain'] = envelope.login.domain;
@@ -503,6 +569,9 @@ function compactRootObject(
     root['so'] = envelope.smartCategory.sceneOrder;
     root['io'] = envelope.smartCategory.infoOrder;
     root['co'] = remapOrder(envelope.smartCategory.customOrder, oldIds);
+    root['to'] = envelope.albumsHome.tileOrder;
+    root['th'] = envelope.albumsHome.hidden;
+    root['mo'] = envelope.albumsHome.mediaOrder;
   } else {
     const empty: string[] = [];
     root['so'] = empty;
@@ -577,12 +646,15 @@ export function parseEnvelopeJson(rawText: string): ParseEnvelopeResult {
       return { ok: false, message: '配置版本不支持，请升级应用' };
     }
     const smart = hasFull ? parseSmartCategory(smartRaw) : parseSmartCategory(parsed);
+    const albumsParsed = parseAlbumsHomeBlock(parsed);
     const envelope: AppSettingsEnvelope = {
       schema: APP_SETTINGS_SCHEMA,
       updatedAt: asTime(parsed['updatedAt'] !== undefined ? parsed['updatedAt'] : parsed['t']),
       deviceId: asString(parsed['deviceId'] !== undefined ? parsed['deviceId'] : parsed['d'], '').trim(),
       account: asString(parsed['account'] !== undefined ? parsed['account'] : parsed['a'], '').trim(),
       smartCategory: smart,
+      albumsHome: albumsParsed.value,
+      albumsHomePresent: albumsParsed.present,
       login: mergeLoginUsersFromEnvelope(
         parseLoginConfig(parsed['login'] !== undefined ? parsed['login'] : parsed['l']),
         parseLoginUsers(parsed['lu'] !== undefined ? parsed['lu'] : parsed['users'])
@@ -638,16 +710,35 @@ export function applyEnvelopeToAccount(
 ): ApplyEnvelopeResult {
   const acc = account.trim();
   if (acc.length === 0) {
-    return { ok: false, skipped: false, message: '当前未登录，无法导入' };
+    return {
+      ok: false,
+      skipped: false,
+      message: '当前未登录，无法导入',
+      albumsHomePresent: false,
+      albumsHome: emptyAlbumsHome()
+    };
   }
   if (!force && envelope.updatedAt > 0 && localUpdatedAt > envelope.updatedAt) {
-    return { ok: false, skipped: true, message: '远程配置较旧，未覆盖本机' };
+    return {
+      ok: false,
+      skipped: true,
+      message: '远程配置较旧，未覆盖本机',
+      albumsHomePresent: false,
+      albumsHome: emptyAlbumsHome()
+    };
   }
   const layout = layoutFromEnvelope(envelope, acc);
-  let message = '已导入自定义分类，请重新打开智能分类';
+  let message = '已导入分类与相册布局，请返回相册页查看';
   const srcAccount = envelope.account.trim();
   if (srcAccount.length > 0 && srcAccount !== acc) {
     message = `已导入到当前账号（来源 ${srcAccount}）`;
   }
-  return { ok: true, skipped: false, message: message, layout: layout };
+  return {
+    ok: true,
+    skipped: false,
+    message: message,
+    layout: layout,
+    albumsHomePresent: envelope.albumsHomePresent,
+    albumsHome: envelope.albumsHome
+  };
 }

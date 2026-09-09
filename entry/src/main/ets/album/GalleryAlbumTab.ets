@@ -28,7 +28,8 @@ import {
   GalleryListItem,
   MagicSearchItem,
   MediaCategoryItem,
-  SmartCategoryItem
+  SmartCategoryItem,
+  UserAlbumItem
 } from '../model/FnApiTypes';
 import {
   GalleryNetworkThumb,
@@ -218,6 +219,7 @@ import {
   galleryAlbumOpenCategory,
   galleryAlbumOpenCollectGallery,
   galleryAlbumOpenPerson,
+  galleryAlbumOpenUserAlbum,
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
   galleryAlbumStartUpload,
@@ -475,6 +477,7 @@ export struct GalleryAlbumTab {
   private lastInteractiveVisibleRangeRefreshAtMs: number = 0;
   private albumsHomeSmartPrefetchGen: number = 0;
   private albumsHomePersonPrefetchGen: number = 0;
+  private albumsHomeUserAlbumPrefetchGen: number = 0;
   private albumsHomeMediaPrefetchGen: number = 0;
   private lastHomeSurface: string = 'photos';
   /** 与 GalleryTimelineRefreshStore.version 对齐，落后则重拉相册封面数据 */
@@ -522,6 +525,12 @@ export struct GalleryAlbumTab {
   @State @Watch('onBottomDockVisibilityChanged') private collectOpening: boolean = false;
   @State private personError: string = '';
   @State private personItems: AiPersonItem[] = [];
+  @State private userAlbumLoading: boolean = false;
+  @State private userAlbumError: string = '';
+  @State private userAlbumItems: UserAlbumItem[] = [];
+  @State private albumsHomeEditMode: boolean = false;
+  @State private albumsHomeEditCommitSignal: number = 0;
+  @State private albumsHomeEditCancelSignal: number = 0;
   @State private personStatVersion: number = 0;
   @State private autoSyncBadgeCount: number = 0;
   /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
@@ -1607,6 +1616,12 @@ export struct GalleryAlbumTab {
       set personError(value: string) { self.personError = value; }
       get personItems(): AiPersonItem[] { return self.personItems; }
       set personItems(value: AiPersonItem[]) { self.personItems = value; }
+      get userAlbumLoading(): boolean { return self.userAlbumLoading; }
+      set userAlbumLoading(value: boolean) { self.userAlbumLoading = value; }
+      get userAlbumError(): string { return self.userAlbumError; }
+      set userAlbumError(value: string) { self.userAlbumError = value; }
+      get userAlbumItems(): UserAlbumItem[] { return self.userAlbumItems; }
+      set userAlbumItems(value: UserAlbumItem[]) { self.userAlbumItems = value; }
       get searchLoading(): boolean { return self.searchLoading; }
       set searchLoading(value: boolean) { self.searchLoading = value; }
       get searchError(): string { return self.searchError; }
@@ -1635,6 +1650,8 @@ export struct GalleryAlbumTab {
       set albumsHomeSmartPrefetchGen(value: number) { self.albumsHomeSmartPrefetchGen = value; }
       get albumsHomePersonPrefetchGen(): number { return self.albumsHomePersonPrefetchGen; }
       set albumsHomePersonPrefetchGen(value: number) { self.albumsHomePersonPrefetchGen = value; }
+      get albumsHomeUserAlbumPrefetchGen(): number { return self.albumsHomeUserAlbumPrefetchGen; }
+      set albumsHomeUserAlbumPrefetchGen(value: number) { self.albumsHomeUserAlbumPrefetchGen = value; }
       get albumsHomeMediaPrefetchGen(): number { return self.albumsHomeMediaPrefetchGen; }
       set albumsHomeMediaPrefetchGen(value: number) { self.albumsHomeMediaPrefetchGen = value; }
       get lastHomeSurface(): string { return self.lastHomeSurface; }
@@ -2452,6 +2469,10 @@ export struct GalleryAlbumTab {
       this.dismissSlideshowSettings();
       return true;
     }
+    if (this.albumsHomeEditMode && this.isAlbumsHomeSurface()) {
+      this.albumsHomeEditCancelSignal++;
+      return true;
+    }
     return galleryAlbumTryConsumeSurfaceBack(this.asRootSurfaceHost());
   }
 
@@ -2814,7 +2835,14 @@ export struct GalleryAlbumTab {
           onOpenSearchFilter: (): void => {
             this.openSearchFilterSheet();
           },
-          searchFilterActive: this.searchFilterActiveCount > 0
+          searchFilterActive: this.searchFilterActiveCount > 0,
+          albumsHomeEditMode: this.albumsHomeEditMode,
+          onAlbumsHomeEditCancel: (): void => {
+            this.albumsHomeEditCancelSignal++;
+          },
+          onAlbumsHomeEditDone: (): void => {
+            this.albumsHomeEditCommitSignal++;
+          }
         }) {
         Stack({ alignContent: Alignment.TopStart }) {
       // ── 搜索结果视图 ──────────────────────────────────────────────────────
@@ -2892,6 +2920,9 @@ export struct GalleryAlbumTab {
           personLoading: this.personLoading,
           personError: this.personError,
           personItems: this.personItems,
+          userAlbumLoading: this.userAlbumLoading,
+          userAlbumError: this.userAlbumError,
+          userAlbumItems: this.userAlbumItems,
           smartLoading: this.smartCategoryLoading,
           smartError: this.smartCategoryError,
           smartSceneItems: this.smartSceneItems,
@@ -2914,6 +2945,9 @@ export struct GalleryAlbumTab {
           onOpenPersonPage: (): void => {
             this.openPersonPage();
           },
+          onOpenUserAlbum: (item: UserAlbumItem): void => {
+            void galleryAlbumOpenUserAlbum(this.asModeOrchestratorHost(), item);
+          },
           onOpenSmartCategoryPage: (): void => {
             this.openSmartCategoryPage();
           },
@@ -2928,6 +2962,11 @@ export struct GalleryAlbumTab {
           },
           onOpenRecycleBin: (): void => {
             this.openRecycleBinPage();
+          },
+          albumsHomeEditCommitSignal: this.albumsHomeEditCommitSignal,
+          albumsHomeEditCancelSignal: this.albumsHomeEditCancelSignal,
+          onAlbumsHomeEditModeChange: (active: boolean): void => {
+            this.albumsHomeEditMode = active;
           }
         })
           .visibility(this.isRootAlbumsSurfaceLayerVisible() ? Visibility.Visible : Visibility.None)

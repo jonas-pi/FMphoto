@@ -475,6 +475,9 @@ struct CategoryGallery {
   }
 
   private isRecentAddedStreamingMode(): boolean {
+    if (this.pageSourceKind === 'recent' || this.pageSourceKind === 'user-album') {
+      return true;
+    }
     return this.pageUseCreatedAtGrouping && this.pageCategoryKey.length === 0;
   }
 

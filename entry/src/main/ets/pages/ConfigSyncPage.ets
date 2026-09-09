@@ -1,5 +1,5 @@
 /**
- * 配置同步：二维码导出/导入 + WebDAV 上传/下载智能分类。
+ * 配置同步：二维码导出/导入 + WebDAV 上传/下载智能分类与相册布局。
  */
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -39,9 +39,11 @@ import {
   SmartCategoryLayout
 } from '../album/SmartCategoryLayoutPreferences';
 import {
+  AppSettingsAlbumsHome,
   AppSettingsEnvelope,
   AppSettingsLogin,
   applyEnvelopeToAccount,
+  emptyAlbumsHomeConfig,
   envelopeFromLayout,
   layoutLocalUpdatedAt,
   loginConfigHasContent,
@@ -49,6 +51,8 @@ import {
   parseQrPayload,
   serializeEnvelope
 } from '../sync/AppSettingsEnvelope';
+import { albumsHomeApplyLayoutFromCtx, albumsHomeSnapshotFromCtx } from '../album/AlbumsHomeTileOrderPreferences';
+import { mediaCategoryApplyOrderKeys, mediaCategorySavedOrder } from '../album/MediaCategoryOrderPreferences';
 import {
   canScanSettingsQr,
   createSettingsQrImage,
@@ -61,6 +65,42 @@ import {
   loadWebDavConfig,
   saveWebDavConfig
 } from '../sync/AppSettingsWebDavPrefs';
+
+/** TextInput.text 只在创建时生效；父级异步回填要用本地 @State + $$。 */
+@Component
+struct ConfigDavTextField {
+  @Prop @Watch('onSeedChanged') seedText: string = '';
+  @Prop placeholder: Resource = $r('app.string.config_sync_webdav_url_hint');
+  @Prop inputType: InputType = InputType.Normal;
+  onChange: (value: string) => void = (_: string) => {};
+  @State private inputText: string = '';
+
+  aboutToAppear(): void {
+    this.inputText = this.seedText;
+  }
+
+  private onSeedChanged(): void {
+    if (this.inputText !== this.seedText) {
+      this.inputText = this.seedText;
+    }
+  }
+
+  build() {
+    TextInput({ text: $$this.inputText, placeholder: this.placeholder })
+      .type(this.inputType)
+      .enableAutoFill(false)
+      .enableKeyboardOnFocus(false)
+      .onChange((value: string): void => {
+        this.inputText = value;
+        this.onChange(value);
+      })
+      .width('100%')
+      .height(44)
+      .backgroundColor($r('app.color.page_background'))
+      .borderRadius($r('app.float.radius_small'))
+      .padding({ left: 12, right: 12 })
+  }
+}
 
 @Entry
 @Component
@@ -75,6 +115,7 @@ struct ConfigSyncPage {
   @State private davPassword: string = '';
   @State private davPath: string = APP_SETTINGS_WEBDAV_DEFAULT_PATH;
   @State private davSkipCert: boolean = true;
+  @State private davHydrated: boolean = false;
   @State private davBusy: boolean = false;
   @State private qrBusy: boolean = false;
 
@@ -141,6 +182,9 @@ struct ConfigSyncPage {
   }
 
   private async persistWebDavForm(): Promise<void> {
+    if (!this.davHydrated) {
+      return;
+    }
     await saveWebDavConfig(this.hostContext(), this.currentWebDavConfig());
   }
 
@@ -163,11 +207,23 @@ struct ConfigSyncPage {
     this.davPassword = dav.password;
     this.davPath = dav.remotePath;
     this.davSkipCert = dav.skipCert;
+    this.davHydrated = true;
     await this.refreshQr();
   }
 
   private async loadCurrentLayout(): Promise<SmartCategoryLayout> {
     return await smartCategoryLoadLayout(this.hostContext(), smartCategoryCurrentAccount());
+  }
+
+  private async loadAlbumsHomeSlice(): Promise<AppSettingsAlbumsHome> {
+    const ctx = this.hostContext();
+    const snap = await albumsHomeSnapshotFromCtx(ctx);
+    const mediaOrder = await mediaCategorySavedOrder(ctx);
+    const slice = emptyAlbumsHomeConfig();
+    slice.tileOrder = snap.order;
+    slice.hidden = snap.hidden;
+    slice.mediaOrder = mediaOrder;
+    return slice;
   }
 
   private async loadLoginConfig(): Promise<AppSettingsLogin> {
@@ -246,7 +302,8 @@ struct ConfigSyncPage {
       const deviceId = await SessionPreferences.ensureWsDeviceId(this.hostContext());
       const updatedAt = layoutLocalUpdatedAt(layout) > 0 ? layoutLocalUpdatedAt(layout) : Date.now();
       const login = await this.loadLoginConfig();
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login);
+      const albumsHome = await this.loadAlbumsHomeSlice();
+      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome);
       const created = await createSettingsQrImage(envelope);
       if (!created.ok || created.pixelMap === undefined) {
         this.releaseQrPixelMap();
@@ -313,6 +370,14 @@ struct ConfigSyncPage {
       this.toast(loginApplied ? '登录配置已导入，分类保存失败' : '保存失败');
       return;
     }
+    if (applied.albumsHomePresent) {
+      await albumsHomeApplyLayoutFromCtx(
+        this.hostContext(),
+        applied.albumsHome.tileOrder,
+        applied.albumsHome.hidden
+      );
+      await mediaCategoryApplyOrderKeys(this.hostContext(), applied.albumsHome.mediaOrder);
+    }
     this.toast(loginApplied ? `${applied.message}；登录配置已同步` : applied.message);
     await this.refreshQr();
   }
@@ -347,7 +412,8 @@ struct ConfigSyncPage {
       }
       const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
       const login = await this.loadLoginConfig();
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login);
+      const albumsHome = await this.loadAlbumsHomeSlice();
+      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome);
       const res = await webDavPutJson(this.currentWebDavConfig(), serializeEnvelope(envelope));
       this.toast(res.ok ? '已上传到 WebDAV' : res.message);
       if (res.ok) {
@@ -393,20 +459,6 @@ struct ConfigSyncPage {
       title: { mainTitle: $r('app.string.config_sync_title') },
       backIcon: backIcon
     };
-  }
-
-  @Builder
-  private davField(text: string, placeholder: Resource, inputType: InputType, onChange: (value: string) => void) {
-    TextInput({ text: text, placeholder: placeholder })
-      .type(inputType)
-      .enableAutoFill(false)
-      .enableKeyboardOnFocus(false)
-      .onChange(onChange)
-      .width('100%')
-      .height(44)
-      .backgroundColor($r('app.color.page_background'))
-      .borderRadius($r('app.float.radius_small'))
-      .padding({ left: 12, right: 12 })
   }
 
   @Builder
@@ -477,17 +529,37 @@ struct ConfigSyncPage {
             .width('100%')
 
           Column({ space: 12 }) {
-            this.davField(this.davUrl, $r('app.string.config_sync_webdav_url_hint'), InputType.Normal, (v: string) => {
-              this.davUrl = v;
+            ConfigDavTextField({
+              seedText: this.davUrl,
+              placeholder: $r('app.string.config_sync_webdav_url_hint'),
+              inputType: InputType.Normal,
+              onChange: (v: string): void => {
+                this.davUrl = v;
+              }
             })
-            this.davField(this.davUser, $r('app.string.config_sync_webdav_user'), InputType.USER_NAME, (v: string) => {
-              this.davUser = v;
+            ConfigDavTextField({
+              seedText: this.davUser,
+              placeholder: $r('app.string.config_sync_webdav_user'),
+              inputType: InputType.USER_NAME,
+              onChange: (v: string): void => {
+                this.davUser = v;
+              }
             })
-            this.davField(this.davPassword, $r('app.string.config_sync_webdav_password'), InputType.Password, (v: string) => {
-              this.davPassword = v;
+            ConfigDavTextField({
+              seedText: this.davPassword,
+              placeholder: $r('app.string.config_sync_webdav_password'),
+              inputType: InputType.Password,
+              onChange: (v: string): void => {
+                this.davPassword = v;
+              }
             })
-            this.davField(this.davPath, $r('app.string.config_sync_webdav_path_hint'), InputType.Normal, (v: string) => {
-              this.davPath = v;
+            ConfigDavTextField({
+              seedText: this.davPath,
+              placeholder: $r('app.string.config_sync_webdav_path_hint'),
+              inputType: InputType.Normal,
+              onChange: (v: string): void => {
+                this.davPath = v;
+              }
             })
 
             Row() {
@@ -495,7 +567,7 @@ struct ConfigSyncPage {
                 .fontSize(16)
                 .fontColor($r('app.color.text_primary'))
               Blank()
-              Toggle({ type: ToggleType.Switch, isOn: this.davSkipCert })
+              Toggle({ type: ToggleType.Switch, isOn: $$this.davSkipCert })
                 .selectedColor($r('app.color.brand_primary'))
                 .onChange((on: boolean) => {
                   this.davSkipCert = on;

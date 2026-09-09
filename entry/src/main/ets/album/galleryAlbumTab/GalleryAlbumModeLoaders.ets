@@ -5,6 +5,7 @@ import {
   GalleryTimelineDayCell,
   MediaCategoryItem,
   SmartCategoryItem,
+  UserAlbumItem,
 } from '../../model/FnApiTypes';
 import { pickThumb } from '../GalleryAlbumCommon';
 import { FnHttpClient } from '../../network/FnHttpClient';
@@ -24,7 +25,8 @@ import { common } from '@kit.AbilityKit';
 import {
   collectMediaCategoryItems,
   collectPersonItems,
-  collectSmartCategoryItems
+  collectSmartCategoryItems,
+  collectUserAlbumItems
 } from './GalleryAlbumModeData';
 import {
   smartCategoryCurrentAccount,
@@ -46,6 +48,11 @@ export interface SmartCategoryLoadResult {
 
 export interface PersonLoadResult {
   items: AiPersonItem[];
+  error: string;
+}
+
+export interface UserAlbumLoadResult {
+  items: UserAlbumItem[];
   error: string;
 }
 
@@ -275,6 +282,22 @@ class GalleryPersonModeLoaderImpl implements GalleryAlbumModeLoader<GalleryPerso
 
 export const galleryPersonModeLoader: GalleryAlbumModeLoader<GalleryPersonModeData> =
   new GalleryPersonModeLoaderImpl();
+
+export async function loadUserAlbums(
+  client: FnHttpClient
+): Promise<UserAlbumLoadResult> {
+  try {
+    const res = await client.getUserAlbumList();
+    if (!res.success || res.data === undefined) {
+      return { items: [], error: res.message ?? '相册列表加载失败' };
+    }
+    const raw = res.data.list ?? res.data.items ?? res.data.records ?? [];
+    const items = collectUserAlbumItems(raw);
+    return { items: items, error: '' };
+  } catch (e) {
+    return { items: [], error: String(e) || '相册列表加载异常' };
+  }
+}
 
 export async function loadRecentAddedItems(
   client: FnHttpClient,

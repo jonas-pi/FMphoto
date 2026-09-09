@@ -1,19 +1,20 @@
 /**
- * 按人物 ID 拉取时间线并分页合并照片列表，再跳转 CategoryGallery。
- * 与 PersonPage / GalleryAlbumTab / 预览页中的“打开人物媒体”逻辑保持一致。
+ * 按用户相册 ID 拉取时间线并分页合并照片列表，再跳转 CategoryGallery。
  */
 import { UIContext } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
-import { GalleryGetListData, GalleryListItem } from '../model/FnApiTypes';
+import { GalleryGetListData, GalleryListItem, GalleryTimelineData, UserAlbumItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
+import { userAlbumCount, userAlbumId, userAlbumIsBaby, userAlbumName } from './GalleryAlbumEntityData';
 import { galleryListFromData } from './GalleryListItemNormalize';
 
 const DATE_FEED_BATCH = 50;
 const DAY_MAX_ROUNDS = 300;
-const PERSON_ALBUM_INITIAL_OPEN_ITEMS = 120;
-const PERSON_ALBUM_BACKGROUND_APPEND_ITEMS = 100;
-const PERSON_ALBUM_BACKGROUND_APPEND_DELAY_MS = 48;
+const USER_ALBUM_INITIAL_OPEN_ITEMS = 120;
+const USER_ALBUM_BACKGROUND_APPEND_ITEMS = 100;
+const USER_ALBUM_BACKGROUND_APPEND_DELAY_MS = 48;
+const USER_ALBUM_PHOTOS_MAX_ROUNDS = 80;
 
 interface TimelineDayModel {
   year: number;
@@ -22,21 +23,21 @@ interface TimelineDayModel {
   itemCount: number;
 }
 
-class PersonAlbumFetchCursor {
+class UserAlbumFetchCursor {
   dayIndex: number = 0;
   dayOffset: number = 0;
   loadedCount: number = 0;
+  photosOffset: number = 0;
+  useFlatPhotos: boolean = false;
 }
 
-class PersonAlbumChunkResult {
+class UserAlbumChunkResult {
   items: GalleryListItem[] = [];
   done: boolean = false;
 }
 
-/** 打开结果：ok 为 true 时表示已发起 CategoryGallery 路由 */
-export interface PersonAlbumOpenResult {
+export interface UserAlbumOpenResult {
   ok: boolean;
-  /** ok 为 false 时的用户可见说明；成功时为空串 */
   errorMessage: string;
 }
 
@@ -64,10 +65,7 @@ function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   return galleryListFromData(data);
 }
 
-/**
- * 解析人物时间线接口返回的 list（与 GalleryAlbumTab.parsePersonTimeline 对齐）。
- */
-function parsePersonTimelineRows(rawList: Array<Record<string, string | number | undefined>>): TimelineDayModel[] {
+function parseAlbumTimelineRows(rawList: Array<Record<string, string | number | undefined>>): TimelineDayModel[] {
   const out: TimelineDayModel[] = [];
   for (let i = 0; i < rawList.length; i++) {
     const x = rawList[i];
@@ -114,20 +112,75 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-async function fetchPersonAlbumChunk(
+async function fetchUserAlbumChunk(
   client: FnHttpClient,
-  personId: string,
+  albumId: string,
+  isBaby: boolean,
   days: TimelineDayModel[],
-  cursor: PersonAlbumFetchCursor,
+  cursor: UserAlbumFetchCursor,
   targetItems: number,
   detailItemCount: number,
   shouldContinue?: () => boolean
-): Promise<PersonAlbumChunkResult> {
+): Promise<UserAlbumChunkResult> {
   const out: GalleryListItem[] = [];
   let rounds = 0;
+  if (cursor.useFlatPhotos) {
+    while (rounds < USER_ALBUM_PHOTOS_MAX_ROUNDS) {
+      if (shouldContinue !== undefined && !shouldContinue()) {
+        const cancelled = new UserAlbumChunkResult();
+        cancelled.items = out;
+        cancelled.done = true;
+        return cancelled;
+      }
+      if (targetItems > 0 && out.length >= targetItems) {
+        break;
+      }
+      if (detailItemCount > 0 && cursor.loadedCount + out.length >= detailItemCount) {
+        break;
+      }
+      const one = await client.getUserAlbumPhotos(albumId, cursor.photosOffset, DATE_FEED_BATCH, 20000);
+      if (shouldContinue !== undefined && !shouldContinue()) {
+        const cancelled = new UserAlbumChunkResult();
+        cancelled.items = out;
+        cancelled.done = true;
+        return cancelled;
+      }
+      if (!one.success || one.data === undefined) {
+        const failed = new UserAlbumChunkResult();
+        failed.items = out;
+        failed.done = true;
+        return failed;
+      }
+      const list = listFromData(one.data);
+      if (list.length === 0) {
+        const done = new UserAlbumChunkResult();
+        done.items = out;
+        done.done = true;
+        return done;
+      }
+      for (let i = 0; i < list.length; i++) {
+        out.push(list[i]);
+      }
+      cursor.photosOffset += list.length;
+      cursor.loadedCount += list.length;
+      rounds++;
+      if (list.length < DATE_FEED_BATCH) {
+        const done = new UserAlbumChunkResult();
+        done.items = out;
+        done.done = true;
+        return done;
+      }
+    }
+    const result = new UserAlbumChunkResult();
+    result.items = out;
+    result.done = rounds >= USER_ALBUM_PHOTOS_MAX_ROUNDS ||
+      (detailItemCount > 0 && cursor.loadedCount >= detailItemCount);
+    return result;
+  }
+
   while (cursor.dayIndex < days.length && rounds < DAY_MAX_ROUNDS) {
     if (shouldContinue !== undefined && !shouldContinue()) {
-      const cancelled = new PersonAlbumChunkResult();
+      const cancelled = new UserAlbumChunkResult();
       cancelled.items = out;
       cancelled.done = true;
       return cancelled;
@@ -141,15 +194,23 @@ async function fetchPersonAlbumChunk(
     const day = days[cursor.dayIndex];
     const st = fmtDayStart(day.year, day.month, day.day);
     const et = fmtDayEnd(day.year, day.month, day.day);
-    const one = await client.getAiPersonPhotoList(personId, st, et, DATE_FEED_BATCH, cursor.dayOffset, 20000);
+    const one = await client.getUserAlbumPhotoList(
+      albumId,
+      isBaby,
+      st,
+      et,
+      DATE_FEED_BATCH,
+      cursor.dayOffset,
+      20000
+    );
     if (shouldContinue !== undefined && !shouldContinue()) {
-      const cancelled = new PersonAlbumChunkResult();
+      const cancelled = new UserAlbumChunkResult();
       cancelled.items = out;
       cancelled.done = true;
       return cancelled;
     }
     if (!one.success || one.data === undefined) {
-      const failed = new PersonAlbumChunkResult();
+      const failed = new UserAlbumChunkResult();
       failed.items = out;
       failed.done = true;
       return failed;
@@ -176,16 +237,17 @@ async function fetchPersonAlbumChunk(
     cursor.dayIndex >= days.length ||
     (detailItemCount > 0 && cursor.loadedCount >= detailItemCount) ||
     rounds >= DAY_MAX_ROUNDS;
-  const result = new PersonAlbumChunkResult();
+  const result = new UserAlbumChunkResult();
   result.items = out;
   result.done = done;
   return result;
 }
 
-async function continuePersonAlbumBackgroundLoad(
-  personId: string,
+async function continueUserAlbumBackgroundLoad(
+  albumId: string,
+  isBaby: boolean,
   days: TimelineDayModel[],
-  cursor: PersonAlbumFetchCursor,
+  cursor: UserAlbumFetchCursor,
   detailItemCount: number,
   token: number
 ): Promise<void> {
@@ -199,12 +261,13 @@ async function continuePersonAlbumBackgroundLoad(
     if (token !== CategoryGalleryNavStore.currentToken()) {
       return;
     }
-    const chunk = await fetchPersonAlbumChunk(
+    const chunk = await fetchUserAlbumChunk(
       client,
-      personId,
+      albumId,
+      isBaby,
       days,
       cursor,
-      PERSON_ALBUM_BACKGROUND_APPEND_ITEMS,
+      USER_ALBUM_BACKGROUND_APPEND_ITEMS,
       detailItemCount
     );
     if (chunk.items.length > 0) {
@@ -214,53 +277,15 @@ async function continuePersonAlbumBackgroundLoad(
       CategoryGalleryNavStore.setBackgroundLoading(token, false);
       return;
     }
-    await sleep(PERSON_ALBUM_BACKGROUND_APPEND_DELAY_MS);
+    await sleep(USER_ALBUM_BACKGROUND_APPEND_DELAY_MS);
   }
 }
 
-/**
- * 按人物 ID 打开其图库媒体列表页（CategoryGallery）。
- */
-export async function openPersonAlbumById(
-  baseUrl: string,
-  personId: string,
-  initialTitle: string,
-  uiCtx: UIContext,
-  shouldContinue?: () => boolean
-): Promise<PersonAlbumOpenResult> {
-  if (personId.length === 0) {
-    return { ok: false, errorMessage: '人物 ID 无效' };
+function timelineRowsFromData(data: GalleryTimelineData | undefined): TimelineDayModel[] {
+  if (data === undefined || data === null) {
+    return [];
   }
-  const client = AppSession.getClient();
-  if (client === null) {
-    return { ok: false, errorMessage: '未登录' };
-  }
-  let title = initialTitle.length > 0 ? initialTitle : '未命名人物';
-  if (shouldContinue !== undefined && !shouldContinue()) {
-    return { ok: false, errorMessage: '' };
-  }
-  const detail = await client.getAiPersonDetail(personId);
-  if (shouldContinue !== undefined && !shouldContinue()) {
-    return { ok: false, errorMessage: '' };
-  }
-  let detailItemCount = 0;
-  if (detail.success && detail.data !== undefined) {
-    if (detail.data.name !== undefined && detail.data.name.length > 0) {
-      title = detail.data.name;
-    }
-    const cntRaw = detail.data.itemCount;
-    if (cntRaw !== undefined && Number.isFinite(Number(cntRaw))) {
-      detailItemCount = Math.max(0, Math.floor(Number(cntRaw)));
-    }
-  }
-  const tl = await client.getAiPersonPhotoTimeline(personId);
-  if (shouldContinue !== undefined && !shouldContinue()) {
-    return { ok: false, errorMessage: '' };
-  }
-  if (!tl.success || tl.data === undefined) {
-    return { ok: false, errorMessage: tl.message ?? '人物时间线加载失败' };
-  }
-  const raw = tl.data.list ?? [];
+  const raw = data.list ?? [];
   const rawIn: Array<Record<string, string | number | undefined>> = [];
   for (let i = 0; i < raw.length; i++) {
     const el = raw[i];
@@ -268,34 +293,67 @@ export async function openPersonAlbumById(
       rawIn.push(el as Record<string, string | number | undefined>);
     }
   }
-  const days = parsePersonTimelineRows(rawIn);
-  const cursor = new PersonAlbumFetchCursor();
-  const initialChunk = await fetchPersonAlbumChunk(
+  return parseAlbumTimelineRows(rawIn);
+}
+
+/**
+ * 按用户相册 ID 打开其媒体列表页（CategoryGallery）。空相册仍打开，展示空态。
+ */
+export async function openUserAlbumById(
+  baseUrl: string,
+  album: UserAlbumItem,
+  uiCtx: UIContext,
+  shouldContinue?: () => boolean
+): Promise<UserAlbumOpenResult> {
+  const albumId = userAlbumId(album);
+  if (albumId.length === 0) {
+    return { ok: false, errorMessage: '相册 ID 无效' };
+  }
+  const client = AppSession.getClient();
+  if (client === null) {
+    return { ok: false, errorMessage: '未登录' };
+  }
+  const title = userAlbumName(album);
+  const isBaby = userAlbumIsBaby(album);
+  const detailItemCount = userAlbumCount(album);
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return { ok: false, errorMessage: '' };
+  }
+  const tl = await client.getUserAlbumTimeline(albumId, isBaby);
+  if (shouldContinue !== undefined && !shouldContinue()) {
+    return { ok: false, errorMessage: '' };
+  }
+  const cursor = new UserAlbumFetchCursor();
+  let days: TimelineDayModel[] = [];
+  if (tl.success && tl.data !== undefined) {
+    days = timelineRowsFromData(tl.data);
+  }
+  if (days.length === 0) {
+    cursor.useFlatPhotos = true;
+  }
+  const initialChunk = await fetchUserAlbumChunk(
     client,
-    personId,
+    albumId,
+    isBaby,
     days,
     cursor,
-    PERSON_ALBUM_INITIAL_OPEN_ITEMS,
+    USER_ALBUM_INITIAL_OPEN_ITEMS,
     detailItemCount,
     shouldContinue
   );
   if (shouldContinue !== undefined && !shouldContinue()) {
     return { ok: false, errorMessage: '' };
   }
-  if (initialChunk.items.length === 0) {
-    return { ok: false, errorMessage: '该人物暂无可预览媒体' };
-  }
   const opened = await CategoryGalleryNavStore.open(baseUrl, title, initialChunk.items, uiCtx, false, {
-    sourceKind: 'person',
-    personId: personId,
+    sourceKind: 'user-album',
     expectedTotalCount: detailItemCount
   });
   if (!opened) {
-    return { ok: false, errorMessage: '打开人物媒体失败' };
+    return { ok: false, errorMessage: '打开相册失败' };
   }
   if (!initialChunk.done) {
     const token = CategoryGalleryNavStore.currentToken();
-    void continuePersonAlbumBackgroundLoad(personId, days, cursor, detailItemCount, token);
+    void continueUserAlbumBackgroundLoad(albumId, isBaby, days, cursor, detailItemCount, token);
   }
   return { ok: true, errorMessage: '' };
 }

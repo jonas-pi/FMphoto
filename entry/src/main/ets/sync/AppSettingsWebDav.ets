@@ -11,6 +11,7 @@ import { AppSettingsWebDavConfig } from './AppSettingsWebDavPrefs';
 const TAG: string = 'AppSettingsWebDav';
 const DOMAIN: number = 0x3200;
 const TIMEOUT_MS: number = 20000;
+const DNS_FAIL_CODE: number = 2300006;
 
 export interface WebDavOpResult {
   ok: boolean;
@@ -103,6 +104,9 @@ function messageForCode(code: number, fallback: string): string {
   if (code === 405) {
     return '服务器不支持该 WebDAV 方法';
   }
+  if (code === DNS_FAIL_CODE) {
+    return '无法解析主机名。该地址若只有 IPv6，请改用支持 IPv6 的网络，或给域名加上 IPv4';
+  }
   if (CERT_CODES.indexOf(code) >= 0) {
     return '证书不可信，可打开跳过证书校验';
   }
@@ -110,6 +114,74 @@ function messageForCode(code: number, fallback: string): string {
     return fallback;
   }
   return `请求失败（${code}）`;
+}
+
+function applyHttpMethod(opt: http.HttpRequestOptions, method: string): void {
+  const upper = method.toUpperCase();
+  if (upper === 'GET') {
+    opt.method = http.RequestMethod.GET;
+    return;
+  }
+  if (upper === 'PUT') {
+    opt.method = http.RequestMethod.PUT;
+    return;
+  }
+  if (upper === 'HEAD') {
+    opt.method = http.RequestMethod.HEAD;
+    return;
+  }
+  opt.customMethod = method;
+}
+
+async function requestWithFamily(
+  url: string,
+  method: string,
+  config: AppSettingsWebDavConfig,
+  body: string,
+  contentType: string,
+  family: http.AddressFamily
+): Promise<WebDavOpResult> {
+  const req = http.createHttp();
+  try {
+    const extra: string | undefined = body.length > 0 ? body : undefined;
+    const bodyBytes = extra !== undefined ? utf8EncodeLocal(extra).length : 0;
+    const opt: http.HttpRequestOptions = {
+      expectDataType: http.HttpDataType.STRING,
+      connectTimeout: TIMEOUT_MS,
+      readTimeout: TIMEOUT_MS,
+      header: buildHeaders(config, contentType, bodyBytes),
+      usingProtocol: http.HttpProtocol.HTTP1_1,
+      addressFamily: family
+    };
+    applyHttpMethod(opt, method);
+    if (extra !== undefined) {
+      opt.extraData = extra;
+    }
+    if (config.skipCert) {
+      opt.remoteValidation = 'skip';
+    }
+    const resp = await req.request(url, opt);
+    const code = resp.responseCode as number;
+    const resultRaw = resp.result;
+    const text = typeof resultRaw === 'string' ? resultRaw : '';
+    return { ok: true, code: code, body: text, message: '' };
+  } catch (e) {
+    const err = e as BusinessError;
+    const code = err.code;
+    hilog.error(DOMAIN, TAG, 'webdav %{public}s family=%{public}s failed code=%{public}d %{public}s',
+      method, family, code, err.message);
+    return {
+      ok: false,
+      code: code,
+      body: '',
+      message: messageForCode(code, err.message)
+    };
+  } finally {
+    try {
+      req.destroy();
+    } catch (_e) {
+    }
+  }
 }
 
 function isPutOk(code: number): boolean {
@@ -127,44 +199,12 @@ async function requestOnce(
   body: string,
   contentType: string
 ): Promise<WebDavOpResult> {
-  const req = http.createHttp();
-  try {
-    const extra: string | undefined = body.length > 0 ? body : undefined;
-    const bodyBytes = extra !== undefined ? utf8EncodeLocal(extra).length : 0;
-    const opt: http.HttpRequestOptions = {
-      expectDataType: http.HttpDataType.STRING,
-      connectTimeout: TIMEOUT_MS,
-      readTimeout: TIMEOUT_MS,
-      header: buildHeaders(config, contentType, bodyBytes),
-      customMethod: method
-    };
-    if (extra !== undefined) {
-      opt.extraData = extra;
-    }
-    if (config.skipCert) {
-      opt.remoteValidation = 'skip';
-    }
-    const resp = await req.request(url, opt);
-    const code = resp.responseCode as number;
-    const resultRaw = resp.result;
-    const text = typeof resultRaw === 'string' ? resultRaw : '';
-    return { ok: true, code: code, body: text, message: '' };
-  } catch (e) {
-    const err = e as BusinessError;
-    const code = err.code;
-    hilog.error(DOMAIN, TAG, 'webdav %{public}s failed code=%{public}d %{public}s', method, code, err.message);
-    return {
-      ok: false,
-      code: code,
-      body: '',
-      message: messageForCode(code, err.message)
-    };
-  } finally {
-    try {
-      req.destroy();
-    } catch (_e) {
-    }
+  const first = await requestWithFamily(url, method, config, body, contentType, http.AddressFamily.DEFAULT);
+  if (first.ok || first.code !== DNS_FAIL_CODE) {
+    return first;
   }
+  // 仅有 AAAA 的域名在部分蜂窝网上会被 NetStack 当成解析失败，改走 IPv6 再试。
+  return await requestWithFamily(url, method, config, body, contentType, http.AddressFamily.ONLY_V6);
 }
 
 export function validateWebDavConfig(config: AppSettingsWebDavConfig): string {

@@ -52,6 +52,7 @@ import { FN_SYSTEM_BOTTOM_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { GalleryVideoGestureHud } from './GalleryVideoGestureHud';
 import { GalleryVideoHoldSpeedHud } from './GalleryVideoHoldSpeedHud';
 import { GalleryVideoOverlayChrome } from './GalleryVideoOverlayChrome';
+import { GalleryPreviewSessionPrefs } from './GalleryPreviewSessionPrefs';
 import { GalleryVideoSeekPreviewSession } from './GalleryVideoSeekPreview';
 
 const DOMAIN = 0xFF00;
@@ -108,15 +109,6 @@ const QUALITY_OPTIONS: QualityOption[] = [
   { label: '均衡 720p', resolution: '720', bitrate: 12000000, directStream: false },
   { label: '流畅 480p', resolution: '480', bitrate: 6000000, directStream: false }
 ];
-/**
- * 全局记忆的视频倍速：
- * - 进入下一个视频时沿用最近一次手动选择的倍速；
- * - 默认值仍为 1.0x；
- * - 使用 static 让同一进程内所有预览页实例共享该值。
- */
-let LAST_VIDEO_SPEED_RATE = 1.0;
-/** 全局记忆清晰度档位索引，切换到下一个视频时沿用 */
-let LAST_VIDEO_QUALITY_INDEX = 0;
 
 @Component
 export struct GalleryAuthVideo {
@@ -168,9 +160,10 @@ export struct GalleryAuthVideo {
   @State private seekPreviewPix: PixelMap | undefined = undefined;
   /** 缓冲条进度 0~1。内网原片跟本地已下前缀；其它片源跟播放器缓存。 */
   @State private bufferProgress: number = 0;
-  /** 初值读全局记忆，避免 LazyForEach 新实例首帧仍画 1.0x/原始 再闪一下 */
-  @State private speedRate: number = LAST_VIDEO_SPEED_RATE;
-  @State private qualityIndex: number = LAST_VIDEO_QUALITY_INDEX;
+  @State private speedRate: number = 1.0;
+  @State private qualityIndex: number = 0;
+  @State private speedLocked: boolean = false;
+  @State private qualityLocked: boolean = false;
   @State private longPressSpeeding: boolean = false;
   @State private viewW: number = 360;
   @State private viewH: number = 780;
@@ -482,9 +475,37 @@ export struct GalleryAuthVideo {
 
   /**
    * 当前条目分辨率下，把本页 qualityIndex 夹到合法档位。
-   * 注意：切勿写 LAST_VIDEO_QUALITY_INDEX——那是用户「偏好」，仅应在菜单里手选时更新；
-   * 若在此处因低分辨率视频回退到 0 也同步全局，滑回高分辨率视频后会永久变成「原始」。
+   * 注意：切勿在这里写会话锁定档——那是长按按钮后的偏好；
+   * 若因低分辨率回退到 0 也改锁定值，滑回高分辨率视频会永久变成「原始」。
    */
+  private applySessionVideoPrefs(): void {
+    this.speedLocked = GalleryPreviewSessionPrefs.speedLocked;
+    this.qualityLocked = GalleryPreviewSessionPrefs.qualityLocked;
+    this.speedRate = this.speedLocked ? GalleryPreviewSessionPrefs.speedRate : 1.0;
+    this.qualityIndex = this.qualityLocked ? GalleryPreviewSessionPrefs.qualityIndex : 0;
+    this.normalizeQualityIndex();
+  }
+
+  private toggleSpeedLock(): void {
+    if (this.speedLocked) {
+      GalleryPreviewSessionPrefs.unlockSpeed();
+      this.speedLocked = false;
+      return;
+    }
+    GalleryPreviewSessionPrefs.lockSpeed(this.speedRate);
+    this.speedLocked = true;
+  }
+
+  private toggleQualityLock(): void {
+    if (this.qualityLocked) {
+      GalleryPreviewSessionPrefs.unlockQuality();
+      this.qualityLocked = false;
+      return;
+    }
+    GalleryPreviewSessionPrefs.lockQuality(this.qualityIndex);
+    this.qualityLocked = true;
+  }
+
   private normalizeQualityIndex(): void {
     if (this.isQualityAllowed(this.qualityIndex)) {
       return;
@@ -523,11 +544,7 @@ export struct GalleryAuthVideo {
     stopGalleryVideoLanPrefetch();
     this.seekInFlight = false;
     this.clearSeekDoneWatch();
-    // 切换到下一个视频时保留用户最近一次选择的倍速，不再重置为 1.0x。
-    this.speedRate = LAST_VIDEO_SPEED_RATE;
-    // 切换到下一个视频时保留上次选择的清晰度档位。
-    this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
-    this.normalizeQualityIndex();
+    this.applySessionVideoPrefs();
     this.longPressSpeeding = false;
     this.videoPxW = 0;
     this.videoPxH = 0;
@@ -550,15 +567,12 @@ export struct GalleryAuthVideo {
   }
 
   /**
-   * 组件首次创建时，@Watch('onUrlChange') 可能不会在首帧前触发，
-   * 导致按钮文案短暂显示默认值（1.00x / 原始）。
-   * 这里在首次出现时主动同步全局记忆，确保切到下一视频时“显示即记忆值”。
+   * 组件首次创建时，@Watch('onUrlChange') 可能不会在首帧前触发。
+   * 长按锁定时同步会话偏好；未锁定则回 1.0x / 原始。
    */
   aboutToAppear(): void {
     this.isDarkTheme = this.colorMode === 1;
-    this.speedRate = LAST_VIDEO_SPEED_RATE;
-    this.qualityIndex = LAST_VIDEO_QUALITY_INDEX;
-    this.normalizeQualityIndex();
+    this.applySessionVideoPrefs();
     this.autoRecoverCount = 0;
     this.showPlaybackRetry = false;
     this.lastTogglePlaySeq = this.togglePlaySeq;
@@ -1437,12 +1451,16 @@ export struct GalleryAuthVideo {
   }
 
   private applyPickedSpeed(picked: number): void {
+    const changed = Math.abs(this.speedRate - picked) >= 0.01;
+    this.speedRate = picked;
+    if (changed && this.speedLocked) {
+      GalleryPreviewSessionPrefs.unlockSpeed();
+      this.speedLocked = false;
+    }
     const p = this.avPlayer;
     if (p === null) {
       return;
     }
-    this.speedRate = picked;
-    LAST_VIDEO_SPEED_RATE = picked;
     if (!this.longPressSpeeding) {
       this.applySpeed(p, picked);
       this.armPlaybackFalsePositiveGuardForTranscode();
@@ -1485,7 +1503,10 @@ export struct GalleryAuthVideo {
       return;
     }
     this.qualityIndex = idx;
-    LAST_VIDEO_QUALITY_INDEX = idx;
+    if (this.qualityLocked) {
+      GalleryPreviewSessionPrefs.unlockQuality();
+      this.qualityLocked = false;
+    }
     if (!this.userStartedOnce) {
       return;
     }
@@ -2116,8 +2137,10 @@ export struct GalleryAuthVideo {
         landscape: this.landscape,
         speedText: this.speedBadgeText(),
         speedRate: this.speedRate,
+        speedLocked: this.speedLocked,
         qualityLabels: this.qualityMenuLabels(),
         qualityIndex: this.qualityIndex,
+        qualityLocked: this.qualityLocked,
         qualityText: this.qualityBadgeText(),
         currentText: this.fmtTime(this.currentMs),
         durationText: this.fmtTime(this.durationMs),
@@ -2132,9 +2155,17 @@ export struct GalleryAuthVideo {
           this.bumpChromeAutoHide();
           this.applyPickedSpeed(rate);
         },
+        onToggleSpeedLock: (): void => {
+          this.bumpChromeAutoHide();
+          this.toggleSpeedLock();
+        },
         onSelectQuality: (index: number): void => {
           this.bumpChromeAutoHide();
           this.applyQualityAt(index);
+        },
+        onToggleQualityLock: (): void => {
+          this.bumpChromeAutoHide();
+          this.toggleQualityLock();
         },
         onFullscreen: (): void => {
           this.bumpChromeAutoHide();

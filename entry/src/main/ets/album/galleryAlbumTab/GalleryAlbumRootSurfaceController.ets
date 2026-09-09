@@ -1,11 +1,11 @@
 ﻿import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
-import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem } from '../../model/FnApiTypes';
+import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem, UserAlbumItem } from '../../model/FnApiTypes';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../../common/FnMotion';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { galleryAlbumTopBarChromeHeightVp } from './GalleryAlbumTopBar';
-import { loadMediaCategories as requestMediaCategories, loadPersons as requestPersons, loadSmartCategories as requestSmartCategories } from './GalleryAlbumModeLoaders';
+import { loadMediaCategories as requestMediaCategories, loadPersons as requestPersons, loadSmartCategories as requestSmartCategories, loadUserAlbums as requestUserAlbums } from './GalleryAlbumModeLoaders';
 import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
 import {
   GalleryAlbumNavigation,
@@ -40,6 +40,9 @@ export interface GalleryAlbumRootSurfaceHost {
   personLoading: boolean;
   personError: string;
   personItems: AiPersonItem[];
+  userAlbumLoading: boolean;
+  userAlbumError: string;
+  userAlbumItems: UserAlbumItem[];
   searchLoading: boolean;
   searchError: string;
   searchResults: GalleryListItem[];
@@ -54,6 +57,7 @@ export interface GalleryAlbumRootSurfaceHost {
   rootSurfaceSwitchTo: string;
   albumsHomeSmartPrefetchGen: number;
   albumsHomePersonPrefetchGen: number;
+  albumsHomeUserAlbumPrefetchGen: number;
   albumsHomeMediaPrefetchGen: number;
   lastHomeSurface: string;
   /** 上次成功拉过相册补充数据时的 RefreshStore.version；落后则强制重拉封面 */
@@ -98,7 +102,9 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
   const needSmartPrefetch = albumsStale ||
     (galleryAlbumAlbumsHomeSmartItems(host).length <= 0 && !host.smartCategoryLoading);
   const needPersonPrefetch = albumsStale || (host.personItems.length <= 0 && !host.personLoading);
-  if (!needMediaPrefetch && !needSmartPrefetch && !needPersonPrefetch) {
+  const needUserAlbumPrefetch = albumsStale ||
+    (host.albumsHomeUserAlbumPrefetchGen <= 0 && host.userAlbumItems.length <= 0 && !host.userAlbumLoading);
+  if (!needMediaPrefetch && !needSmartPrefetch && !needPersonPrefetch && !needUserAlbumPrefetch) {
     return;
   }
   const client = AppSession.getClient();
@@ -148,6 +154,20 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
       host.personItems = result.items;
       host.personError = result.error;
       host.personLoading = false;
+    })();
+  }
+  if (needUserAlbumPrefetch) {
+    const albumGen = ++host.albumsHomeUserAlbumPrefetchGen;
+    host.userAlbumLoading = true;
+    host.userAlbumError = '';
+    void (async (): Promise<void> => {
+      const result = await requestUserAlbums(client);
+      if (albumGen !== host.albumsHomeUserAlbumPrefetchGen) {
+        return;
+      }
+      host.userAlbumItems = result.items;
+      host.userAlbumError = result.error;
+      host.userAlbumLoading = false;
     })();
   }
 }

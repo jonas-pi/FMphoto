@@ -1,4 +1,5 @@
 import { GalleryGetListData, GalleryListItem } from '../../model/FnApiTypes';
+import { galleryListFromData } from '../GalleryListItemNormalize';
 
 export interface GalleryThumbHitRect {
   left: number;
@@ -121,13 +122,6 @@ export function sortDaysDesc(cells: TimelineDayModel[]): TimelineDayModel[] {
 }
 
 export function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  const raw = data.list ?? data.items ?? data.photos ?? data.records;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw as GalleryListItem[];
+  return galleryListFromData(data);
 }
 

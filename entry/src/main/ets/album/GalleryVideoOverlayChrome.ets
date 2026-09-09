@@ -42,8 +42,10 @@ export struct GalleryVideoOverlayChrome {
   @Prop landscape: boolean = false;
   @Prop speedText: string = '1.0X';
   @Prop speedRate: number = 1.0;
+  @Prop speedLocked: boolean = false;
   @Prop qualityLabels: string[] = ['原始', '高清 1080p', '均衡 720p', '流畅 480p'];
   @Prop qualityIndex: number = 0;
+  @Prop qualityLocked: boolean = false;
   @Prop qualityText: string = '原始';
   @Prop currentText: string = '00:00';
   @Prop durationText: string = '00:00';
@@ -53,7 +55,9 @@ export struct GalleryVideoOverlayChrome {
   @Prop seekPreviewVisible: boolean = false;
   onPlay: () => void = () => {};
   onSelectSpeed: (rate: number) => void = (_rate: number) => {};
+  onToggleSpeedLock: () => void = () => {};
   onSelectQuality: (index: number) => void = (_index: number) => {};
+  onToggleQualityLock: () => void = () => {};
   onFullscreen: () => void = () => {};
   onInteract: () => void = () => {};
   onSeekStart: () => void = () => {};
@@ -148,26 +152,31 @@ export struct GalleryVideoOverlayChrome {
       MenuItem({ content: '0.25X' })
         .selected(this.isCurrentSpeed(0.25))
         .onClick((): void => {
+          this.speedMenuVisible = false;
           this.onSelectSpeed(0.25);
         })
       MenuItem({ content: '0.5X' })
         .selected(this.isCurrentSpeed(0.5))
         .onClick((): void => {
+          this.speedMenuVisible = false;
           this.onSelectSpeed(0.5);
         })
       MenuItem({ content: '1.0X' })
         .selected(this.isCurrentSpeed(1.0))
         .onClick((): void => {
+          this.speedMenuVisible = false;
           this.onSelectSpeed(1.0);
         })
       MenuItem({ content: '1.5X' })
         .selected(this.isCurrentSpeed(1.5))
         .onClick((): void => {
+          this.speedMenuVisible = false;
           this.onSelectSpeed(1.5);
         })
       MenuItem({ content: '2.0X' })
         .selected(this.isCurrentSpeed(2.0))
         .onClick((): void => {
+          this.speedMenuVisible = false;
           this.onSelectSpeed(2.0);
         })
     }
@@ -310,8 +319,16 @@ export struct GalleryVideoOverlayChrome {
                 barHeight: OVERLAY_PILL_HEIGHT_VP,
                 text: this.speedText,
                 fontSizeValue: OVERLAY_PILL_FONT_VP,
+                fontColorValue: this.speedLocked ?
+                  $r('sys.color.ohos_id_color_activated') : $r('app.color.icon_primary'),
+                enableLongPress: true,
                 onBarClick: (): void => {
                   this.openSpeedMenu();
+                },
+                onBarLongPress: (): void => {
+                  playGalleryLongPressMenuHaptic();
+                  this.onInteract();
+                  this.onToggleSpeedLock();
                 }
               })
             }
@@ -335,8 +352,16 @@ export struct GalleryVideoOverlayChrome {
                 barHeight: OVERLAY_PILL_HEIGHT_VP,
                 text: this.qualityText,
                 fontSizeValue: OVERLAY_PILL_FONT_VP,
+                fontColorValue: this.qualityLocked ?
+                  $r('sys.color.ohos_id_color_activated') : $r('app.color.icon_primary'),
+                enableLongPress: true,
                 onBarClick: (): void => {
                   this.openQualityMenu();
+                },
+                onBarLongPress: (): void => {
+                  playGalleryLongPressMenuHaptic();
+                  this.onInteract();
+                  this.onToggleQualityLock();
                 }
               })
             }

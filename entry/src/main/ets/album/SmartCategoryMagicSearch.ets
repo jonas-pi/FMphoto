@@ -5,6 +5,7 @@ import { common } from '@kit.AbilityKit';
 import { GalleryListItem, GalleryThumbnailBlock, MagicSearchItem, SmartCategoryItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { pickThumb } from './GalleryAlbumCommon';
+import { normalizeGalleryListItem } from './GalleryListItemNormalize';
 import { smartCategoryCover, smartCategoryName } from './GalleryAlbumEntityData';
 import { SmartCategoryCountStore } from './SmartCategoryCountStore';
 import {
@@ -71,7 +72,7 @@ export function normalizeSmartMagicItem(item: MagicSearchItem): GalleryListItem 
   } else {
     out.additional.thumbnail = thumbBlock;
   }
-  return out;
+  return normalizeGalleryListItem(out);
 }
 
 /** 按关键词拉取智能分类媒体列表（AI 语义搜索） */

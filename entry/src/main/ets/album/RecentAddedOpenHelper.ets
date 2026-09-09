@@ -4,6 +4,7 @@ import { AppSession } from '../auth/AppSession';
 import { GalleryGetListData, GalleryListItem, GalleryTimelineData } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
+import { galleryListFromData } from './GalleryListItemNormalize';
 import { GALLERY_RECENT_DAY_MAX_ROUNDS } from './galleryAlbumTab/GalleryAlbumTabConstants';
 
 const DOMAIN = 0xFF00;
@@ -68,14 +69,7 @@ function sortDaysDesc(cells: TimelineDayModel[]): TimelineDayModel[] {
 }
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  const raw = data.list ?? data.items ?? data.photos ?? data.records;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw as GalleryListItem[];
+  return galleryListFromData(data);
 }
 
 function parseRecentTimelineRows(rawList: Array<Record<string, string | number | undefined>>): TimelineDayModel[] {

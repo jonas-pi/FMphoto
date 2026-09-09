@@ -185,6 +185,7 @@ export struct GalleryAlbumTopBar {
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @Prop searchFilterActive: boolean = false;
+  @Prop albumsHomeEditMode: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   /** 真实可滚动内容：图库/相册/分类等页面 Stack，由调用方通过尾随闭包传入。 */
@@ -200,6 +201,8 @@ export struct GalleryAlbumTopBar {
   onBackToGallery: () => void = () => {};
   onShowMoreMenu: () => void = () => {};
   onOpenSearchFilter: () => void = () => {};
+  onAlbumsHomeEditCancel: () => void = () => {};
+  onAlbumsHomeEditDone: () => void = () => {};
 
   /** 不进 @State：只挡自动抢焦，避免为了收键盘刷新输入框。 */
   private suppressSearchAutoFocus: boolean = true;
@@ -208,6 +211,10 @@ export struct GalleryAlbumTopBar {
   private searchInputCtrl: TextInputController = new TextInputController();
   private suppressSearchFocusTimer: number = -1;
   private searchFocusKickTimer: number = -1;
+
+  private isAlbumsHomeEditing(): boolean {
+    return this.albumsHomeEditMode && this.isAlbumsHomeSurface() && this.isRootSurfaceMode();
+  }
 
   private isAlbumsHomeSurface(): boolean {
     return this.homeSurface === 'albums';
@@ -241,6 +248,9 @@ export struct GalleryAlbumTopBar {
   }
 
   private mainTitleText(): string {
+    if (this.isAlbumsHomeEditing()) {
+      return '编辑';
+    }
     if (this.gallerySelectionMode) {
       return this.selectionText();
     }
@@ -258,6 +268,9 @@ export struct GalleryAlbumTopBar {
   }
 
   private shouldShowBack(): boolean {
+    if (this.isAlbumsHomeEditing()) {
+      return true;
+    }
     if (this.gallerySelectionMode && !this.inSearchMode) {
       return false;
     }
@@ -402,6 +415,10 @@ export struct GalleryAlbumTopBar {
   }
 
   private leaveSearchOrBack(): void {
+    if (this.isAlbumsHomeEditing()) {
+      this.onAlbumsHomeEditCancel();
+      return;
+    }
     if (this.gallerySelectionMode && this.inSearchMode) {
       this.onExitSelection();
       return;
@@ -525,6 +542,18 @@ export struct GalleryAlbumTopBar {
   }
 
   private buildDefaultMenuItems(): HdsNavigationMenuItemOptions[] {
+    if (this.isAlbumsHomeEditing()) {
+      const doneContent: HdsNavigationIconOptions = {
+        label: '完成',
+        icon: $r('sys.symbol.checkmark'),
+        type: IconStyleMode.NORMAL,
+        isEnabled: true,
+        action: (): void => {
+          this.onAlbumsHomeEditDone();
+        }
+      };
+      return [this.menuItem(doneContent)];
+    }
     if (this.gallerySelectionMode) {
       return [this.menuItem(fnHdsRoundCancelIcon((): void => {
         this.onExitSelection();

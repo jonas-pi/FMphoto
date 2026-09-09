@@ -61,6 +61,7 @@ import {
   RecycleBinListData,
   SearchFilterListData,
   SmartCategoryData,
+  UserAlbumData,
   UserInfoData
 } from '../model/FnApiTypes';
 
@@ -1151,6 +1152,39 @@ export class FnHttpClient {
 
   async getAiPersonPhotoList(personId: string, startTime: string, endTime: string, limit: number, offset: number, timeoutMs: number = 20000): Promise<FnClientResult<GalleryGetListData>> {
     return this.galleryOps.getAiPersonPhotoList(personId, startTime, endTime, limit, offset, timeoutMs);
+  }
+
+  async getUserAlbumList(timeoutMs: number = 20000): Promise<FnClientResult<UserAlbumData>> {
+    return this.galleryOps.getUserAlbumList(timeoutMs);
+  }
+
+  async getUserAlbumTimeline(
+    albumId: string,
+    isBaby: boolean,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryTimelineData>> {
+    return this.galleryOps.getUserAlbumTimeline(albumId, isBaby, timeoutMs);
+  }
+
+  async getUserAlbumPhotoList(
+    albumId: string,
+    isBaby: boolean,
+    startTime: string,
+    endTime: string,
+    limit: number,
+    offset: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    return this.galleryOps.getUserAlbumPhotoList(albumId, isBaby, startTime, endTime, limit, offset, timeoutMs);
+  }
+
+  async getUserAlbumPhotos(
+    albumId: string,
+    offset: number,
+    limit: number,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<GalleryGetListData>> {
+    return this.galleryOps.getUserAlbumPhotos(albumId, offset, limit, timeoutMs);
   }
 
   async searchResultsByCategory(item: MediaCategoryItem, timeoutMs: number = 20000): Promise<FnClientResult<GalleryListItem[]>> {

@@ -6,6 +6,11 @@ import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { AppSession } from '../auth/AppSession';
 import { GalleryListItem, GalleryThumbnailBlock } from '../model/FnApiTypes';
+import {
+  galleryListItemIdOf,
+  galleryListItemUuidOf,
+  galleryPhotoStreamPath
+} from './GalleryListItemNormalize';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
 import { gallerySharedTransitionOptions } from './GallerySharedTransition';
@@ -28,6 +33,9 @@ import {
 /** 预览图缩放：最小值固定为 1.0（不允许缩小到比 fit 更小） */
 export const GALLERY_PREVIEW_SCALE_MIN = 1.0;
 export const GALLERY_PREVIEW_SCALE_MAX = 4;
+
+export { galleryListItemIdOf };
+
 /** 官方图片预览：双击在默认尺寸与固定倍率之间切换 */
 export const GALLERY_PREVIEW_DOUBLE_TAP_SCALE = 2;
 export const GALLERY_PREVIEW_ZOOM_EPS = 0.0005;
@@ -934,6 +942,11 @@ export function pickOriginal(it: GalleryListItem): string {
       return orig.trim();
     }
   }
+  const id = galleryListItemIdOf(it);
+  const uuid = galleryListItemUuidOf(it);
+  if (id.length > 0 && uuid.length > 0) {
+    return galleryPhotoStreamPath(id, uuid, 'o');
+  }
   return '';
 }
 
@@ -1467,6 +1480,8 @@ export struct GalleryNetworkThumb {
   @Prop cacheRank: number = 0;
   /** 磁盘落盘类型：0 不定、1 首屏、2 相册封面；见 GalleryThumbDiskCache */
   @Prop diskPersistKind: number = 0;
+  /** 封面圆角；0 表示直角，由外层自行裁切 */
+  @Prop clipRadius: number = 0;
   @StorageProp('colorMode') private colorMode: number = 0;
   /** NAS 缓存失效后递增，强制已挂载缩略图丢掉旧 PixelMap 并重拉 */
   @StorageProp(GALLERY_THUMB_CACHE_EPOCH_KEY) @Watch('onThumbCacheEpochChanged')
@@ -1726,7 +1741,7 @@ export struct GalleryNetworkThumb {
     }
     .width('100%')
     .aspectRatio(1)
-    .borderRadius(0)
+    .borderRadius(this.clipRadius)
     .backgroundColor(this.colorMode === 1 ? '#1C1C1E' : '#F0F0F0')
     .clip(true)
     .id(this.safeSharedTransitionId().length > 0 ? `${this.safeSharedTransitionId()}_source` : '')

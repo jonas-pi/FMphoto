@@ -1,4 +1,5 @@
 import { GalleryListItem } from '../../model/FnApiTypes';
+import { galleryListItemIdOf } from '../GalleryAlbumCommon';
 import { GalleryFlowNode } from '../GalleryFlowDataSource';
 import { GalleryAlbumDaySectionModel, GalleryAlbumDaySectionState } from './GalleryAlbumState';
 import { dayKey, TimelineDayModel, ymKey } from './GalleryAlbumTabTypes';
@@ -6,10 +7,7 @@ import { GalleryAlbumVisibleLoadHost } from './GalleryAlbumVisibleLoadController
 import { GalleryViewGranularity } from './GalleryAlbumGranularity';
 
 export function galleryAlbumItemIdOf(item: GalleryListItem): string {
-  if (item.id === undefined || item.id === null) {
-    return '';
-  }
-  return String(item.id).trim();
+  return galleryListItemIdOf(item);
 }
 
 export function galleryAlbumFlatItems(host: GalleryAlbumVisibleLoadHost): GalleryListItem[] {

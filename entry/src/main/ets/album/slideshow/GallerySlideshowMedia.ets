@@ -2,6 +2,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryGetListData, GalleryListItem, GalleryTimelineData } from '../../model/FnApiTypes';
 import { FnHttpClient } from '../../network/FnHttpClient';
 import { isGifItem, isVideoItem } from '../GalleryAlbumCommon';
+import { galleryListFromData } from '../GalleryListItemNormalize';
 import { DATE_FEED_BATCH, DAY_MAX_ROUNDS } from '../galleryAlbumTab/GalleryAlbumTabConstants';
 import {
   fmtDayEnd,
@@ -26,14 +27,7 @@ export class GallerySlideshowFetchResult {
 }
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  const raw = data.list ?? data.items ?? data.photos ?? data.records;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw as GalleryListItem[];
+  return galleryListFromData(data);
 }
 
 function collectTimelineDays(timeline: GalleryTimelineData): TimelineDayModel[] {

@@ -3,6 +3,7 @@ import { AppSession, FN_MEDIA_BASE_URL } from '../auth/AppSession';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import { CategoryGalleryNavStore } from '../album/CategoryGalleryNavStore';
 import { GalleryNetworkThumb, nasUrl, pickThumb } from '../album/GalleryAlbumCommon';
+import { normalizeGalleryListItem, galleryListFromData } from '../album/GalleryListItemNormalize';
 import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnInlineLoading } from '../common/FnUiCommon';
@@ -140,10 +141,7 @@ function mapPointCount(raw: MapLooseRecord): number {
 }
 
 function mapItemsFromListData(data: GalleryGetListData | undefined): GalleryListItem[] {
-  if (data === undefined || data === null) {
-    return [];
-  }
-  return data.list ?? data.items ?? data.photos ?? data.records ?? [];
+  return galleryListFromData(data);
 }
 
 function mapTimelineItemsFromData(data: MapTimelineData | undefined): MapTimelineItem[] {
@@ -745,23 +743,7 @@ struct MapPage {
   }
 
   private posterToGalleryItem(item: GalleryListItem): GalleryListItem {
-    const raw = item as MapLooseRecord;
-    const id = mapReadString(raw, ['id']);
-    const uuid = mapReadString(raw, ['photoUUID', 'uuid']);
-    const out = item as GalleryListItem;
-    if (id.length > 0) {
-      out.id = id;
-    }
-    if (uuid.length > 0) {
-      out.photoUUID = uuid;
-    }
-    if (out.thumb === undefined && id.length > 0 && uuid.length > 0) {
-      out.thumb = `/p/api/v1/stream/p/t/${id}/m/${uuid}`;
-    }
-    if (out.originalUrl === undefined && id.length > 0 && uuid.length > 0) {
-      out.originalUrl = `/p/api/v1/stream/p/t/${id}/o/${uuid}`;
-    }
-    return out;
+    return normalizeGalleryListItem(item);
   }
 
   private embeddedPhotos(item: MapPreviewAllPointItem): GalleryListItem[] {
@@ -770,7 +752,7 @@ struct MapPage {
     for (let i = 0; i < arr.length; i++) {
       const one = arr[i];
       if (typeof one === 'object' && one !== null) {
-        out.push(one as GalleryListItem);
+        out.push(normalizeGalleryListItem(one as GalleryListItem));
       }
     }
     return out;
