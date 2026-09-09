@@ -16,6 +16,7 @@ export const FN_SHARE_INBOX_VERSION_KEY: string = 'FN_SHARE_INBOX_VERSION';
 export class GalleryShareInbox {
   private static pending: string[] = [];
   private static loginHintShown: boolean = false;
+  private static confirming: boolean = false;
 
   static ensureStorage(): void {
     AppStorage.setOrCreate<number>(FN_SHARE_INBOX_VERSION_KEY, 0);
@@ -23,6 +24,18 @@ export class GalleryShareInbox {
 
   static peekCount(): number {
     return GalleryShareInbox.pending.length;
+  }
+
+  static isConfirming(): boolean {
+    return GalleryShareInbox.confirming;
+  }
+
+  static beginConfirm(): void {
+    GalleryShareInbox.confirming = true;
+  }
+
+  static endConfirm(): void {
+    GalleryShareInbox.confirming = false;
   }
 
   static shouldShowLoginHint(): boolean {

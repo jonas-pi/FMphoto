@@ -106,8 +106,7 @@ struct Login {
   }
 
   private tryConsumeShareInbox(): void {
-    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    galleryShareTryConsume(ctx, (msg: string): void => {
+    void galleryShareTryConsume(this.getUIContext(), (msg: string): void => {
       try {
         this.getUIContext().getPromptAction().showToast({ message: msg });
       } catch (_e) {
