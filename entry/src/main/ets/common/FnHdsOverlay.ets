@@ -69,11 +69,11 @@ export function fnHdsSheetSystemMaterial(): uiMaterial.Material | undefined {
     return undefined;
   }
   if (cachedSheetMaterial === undefined) {
-    // 官方 bindSheet 示例用 ULTRA_THICK；补 lightEffect 才有触摸流光（沉浸光感）
+    // 官方 bindSheet 示例只设 ULTRA_THICK，不开 lightEffect。
+    // lightEffect 是小控件触摸流光；铺在整块半模态上会变成跟随手指的大片点光源。
     // @SuppressWarnings compatibility
     cachedSheetMaterial = new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.ULTRA_THICK,
-      lightEffect: { color: undefined }
+      style: uiMaterial.ImmersiveStyle.ULTRA_THICK
     });
   }
   return cachedSheetMaterial;
