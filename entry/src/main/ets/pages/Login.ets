@@ -42,6 +42,8 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { FN_SHARE_INBOX_VERSION_KEY } from '../album/share/GalleryShareInbox';
+import { galleryShareTryConsume } from '../album/share/GalleryShareConsume';
 
 const LOGIN_DOMAIN = 0xFF00;
 const LOGIN_TAG = 'Login';
@@ -92,9 +94,25 @@ struct Login {
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
   @StorageProp(FN_LOGIN_PANEL_RADIUS_VP_KEY) private panelRadiusVp: number = LOGIN_CARD_RADIUS_FALLBACK_VP;
+  @StorageProp(FN_SHARE_INBOX_VERSION_KEY) @Watch('onShareInboxVersionChanged') private shareInboxVersion: number = 0;
 
   onPageShow(): void {
     this.applySystemBarTheme();
+    this.tryConsumeShareInbox();
+  }
+
+  private onShareInboxVersionChanged(): void {
+    this.tryConsumeShareInbox();
+  }
+
+  private tryConsumeShareInbox(): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    galleryShareTryConsume(ctx, (msg: string): void => {
+      try {
+        this.getUIContext().getPromptAction().showToast({ message: msg });
+      } catch (_e) {
+      }
+    });
   }
 
   onColorModeChanged(): void {
@@ -131,6 +149,9 @@ struct Login {
     }).catch((_e: Error) => {
       this.formReady = true;
     });
+    setTimeout((): void => {
+      this.tryConsumeShareInbox();
+    }, 0);
   }
 
   private loginPanelRadiusVp(): number {

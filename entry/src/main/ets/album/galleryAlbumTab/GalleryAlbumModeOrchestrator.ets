@@ -11,21 +11,12 @@ import {
   UserAlbumItem
 } from '../../model/FnApiTypes';
 import { AppSession } from '../../auth/AppSession';
-import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
 import { FN_GLOBAL_TAB_SWITCH_OFFSET_VP, FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
-import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
 import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
-import {
-  fileNameFromPickerUri,
-  localPhotoEntryFromPickerUri
-} from '../GalleryAutoSyncPicker';
-import { FnTransferDirection, fnTransferDirectionLabel } from '../../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
-import { GalleryAutoSyncLedger } from '../GalleryAutoSyncLedger';
-import { GalleryAutoSyncNasIndex } from '../GalleryAutoSyncNasIndex';
-import { uploadUriMaybeMovingPhoto } from '../livephoto/LivePhotoUpload';
+import { galleryStartUriListUpload } from '../GalleryUriBackgroundUpload';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
 import { openUserAlbumById } from '../UserAlbumOpenHelper';
 import { openMediaCategoryGallery, openingTextForCategory } from '../MediaCategoryOpenHelper';
@@ -325,7 +316,7 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
   if (uris.length === 0) {
     return;
   }
-  galleryAlbumUploadUriListInBackground(host, uris, FnTransferDirection.UPLOAD, 'album-upload', '上传');
+  galleryAlbumUploadUriListInBackground(host, uris, 'album-upload', '上传');
 }
 
 /**
@@ -344,61 +335,18 @@ export function galleryAlbumTriggerAutoSync(
 function galleryAlbumUploadUriListInBackground(
   host: GalleryAlbumModeOrchestratorHost,
   uris: string[],
-  direction: FnTransferDirection,
   keepAliveTag: string,
   doneVerb: string
 ): void {
-  const client = AppSession.getClient();
-  if (client === null) {
-    host.toast('未登录');
-    return;
-  }
-  if (uris.length === 0) {
-    return;
-  }
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  const label = fnTransferDirectionLabel(direction);
-  void (async (): Promise<void> => {
-    const taskId = FnTransferQueueStore.begin(direction, label, uris.length);
-    let ok = 0;
-    let firstFailMsg = '';
-    const stored = AppSession.getStored();
-    const albumDirHint =
-      stored !== null && stored.albumParentGuid.trim().length > 0 ? stored.albumParentGuid.trim() : undefined;
-    try {
-      await BackgroundKeepAliveController.withDataTransfer(ctx, keepAliveTag, async (): Promise<void> => {
-        for (let i = 0; i < uris.length; i++) {
-          const uri = uris[i];
-          FnTransferQueueStore.update(taskId, i + 1, fileNameFromPickerUri(uri));
-          const res = await uploadUriMaybeMovingPhoto(client, ctx, uri, 150000, albumDirHint);
-          if (res.success) {
-            ok++;
-            // Picker / 手动上传成功后写入账本，避免下次同步再次判定为未同步
-            const entry = localPhotoEntryFromPickerUri(uri);
-            await GalleryAutoSyncLedger.markSynced(ctx, [entry]);
-            GalleryAutoSyncStore.markSynced([uri]);
-            GalleryAutoSyncNasIndex.addLocalEntries([entry]);
-          } else if (firstFailMsg.length === 0) {
-            const em = res.message ?? '';
-            firstFailMsg = em.length > 0 ? em : `${doneVerb}失败`;
-          }
-        }
-      });
-    } finally {
-      const summary = ok > 0 ? `${doneVerb}完成 ${ok}/${uris.length}` : (firstFailMsg.length > 0 ? firstFailMsg : `${doneVerb}失败`);
-      FnTransferQueueStore.finish(taskId, ok > 0, summary);
-    }
-    if (ok > 0) {
-      host.toast(`${doneVerb}完成 ${ok}/${uris.length}`);
-      GalleryTimelineRefreshStore.bump();
-      host.requestBootstrap(false);
-      setTimeout((): void => {
-        void host.bootstrap(false);
-      }, GALLERY_UPLOAD_RECHECK_MS);
-    } else {
-      host.toast(firstFailMsg.length > 0 ? firstFailMsg : `${doneVerb}失败，请稍后重试`);
-    }
-  })();
+  galleryStartUriListUpload(ctx, uris, keepAliveTag, doneVerb, (msg: string): void => {
+    host.toast(msg);
+  }, (): void => {
+    host.requestBootstrap(false);
+    setTimeout((): void => {
+      void host.bootstrap(false);
+    }, GALLERY_UPLOAD_RECHECK_MS);
+  });
 }
 
 export async function galleryAlbumLoadMediaCategories(host: GalleryAlbumModeOrchestratorHost): Promise<void> {

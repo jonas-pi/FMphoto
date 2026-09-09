@@ -79,6 +79,9 @@ import {
   galleryViewGranularityLabel,
   nextGalleryViewGranularity
 } from '../album/galleryAlbumTab/GalleryAlbumGranularity';
+import { FN_SHARE_INBOX_VERSION_KEY } from '../album/share/GalleryShareInbox';
+import { galleryShareTryConsume } from '../album/share/GalleryShareConsume';
+import { FN_TRANSFER_QUEUE_VERSION } from '../common/FnTransferQueueStore';
 
 const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
 
@@ -105,6 +108,8 @@ struct Home {
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onHomeEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
+  @StorageProp(FN_SHARE_INBOX_VERSION_KEY) @Watch('onShareInboxVersionChanged') private shareInboxVersion: number = 0;
+  @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @State private gallerySelectionDockActive: boolean = false;
   @State private gallerySelectionDockPrivilege: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
@@ -134,10 +139,26 @@ struct Home {
     this.applySystemBarTheme(true);
     this.pageShowSignal++;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.tryConsumeShareInbox();
     void proactiveRefreshLongTokenOnForeground(ctx).then((changed: boolean): void => {
       if (changed) {
         this.albumReloadEpoch++;
       }
+    });
+  }
+
+  private onShareInboxVersionChanged(): void {
+    this.tryConsumeShareInbox();
+  }
+
+  private onTransferQueueVersionChanged(): void {
+    this.tryConsumeShareInbox();
+  }
+
+  private tryConsumeShareInbox(): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    galleryShareTryConsume(ctx, (msg: string): void => {
+      this.toast(msg);
     });
   }
 
@@ -450,6 +471,9 @@ struct Home {
         }
       }
     }
+    setTimeout((): void => {
+      this.tryConsumeShareInbox();
+    }, 0);
   }
 
   aboutToDisappear(): void {

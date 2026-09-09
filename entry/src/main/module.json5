@@ -79,6 +79,7 @@
         "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        "launchType": "singleton",
         "backgroundModes": [
           "dataTransfer"
         ],
@@ -89,6 +90,28 @@
             ],
             "actions": [
               "ohos.want.action.home"
+            ]
+          },
+          {
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.image",
+                "maxFileSupported": 500
+              },
+              {
+                "scheme": "file",
+                "utd": "general.video",
+                "maxFileSupported": 500
+              },
+              {
+                "scheme": "file",
+                "utd": "general.media",
+                "maxFileSupported": 500
+              }
             ]
           }
         ]

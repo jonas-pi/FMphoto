@@ -23,6 +23,7 @@ import {
   fnSetImmersiveLightEnabled
 } from '../common/FnImmersiveSettings';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { GalleryShareInbox } from '../album/share/GalleryShareInbox';
 import { ensureStarted, scheduleCheck, stop } from '../network/LoginEndpointAutoSwitch';
 
 /** 应用日志域（与网络模块 FnHttp 同域便于筛选，取值需在 0x0～0xFFFF） */
@@ -46,8 +47,15 @@ export default class EntryAbility extends UIAbility {
     GalleryThumbDiskCache.init(this.context.cacheDir);
     ensureGalleryThumbCacheEpochStorage();
     FnTransferQueueStore.ensureStorage();
+    GalleryShareInbox.ensureStorage();
     fnEnsureWindowBreakpointStorage();
     ensureStarted(this.context);
+    void GalleryShareInbox.ingestWant(want);
+  }
+
+  /** 应用已在前台时再次被系统分享拉起 */
+  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    void GalleryShareInbox.ingestWant(want);
   }
 
   /** 系统深浅色模式切换时同步更新 AppStorage，使所有 @StorageProp('colorMode') 组件立即响应 */
