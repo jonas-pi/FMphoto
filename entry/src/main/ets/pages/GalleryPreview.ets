@@ -87,8 +87,10 @@ import {
 } from '../common/FnMotion';
 import {
   GalleryPreviewActionsHost,
+  GalleryPreviewDetailsVisibleEffect,
   galleryPreviewCloseDetailsPanel,
   galleryPreviewDeleteCurrentItem,
+  galleryPreviewDetailsVisibleSideEffects,
   galleryPreviewDownloadCurrentImage,
   galleryPreviewOnPersonInPhotoClick,
   galleryPreviewOpenDetailsPanel,
@@ -100,6 +102,7 @@ import {
 } from './galleryPreview/GalleryPreviewActions';
 import { GalleryPreviewChrome } from './galleryPreview/GalleryPreviewChrome';
 import { PreviewItemsDataSource } from './galleryPreview/GalleryPreviewDataSource';
+import { GalleryPreviewSession } from './galleryPreview/GalleryPreviewSession';
 import { GalleryPreviewDetailsSheet } from './galleryPreview/GalleryPreviewDetailsSheet';
 import {
   galleryPreviewCurrentHasOriginal,
@@ -179,6 +182,9 @@ struct GalleryPreview {
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private isDarkTheme: boolean = false;
+  private session: GalleryPreviewSession = new GalleryPreviewSession();
+  private slideshowHostCache: GalleryPreviewSlideshowHost | undefined = undefined;
+  private actionsHostCache: GalleryPreviewActionsHost | undefined = undefined;
 
   private itemSource: PreviewItemsDataSource = new PreviewItemsDataSource();
   private previewItems: GalleryListItem[] = [];
@@ -190,23 +196,8 @@ struct GalleryPreview {
   private sourcePlaceholderW: number = 0;
   private sourcePlaceholderH: number = 0;
   private swiperCtrl: SwiperController = new SwiperController();
-  private collectSyncGen: number = 0;
-  private slideshowEnabled: boolean = false;
-  private slideshowIntervalMs: number = 5000;
-  private slideshowLibraryTotal: number = 0;
-  private slideshowGlobalIndices: number[] = [];
-  private slideshowTimerId: number = -1;
-  /** 详情打开期间视频已播完：关详情后再切页，避免半模态还在就自动划走 */
-  private slideshowAdvancePending: boolean = false;
-  /** 官方：Swiper+LazyForEach 禁止在 onChange 里刷新子页，补货须推迟 */
-  private slideshowPrefetchTimer: number = -1;
-  /** 切页日志：上一张全局下标 / 稳定键，用于识别顺延与重复 */
-  private lastLoggedSlideshowGlobal: number = -1;
-  private lastLoggedSlideshowKey: string = '';
   private chromeRevealTimer: number = -1;
   private heroScrimEntered: boolean = false;
-  private choiceSheetResolver: ((index: number) => void) | undefined = undefined;
-  private liveSaveResolver: ((choice: LivePhotoSaveChoice) => void) | undefined = undefined;
   /** 当前页内详情动画终点，用于避免重复提交相同弹簧。 */
   private detailsAvoidTargetVp: number = -1;
 
@@ -214,7 +205,7 @@ struct GalleryPreview {
     this.isDarkTheme = this.colorMode === 1;
     this.applySystemBar(true);
     this.playHeroScrimEnterIfNeeded();
-    if (this.slideshowEnabled) {
+    if (this.session.slideshow.slideshowEnabled) {
       this.armSlideshowTimer();
     }
   }
@@ -245,7 +236,7 @@ struct GalleryPreview {
 
   private navigateBack(): void {
     void restoreGalleryPreviewPortrait(this.getUIContext());
-    if (!this.slideshowEnabled) {
+    if (!this.session.slideshow.slideshowEnabled) {
       this.clearChromeRevealTimer();
       setGalleryPreviewToolbarVisible(false);
       this.getUIContext().animateTo({
@@ -291,29 +282,29 @@ struct GalleryPreview {
     }
     this.syncCollectStateFromCurrentItem();
     void this.refreshCollectStateFromGetOne(this.currentItemId());
-    this.slideshowEnabled = GalleryPreviewNavStore.slideshow.enabled;
-    this.slideshowIntervalMs = GalleryPreviewNavStore.slideshow.intervalMs;
-    this.slideshowLibraryTotal = GalleryPreviewNavStore.slideshow.libraryTotalCount;
-    this.slideshowGlobalIndices = GalleryPreviewNavStore.slideshowGlobalIndices.slice();
-    if (!this.slideshowEnabled && routeParams !== undefined && routeParams['slideshow'] === '1') {
-      this.slideshowEnabled = true;
-      if (this.slideshowIntervalMs <= 0) {
-        this.slideshowIntervalMs = 5000;
+    this.session.slideshow.slideshowEnabled = GalleryPreviewNavStore.slideshow.enabled;
+    this.session.slideshow.slideshowIntervalMs = GalleryPreviewNavStore.slideshow.intervalMs;
+    this.session.slideshow.slideshowLibraryTotal = GalleryPreviewNavStore.slideshow.libraryTotalCount;
+    this.session.slideshow.slideshowGlobalIndices = GalleryPreviewNavStore.slideshowGlobalIndices.slice();
+    if (!this.session.slideshow.slideshowEnabled && routeParams !== undefined && routeParams['slideshow'] === '1') {
+      this.session.slideshow.slideshowEnabled = true;
+      if (this.session.slideshow.slideshowIntervalMs <= 0) {
+        this.session.slideshow.slideshowIntervalMs = 5000;
       }
     }
-    if (this.slideshowLibraryTotal <= 0 && GallerySlideshowStreamStore.isActive()) {
-      this.slideshowLibraryTotal = GallerySlideshowStreamStore.getLibraryTotalCount();
+    if (this.session.slideshow.slideshowLibraryTotal <= 0 && GallerySlideshowStreamStore.isActive()) {
+      this.session.slideshow.slideshowLibraryTotal = GallerySlideshowStreamStore.getLibraryTotalCount();
     }
     // 工具栏显隐不进本页 @State，避免点击切换时整页（含 Swiper）重绘。
     this.armChromeReveal();
-    if (this.slideshowEnabled) {
+    if (this.session.slideshow.slideshowEnabled) {
       this.scrimOpacity = 1;
       this.heroScrimEntered = true;
     }
     setGalleryPreviewOpening(false);
     this.originalLocked = GalleryPreviewSessionPrefs.originalLocked;
     this.applySessionOriginalIfNeeded();
-    if (this.slideshowEnabled) {
+    if (this.session.slideshow.slideshowEnabled) {
       this.logSlideshowPage();
       this.maybePrefetchSlideshowItems();
     }
@@ -376,7 +367,7 @@ struct GalleryPreview {
     this.clearSlideshowTimer();
     this.clearSlideshowPrefetchTimer();
     this.clearChromeRevealTimer();
-    this.slideshowAdvancePending = false;
+    this.session.slideshow.slideshowAdvancePending = false;
     this.detailsVisible = false;
     resetGalleryPreviewDetailsFit();
     setGalleryPreviewDetailsCover(false);
@@ -466,7 +457,7 @@ struct GalleryPreview {
 
   private armChromeReveal(): void {
     this.clearChromeRevealTimer();
-    if (this.slideshowEnabled) {
+    if (this.session.slideshow.slideshowEnabled) {
       setGalleryPreviewToolbarVisible(false);
       return;
     }
@@ -478,7 +469,7 @@ struct GalleryPreview {
   }
 
   private playHeroScrimEnterIfNeeded(): void {
-    if (!galleryPreviewShouldPlayHeroScrim(this.slideshowEnabled, this.heroScrimEntered)) {
+    if (!galleryPreviewShouldPlayHeroScrim(this.session.slideshow.slideshowEnabled, this.heroScrimEntered)) {
       return;
     }
     this.heroScrimEntered = true;
@@ -522,13 +513,13 @@ struct GalleryPreview {
   }
 
   private titleCounter(): string {
-    if (this.slideshowEnabled && this.slideshowLibraryTotal > 0) {
+    if (this.session.slideshow.slideshowEnabled && this.session.slideshow.slideshowLibraryTotal > 0) {
       const globalIdx = this.slideshowGlobalIndexAt(this.swiperIndex);
       if (globalIdx >= 0) {
-        return galleryPreviewTitleCounter(globalIdx, this.slideshowLibraryTotal);
+        return galleryPreviewTitleCounter(globalIdx, this.session.slideshow.slideshowLibraryTotal);
       }
       // 全局下标缺失时不要用播放队列序号冒充时间轴位置（会显示成 45/总数 顺延）
-      return `- / ${this.slideshowLibraryTotal}`;
+      return `- / ${this.session.slideshow.slideshowLibraryTotal}`;
     }
     return galleryPreviewTitleCounter(this.swiperIndex, this.totalCount);
   }
@@ -599,7 +590,7 @@ struct GalleryPreview {
   }
 
   private applySessionOriginalIfNeeded(): void {
-    if (this.slideshowEnabled || !this.originalLocked || !this.currentHasOriginal()) {
+    if (this.session.slideshow.slideshowEnabled || !this.originalLocked || !this.currentHasOriginal()) {
       return;
     }
     this.originalPreviewEnabled = true;
@@ -681,14 +672,14 @@ struct GalleryPreview {
     return new Promise<number>((resolve: (index: number) => void) => {
       this.choiceSheetTitle = title;
       this.choiceSheetButtons = buttons;
-      this.choiceSheetResolver = resolve;
+      this.session.overlay.choiceSheetResolver = resolve;
       this.choiceSheetVisible = true;
     });
   }
 
   private completeChoice(index: number): void {
-    const resolver = this.choiceSheetResolver;
-    this.choiceSheetResolver = undefined;
+    const resolver = this.session.overlay.choiceSheetResolver;
+    this.session.overlay.choiceSheetResolver = undefined;
     this.choiceSheetVisible = false;
     if (resolver !== undefined) {
       resolver(index);
@@ -707,7 +698,7 @@ struct GalleryPreview {
       return Promise.resolve(false);
     }
     return new Promise<boolean>((resolve: (ok: boolean) => void) => {
-      this.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
+      this.session.overlay.liveSaveResolver = (choice: LivePhotoSaveChoice): void => {
         resolve(choice === 'privilege');
       };
       this.liveSaveSheetVisible = true;
@@ -715,8 +706,8 @@ struct GalleryPreview {
   }
 
   private completeLivePhotoSave(choice: LivePhotoSaveChoice): void {
-    const resolver = this.liveSaveResolver;
-    this.liveSaveResolver = undefined;
+    const resolver = this.session.overlay.liveSaveResolver;
+    this.session.overlay.liveSaveResolver = undefined;
     this.liveSaveSheetVisible = false;
     if (resolver !== undefined) {
       resolver(choice);
@@ -760,34 +751,37 @@ struct GalleryPreview {
   }
 
   private asSlideshowHost(): GalleryPreviewSlideshowHost {
+    if (this.slideshowHostCache !== undefined) {
+      return this.slideshowHostCache;
+    }
     const self = this;
     class GalleryPreviewSlideshowHostBridge implements GalleryPreviewSlideshowHost {
-      get slideshowEnabled(): boolean { return self.slideshowEnabled; }
-      set slideshowEnabled(v: boolean) { self.slideshowEnabled = v; }
+      get slideshowEnabled(): boolean { return self.session.slideshow.slideshowEnabled; }
+      set slideshowEnabled(v: boolean) { self.session.slideshow.slideshowEnabled = v; }
 
-      get slideshowIntervalMs(): number { return self.slideshowIntervalMs; }
-      set slideshowIntervalMs(v: number) { self.slideshowIntervalMs = v; }
+      get slideshowIntervalMs(): number { return self.session.slideshow.slideshowIntervalMs; }
+      set slideshowIntervalMs(v: number) { self.session.slideshow.slideshowIntervalMs = v; }
 
-      get slideshowLibraryTotal(): number { return self.slideshowLibraryTotal; }
-      set slideshowLibraryTotal(v: number) { self.slideshowLibraryTotal = v; }
+      get slideshowLibraryTotal(): number { return self.session.slideshow.slideshowLibraryTotal; }
+      set slideshowLibraryTotal(v: number) { self.session.slideshow.slideshowLibraryTotal = v; }
 
-      get slideshowGlobalIndices(): number[] { return self.slideshowGlobalIndices; }
-      set slideshowGlobalIndices(v: number[]) { self.slideshowGlobalIndices = v; }
+      get slideshowGlobalIndices(): number[] { return self.session.slideshow.slideshowGlobalIndices; }
+      set slideshowGlobalIndices(v: number[]) { self.session.slideshow.slideshowGlobalIndices = v; }
 
-      get slideshowTimerId(): number { return self.slideshowTimerId; }
-      set slideshowTimerId(v: number) { self.slideshowTimerId = v; }
+      get slideshowTimerId(): number { return self.session.slideshow.slideshowTimerId; }
+      set slideshowTimerId(v: number) { self.session.slideshow.slideshowTimerId = v; }
 
-      get slideshowAdvancePending(): boolean { return self.slideshowAdvancePending; }
-      set slideshowAdvancePending(v: boolean) { self.slideshowAdvancePending = v; }
+      get slideshowAdvancePending(): boolean { return self.session.slideshow.slideshowAdvancePending; }
+      set slideshowAdvancePending(v: boolean) { self.session.slideshow.slideshowAdvancePending = v; }
 
-      get slideshowPrefetchTimer(): number { return self.slideshowPrefetchTimer; }
-      set slideshowPrefetchTimer(v: number) { self.slideshowPrefetchTimer = v; }
+      get slideshowPrefetchTimer(): number { return self.session.slideshow.slideshowPrefetchTimer; }
+      set slideshowPrefetchTimer(v: number) { self.session.slideshow.slideshowPrefetchTimer = v; }
 
-      get lastLoggedSlideshowGlobal(): number { return self.lastLoggedSlideshowGlobal; }
-      set lastLoggedSlideshowGlobal(v: number) { self.lastLoggedSlideshowGlobal = v; }
+      get lastLoggedSlideshowGlobal(): number { return self.session.slideshow.lastLoggedSlideshowGlobal; }
+      set lastLoggedSlideshowGlobal(v: number) { self.session.slideshow.lastLoggedSlideshowGlobal = v; }
 
-      get lastLoggedSlideshowKey(): string { return self.lastLoggedSlideshowKey; }
-      set lastLoggedSlideshowKey(v: string) { self.lastLoggedSlideshowKey = v; }
+      get lastLoggedSlideshowKey(): string { return self.session.slideshow.lastLoggedSlideshowKey; }
+      set lastLoggedSlideshowKey(v: string) { self.session.slideshow.lastLoggedSlideshowKey = v; }
 
       get swiperIndex(): number { return self.swiperIndex; }
       set swiperIndex(v: number) { self.swiperIndex = v; }
@@ -825,10 +819,14 @@ struct GalleryPreview {
       currentItem(): GalleryListItem | null { return self.currentItem(); }
       currentItemIsVideo(): boolean { return self.currentItemIsVideo(); }
     }
-    return new GalleryPreviewSlideshowHostBridge();
+    this.slideshowHostCache = new GalleryPreviewSlideshowHostBridge();
+    return this.slideshowHostCache;
   }
 
   private asActionsHost(): GalleryPreviewActionsHost {
+    if (this.actionsHostCache !== undefined) {
+      return this.actionsHostCache;
+    }
     const self = this;
     class PreviewActionsHostBridge implements GalleryPreviewActionsHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -847,12 +845,14 @@ struct GalleryPreview {
         const wasVisible = self.detailsVisible;
         self.detailsVisible = v;
         self.syncPreviewDetailsLayout();
-        if (!self.slideshowEnabled || wasVisible === v) {
-          return;
-        }
-        if (v) {
+        const effect = galleryPreviewDetailsVisibleSideEffects(
+          wasVisible,
+          v,
+          self.session.slideshow.slideshowEnabled
+        );
+        if (effect === GalleryPreviewDetailsVisibleEffect.PAUSE) {
           self.pauseSlideshowForDetails();
-        } else {
+        } else if (effect === GalleryPreviewDetailsVisibleEffect.RESUME) {
           self.resumeSlideshowAfterDetails();
         }
       }
@@ -911,8 +911,8 @@ struct GalleryPreview {
       get swiperCtrl(): SwiperController { return self.swiperCtrl; }
       set swiperCtrl(v: SwiperController) { self.swiperCtrl = v; }
 
-      get collectSyncGen(): number { return self.collectSyncGen; }
-      set collectSyncGen(v: number) { self.collectSyncGen = v; }
+      get collectSyncGen(): number { return self.session.collectSyncGen; }
+      set collectSyncGen(v: number) { self.session.collectSyncGen = v; }
 
       currentItem(): GalleryListItem | null { return self.currentItem(); }
       currentItemId(): string { return self.currentItemId(); }
@@ -920,7 +920,8 @@ struct GalleryPreview {
       routerBack(): void { self.navigateBack(); }
       askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
-    return new PreviewActionsHostBridge();
+    this.actionsHostCache = new PreviewActionsHostBridge();
+    return this.actionsHostCache;
   }
 
   @Builder
@@ -942,7 +943,7 @@ struct GalleryPreview {
         .backgroundColor(this.pageBg())
         .hitTestBehavior(HitTestMode.None)
 
-      if (!this.slideshowEnabled && this.sourcePageSnapshot !== undefined) {
+      if (!this.session.slideshow.slideshowEnabled && this.sourcePageSnapshot !== undefined) {
         // 快照始终保留在遮罩下方；下滑只降低遮罩透明度即可稳定露出原页面。
         // 上滑时 dismissProgress 固定为 0，完全不透明的遮罩会继续盖住快照。
         Image(this.sourcePageSnapshot)
@@ -978,8 +979,8 @@ struct GalleryPreview {
               loadOriginalToken: this.loadOriginalToken,
               originalPreviewEnabled: idx === this.swiperIndex && this.originalPreviewEnabled,
               active: idx === this.swiperIndex,
-              enableSharedTransition: !this.slideshowEnabled,
-              autoStartVideo: this.slideshowEnabled,
+              enableSharedTransition: !this.session.slideshow.slideshowEnabled,
+              autoStartVideo: this.session.slideshow.slideshowEnabled,
               videoBottomPadding: this.videoControlsBottomPadding(),
               detailsShowing: this.detailsVisible,
               allowVerticalGesture: true,
@@ -1088,7 +1089,7 @@ struct GalleryPreview {
           this.originalPreviewEnabled = false;
           this.originalShowing = false;
           this.applySessionOriginalIfNeeded();
-          setGalleryPreviewToolbarVisible(!this.slideshowEnabled);
+          setGalleryPreviewToolbarVisible(!this.session.slideshow.slideshowEnabled);
           if (!this.currentItemIsVideo()) {
             resetGalleryPreviewVideoChrome();
             void restoreGalleryPreviewPortrait(this.getUIContext());
@@ -1108,7 +1109,7 @@ struct GalleryPreview {
           if (this.detailsVisible) {
             this.openDetailsPanel();
           }
-          if (this.slideshowEnabled) {
+          if (this.session.slideshow.slideshowEnabled) {
             this.logSlideshowPage();
             this.armSlideshowTimer();
             this.scheduleSlideshowPrefetch();
@@ -1226,7 +1227,7 @@ struct GalleryPreview {
   }
 
   pageTransition(): void {
-    if (this.slideshowEnabled || GalleryPreviewNavStore.slideshow.enabled) {
+    if (this.session.slideshow.slideshowEnabled || GalleryPreviewNavStore.slideshow.enabled) {
       PageTransitionEnter({ duration: FN_PREVIEW_PAGE_ENTER_DURATION, curve: FN_PREVIEW_PAGE_ENTER_CURVE })
         .opacity(0)
         .scale({ x: 0.95, y: 0.95 })

@@ -127,9 +127,12 @@ import {
   galleryAlbumFlatItems,
   galleryAlbumGalleryFlowLazyKey,
   galleryAlbumItemIdOf,
+  galleryAlbumMergeSectionSilent,
+  galleryAlbumNotifyDayRowsChanged,
   galleryAlbumRebuildFlow,
   galleryAlbumUpsertSection,
 } from './galleryAlbumTab/GalleryAlbumFlowLogic';
+import { GalleryAlbumCommands } from './galleryAlbumTab/GalleryAlbumCommands';
 import {
   galleryAlbumEnsureSelectionVisualStorage,
   galleryAlbumSyncSelectionVisualState
@@ -422,6 +425,7 @@ import {
   PUMP_UI_GAP_MS,
 } from './galleryAlbumTab/GalleryAlbumTabConstants';
 import { GalleryAlbumDaySectionState } from './galleryAlbumTab/GalleryAlbumState';
+import { GalleryAlbumSession } from './galleryAlbumTab/GalleryAlbumSession';
 import {
   DayGlobalResolveResult,
   dayKey,
@@ -466,34 +470,30 @@ export struct GalleryAlbumTab {
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
     WidthBreakpoint.WIDTH_SM;
+  private session: GalleryAlbumSession = new GalleryAlbumSession();
+  private selectionHostCache: SelectionGestureControllerHost | undefined = undefined;
+  private batchHostCache: GalleryAlbumBatchActionsHost | undefined = undefined;
+  private timelineHostCache: TimelineGestureControllerHost | undefined = undefined;
+  private modeHostCache: GalleryAlbumModeOrchestratorHost | undefined = undefined;
+  private loadHostCache: GalleryAlbumLoadOrchestratorHost | undefined = undefined;
+  private visibleHostCache: GalleryAlbumVisibleLoadHost | undefined = undefined;
+  private rootSurfaceHostCache: GalleryAlbumRootSurfaceHost | undefined = undefined;
+  private rootTitleHostCache: GalleryAlbumRootTitleHost | undefined = undefined;
+  private lifecycleHostCache: GalleryAlbumLifecycleHost | undefined = undefined;
+  private commandsCache: GalleryAlbumCommands | undefined = undefined;
 
   @State private bootLoading: boolean = false;
   @State private loadError: string = '';
   @State private footText: string = '';
   @State private sections: GalleryAlbumDaySectionState[] = [];
   @State private rootPhotosScrollTitle: string = '\u56fe\u5e93';
-  private rootPhotosScrolledUnderTopBar: boolean = false;
-  private rootPhotosTitlePreferListAnchorUntilMs: number = 0;
-  private lastInteractiveVisibleRangeRefreshAtMs: number = 0;
-  private albumsHomeSmartPrefetchGen: number = 0;
-  private albumsHomePersonPrefetchGen: number = 0;
-  private albumsHomeUserAlbumPrefetchGen: number = 0;
-  private albumsHomeMediaPrefetchGen: number = 0;
-  private lastHomeSurface: string = 'photos';
-  /** 与 GalleryTimelineRefreshStore.version 对齐，落后则重拉相册封面数据 */
-  private lastAlbumsHomeRefreshVersion: number = 0;
   @State private rootModeContentWidthVp: number = 360;
   @State private rootPhotosSurfaceTranslateX: number = 0;
   @State private rootAlbumsSurfaceTranslateX: number = 0;
   @State private rootSurfaceSwitchAnimating: boolean = false;
-  private rootSurfaceSwitchStartTimer: number = -1;
-  private rootSurfaceSwitchTimer: number = -1;
-  private rootSurfaceSwitchFrom: string = 'photos';
-  private rootSurfaceSwitchTo: string = 'photos';
 
   // ── 搜索状态 ──────────────────────────────────────────────────────────────
-  // 不用 @State：每敲一字刷新整页会重建顶栏 TextInput，输入法会收起再弹出。
-  private searchQuery: string = '';
+  // 不用 @State：每敲一字刷新整页会重建顶栏 TextInput，输入法会收起再弹出。searchQuery 在 session.mode。
   /** 仅外部写入（智能分类点选 / 清空）才刷新顶栏种子，输入过程不改。 */
   @State private searchSeed: string = '';
   @State @Watch('onBottomDockVisibilityChanged') private inSearchMode: boolean = false;
@@ -535,7 +535,6 @@ export struct GalleryAlbumTab {
   @State private autoSyncBadgeCount: number = 0;
   /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
   @State private gallerySelectionMode: boolean = false;
-  private gallerySelectedIds: string[] = [];
   @State private gallerySelectedCount: number = 0;
   @State private selectionHasLivePhoto: boolean = false;
   @State private liveSaveSheetVisible: boolean = false;
@@ -558,31 +557,6 @@ export struct GalleryAlbumTab {
    *   图片解码门控走 setGalleryListScrollFrozen。
    */
   @State private timelineSidebarDragging: boolean = false;
-  private listKineticScrolling: boolean = false;
-  private isDraggingOrFling: boolean = false;
-  private visualPlaceholderMode: boolean = false;
-  /** 主列表进入 Idle 后的 settled 防抖定时器 id，再次滚动时取消。 */
-  private listSettledTimer: number = -1;
-  /** settled 防抖代次，避免旧定时器回写。 */
-  private listSettledGen: number = 0;
-  /** 滚动排障：上次滚动日志时间戳。 */
-  private lastScrollDebugLogMs: number = 0;
-  /** 滚动排障：上次滚动状态文本，仅在状态变化或节流到期时打印。 */
-  private lastScrollDebugState: string = 'init';
-  /** 最近一次主列表交互时间，用于限制泵日志只在交互窗口输出。 */
-  private lastMainListInteractMs: number = 0;
-  private lastMainListScrollOffsetVp: number = 0;
-  private lastMainListScrollOffsetHave: boolean = false;
-  private visibleLoadPreferBottomFirst: boolean = false;
-  /** 时间轴拖动 watchdog 定时器。 */
-  private timelineDragWatchdogTimer: number = -1;
-  /** 时间轴拖动会话代次，用于取消旧 watchdog 回写。 */
-  private timelineDragWatchdogGen: number = 0;
-  /** 滚动时触达时间轴显隐的节流时间戳，避免每帧重置 show/hide 定时器。 */
-  private lastTimelineBarTouchMs: number = 0;
-  /** 主列表到时间轴手柄位置同步的节流时间戳，避免 onScrollIndex 高频驱动手柄重绘。 */
-  private lastTimelineHandleSyncMs: number = 0;
-  private navigationGuardEpoch: number = 0;
   /** 时间轴是否显示：滚动或交互中显式可见，静止后自动淡出。 */
   @State private timelineBarVisible: boolean = false;
   /** 时间轴按压态：手指在轨道上，用于显隐与触感，不等同于“展开 scrub”。 */
@@ -591,147 +565,22 @@ export struct GalleryAlbumTab {
   @State private timelineLongPressExpanded: boolean = false;
   /** 滑块比例 [0,1]；0 表示最新，1 表示最旧。 */
   @State private timelineSliderRatio: number = 0;
-  /** 褰撳墠楂樹寒鏈堜唤鍦ㄦ椂闂磋酱骞存湀鍒楄〃涓殑涓嬫爣 */
   @State private timelineSidebarHighlightIndex: number = 0;
   /** 指示标签的 Y 位置（vp）。 */
   @State private timelineIndicatorY: number = 12;
   /** 时间轴可用轨道高度（vp），由 onAreaChange 实测写入。 */
   @State private timelineScrubTrackHeightVp: number = 500;
-  /** 自动隐藏定时器。 */
-  private timelineHideTimer: number = -1;
-  /** seek 保护标记：松手后短窗内阻断反向同步。 */
-  private timelineSeekInProgress: boolean = false;
-  /** seek 鐩戣鍣ㄤ唬娆★細鏂版嫋鍔ㄥ彲鍙栨秷鏃т换鍔?*/
-  private timelineSeekGen: number = 0;
-  /** 鏃堕棿杞寸▼搴忓寲 seek 鐨勫垪琛ㄩ敋鐐癸紝release 鍚庢嫿涓嶅埌 visible callback 鏃剁敤浜庤繎浼煎彲瑙嗗尯 */
-  private timelineSeekAnchorNodeIdx: number = -1;
-  /** 当前 List 可见节点区间，由 onScrollIndex 回传。 */
-  private listVisibleFirstNodeIdx: number = 0;
-  private listVisibleLastNodeIdx: number = 0;
-  /**
-   * onScrollIndex 最近一次回调时的 Scroller 纵向偏移与首索引。
-   * LazyForEach + 全量骨架下，first/last 往往会明显滞后；这里用 (yNow - anchorY)
-   * 向前推进节点索引，使其更贴近真实视口。
-   */
-  private listScrollIndexAnchorYVp: number = 0;
-  private listScrollIndexAnchorFirst: number = 0;
-  private listScrollIndexAnchorHave: boolean = false;
-  /**
-   * 全时间线“照片槽位”下标缓存，与 countPhotoSlotsBeforeNode 保持一致。
-   * 若可见区只有标题行，onScrollIndex 可能返回 visEnd <= visStart，导致 loadVisible 不触发；
-   * 这里使用最近一次有效可视槽位，作为松手静止后的加载锚点。
-   */
-  private lastKnownGlobalPhotoSlotStart: number = 0;
-  private lastKnownGlobalPhotoSlotEndExclusive: number = 0;
-  /** 可视区预加载缓冲，以“照片槽位”为单位。 */
-  private readonly visiblePhotoBufferSlots: number = 12;
-  /** 可视区驱动加载节流，避免 Idle 抖动时高频触发 loadVisibleItems。 */
-  private lastLoadVisibleAtMs: number = 0;
-  private loadVisibleRetryTimer: number = -1;
-  private loadVisibleRetryGen: number = 0;
-  private visibleBandPumpRunIdSeq: number = 0;
-  private visibleBandPumpActiveRunId: number = -1;
-  private visibleBandPumpActiveEpoch: number = -1;
-  /** pump 代次：新滚动开始时递增，旧 pump/回调立即失效，用于打断并发链路。 */
-  private pumpEpoch: number = 0;
-  /** 时间轴松手后短窗内忽略程序化滚动对冻结态的回写，防止“必须再滑一下才加载”。 */
-  private ignoreListFreezeUntilMs: number = 0;
-  /** seek 后若拿不到 scroller visible range，在短时间内继续保持 anchor 优先。 */
-  private timelineSeekNoScrollerGuardUntilMs: number = 0;
-  private timelineReleaseAwaitVisibleCallback: boolean = false;
-  private timelineSeekStableVisibleFirstNodeIdx: number = -1;
-  private timelineSeekStableVisibleLastNodeIdx: number = -1;
-  private timelineSeekStableVisibleHits: number = 0;
-  /** 视觉冻结期收到的数据变更延迟到解冻后再一次性刷新，避免滚动条不跟手。 */
-  private pendingFlowRebuild: boolean = false;
-  /** 避免滚动停止后重复触发同一目标日的抢占加载。 */
-  private lastVisibleLoadDayIdx: number = -1;
   /** 模式切换时内容层动效：淡入加轻微位移。 */
   @State private modeSwitchOpacity: number = 1;
   @State private modeSwitchOffsetY: number = 0;
   @State private renderedViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
-  private lastGranularityMotionMode: GalleryViewGranularity = GalleryViewGranularity.DAY;
-  /** 捏合切级用截图盖层，不再走位移淡入，避免和重建抢同一段动画。 */
-  private skipNextGranularityHostMotion: boolean = false;
-  private granularityPinchActive: boolean = false;
-  /** WaterFlow + LazyForEach 数据源，与 sections 保持同步。 */
-  private flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
-
-  private loadGen: number = 0;
-  private personStatGen: number = 0;
-  private personStatOverrides: Map<string, string> = new Map<string, string>();
-  private orderedDays: TimelineDayModel[] = [];
-  private dayGlobalSlotStarts: number[] = [];
-  private dayIndex: number = 0;
-  private loadingMore: boolean = false;
-  private exhausted: boolean = false;
-  private dayOffsets: Map<string, number> = new Map<string, number>();
-  /** 每天已请求的批次数，作为安全上限，防止 itemCount 不准时无限循环。 */
-  private dayRounds: Map<string, number> = new Map<string, number>();
-  /** 每天连续空页计数，防止单次空页误切日。 */
-  private dayEmptyRounds: Map<string, number> = new Map<string, number>();
-  private scrollerRef: Scroller = new Scroller();
-  /** 相册首页 List 的 Scroller，供顶栏 bindToScrollable 联动沉浸滚动效果。 */
-  private albumsScroller: Scroller = new Scroller();
-  /** 搜索结果 List 的 Scroller，供顶栏 bindToScrollable 联动沉浸滚动效果。 */
-  private searchScroller: Scroller = new Scroller();
-  /** 顶栏 bindToScrollable 复用同一数组引用，避免父页刷新时 @Prop 被当成新列表。 */
-  private titleBarScrollerBindList: Scroller[] = [];
-  /** 上次已处理的删除同步版本号。 */
-  private handledDeleteSyncVersion: number = 0;
-  /** 长按后在此时间戳之前忽略单击，避免误进预览。 */
-  private galleryLongPressIgnoreClickUntil: number = 0;
   /**
    * “划选段”进行中时为 true。该状态下 onDidScroll 不清空命中缓存，
    * 同时会把 Row 的 Pan 切为全向，以支持跨行划选。
    */
   @State private gallerySlideGestureActive: boolean = false;
-  /** 各缩略图最近一次布局在窗口中的矩形；仅当前可见且已布局项有值，滚动时会清空以防脏矩形。 */
-  private galleryThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
-  /** AI 搜索结果列表的划选命中矩形，键为扁平下标字符串，与 `sg_${flat}` 对应。 */
-  private searchThumbHitBounds: Map<string, GalleryThumbHitRect> = new Map<string, GalleryThumbHitRect>();
-  /** 滑动连选时，fingerList 不可用则使用长按参考点加 Pan offset 估算指尖位置。 */
-  private gallerySlideRefX: number = 0;
-  private gallerySlideRefY: number = 0;
-  private gallerySlideHasRef: boolean = false;
-  /**
-   * 划选锚点：长按起始缩略图在扁平列表中的下标，与 rowSlotFlatIndices 保持对齐。
-   */
-  private gallerySlideAnchorFlat: number = -1;
-  /**
-   * 进入本次划选前已选中的 id 快照。
-   * begin 时拍下快照，保证缩回手指时只移除当前 flat 区间内、且不在原集合中的项目。
-   */
-  private gallerySlideUnionBase: string[] = [];
-  /**
-   * 当前划选区间终点 flat。指尖短暂离开缩略图时沿用上一次命中，避免选中状态闪烁。
-   */
-  private gallerySlideLastEndFlat: number = -1;
-  /** 划选时仅在终点 flat 变化时提交 @State，减少整表刷新卡顿。 */
-  private gallerySlideLastAppliedEndFlat: number = -99999;
-  private gallerySlideLastApplyMs: number = 0;
-  private gallerySlidePendingEndFlat: number = -1;
-  private galleryMainListDomId: string = GALLERY_ALBUM_MAIN_LIST_DOM_ID;
-  private gallerySlideAutoScrollTimer: number = -1;
-  private gallerySlideAutoScrollVelocityVp: number = 0;
-  private gallerySlideAutoScrollPointerX: number = 0;
-  private gallerySlideAutoScrollPointerY: number = 0;
-  /** 防抖定时器 id，小于 0 表示未挂起。 */
-  private bootstrapDebounceTimer: number = -1;
-  /** 与 GalleryTimelineRefreshStore.version 对齐；bootstrap 成功后更新，避免重复全量刷新。 */
-  private lastBootstrapSatisfiedRefreshVersion: number = 0;
   /** 时间线 List 下拉刷新，绑定系统 Refresh 动效。 */
   @State private galleryTimelineRefreshing: boolean = false;
-  /** 与 Refresh 动效配对：捏合中止时自增，作废仍在 await 的旧刷新 finally。 */
-  private galleryTimelineRefreshEpoch: number = 0;
-  /**
-   * 时间线是否在列表顶端（Scroller 垂直偏移 <= 0）。
-   * 这里不做成 @State，避免滚动时整页重绘；在 onDidScroll / 下拉回调前同步，
-   * 仅用于判断是否允许触发刷新。
-   */
-  private galleryTimelineAtTopForPull: boolean = true;
-  /** 下拉未回到顶部附近前，不重复触发“已达阈值”震动，避免来回拖动连续触发。 */
-  private galleryPullRefreshThresholdHapticDone: boolean = false;
 
   private selectionVisualChangedIds(prev: string[], next: string[]): Set<string> {
     const prevSet = new Set<string>();
@@ -786,9 +635,9 @@ export struct GalleryAlbumTab {
       return 0;
     }
     const notified = new Set<number>();
-    const total = this.flowDataSource.totalCount();
+    const total = this.session.load.flowDataSource.totalCount();
     for (let i = 0; i < total; i++) {
-      const node = this.flowDataSource.getData(i);
+      const node = this.session.load.flowDataSource.getData(i);
       if (node.kind !== 'row') {
         continue;
       }
@@ -805,7 +654,7 @@ export struct GalleryAlbumTab {
       }
     }
     notified.forEach((idx: number): void => {
-      this.flowDataSource.notifyDataChange(idx);
+      this.session.load.flowDataSource.notifyDataChange(idx);
     });
     return notified.size;
   }
@@ -814,23 +663,23 @@ export struct GalleryAlbumTab {
     if (!this.isMainGalleryModeActive()) {
       return 0;
     }
-    const total = this.flowDataSource.totalCount();
+    const total = this.session.load.flowDataSource.totalCount();
     if (total <= 0) {
       return 0;
     }
-    let first = Math.max(0, Math.min(this.listVisibleFirstNodeIdx - 3, total - 1));
-    let last = Math.max(first, Math.min(this.listVisibleLastNodeIdx + 3, total - 1));
+    let first = Math.max(0, Math.min(this.session.visible.listVisibleFirstNodeIdx - 3, total - 1));
+    let last = Math.max(first, Math.min(this.session.visible.listVisibleLastNodeIdx + 3, total - 1));
     if (last - first < 8) {
       first = Math.max(0, Math.min(first, total - 1));
       last = Math.min(total - 1, first + 24);
     }
     let count = 0;
     for (let i = first; i <= last; i++) {
-      const node = this.flowDataSource.getData(i);
+      const node = this.session.load.flowDataSource.getData(i);
       if (node.kind !== 'row') {
         continue;
       }
-      this.flowDataSource.notifyDataChange(i);
+      this.session.load.flowDataSource.notifyDataChange(i);
       count++;
     }
     return count;
@@ -849,13 +698,13 @@ export struct GalleryAlbumTab {
         'idRows=%{public}d visibleRows=%{public}d visible=%{public}d~%{public}d flow=%{public}d ids=%{public}s',
       reason,
       this.gallerySelectionMode ? 'on' : 'off',
-      this.gallerySelectedIds.length,
+      this.session.selection.gallerySelectedIds.length,
       changedIds.size,
       idRows,
       visibleRows,
-      this.listVisibleFirstNodeIdx,
-      this.listVisibleLastNodeIdx,
-      this.flowDataSource.totalCount(),
+      this.session.visible.listVisibleFirstNodeIdx,
+      this.session.visible.listVisibleLastNodeIdx,
+      this.session.load.flowDataSource.totalCount(),
       this.selectionVisualIdSample(changedIds)
     );
   }
@@ -869,7 +718,7 @@ export struct GalleryAlbumTab {
       return;
     }
     try {
-      this.flowDataSource.notifyDataReload();
+      this.session.load.flowDataSource.notifyDataReload();
     } catch (_e) {
     }
   }
@@ -880,7 +729,7 @@ export struct GalleryAlbumTab {
 
   private refreshSelectionHasLivePhoto(): void {
     const list = this.inSearchMode ? this.searchResults : galleryAlbumFlatItems(this.asVisibleLoadHost());
-    const selected = galleryItemsMatchingSelectedIds(list, this.gallerySelectedIds);
+    const selected = galleryItemsMatchingSelectedIds(list, this.session.selection.gallerySelectedIds);
     this.selectionHasLivePhoto = gallerySelectionContainsLive(selected);
   }
 
@@ -993,14 +842,14 @@ export struct GalleryAlbumTab {
     if (value) {
       this.dismissMoreMenu();
     }
-    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
+    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.session.selection.gallerySelectedIds);
     this.notifySelectionDockStateChange();
   }
 
   private setGallerySelectedIdsStateLocal(value: string[]): void {
-    this.gallerySelectedIds = value;
+    this.session.selection.gallerySelectedIds = value;
     this.refreshSelectionHasLivePhoto();
-    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
+    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.session.selection.gallerySelectedIds);
     if (this.gallerySelectedCount !== value.length) {
       this.gallerySelectedCount = value.length;
     }
@@ -1009,7 +858,131 @@ export struct GalleryAlbumTab {
     }
   }
 
+  private albumCommands(): GalleryAlbumCommands {
+    if (this.commandsCache !== undefined) {
+      return this.commandsCache;
+    }
+    const self = this;
+    class GalleryAlbumCommandsBridge implements GalleryAlbumCommands {
+      exitSelection(): void {
+        galleryAlbumExitSelection(self.asSelectionGestureHost());
+      }
+      rebuildFlow(): void {
+        galleryAlbumRebuildFlow(self.asVisibleLoadHost());
+      }
+      flatItems(): GalleryListItem[] {
+        return galleryAlbumFlatItems(self.asVisibleLoadHost());
+      }
+      requestVisibleLoadImmediate(): void {
+        galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost());
+      }
+      requestVisibleLoadThrottled(forceImmediate?: boolean, aggressive?: boolean): void {
+        galleryAlbumVisibleLoadVisibleItemsThrottled(self.asVisibleLoadHost(), forceImmediate, aggressive);
+      }
+      requestVisibleLoadInteractivePriority(): void {
+        galleryAlbumVisibleLoadVisibleItemsThrottled(self.asVisibleLoadHost(), true, true, true);
+      }
+      pumpLoad(singleBatch?: boolean): void {
+        galleryAlbumPumpLoad(self.asLoadOrchestratorHost(), singleBatch);
+      }
+      loadOneBatch(): Promise<number> {
+        return galleryAlbumLoadOneBatch(self.asLoadOrchestratorHost());
+      }
+      bootstrap(showFullBleedSkeleton?: boolean): Promise<void> {
+        return galleryAlbumBootstrap(self.asLoadOrchestratorHost(), showFullBleedSkeleton);
+      }
+      applyDeleteSyncIfNeeded(): void {
+        galleryAlbumApplyDeleteSyncIfNeeded(self.asBatchActionHost());
+      }
+      enrichPersonStats(items: AiPersonItem[], gen: number): Promise<void> {
+        return galleryAlbumEnrichPersonStats(self.asModeOrchestratorHost(), items, gen);
+      }
+      upsertSection(day: TimelineDayModel, list: GalleryListItem[], newOffset: number): void {
+        galleryAlbumUpsertSection(self.asVisibleLoadHost(), day, list, newOffset);
+      }
+      mergeSectionSilent(day: TimelineDayModel, list: GalleryListItem[], startOffset: number): void {
+        galleryAlbumMergeSectionSilent(self.asVisibleLoadHost(), day, list, startOffset);
+      }
+      notifyDayRowsChanged(year: number, month: number, day: number): void {
+        galleryAlbumNotifyDayRowsChanged(self.asVisibleLoadHost(), year, month, day);
+      }
+      playModeSwitchMotion(direction?: number): void {
+        galleryAlbumPlayModeSwitchMotion(self.asModeOrchestratorHost(), direction);
+      }
+      backToMain(animate: boolean): void {
+        if (animate) {
+          galleryAlbumBackToMain(self.asModeOrchestratorHost());
+          return;
+        }
+        galleryAlbumExitSelection(self.asSelectionGestureHost());
+        self.inSearchMode = false;
+        self.inCategoryMode = false;
+        self.inSmartCategoryMode = false;
+        self.inPersonMode = false;
+      }
+      loadMediaCategories(): Promise<void> {
+        return galleryAlbumLoadMediaCategories(self.asModeOrchestratorHost());
+      }
+      triggerAutoSync(timelineItems: GalleryListItem[]): void {
+        galleryAlbumTriggerAutoSync(self.asModeOrchestratorHost(), timelineItems);
+      }
+      refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void {
+        galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(self.asVisibleLoadHost(), firstIdx, lastIdx);
+      }
+      captureListScrollIndexAnchor(): void {
+        galleryAlbumVisibleCaptureListScrollIndexAnchor(self.asVisibleLoadHost());
+      }
+      refreshVisibleRangeIfAvailable(): boolean {
+        return galleryAlbumVisibleRefreshVisibleRangeIfAvailable(self.asVisibleLoadHost());
+      }
+      forceRefreshVisibleRange(): boolean {
+        return galleryAlbumVisibleForceRefreshVisibleRange(self.asVisibleLoadHost());
+      }
+      flushPendingFlowRebuild(): void {
+        galleryAlbumVisibleFlushPendingFlowRebuild(self.asVisibleLoadHost());
+      }
+      syncGalleryTimelineAtTopForPull(): void {
+        galleryAlbumSyncTimelineAtTopForPull(self.asLoadOrchestratorHost());
+      }
+      resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
+        return galleryAlbumResolveYearMonthByTimelineRatio(self.asTimelineGestureHost(), ratio);
+      }
+      resolveDayByGlobalIndex(globalIndex: number): DayGlobalResolveResult | null {
+        return galleryAlbumResolveDayByGlobalIndex(self.asTimelineGestureHost(), globalIndex);
+      }
+      isInScrollInteractiveLogWindow(): boolean {
+        return timelineGestureIsInScrollInteractiveLogWindow(self.asTimelineGestureHost());
+      }
+      logScrollDebug(msg: string): void {
+        timelineGestureLogScrollDebug(self.asTimelineGestureHost(), msg);
+      }
+      cancelListSettledTimer(): void {
+        timelineGestureCancelListSettledTimer(self.asTimelineGestureHost());
+      }
+      refreshVisualPlaceholderMode(): void {
+        timelineGestureRefreshVisualPlaceholderMode(self.asTimelineGestureHost());
+      }
+      applyMainTimelineCacheSnapshot(snap: GalleryHomeTimelineSnapshot): void {
+        galleryAlbumApplyMainTimelineCacheSnapshot(self.asLoadOrchestratorHost(), snap);
+      }
+      buildMainTimelineCacheSnapshot(): GalleryHomeTimelineSnapshot | null {
+        return galleryAlbumBuildMainTimelineCacheSnapshot(self.asLoadOrchestratorHost());
+      }
+      onTabVisibleAgain(): void {
+        galleryAlbumOnTabVisibleAgain(self.asLoadOrchestratorHost());
+      }
+      setGallerySelectedIds(ids: string[]): void {
+        galleryAlbumSetGallerySelectedIdsState(self.asSelectionGestureHost(), ids);
+      }
+    }
+    this.commandsCache = new GalleryAlbumCommandsBridge();
+    return this.commandsCache;
+  }
+
   private asSelectionGestureHost(): SelectionGestureControllerHost {
+    if (this.selectionHostCache !== undefined) {
+      return this.selectionHostCache;
+    }
     const self = this;
     class SelectionGestureHostBridge implements SelectionGestureControllerHost {
       getUIContext() { return self.getUIContext(); }
@@ -1031,66 +1004,66 @@ export struct GalleryAlbumTab {
       }
       get galleryMainListScrollEnabled(): boolean { return self.galleryMainListScrollEnabled; }
       set galleryMainListScrollEnabled(value: boolean) { self.galleryMainListScrollEnabled = value; }
-      get gallerySlideAnchorFlat(): number { return self.gallerySlideAnchorFlat; }
-      set gallerySlideAnchorFlat(value: number) { self.gallerySlideAnchorFlat = value; }
-      get gallerySlideUnionBase(): string[] { return self.gallerySlideUnionBase; }
-      set gallerySlideUnionBase(value: string[]) { self.gallerySlideUnionBase = value; }
-      get gallerySlideLastEndFlat(): number { return self.gallerySlideLastEndFlat; }
-      set gallerySlideLastEndFlat(value: number) { self.gallerySlideLastEndFlat = value; }
-      get gallerySlideLastAppliedEndFlat(): number { return self.gallerySlideLastAppliedEndFlat; }
-      set gallerySlideLastAppliedEndFlat(value: number) { self.gallerySlideLastAppliedEndFlat = value; }
-      get gallerySlideLastApplyMs(): number { return self.gallerySlideLastApplyMs; }
-      set gallerySlideLastApplyMs(value: number) { self.gallerySlideLastApplyMs = value; }
-      get gallerySlidePendingEndFlat(): number { return self.gallerySlidePendingEndFlat; }
-      set gallerySlidePendingEndFlat(value: number) { self.gallerySlidePendingEndFlat = value; }
-      get galleryLongPressIgnoreClickUntil(): number { return self.galleryLongPressIgnoreClickUntil; }
-      set galleryLongPressIgnoreClickUntil(value: number) { self.galleryLongPressIgnoreClickUntil = value; }
-      get gallerySlideRefX(): number { return self.gallerySlideRefX; }
-      set gallerySlideRefX(value: number) { self.gallerySlideRefX = value; }
-      get gallerySlideRefY(): number { return self.gallerySlideRefY; }
-      set gallerySlideRefY(value: number) { self.gallerySlideRefY = value; }
-      get gallerySlideHasRef(): boolean { return self.gallerySlideHasRef; }
-      set gallerySlideHasRef(value: boolean) { self.gallerySlideHasRef = value; }
+      get gallerySlideAnchorFlat(): number { return self.session.selection.gallerySlideAnchorFlat; }
+      set gallerySlideAnchorFlat(value: number) { self.session.selection.gallerySlideAnchorFlat = value; }
+      get gallerySlideUnionBase(): string[] { return self.session.selection.gallerySlideUnionBase; }
+      set gallerySlideUnionBase(value: string[]) { self.session.selection.gallerySlideUnionBase = value; }
+      get gallerySlideLastEndFlat(): number { return self.session.selection.gallerySlideLastEndFlat; }
+      set gallerySlideLastEndFlat(value: number) { self.session.selection.gallerySlideLastEndFlat = value; }
+      get gallerySlideLastAppliedEndFlat(): number { return self.session.selection.gallerySlideLastAppliedEndFlat; }
+      set gallerySlideLastAppliedEndFlat(value: number) { self.session.selection.gallerySlideLastAppliedEndFlat = value; }
+      get gallerySlideLastApplyMs(): number { return self.session.selection.gallerySlideLastApplyMs; }
+      set gallerySlideLastApplyMs(value: number) { self.session.selection.gallerySlideLastApplyMs = value; }
+      get gallerySlidePendingEndFlat(): number { return self.session.selection.gallerySlidePendingEndFlat; }
+      set gallerySlidePendingEndFlat(value: number) { self.session.selection.gallerySlidePendingEndFlat = value; }
+      get galleryLongPressIgnoreClickUntil(): number { return self.session.selection.galleryLongPressIgnoreClickUntil; }
+      set galleryLongPressIgnoreClickUntil(value: number) { self.session.selection.galleryLongPressIgnoreClickUntil = value; }
+      get gallerySlideRefX(): number { return self.session.selection.gallerySlideRefX; }
+      set gallerySlideRefX(value: number) { self.session.selection.gallerySlideRefX = value; }
+      get gallerySlideRefY(): number { return self.session.selection.gallerySlideRefY; }
+      set gallerySlideRefY(value: number) { self.session.selection.gallerySlideRefY = value; }
+      get gallerySlideHasRef(): boolean { return self.session.selection.gallerySlideHasRef; }
+      set gallerySlideHasRef(value: boolean) { self.session.selection.gallerySlideHasRef = value; }
       get searchResults(): GalleryListItem[] { return self.searchResults; }
       set searchResults(value: GalleryListItem[]) { self.searchResults = value; }
       get searchGridColumns(): number { return fnAdaptiveGridColumns(3, self.windowWidthBp); }
       set searchGridColumns(_value: number) {}
       get galleryGridColumns(): number { return self.currentGalleryGridColumns(); }
       set galleryGridColumns(_value: number) {}
-      get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
-      set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
-      get scrollerRef(): Scroller { return self.scrollerRef; }
-      set scrollerRef(value: Scroller) { self.scrollerRef = value; }
-      get searchScroller(): Scroller { return self.searchScroller; }
-      set searchScroller(value: Scroller) { self.searchScroller = value; }
+      get flowDataSource(): GalleryWaterFlowDataSource { return self.session.load.flowDataSource; }
+      set flowDataSource(value: GalleryWaterFlowDataSource) { self.session.load.flowDataSource = value; }
+      get scrollerRef(): Scroller { return self.session.scrollerRef; }
+      set scrollerRef(value: Scroller) { self.session.scrollerRef = value; }
+      get searchScroller(): Scroller { return self.session.searchScroller; }
+      set searchScroller(value: Scroller) { self.session.searchScroller = value; }
       get searchListDomId(): string { return GALLERY_ALBUM_SEARCH_LIST_DOM_ID; }
       set searchListDomId(_value: string) {}
-      get galleryMainListDomId(): string { return self.galleryMainListDomId; }
-      set galleryMainListDomId(value: string) { self.galleryMainListDomId = value; }
-      get gallerySlideAutoScrollTimer(): number { return self.gallerySlideAutoScrollTimer; }
-      set gallerySlideAutoScrollTimer(value: number) { self.gallerySlideAutoScrollTimer = value; }
-      get gallerySlideAutoScrollVelocityVp(): number { return self.gallerySlideAutoScrollVelocityVp; }
-      set gallerySlideAutoScrollVelocityVp(value: number) { self.gallerySlideAutoScrollVelocityVp = value; }
-      get gallerySlideAutoScrollPointerX(): number { return self.gallerySlideAutoScrollPointerX; }
-      set gallerySlideAutoScrollPointerX(value: number) { self.gallerySlideAutoScrollPointerX = value; }
-      get gallerySlideAutoScrollPointerY(): number { return self.gallerySlideAutoScrollPointerY; }
-      set gallerySlideAutoScrollPointerY(value: number) { self.gallerySlideAutoScrollPointerY = value; }
+      get galleryMainListDomId(): string { return self.session.selection.galleryMainListDomId; }
+      set galleryMainListDomId(value: string) { self.session.selection.galleryMainListDomId = value; }
+      get gallerySlideAutoScrollTimer(): number { return self.session.selection.gallerySlideAutoScrollTimer; }
+      set gallerySlideAutoScrollTimer(value: number) { self.session.selection.gallerySlideAutoScrollTimer = value; }
+      get gallerySlideAutoScrollVelocityVp(): number { return self.session.selection.gallerySlideAutoScrollVelocityVp; }
+      set gallerySlideAutoScrollVelocityVp(value: number) { self.session.selection.gallerySlideAutoScrollVelocityVp = value; }
+      get gallerySlideAutoScrollPointerX(): number { return self.session.selection.gallerySlideAutoScrollPointerX; }
+      set gallerySlideAutoScrollPointerX(value: number) { self.session.selection.gallerySlideAutoScrollPointerX = value; }
+      get gallerySlideAutoScrollPointerY(): number { return self.session.selection.gallerySlideAutoScrollPointerY; }
+      set gallerySlideAutoScrollPointerY(value: number) { self.session.selection.gallerySlideAutoScrollPointerY = value; }
       get gallerySlideAutoScrollTopInsetVp(): number { return self.mainGalleryContentInsetTopVp(); }
       set gallerySlideAutoScrollTopInsetVp(_value: number) {}
       get gallerySlideAutoScrollBottomInsetVp(): number { return self.currentBottomDockInsetVp(); }
       set gallerySlideAutoScrollBottomInsetVp(_value: number) {}
-      get galleryThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.galleryThumbHitBounds; }
-      set galleryThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.galleryThumbHitBounds = value; }
-      get searchThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.searchThumbHitBounds; }
-      set searchThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.searchThumbHitBounds = value; }
-      get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
-      set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
-      get listVisibleLastNodeIdx(): number { return self.listVisibleLastNodeIdx; }
-      set listVisibleLastNodeIdx(value: number) { self.listVisibleLastNodeIdx = value; }
-      get gallerySelectedIds(): string[] { return self.gallerySelectedIds; }
+      get galleryThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.session.selection.galleryThumbHitBounds; }
+      set galleryThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.session.selection.galleryThumbHitBounds = value; }
+      get searchThumbHitBounds(): Map<string, GalleryThumbHitRect> { return self.session.selection.searchThumbHitBounds; }
+      set searchThumbHitBounds(value: Map<string, GalleryThumbHitRect>) { self.session.selection.searchThumbHitBounds = value; }
+      get listVisibleFirstNodeIdx(): number { return self.session.visible.listVisibleFirstNodeIdx; }
+      set listVisibleFirstNodeIdx(value: number) { self.session.visible.listVisibleFirstNodeIdx = value; }
+      get listVisibleLastNodeIdx(): number { return self.session.visible.listVisibleLastNodeIdx; }
+      set listVisibleLastNodeIdx(value: number) { self.session.visible.listVisibleLastNodeIdx = value; }
+      get gallerySelectedIds(): string[] { return self.session.selection.gallerySelectedIds; }
       set gallerySelectedIds(value: string[]) { self.setGallerySelectedIdsStateLocal(value); }
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
-      flatItems(): GalleryListItem[] { return galleryAlbumFlatItems(self.asVisibleLoadHost()); }
+      flatItems(): GalleryListItem[] { return self.albumCommands().flatItems(); }
       galleryThumbDomId(photoId: string): string { return galleryAlbumGalleryThumbDomId(photoId); }
       recordGalleryThumbRectFromDom(photoId: string, domId: string): void {
         galleryAlbumRecordGalleryThumbRectFromDom(this, photoId, domId);
@@ -1102,10 +1075,14 @@ export struct GalleryAlbumTab {
         return galleryAlbumResolveGalleryFlatIndexForOpenPreview(this, item, hintFlat);
       }
     }
-    return new SelectionGestureHostBridge();
+    this.selectionHostCache = new SelectionGestureHostBridge();
+    return this.selectionHostCache;
   }
 
   private asBatchActionHost(): GalleryAlbumBatchActionsHost {
+    if (this.batchHostCache !== undefined) {
+      return this.batchHostCache;
+    }
     const self = this;
     class BatchActionHostBridge implements GalleryAlbumBatchActionsHost {
       getUIContext() { return self.getUIContext(); }
@@ -1113,7 +1090,7 @@ export struct GalleryAlbumTab {
       set baseUrl(value: string) { self.baseUrl = value; }
       get inSearchMode(): boolean { return self.inSearchMode; }
       set inSearchMode(value: boolean) { self.inSearchMode = value; }
-      get gallerySelectedIds(): string[] { return self.gallerySelectedIds; }
+      get gallerySelectedIds(): string[] { return self.session.selection.gallerySelectedIds; }
       set gallerySelectedIds(value: string[]) { self.setGallerySelectedIdsStateLocal(value); }
       get galleryBatchDeleting(): boolean { return self.galleryBatchDeleting; }
       set galleryBatchDeleting(value: boolean) { self.galleryBatchDeleting = value; }
@@ -1123,81 +1100,85 @@ export struct GalleryAlbumTab {
       set searchResults(value: GalleryListItem[]) { self.searchResults = value; }
       get sections(): GalleryAlbumDaySectionState[] { return self.sections; }
       set sections(value: GalleryAlbumDaySectionState[]) { self.sections = value; }
-      get handledDeleteSyncVersion(): number { return self.handledDeleteSyncVersion; }
-      set handledDeleteSyncVersion(value: number) { self.handledDeleteSyncVersion = value; }
+      get handledDeleteSyncVersion(): number { return self.session.load.handledDeleteSyncVersion; }
+      set handledDeleteSyncVersion(value: number) { self.session.load.handledDeleteSyncVersion = value; }
       toast(msg: string): void { self.toast(msg); }
       requestBootstrap(debounced: boolean): void { self.requestBootstrap(debounced); }
-      exitGallerySelection(): void { galleryAlbumExitSelection(self.asSelectionGestureHost()); }
+      exitGallerySelection(): void { self.albumCommands().exitSelection(); }
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
-      flatItems(): GalleryListItem[] { return galleryAlbumFlatItems(self.asVisibleLoadHost()); }
-      rebuildFlow(): void { galleryAlbumRebuildFlow(self.asVisibleLoadHost()); }
+      flatItems(): GalleryListItem[] { return self.albumCommands().flatItems(); }
+      rebuildFlow(): void { self.albumCommands().rebuildFlow(); }
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
       askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
-    return new BatchActionHostBridge();
+    this.batchHostCache = new BatchActionHostBridge();
+    return this.batchHostCache;
   }
 
   private asTimelineGestureHost(): TimelineGestureControllerHost {
+    if (this.timelineHostCache !== undefined) {
+      return this.timelineHostCache;
+    }
     const self = this;
     class TimelineGestureHostBridge implements TimelineGestureControllerHost {
-      get scrollerRef(): Scroller { return self.scrollerRef; }
-      set scrollerRef(value: Scroller) { self.scrollerRef = value; }
-      get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
-      set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
-      get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
+      get scrollerRef(): Scroller { return self.session.scrollerRef; }
+      set scrollerRef(value: Scroller) { self.session.scrollerRef = value; }
+      get flowDataSource(): GalleryWaterFlowDataSource { return self.session.load.flowDataSource; }
+      set flowDataSource(value: GalleryWaterFlowDataSource) { self.session.load.flowDataSource = value; }
+      get orderedDays(): TimelineDayModel[] { return self.session.load.orderedDays; }
       set orderedDays(value: TimelineDayModel[]) { self.setOrderedDays(value); }
-      get dayGlobalSlotStarts(): number[] { return self.dayGlobalSlotStarts; }
-      set dayGlobalSlotStarts(value: number[]) { self.dayGlobalSlotStarts = value; }
+      get dayGlobalSlotStarts(): number[] { return self.session.load.dayGlobalSlotStarts; }
+      set dayGlobalSlotStarts(value: number[]) { self.session.load.dayGlobalSlotStarts = value; }
       get sections(): GalleryAlbumDaySectionState[] { return self.sections; }
       set sections(value: GalleryAlbumDaySectionState[]) { self.sections = value; }
-      get visualPlaceholderMode(): boolean { return self.visualPlaceholderMode; }
-      set visualPlaceholderMode(value: boolean) { self.visualPlaceholderMode = value; }
+      get visualPlaceholderMode(): boolean { return self.session.visible.visualPlaceholderMode; }
+      set visualPlaceholderMode(value: boolean) { self.session.visible.visualPlaceholderMode = value; }
       get timelineSidebarDragging(): boolean { return self.timelineSidebarDragging; }
       set timelineSidebarDragging(value: boolean) { self.timelineSidebarDragging = value; }
-      get isDraggingOrFling(): boolean { return self.isDraggingOrFling; }
-      set isDraggingOrFling(value: boolean) { self.isDraggingOrFling = value; }
+      get isDraggingOrFling(): boolean { return self.session.visible.isDraggingOrFling; }
+      set isDraggingOrFling(value: boolean) { self.session.visible.isDraggingOrFling = value; }
       get timelineBarVisible(): boolean { return self.timelineBarVisible; }
       set timelineBarVisible(value: boolean) { self.timelineBarVisible = value; }
       get timelinePressing(): boolean { return self.timelinePressing; }
       set timelinePressing(value: boolean) { self.timelinePressing = value; }
       get timelineLongPressExpanded(): boolean { return self.timelineLongPressExpanded; }
       set timelineLongPressExpanded(value: boolean) { self.timelineLongPressExpanded = value; }
-      get timelineDragWatchdogTimer(): number { return self.timelineDragWatchdogTimer; }
-      set timelineDragWatchdogTimer(value: number) { self.timelineDragWatchdogTimer = value; }
-      get timelineDragWatchdogGen(): number { return self.timelineDragWatchdogGen; }
-      set timelineDragWatchdogGen(value: number) { self.timelineDragWatchdogGen = value; }
-      get lastMainListInteractMs(): number { return self.lastMainListInteractMs; }
-      set lastMainListInteractMs(value: number) { self.lastMainListInteractMs = value; }
-      get lastTimelineBarTouchMs(): number { return self.lastTimelineBarTouchMs; }
-      set lastTimelineBarTouchMs(value: number) { self.lastTimelineBarTouchMs = value; }
-      get lastTimelineHandleSyncMs(): number { return self.lastTimelineHandleSyncMs; }
-      set lastTimelineHandleSyncMs(value: number) { self.lastTimelineHandleSyncMs = value; }
-      get lastScrollDebugLogMs(): number { return self.lastScrollDebugLogMs; }
-      set lastScrollDebugLogMs(value: number) { self.lastScrollDebugLogMs = value; }
-      get lastScrollDebugState(): string { return self.lastScrollDebugState; }
-      set lastScrollDebugState(value: string) { self.lastScrollDebugState = value; }
-      get listSettledTimer(): number { return self.listSettledTimer; }
-      set listSettledTimer(value: number) { self.listSettledTimer = value; }
-      get listSettledGen(): number { return self.listSettledGen; }
-      set listSettledGen(value: number) { self.listSettledGen = value; }
-      get listKineticScrolling(): boolean { return self.listKineticScrolling; }
-      set listKineticScrolling(value: boolean) { self.listKineticScrolling = value; }
-      get dayIndex(): number { return self.dayIndex; }
-      set dayIndex(value: number) { self.dayIndex = value; }
-      get exhausted(): boolean { return self.exhausted; }
-      set exhausted(value: boolean) { self.exhausted = value; }
-      get loadingMore(): boolean { return self.loadingMore; }
-      set loadingMore(value: boolean) { self.loadingMore = value; }
+      get timelineDragWatchdogTimer(): number { return self.session.timeline.timelineDragWatchdogTimer; }
+      set timelineDragWatchdogTimer(value: number) { self.session.timeline.timelineDragWatchdogTimer = value; }
+      get timelineDragWatchdogGen(): number { return self.session.timeline.timelineDragWatchdogGen; }
+      set timelineDragWatchdogGen(value: number) { self.session.timeline.timelineDragWatchdogGen = value; }
+      get lastMainListInteractMs(): number { return self.session.visible.lastMainListInteractMs; }
+      set lastMainListInteractMs(value: number) { self.session.visible.lastMainListInteractMs = value; }
+      get lastTimelineBarTouchMs(): number { return self.session.timeline.lastTimelineBarTouchMs; }
+      set lastTimelineBarTouchMs(value: number) { self.session.timeline.lastTimelineBarTouchMs = value; }
+      get lastTimelineHandleSyncMs(): number { return self.session.timeline.lastTimelineHandleSyncMs; }
+      set lastTimelineHandleSyncMs(value: number) { self.session.timeline.lastTimelineHandleSyncMs = value; }
+      get lastScrollDebugLogMs(): number { return self.session.visible.lastScrollDebugLogMs; }
+      set lastScrollDebugLogMs(value: number) { self.session.visible.lastScrollDebugLogMs = value; }
+      get lastScrollDebugState(): string { return self.session.visible.lastScrollDebugState; }
+      set lastScrollDebugState(value: string) { self.session.visible.lastScrollDebugState = value; }
+      get listSettledTimer(): number { return self.session.visible.listSettledTimer; }
+      set listSettledTimer(value: number) { self.session.visible.listSettledTimer = value; }
+      get listSettledGen(): number { return self.session.visible.listSettledGen; }
+      set listSettledGen(value: number) { self.session.visible.listSettledGen = value; }
+      get listKineticScrolling(): boolean { return self.session.visible.listKineticScrolling; }
+      set listKineticScrolling(value: boolean) { self.session.visible.listKineticScrolling = value; }
+      get dayIndex(): number { return self.session.load.dayIndex; }
+      set dayIndex(value: number) { self.session.load.dayIndex = value; }
+      get exhausted(): boolean { return self.session.load.exhausted; }
+      set exhausted(value: boolean) { self.session.load.exhausted = value; }
+      get loadingMore(): boolean { return self.session.load.loadingMore; }
+      set loadingMore(value: boolean) { self.session.load.loadingMore = value; }
       get bootLoading(): boolean { return self.bootLoading; }
       set bootLoading(value: boolean) { self.bootLoading = value; }
       get gallerySlideGestureActive(): boolean { return self.gallerySlideGestureActive; }
       set gallerySlideGestureActive(value: boolean) { self.gallerySlideGestureActive = value; }
       get galleryMainListScrollEnabled(): boolean { return self.galleryMainListScrollEnabled; }
       set galleryMainListScrollEnabled(value: boolean) { self.galleryMainListScrollEnabled = value; }
-      get timelineSeekInProgress(): boolean { return self.timelineSeekInProgress; }
-      set timelineSeekInProgress(value: boolean) { self.timelineSeekInProgress = value; }
-      get timelineHideTimer(): number { return self.timelineHideTimer; }
-      set timelineHideTimer(value: number) { self.timelineHideTimer = value; }
+      get timelineSeekInProgress(): boolean { return self.session.timeline.timelineSeekInProgress; }
+      set timelineSeekInProgress(value: boolean) { self.session.timeline.timelineSeekInProgress = value; }
+      get timelineHideTimer(): number { return self.session.timeline.timelineHideTimer; }
+      set timelineHideTimer(value: number) { self.session.timeline.timelineHideTimer = value; }
       get timelineSliderRatio(): number { return self.timelineSliderRatio; }
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
       get timelineScrubTrackHeightVp(): number { return self.timelineScrubTrackHeightVp; }
@@ -1206,35 +1187,35 @@ export struct GalleryAlbumTab {
       set timelineSidebarHighlightIndex(value: number) { self.timelineSidebarHighlightIndex = value; }
       get timelineIndicatorY(): number { return self.timelineIndicatorY; }
       set timelineIndicatorY(value: number) { self.timelineIndicatorY = value; }
-      get timelineSeekGen(): number { return self.timelineSeekGen; }
-      set timelineSeekGen(value: number) { self.timelineSeekGen = value; }
-      get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
-      set timelineSeekAnchorNodeIdx(value: number) { self.timelineSeekAnchorNodeIdx = value; }
-      get visibleLoadPreferBottomFirst(): boolean { return self.visibleLoadPreferBottomFirst; }
-      set visibleLoadPreferBottomFirst(value: boolean) { self.visibleLoadPreferBottomFirst = value; }
-      get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
-      set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
-      get listVisibleLastNodeIdx(): number { return self.listVisibleLastNodeIdx; }
-      set listVisibleLastNodeIdx(value: number) { self.listVisibleLastNodeIdx = value; }
-      get ignoreListFreezeUntilMs(): number { return self.ignoreListFreezeUntilMs; }
-      set ignoreListFreezeUntilMs(value: number) { self.ignoreListFreezeUntilMs = value; }
-      get timelineSeekNoScrollerGuardUntilMs(): number { return self.timelineSeekNoScrollerGuardUntilMs; }
-      set timelineSeekNoScrollerGuardUntilMs(value: number) { self.timelineSeekNoScrollerGuardUntilMs = value; }
-      get pumpEpoch(): number { return self.pumpEpoch; }
-      set pumpEpoch(value: number) { self.pumpEpoch = value; }
+      get timelineSeekGen(): number { return self.session.timeline.timelineSeekGen; }
+      set timelineSeekGen(value: number) { self.session.timeline.timelineSeekGen = value; }
+      get timelineSeekAnchorNodeIdx(): number { return self.session.timeline.timelineSeekAnchorNodeIdx; }
+      set timelineSeekAnchorNodeIdx(value: number) { self.session.timeline.timelineSeekAnchorNodeIdx = value; }
+      get visibleLoadPreferBottomFirst(): boolean { return self.session.visible.visibleLoadPreferBottomFirst; }
+      set visibleLoadPreferBottomFirst(value: boolean) { self.session.visible.visibleLoadPreferBottomFirst = value; }
+      get listVisibleFirstNodeIdx(): number { return self.session.visible.listVisibleFirstNodeIdx; }
+      set listVisibleFirstNodeIdx(value: number) { self.session.visible.listVisibleFirstNodeIdx = value; }
+      get listVisibleLastNodeIdx(): number { return self.session.visible.listVisibleLastNodeIdx; }
+      set listVisibleLastNodeIdx(value: number) { self.session.visible.listVisibleLastNodeIdx = value; }
+      get ignoreListFreezeUntilMs(): number { return self.session.visible.ignoreListFreezeUntilMs; }
+      set ignoreListFreezeUntilMs(value: number) { self.session.visible.ignoreListFreezeUntilMs = value; }
+      get timelineSeekNoScrollerGuardUntilMs(): number { return self.session.timeline.timelineSeekNoScrollerGuardUntilMs; }
+      set timelineSeekNoScrollerGuardUntilMs(value: number) { self.session.timeline.timelineSeekNoScrollerGuardUntilMs = value; }
+      get pumpEpoch(): number { return self.session.load.pumpEpoch; }
+      set pumpEpoch(value: number) { self.session.load.pumpEpoch = value; }
       flowNodeIndexFromListIndex(index: number): number { return self.flowNodeIndexFromMainListIndex(index); }
       listIndexFromFlowNodeIndex(index: number): number { return self.mainListIndexFromFlowNodeIndex(index); }
       refreshLastKnownGlobalSlotsFromListIndices(firstIdx: number, lastIdx: number): void {
-        galleryAlbumVisibleRefreshLastKnownGlobalSlotsFromListIndices(self.asVisibleLoadHost(), firstIdx, lastIdx);
+        self.albumCommands().refreshLastKnownGlobalSlotsFromListIndices(firstIdx, lastIdx);
       }
       captureListScrollIndexAnchor(): void {
-        galleryAlbumVisibleCaptureListScrollIndexAnchor(self.asVisibleLoadHost());
+        self.albumCommands().captureListScrollIndexAnchor();
       }
       refreshVisibleRangeIfAvailable(): boolean {
-        return galleryAlbumVisibleRefreshVisibleRangeIfAvailable(self.asVisibleLoadHost());
+        return self.albumCommands().refreshVisibleRangeIfAvailable();
       }
       forceRefreshVisibleRange(): boolean {
-        return galleryAlbumVisibleForceRefreshVisibleRange(self.asVisibleLoadHost());
+        return self.albumCommands().forceRefreshVisibleRange();
       }
       tryHandOffTimelineSeekToListDriven(reason: string): boolean {
         return self.tryHandOffTimelineSeekToListDrivenFromScroller(reason);
@@ -1249,27 +1230,31 @@ export struct GalleryAlbumTab {
         galleryAlbumStartTimelineSeekWatchdog(this, year, month);
       }
       seekTimelineListToDisplayRatio(ratio: number): void { galleryAlbumSeekTimelineListToDisplayRatio(this, ratio); }
-      syncGalleryTimelineAtTopForPull(): void { galleryAlbumSyncTimelineAtTopForPull(self.asLoadOrchestratorHost()); }
-      clearGalleryThumbHitBounds(): void { self.galleryThumbHitBounds.clear(); }
-      flushPendingFlowRebuild(): void { galleryAlbumVisibleFlushPendingFlowRebuild(self.asVisibleLoadHost()); }
+      syncGalleryTimelineAtTopForPull(): void { self.albumCommands().syncGalleryTimelineAtTopForPull(); }
+      clearGalleryThumbHitBounds(): void { self.session.selection.galleryThumbHitBounds.clear(); }
+      flushPendingFlowRebuild(): void { self.albumCommands().flushPendingFlowRebuild(); }
       loadVisibleItemsThrottled(forceImmediate?: boolean, aggressive?: boolean): void {
-        galleryAlbumVisibleLoadVisibleItemsThrottled(self.asVisibleLoadHost(), forceImmediate, aggressive);
+        self.albumCommands().requestVisibleLoadThrottled(forceImmediate, aggressive);
       }
-      loadVisibleItemsImmediate(): void { galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost()); }
+      loadVisibleItemsImmediate(): void { self.albumCommands().requestVisibleLoadImmediate(); }
       loadVisibleItemsInteractiveVisiblePriority(): void {
-        galleryAlbumVisibleLoadVisibleItemsThrottled(self.asVisibleLoadHost(), true, true, true);
+        self.albumCommands().requestVisibleLoadInteractivePriority();
       }
       syncListVisibleRoughToTimelineSliderTarget(): void { galleryAlbumSyncListVisibleRoughToTimelineSliderTarget(this); }
       refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
-      pumpLoad(singleBatch?: boolean): void { galleryAlbumPumpLoad(self.asLoadOrchestratorHost(), singleBatch); }
+      pumpLoad(singleBatch?: boolean): void { self.albumCommands().pumpLoad(singleBatch); }
       runMainListScrollSettledWork(epochAtSchedule?: number): void {
         timelineGestureRunMainListScrollSettledWork(this, epochAtSchedule);
       }
     }
-    return new TimelineGestureHostBridge();
+    this.timelineHostCache = new TimelineGestureHostBridge();
+    return this.timelineHostCache;
   }
 
   private asModeOrchestratorHost(): GalleryAlbumModeOrchestratorHost {
+    if (this.modeHostCache !== undefined) {
+      return this.modeHostCache;
+    }
     const self = this;
     class ModeOrchestratorHostBridge implements GalleryAlbumModeOrchestratorHost {
       getUIContext() { return self.getUIContext(); }
@@ -1287,9 +1272,9 @@ export struct GalleryAlbumTab {
       set inSmartCategoryMode(value: boolean) { self.inSmartCategoryMode = value; }
       get inPersonMode(): boolean { return self.inPersonMode; }
       set inPersonMode(value: boolean) { self.inPersonMode = value; }
-      get searchQuery(): string { return self.searchQuery; }
+      get searchQuery(): string { return self.session.mode.searchQuery; }
       set searchQuery(value: string) {
-        self.searchQuery = value;
+        self.session.mode.searchQuery = value;
         if (value.length === 0) {
           self.searchSeed = '';
         }
@@ -1328,33 +1313,37 @@ export struct GalleryAlbumTab {
       set personError(value: string) { self.personError = value; }
       get personItems(): AiPersonItem[] { return self.personItems; }
       set personItems(value: AiPersonItem[]) { self.personItems = value; }
-      get personStatOverrides(): Map<string, string> { return self.personStatOverrides; }
-      set personStatOverrides(value: Map<string, string>) { self.personStatOverrides = value; }
+      get personStatOverrides(): Map<string, string> { return self.session.mode.personStatOverrides; }
+      set personStatOverrides(value: Map<string, string>) { self.session.mode.personStatOverrides = value; }
       get personStatVersion(): number { return self.personStatVersion; }
       set personStatVersion(value: number) { self.personStatVersion = value; }
-      get personStatGen(): number { return self.personStatGen; }
-      set personStatGen(value: number) { self.personStatGen = value; }
+      get personStatGen(): number { return self.session.mode.personStatGen; }
+      set personStatGen(value: number) { self.session.mode.personStatGen = value; }
       get recentOpening(): boolean { return self.recentOpening; }
       set recentOpening(value: boolean) { self.recentOpening = value; }
       get collectOpening(): boolean { return self.collectOpening; }
       set collectOpening(value: boolean) { self.collectOpening = value; }
       get syncBadgeCount(): number { return self.autoSyncBadgeCount; }
       set syncBadgeCount(value: number) { self.autoSyncBadgeCount = value; }
-      get lastBootstrapSatisfiedRefreshVersion(): number { return self.lastBootstrapSatisfiedRefreshVersion; }
-      set lastBootstrapSatisfiedRefreshVersion(value: number) { self.lastBootstrapSatisfiedRefreshVersion = value; }
-      exitGallerySelection(): void { galleryAlbumExitSelection(self.asSelectionGestureHost()); }
+      get lastBootstrapSatisfiedRefreshVersion(): number { return self.session.load.lastBootstrapSatisfiedRefreshVersion; }
+      set lastBootstrapSatisfiedRefreshVersion(value: number) { self.session.load.lastBootstrapSatisfiedRefreshVersion = value; }
+      exitGallerySelection(): void { self.albumCommands().exitSelection(); }
       requestBootstrap(forceImmediate: boolean): void { self.requestBootstrap(forceImmediate); }
       bootstrap(showFullBleedSkeleton?: boolean): Promise<void> {
-        return galleryAlbumBootstrap(self.asLoadOrchestratorHost(), showFullBleedSkeleton);
+        return self.albumCommands().bootstrap(showFullBleedSkeleton);
       }
       itemIdOf(item: GalleryListItem): string { return galleryAlbumItemIdOf(item); }
       createNavigationGuard(): () => boolean { return self.createNavigationGuard(); }
       toast(msg: string): void { self.toast(msg); }
     }
-    return new ModeOrchestratorHostBridge();
+    this.modeHostCache = new ModeOrchestratorHostBridge();
+    return this.modeHostCache;
   }
 
   private asLoadOrchestratorHost(): GalleryAlbumLoadOrchestratorHost {
+    if (this.loadHostCache !== undefined) {
+      return this.loadHostCache;
+    }
     const self = this;
     class LoadOrchestratorHostBridge implements GalleryAlbumLoadOrchestratorHost {
       getUIContext() { return self.getUIContext(); }
@@ -1388,38 +1377,38 @@ export struct GalleryAlbumTab {
       set personError(value: string) { self.personError = value; }
       get personItems(): AiPersonItem[] { return self.personItems; }
       set personItems(value: AiPersonItem[]) { self.personItems = value; }
-      get personStatOverrides(): Map<string, string> { return self.personStatOverrides; }
-      set personStatOverrides(value: Map<string, string>) { self.personStatOverrides = value; }
+      get personStatOverrides(): Map<string, string> { return self.session.mode.personStatOverrides; }
+      set personStatOverrides(value: Map<string, string>) { self.session.mode.personStatOverrides = value; }
       get personStatVersion(): number { return self.personStatVersion; }
       set personStatVersion(value: number) { self.personStatVersion = value; }
-      get personStatGen(): number { return self.personStatGen; }
-      set personStatGen(value: number) { self.personStatGen = value; }
-      get lastBootstrapSatisfiedRefreshVersion(): number { return self.lastBootstrapSatisfiedRefreshVersion; }
-      set lastBootstrapSatisfiedRefreshVersion(value: number) { self.lastBootstrapSatisfiedRefreshVersion = value; }
-      get galleryTimelineAtTopForPull(): boolean { return self.galleryTimelineAtTopForPull; }
-      set galleryTimelineAtTopForPull(value: boolean) { self.galleryTimelineAtTopForPull = value; }
+      get personStatGen(): number { return self.session.mode.personStatGen; }
+      set personStatGen(value: number) { self.session.mode.personStatGen = value; }
+      get lastBootstrapSatisfiedRefreshVersion(): number { return self.session.load.lastBootstrapSatisfiedRefreshVersion; }
+      set lastBootstrapSatisfiedRefreshVersion(value: number) { self.session.load.lastBootstrapSatisfiedRefreshVersion = value; }
+      get galleryTimelineAtTopForPull(): boolean { return self.session.load.galleryTimelineAtTopForPull; }
+      set galleryTimelineAtTopForPull(value: boolean) { self.session.load.galleryTimelineAtTopForPull = value; }
       get gallerySelectionMode(): boolean { return self.gallerySelectionMode; }
       set gallerySelectionMode(value: boolean) { self.setGallerySelectionModeState(value); }
       get galleryTimelineRefreshing(): boolean { return self.galleryTimelineRefreshing; }
       set galleryTimelineRefreshing(value: boolean) { self.galleryTimelineRefreshing = value; }
-      get galleryTimelineRefreshEpoch(): number { return self.galleryTimelineRefreshEpoch; }
-      set galleryTimelineRefreshEpoch(value: number) { self.galleryTimelineRefreshEpoch = value; }
-      get galleryPullRefreshThresholdHapticDone(): boolean { return self.galleryPullRefreshThresholdHapticDone; }
-      set galleryPullRefreshThresholdHapticDone(value: boolean) { self.galleryPullRefreshThresholdHapticDone = value; }
-      get loadGen(): number { return self.loadGen; }
-      set loadGen(value: number) { self.loadGen = value; }
-      get exhausted(): boolean { return self.exhausted; }
-      set exhausted(value: boolean) { self.exhausted = value; }
-      get dayIndex(): number { return self.dayIndex; }
-      set dayIndex(value: number) { self.dayIndex = value; }
-      get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
+      get galleryTimelineRefreshEpoch(): number { return self.session.load.galleryTimelineRefreshEpoch; }
+      set galleryTimelineRefreshEpoch(value: number) { self.session.load.galleryTimelineRefreshEpoch = value; }
+      get galleryPullRefreshThresholdHapticDone(): boolean { return self.session.load.galleryPullRefreshThresholdHapticDone; }
+      set galleryPullRefreshThresholdHapticDone(value: boolean) { self.session.load.galleryPullRefreshThresholdHapticDone = value; }
+      get loadGen(): number { return self.session.load.loadGen; }
+      set loadGen(value: number) { self.session.load.loadGen = value; }
+      get exhausted(): boolean { return self.session.load.exhausted; }
+      set exhausted(value: boolean) { self.session.load.exhausted = value; }
+      get dayIndex(): number { return self.session.load.dayIndex; }
+      set dayIndex(value: number) { self.session.load.dayIndex = value; }
+      get orderedDays(): TimelineDayModel[] { return self.session.load.orderedDays; }
       set orderedDays(value: TimelineDayModel[]) { self.setOrderedDays(value); }
-      get dayOffsets(): Map<string, number> { return self.dayOffsets; }
-      set dayOffsets(value: Map<string, number>) { self.dayOffsets = value; }
-      get dayRounds(): Map<string, number> { return self.dayRounds; }
-      set dayRounds(value: Map<string, number>) { self.dayRounds = value; }
-      get dayEmptyRounds(): Map<string, number> { return self.dayEmptyRounds; }
-      set dayEmptyRounds(value: Map<string, number>) { self.dayEmptyRounds = value; }
+      get dayOffsets(): Map<string, number> { return self.session.load.dayOffsets; }
+      set dayOffsets(value: Map<string, number>) { self.session.load.dayOffsets = value; }
+      get dayRounds(): Map<string, number> { return self.session.load.dayRounds; }
+      set dayRounds(value: Map<string, number>) { self.session.load.dayRounds = value; }
+      get dayEmptyRounds(): Map<string, number> { return self.session.load.dayEmptyRounds; }
+      set dayEmptyRounds(value: Map<string, number>) { self.session.load.dayEmptyRounds = value; }
       get bootLoading(): boolean { return self.bootLoading; }
       set bootLoading(value: boolean) { self.bootLoading = value; }
       get loadError(): string { return self.loadError; }
@@ -1428,36 +1417,35 @@ export struct GalleryAlbumTab {
       set sections(value: GalleryAlbumDaySectionState[]) { self.sections = value; }
       get footText(): string { return self.footText; }
       set footText(value: string) { self.footText = value; }
-      get loadingMore(): boolean { return self.loadingMore; }
-      set loadingMore(value: boolean) { self.loadingMore = value; }
-      get pumpEpoch(): number { return self.pumpEpoch; }
-      set pumpEpoch(value: number) { self.pumpEpoch = value; }
-      get lastVisibleLoadDayIdx(): number { return self.lastVisibleLoadDayIdx; }
-      set lastVisibleLoadDayIdx(value: number) { self.lastVisibleLoadDayIdx = value; }
-      get bootstrapDebounceTimer(): number { return self.bootstrapDebounceTimer; }
-      set bootstrapDebounceTimer(value: number) { self.bootstrapDebounceTimer = value; }
-      get scrollerRef(): Scroller { return self.scrollerRef; }
-      set scrollerRef(value: Scroller) { self.scrollerRef = value; }
-      applyDeleteSyncIfNeeded(): void { galleryAlbumApplyDeleteSyncIfNeeded(self.asBatchActionHost()); }
+      get loadingMore(): boolean { return self.session.load.loadingMore; }
+      set loadingMore(value: boolean) { self.session.load.loadingMore = value; }
+      get pumpEpoch(): number { return self.session.load.pumpEpoch; }
+      set pumpEpoch(value: number) { self.session.load.pumpEpoch = value; }
+      get lastVisibleLoadDayIdx(): number { return self.session.visible.lastVisibleLoadDayIdx; }
+      set lastVisibleLoadDayIdx(value: number) { self.session.visible.lastVisibleLoadDayIdx = value; }
+      get bootstrapDebounceTimer(): number { return self.session.load.bootstrapDebounceTimer; }
+      set bootstrapDebounceTimer(value: number) { self.session.load.bootstrapDebounceTimer = value; }
+      get scrollerRef(): Scroller { return self.session.scrollerRef; }
+      set scrollerRef(value: Scroller) { self.session.scrollerRef = value; }
+      applyDeleteSyncIfNeeded(): void { self.albumCommands().applyDeleteSyncIfNeeded(); }
       enrichPersonStats(items: AiPersonItem[], gen: number): Promise<void> {
-        return galleryAlbumEnrichPersonStats(self.asModeOrchestratorHost(), items, gen);
+        return self.albumCommands().enrichPersonStats(items, gen);
       }
-      rebuildFlow(): void { galleryAlbumRebuildFlow(self.asVisibleLoadHost()); }
+      rebuildFlow(): void { self.albumCommands().rebuildFlow(); }
       countGalleryListedItems(): number { return galleryAlbumCountGalleryListedItems(self.sections); }
       upsertSection(day: TimelineDayModel, list: GalleryListItem[], newOffset: number): void {
-        galleryAlbumUpsertSection(self.asVisibleLoadHost(), day, list, newOffset);
+        self.albumCommands().upsertSection(day, list, newOffset);
       }
       clearBootstrapDebounceTimer(): void { self.clearBootstrapDebounceTimer(); }
       loadVisibleItemsImmediate(): void {
-        galleryAlbumVisibleLoadVisibleItemsImmediate(self.asVisibleLoadHost());
+        self.albumCommands().requestVisibleLoadImmediate();
       }
-      asVisibleLoadHost(): GalleryAlbumVisibleLoadHost { return self.asVisibleLoadHost(); }
+      get commands(): GalleryAlbumCommands { return self.albumCommands(); }
       onMainTimelineReady(): void {
         if (self.inSearchMode || self.inCategoryMode || self.inSmartCategoryMode || self.inPersonMode) {
           return;
         }
-        galleryAlbumTriggerAutoSync(
-          self.asModeOrchestratorHost(),
+        self.albumCommands().triggerAutoSync(
           galleryAlbumCollectListedTimelineItems(self.sections)
         );
         const persistBaseUrl = self.baseUrl;
@@ -1468,84 +1456,88 @@ export struct GalleryAlbumTab {
         }, 480);
       }
     }
-    return new LoadOrchestratorHostBridge();
+    this.loadHostCache = new LoadOrchestratorHostBridge();
+    return this.loadHostCache;
   }
 
   private asVisibleLoadHost(): GalleryAlbumVisibleLoadHost {
+    if (this.visibleHostCache !== undefined) {
+      return this.visibleHostCache;
+    }
     const self = this;
     class VisibleLoadHostBridge implements GalleryAlbumVisibleLoadHost {
-      get scrollerRef(): Scroller { return self.scrollerRef; }
-      set scrollerRef(value: Scroller) { self.scrollerRef = value; }
-      get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
-      set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
+      get scrollerRef(): Scroller { return self.session.scrollerRef; }
+      set scrollerRef(value: Scroller) { self.session.scrollerRef = value; }
+      get flowDataSource(): GalleryWaterFlowDataSource { return self.session.load.flowDataSource; }
+      set flowDataSource(value: GalleryWaterFlowDataSource) { self.session.load.flowDataSource = value; }
       get bootLoading(): boolean { return self.bootLoading; }
       set bootLoading(value: boolean) { self.bootLoading = value; }
-      get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
+      get orderedDays(): TimelineDayModel[] { return self.session.load.orderedDays; }
       set orderedDays(value: TimelineDayModel[]) { self.setOrderedDays(value); }
-      get dayGlobalSlotStarts(): number[] { return self.dayGlobalSlotStarts; }
-      set dayGlobalSlotStarts(value: number[]) { self.dayGlobalSlotStarts = value; }
+      get dayGlobalSlotStarts(): number[] { return self.session.load.dayGlobalSlotStarts; }
+      set dayGlobalSlotStarts(value: number[]) { self.session.load.dayGlobalSlotStarts = value; }
       get sections(): GalleryAlbumDaySectionState[] { return self.sections; }
       set sections(value: GalleryAlbumDaySectionState[]) { self.sections = value; }
-      get visualPlaceholderMode(): boolean { return self.visualPlaceholderMode; }
-      set visualPlaceholderMode(value: boolean) { self.visualPlaceholderMode = value; }
-      get isDraggingOrFling(): boolean { return self.isDraggingOrFling; }
-      set isDraggingOrFling(value: boolean) { self.isDraggingOrFling = value; }
+      get visualPlaceholderMode(): boolean { return self.session.visible.visualPlaceholderMode; }
+      set visualPlaceholderMode(value: boolean) { self.session.visible.visualPlaceholderMode = value; }
+      get isDraggingOrFling(): boolean { return self.session.visible.isDraggingOrFling; }
+      set isDraggingOrFling(value: boolean) { self.session.visible.isDraggingOrFling = value; }
       get timelineSidebarDragging(): boolean { return self.timelineSidebarDragging; }
       set timelineSidebarDragging(value: boolean) { self.timelineSidebarDragging = value; }
-      get timelineSeekInProgress(): boolean { return self.timelineSeekInProgress; }
-      set timelineSeekInProgress(value: boolean) { self.timelineSeekInProgress = value; }
-      get ignoreListFreezeUntilMs(): number { return self.ignoreListFreezeUntilMs; }
-      set ignoreListFreezeUntilMs(value: number) { self.ignoreListFreezeUntilMs = value; }
-      get timelineSeekNoScrollerGuardUntilMs(): number { return self.timelineSeekNoScrollerGuardUntilMs; }
-      set timelineSeekNoScrollerGuardUntilMs(value: number) { self.timelineSeekNoScrollerGuardUntilMs = value; }
-      get pendingFlowRebuild(): boolean { return self.pendingFlowRebuild; }
-      set pendingFlowRebuild(value: boolean) { self.pendingFlowRebuild = value; }
-      get lastLoadVisibleAtMs(): number { return self.lastLoadVisibleAtMs; }
-      set lastLoadVisibleAtMs(value: number) { self.lastLoadVisibleAtMs = value; }
-      get loadingMore(): boolean { return self.loadingMore; }
-      set loadingMore(value: boolean) { self.loadingMore = value; }
-      get exhausted(): boolean { return self.exhausted; }
-      set exhausted(value: boolean) { self.exhausted = value; }
-      get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
-      set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
-      get listVisibleLastNodeIdx(): number { return self.listVisibleLastNodeIdx; }
-      set listVisibleLastNodeIdx(value: number) { self.listVisibleLastNodeIdx = value; }
-      get listScrollIndexAnchorHave(): boolean { return self.listScrollIndexAnchorHave; }
-      set listScrollIndexAnchorHave(value: boolean) { self.listScrollIndexAnchorHave = value; }
-      get listScrollIndexAnchorYVp(): number { return self.listScrollIndexAnchorYVp; }
-      set listScrollIndexAnchorYVp(value: number) { self.listScrollIndexAnchorYVp = value; }
-      get listScrollIndexAnchorFirst(): number { return self.listScrollIndexAnchorFirst; }
-      set listScrollIndexAnchorFirst(value: number) { self.listScrollIndexAnchorFirst = value; }
-      get lastKnownGlobalPhotoSlotStart(): number { return self.lastKnownGlobalPhotoSlotStart; }
-      set lastKnownGlobalPhotoSlotStart(value: number) { self.lastKnownGlobalPhotoSlotStart = value; }
-      get lastKnownGlobalPhotoSlotEndExclusive(): number { return self.lastKnownGlobalPhotoSlotEndExclusive; }
-      set lastKnownGlobalPhotoSlotEndExclusive(value: number) { self.lastKnownGlobalPhotoSlotEndExclusive = value; }
-      get dayIndex(): number { return self.dayIndex; }
-      set dayIndex(value: number) { self.dayIndex = value; }
-      get lastVisibleLoadDayIdx(): number { return self.lastVisibleLoadDayIdx; }
-      set lastVisibleLoadDayIdx(value: number) { self.lastVisibleLoadDayIdx = value; }
-      get dayOffsets(): Map<string, number> { return self.dayOffsets; }
-      set dayOffsets(value: Map<string, number>) { self.dayOffsets = value; }
-      get pumpEpoch(): number { return self.pumpEpoch; }
-      set pumpEpoch(value: number) { self.pumpEpoch = value; }
-      get loadGen(): number { return self.loadGen; }
-      set loadGen(value: number) { self.loadGen = value; }
-      get loadVisibleRetryTimer(): number { return self.loadVisibleRetryTimer; }
-      set loadVisibleRetryTimer(value: number) { self.loadVisibleRetryTimer = value; }
-      get loadVisibleRetryGen(): number { return self.loadVisibleRetryGen; }
-      set loadVisibleRetryGen(value: number) { self.loadVisibleRetryGen = value; }
-      get visibleBandPumpRunIdSeq(): number { return self.visibleBandPumpRunIdSeq; }
-      set visibleBandPumpRunIdSeq(value: number) { self.visibleBandPumpRunIdSeq = value; }
-      get visibleBandPumpActiveRunId(): number { return self.visibleBandPumpActiveRunId; }
-      set visibleBandPumpActiveRunId(value: number) { self.visibleBandPumpActiveRunId = value; }
-      get visibleBandPumpActiveEpoch(): number { return self.visibleBandPumpActiveEpoch; }
-      set visibleBandPumpActiveEpoch(value: number) { self.visibleBandPumpActiveEpoch = value; }
+      get timelineSeekInProgress(): boolean { return self.session.timeline.timelineSeekInProgress; }
+      set timelineSeekInProgress(value: boolean) { self.session.timeline.timelineSeekInProgress = value; }
+      get ignoreListFreezeUntilMs(): number { return self.session.visible.ignoreListFreezeUntilMs; }
+      set ignoreListFreezeUntilMs(value: number) { self.session.visible.ignoreListFreezeUntilMs = value; }
+      get timelineSeekNoScrollerGuardUntilMs(): number { return self.session.timeline.timelineSeekNoScrollerGuardUntilMs; }
+      set timelineSeekNoScrollerGuardUntilMs(value: number) { self.session.timeline.timelineSeekNoScrollerGuardUntilMs = value; }
+      get pendingFlowRebuild(): boolean { return self.session.visible.pendingFlowRebuild; }
+      set pendingFlowRebuild(value: boolean) { self.session.visible.pendingFlowRebuild = value; }
+      get lastLoadVisibleAtMs(): number { return self.session.visible.lastLoadVisibleAtMs; }
+      set lastLoadVisibleAtMs(value: number) { self.session.visible.lastLoadVisibleAtMs = value; }
+      get loadingMore(): boolean { return self.session.load.loadingMore; }
+      set loadingMore(value: boolean) { self.session.load.loadingMore = value; }
+      get exhausted(): boolean { return self.session.load.exhausted; }
+      set exhausted(value: boolean) { self.session.load.exhausted = value; }
+      get listVisibleFirstNodeIdx(): number { return self.session.visible.listVisibleFirstNodeIdx; }
+      set listVisibleFirstNodeIdx(value: number) { self.session.visible.listVisibleFirstNodeIdx = value; }
+      get listVisibleLastNodeIdx(): number { return self.session.visible.listVisibleLastNodeIdx; }
+      set listVisibleLastNodeIdx(value: number) { self.session.visible.listVisibleLastNodeIdx = value; }
+      get listScrollIndexAnchorHave(): boolean { return self.session.visible.listScrollIndexAnchorHave; }
+      set listScrollIndexAnchorHave(value: boolean) { self.session.visible.listScrollIndexAnchorHave = value; }
+      get listScrollIndexAnchorYVp(): number { return self.session.visible.listScrollIndexAnchorYVp; }
+      set listScrollIndexAnchorYVp(value: number) { self.session.visible.listScrollIndexAnchorYVp = value; }
+      get listScrollIndexAnchorFirst(): number { return self.session.visible.listScrollIndexAnchorFirst; }
+      set listScrollIndexAnchorFirst(value: number) { self.session.visible.listScrollIndexAnchorFirst = value; }
+      get lastKnownGlobalPhotoSlotStart(): number { return self.session.visible.lastKnownGlobalPhotoSlotStart; }
+      set lastKnownGlobalPhotoSlotStart(value: number) { self.session.visible.lastKnownGlobalPhotoSlotStart = value; }
+      get lastKnownGlobalPhotoSlotEndExclusive(): number { return self.session.visible.lastKnownGlobalPhotoSlotEndExclusive; }
+      set lastKnownGlobalPhotoSlotEndExclusive(value: number) { self.session.visible.lastKnownGlobalPhotoSlotEndExclusive = value; }
+      get dayIndex(): number { return self.session.load.dayIndex; }
+      set dayIndex(value: number) { self.session.load.dayIndex = value; }
+      get lastVisibleLoadDayIdx(): number { return self.session.visible.lastVisibleLoadDayIdx; }
+      set lastVisibleLoadDayIdx(value: number) { self.session.visible.lastVisibleLoadDayIdx = value; }
+      get dayOffsets(): Map<string, number> { return self.session.load.dayOffsets; }
+      set dayOffsets(value: Map<string, number>) { self.session.load.dayOffsets = value; }
+      get pumpEpoch(): number { return self.session.load.pumpEpoch; }
+      set pumpEpoch(value: number) { self.session.load.pumpEpoch = value; }
+      get loadGen(): number { return self.session.load.loadGen; }
+      set loadGen(value: number) { self.session.load.loadGen = value; }
+      get loadVisibleRetryTimer(): number { return self.session.visible.loadVisibleRetryTimer; }
+      set loadVisibleRetryTimer(value: number) { self.session.visible.loadVisibleRetryTimer = value; }
+      get loadVisibleRetryGen(): number { return self.session.visible.loadVisibleRetryGen; }
+      set loadVisibleRetryGen(value: number) { self.session.visible.loadVisibleRetryGen = value; }
+      get visibleBandPumpRunIdSeq(): number { return self.session.visible.visibleBandPumpRunIdSeq; }
+      set visibleBandPumpRunIdSeq(value: number) { self.session.visible.visibleBandPumpRunIdSeq = value; }
+      get visibleBandPumpActiveRunId(): number { return self.session.visible.visibleBandPumpActiveRunId; }
+      set visibleBandPumpActiveRunId(value: number) { self.session.visible.visibleBandPumpActiveRunId = value; }
+      get visibleBandPumpActiveEpoch(): number { return self.session.visible.visibleBandPumpActiveEpoch; }
+      set visibleBandPumpActiveEpoch(value: number) { self.session.visible.visibleBandPumpActiveEpoch = value; }
       get timelineSliderRatio(): number { return self.timelineSliderRatio; }
       set timelineSliderRatio(value: number) { self.timelineSliderRatio = value; }
-      get timelineSeekAnchorNodeIdx(): number { return self.timelineSeekAnchorNodeIdx; }
-      set timelineSeekAnchorNodeIdx(value: number) { self.timelineSeekAnchorNodeIdx = value; }
-      get visibleLoadPreferBottomFirst(): boolean { return self.visibleLoadPreferBottomFirst; }
-      set visibleLoadPreferBottomFirst(value: boolean) { self.visibleLoadPreferBottomFirst = value; }
+      get timelineSeekAnchorNodeIdx(): number { return self.session.timeline.timelineSeekAnchorNodeIdx; }
+      set timelineSeekAnchorNodeIdx(value: number) { self.session.timeline.timelineSeekAnchorNodeIdx = value; }
+      get visibleLoadPreferBottomFirst(): boolean { return self.session.visible.visibleLoadPreferBottomFirst; }
+      set visibleLoadPreferBottomFirst(value: boolean) { self.session.visible.visibleLoadPreferBottomFirst = value; }
       get galleryGridColumns(): number { return self.currentGalleryGridColumns(); }
       set galleryGridColumns(_value: number) {}
       get rootModeContentWidthVp(): number { return self.rootModeContentWidthVp; }
@@ -1558,19 +1550,23 @@ export struct GalleryAlbumTab {
         return self.resolveDayByGlobalIndexFast(globalIndex);
       }
       resolveYearMonthByTimelineRatio(ratio: number): TimelineYearMonthPair | null {
-        return galleryAlbumResolveYearMonthByTimelineRatio(self.asTimelineGestureHost(), ratio);
+        return self.albumCommands().resolveYearMonthByTimelineRatio(ratio);
       }
-      isInScrollInteractiveLogWindow(): boolean { return timelineGestureIsInScrollInteractiveLogWindow(self.asTimelineGestureHost()); }
-      logScrollDebug(msg: string): void { timelineGestureLogScrollDebug(self.asTimelineGestureHost(), msg); }
+      isInScrollInteractiveLogWindow(): boolean { return self.albumCommands().isInScrollInteractiveLogWindow(); }
+      logScrollDebug(msg: string): void { self.albumCommands().logScrollDebug(msg); }
       refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
-      rebuildFlow(): void { galleryAlbumRebuildFlow(self.asVisibleLoadHost()); }
-      pumpLoad(singleBatch?: boolean): void { galleryAlbumPumpLoad(self.asLoadOrchestratorHost(), singleBatch); }
-      loadOneBatch(): Promise<number> { return galleryAlbumLoadOneBatch(self.asLoadOrchestratorHost()); }
+      rebuildFlow(): void { self.albumCommands().rebuildFlow(); }
+      pumpLoad(singleBatch?: boolean): void { self.albumCommands().pumpLoad(singleBatch); }
+      loadOneBatch(): Promise<number> { return self.albumCommands().loadOneBatch(); }
     }
-    return new VisibleLoadHostBridge();
+    this.visibleHostCache = new VisibleLoadHostBridge();
+    return this.visibleHostCache;
   }
 
   private asRootSurfaceHost(): GalleryAlbumRootSurfaceHost {
+    if (this.rootSurfaceHostCache !== undefined) {
+      return this.rootSurfaceHostCache;
+    }
     const self = this;
     class RootSurfaceHostBridge implements GalleryAlbumRootSurfaceHost {
       getUIContext() { return self.getUIContext(); }
@@ -1638,51 +1634,47 @@ export struct GalleryAlbumTab {
       set rootAlbumsSurfaceTranslateX(value: number) { self.rootAlbumsSurfaceTranslateX = value; }
       get rootSurfaceSwitchAnimating(): boolean { return self.rootSurfaceSwitchAnimating; }
       set rootSurfaceSwitchAnimating(value: boolean) { self.rootSurfaceSwitchAnimating = value; }
-      get rootSurfaceSwitchStartTimer(): number { return self.rootSurfaceSwitchStartTimer; }
-      set rootSurfaceSwitchStartTimer(value: number) { self.rootSurfaceSwitchStartTimer = value; }
-      get rootSurfaceSwitchTimer(): number { return self.rootSurfaceSwitchTimer; }
-      set rootSurfaceSwitchTimer(value: number) { self.rootSurfaceSwitchTimer = value; }
-      get rootSurfaceSwitchFrom(): string { return self.rootSurfaceSwitchFrom; }
-      set rootSurfaceSwitchFrom(value: string) { self.rootSurfaceSwitchFrom = value; }
-      get rootSurfaceSwitchTo(): string { return self.rootSurfaceSwitchTo; }
-      set rootSurfaceSwitchTo(value: string) { self.rootSurfaceSwitchTo = value; }
-      get albumsHomeSmartPrefetchGen(): number { return self.albumsHomeSmartPrefetchGen; }
-      set albumsHomeSmartPrefetchGen(value: number) { self.albumsHomeSmartPrefetchGen = value; }
-      get albumsHomePersonPrefetchGen(): number { return self.albumsHomePersonPrefetchGen; }
-      set albumsHomePersonPrefetchGen(value: number) { self.albumsHomePersonPrefetchGen = value; }
-      get albumsHomeUserAlbumPrefetchGen(): number { return self.albumsHomeUserAlbumPrefetchGen; }
-      set albumsHomeUserAlbumPrefetchGen(value: number) { self.albumsHomeUserAlbumPrefetchGen = value; }
-      get albumsHomeMediaPrefetchGen(): number { return self.albumsHomeMediaPrefetchGen; }
-      set albumsHomeMediaPrefetchGen(value: number) { self.albumsHomeMediaPrefetchGen = value; }
-      get lastHomeSurface(): string { return self.lastHomeSurface; }
-      set lastHomeSurface(value: string) { self.lastHomeSurface = value; }
-      get lastAlbumsHomeRefreshVersion(): number { return self.lastAlbumsHomeRefreshVersion; }
-      set lastAlbumsHomeRefreshVersion(value: number) { self.lastAlbumsHomeRefreshVersion = value; }
+      get rootSurfaceSwitchStartTimer(): number { return self.session.root.rootSurfaceSwitchStartTimer; }
+      set rootSurfaceSwitchStartTimer(value: number) { self.session.root.rootSurfaceSwitchStartTimer = value; }
+      get rootSurfaceSwitchTimer(): number { return self.session.root.rootSurfaceSwitchTimer; }
+      set rootSurfaceSwitchTimer(value: number) { self.session.root.rootSurfaceSwitchTimer = value; }
+      get rootSurfaceSwitchFrom(): string { return self.session.root.rootSurfaceSwitchFrom; }
+      set rootSurfaceSwitchFrom(value: string) { self.session.root.rootSurfaceSwitchFrom = value; }
+      get rootSurfaceSwitchTo(): string { return self.session.root.rootSurfaceSwitchTo; }
+      set rootSurfaceSwitchTo(value: string) { self.session.root.rootSurfaceSwitchTo = value; }
+      get albumsHomeSmartPrefetchGen(): number { return self.session.root.albumsHomeSmartPrefetchGen; }
+      set albumsHomeSmartPrefetchGen(value: number) { self.session.root.albumsHomeSmartPrefetchGen = value; }
+      get albumsHomePersonPrefetchGen(): number { return self.session.root.albumsHomePersonPrefetchGen; }
+      set albumsHomePersonPrefetchGen(value: number) { self.session.root.albumsHomePersonPrefetchGen = value; }
+      get albumsHomeUserAlbumPrefetchGen(): number { return self.session.root.albumsHomeUserAlbumPrefetchGen; }
+      set albumsHomeUserAlbumPrefetchGen(value: number) { self.session.root.albumsHomeUserAlbumPrefetchGen = value; }
+      get albumsHomeMediaPrefetchGen(): number { return self.session.root.albumsHomeMediaPrefetchGen; }
+      set albumsHomeMediaPrefetchGen(value: number) { self.session.root.albumsHomeMediaPrefetchGen = value; }
+      get lastHomeSurface(): string { return self.session.root.lastHomeSurface; }
+      set lastHomeSurface(value: string) { self.session.root.lastHomeSurface = value; }
+      get lastAlbumsHomeRefreshVersion(): number { return self.session.root.lastAlbumsHomeRefreshVersion; }
+      set lastAlbumsHomeRefreshVersion(value: number) { self.session.root.lastAlbumsHomeRefreshVersion = value; }
       dismissMoreMenu(): void { self.dismissMoreMenu(); }
       refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
       notifySelectionDockStateChange(): void { self.notifySelectionDockStateChange(); }
-      exitGallerySelection(): void { galleryAlbumExitSelection(self.asSelectionGestureHost()); }
+      exitGallerySelection(): void { self.albumCommands().exitSelection(); }
       playModeSwitchMotion(direction?: number): void {
-        galleryAlbumPlayModeSwitchMotion(self.asModeOrchestratorHost(), direction);
+        self.albumCommands().playModeSwitchMotion(direction);
       }
       backToMain(animate: boolean): void {
-        if (animate) {
-          galleryAlbumBackToMain(self.asModeOrchestratorHost());
-          return;
-        }
-        galleryAlbumExitSelection(self.asSelectionGestureHost());
-        self.inSearchMode = false;
-        self.inCategoryMode = false;
-        self.inSmartCategoryMode = false;
-        self.inPersonMode = false;
+        self.albumCommands().backToMain(animate);
       }
-      loadMediaCategories(): Promise<void> { return galleryAlbumLoadMediaCategories(self.asModeOrchestratorHost()); }
+      loadMediaCategories(): Promise<void> { return self.albumCommands().loadMediaCategories(); }
       toast(msg: string): void { self.toast(msg); }
     }
-    return new RootSurfaceHostBridge();
+    this.rootSurfaceHostCache = new RootSurfaceHostBridge();
+    return this.rootSurfaceHostCache;
   }
 
   private asRootTitleHost(): GalleryAlbumRootTitleHost {
+    if (this.rootTitleHostCache !== undefined) {
+      return this.rootTitleHostCache;
+    }
     const self = this;
     class RootTitleHostBridge implements GalleryAlbumRootTitleHost {
       get homeSurface(): string { return self.homeSurface; }
@@ -1699,39 +1691,43 @@ export struct GalleryAlbumTab {
       set viewGranularity(value: GalleryViewGranularity) { self.viewGranularity = value; }
       get rootPhotosScrollTitle(): string { return self.rootPhotosScrollTitle; }
       set rootPhotosScrollTitle(value: string) { self.rootPhotosScrollTitle = value; }
-      get rootPhotosScrolledUnderTopBar(): boolean { return self.rootPhotosScrolledUnderTopBar; }
-      set rootPhotosScrolledUnderTopBar(value: boolean) { self.rootPhotosScrolledUnderTopBar = value; }
-      get rootPhotosTitlePreferListAnchorUntilMs(): number { return self.rootPhotosTitlePreferListAnchorUntilMs; }
-      set rootPhotosTitlePreferListAnchorUntilMs(value: number) { self.rootPhotosTitlePreferListAnchorUntilMs = value; }
-      get timelineSeekInProgress(): boolean { return self.timelineSeekInProgress; }
-      set timelineSeekInProgress(value: boolean) { self.timelineSeekInProgress = value; }
-      get timelineReleaseAwaitVisibleCallback(): boolean { return self.timelineReleaseAwaitVisibleCallback; }
-      set timelineReleaseAwaitVisibleCallback(value: boolean) { self.timelineReleaseAwaitVisibleCallback = value; }
-      get listVisibleFirstNodeIdx(): number { return self.listVisibleFirstNodeIdx; }
-      set listVisibleFirstNodeIdx(value: number) { self.listVisibleFirstNodeIdx = value; }
-      get lastKnownGlobalPhotoSlotStart(): number { return self.lastKnownGlobalPhotoSlotStart; }
-      set lastKnownGlobalPhotoSlotStart(value: number) { self.lastKnownGlobalPhotoSlotStart = value; }
-      get lastKnownGlobalPhotoSlotEndExclusive(): number { return self.lastKnownGlobalPhotoSlotEndExclusive; }
-      set lastKnownGlobalPhotoSlotEndExclusive(value: number) { self.lastKnownGlobalPhotoSlotEndExclusive = value; }
-      get orderedDays(): TimelineDayModel[] { return self.orderedDays; }
-      set orderedDays(value: TimelineDayModel[]) { self.orderedDays = value; }
-      get dayGlobalSlotStarts(): number[] { return self.dayGlobalSlotStarts; }
-      set dayGlobalSlotStarts(value: number[]) { self.dayGlobalSlotStarts = value; }
-      get flowDataSource(): GalleryWaterFlowDataSource { return self.flowDataSource; }
-      set flowDataSource(value: GalleryWaterFlowDataSource) { self.flowDataSource = value; }
-      get scrollerRef(): Scroller { return self.scrollerRef; }
-      set scrollerRef(value: Scroller) { self.scrollerRef = value; }
+      get rootPhotosScrolledUnderTopBar(): boolean { return self.session.root.rootPhotosScrolledUnderTopBar; }
+      set rootPhotosScrolledUnderTopBar(value: boolean) { self.session.root.rootPhotosScrolledUnderTopBar = value; }
+      get rootPhotosTitlePreferListAnchorUntilMs(): number { return self.session.root.rootPhotosTitlePreferListAnchorUntilMs; }
+      set rootPhotosTitlePreferListAnchorUntilMs(value: number) { self.session.root.rootPhotosTitlePreferListAnchorUntilMs = value; }
+      get timelineSeekInProgress(): boolean { return self.session.timeline.timelineSeekInProgress; }
+      set timelineSeekInProgress(value: boolean) { self.session.timeline.timelineSeekInProgress = value; }
+      get timelineReleaseAwaitVisibleCallback(): boolean { return self.session.timeline.timelineReleaseAwaitVisibleCallback; }
+      set timelineReleaseAwaitVisibleCallback(value: boolean) { self.session.timeline.timelineReleaseAwaitVisibleCallback = value; }
+      get listVisibleFirstNodeIdx(): number { return self.session.visible.listVisibleFirstNodeIdx; }
+      set listVisibleFirstNodeIdx(value: number) { self.session.visible.listVisibleFirstNodeIdx = value; }
+      get lastKnownGlobalPhotoSlotStart(): number { return self.session.visible.lastKnownGlobalPhotoSlotStart; }
+      set lastKnownGlobalPhotoSlotStart(value: number) { self.session.visible.lastKnownGlobalPhotoSlotStart = value; }
+      get lastKnownGlobalPhotoSlotEndExclusive(): number { return self.session.visible.lastKnownGlobalPhotoSlotEndExclusive; }
+      set lastKnownGlobalPhotoSlotEndExclusive(value: number) { self.session.visible.lastKnownGlobalPhotoSlotEndExclusive = value; }
+      get orderedDays(): TimelineDayModel[] { return self.session.load.orderedDays; }
+      set orderedDays(value: TimelineDayModel[]) { self.session.load.orderedDays = value; }
+      get dayGlobalSlotStarts(): number[] { return self.session.load.dayGlobalSlotStarts; }
+      set dayGlobalSlotStarts(value: number[]) { self.session.load.dayGlobalSlotStarts = value; }
+      get flowDataSource(): GalleryWaterFlowDataSource { return self.session.load.flowDataSource; }
+      set flowDataSource(value: GalleryWaterFlowDataSource) { self.session.load.flowDataSource = value; }
+      get scrollerRef(): Scroller { return self.session.scrollerRef; }
+      set scrollerRef(value: Scroller) { self.session.scrollerRef = value; }
       setRootPhotosScrollTitle(title: string): void { self.setRootPhotosScrollTitle(title); }
       estimateFirstVisibleNodeIndexFromScrollY(yVp: number, total: number): number {
         return self.estimateFirstVisibleNodeIndexFromScrollY(yVp, total);
       }
       mainGalleryContentInsetTopVp(): number { return self.mainGalleryContentInsetTopVp(); }
-      asTimelineGestureHost(): TimelineGestureControllerHost { return self.asTimelineGestureHost(); }
+      get commands(): GalleryAlbumCommands { return self.albumCommands(); }
     }
-    return new RootTitleHostBridge();
+    this.rootTitleHostCache = new RootTitleHostBridge();
+    return this.rootTitleHostCache;
   }
 
   private asLifecycleHost(): GalleryAlbumLifecycleHost {
+    if (this.lifecycleHostCache !== undefined) {
+      return this.lifecycleHostCache;
+    }
     const self = this;
     class LifecycleHostBridge implements GalleryAlbumLifecycleHost {
       get baseUrl(): string { return self.baseUrl; }
@@ -1748,10 +1744,10 @@ export struct GalleryAlbumTab {
       set inPersonMode(value: boolean) { self.inPersonMode = value; }
       get rootSurfaceSwitchAnimating(): boolean { return self.rootSurfaceSwitchAnimating; }
       set rootSurfaceSwitchAnimating(value: boolean) { self.rootSurfaceSwitchAnimating = value; }
-      get timelineReleaseAwaitVisibleCallback(): boolean { return self.timelineReleaseAwaitVisibleCallback; }
-      set timelineReleaseAwaitVisibleCallback(value: boolean) { self.timelineReleaseAwaitVisibleCallback = value; }
-      get lastHomeSurface(): string { return self.lastHomeSurface; }
-      set lastHomeSurface(value: string) { self.lastHomeSurface = value; }
+      get timelineReleaseAwaitVisibleCallback(): boolean { return self.session.timeline.timelineReleaseAwaitVisibleCallback; }
+      set timelineReleaseAwaitVisibleCallback(value: boolean) { self.session.timeline.timelineReleaseAwaitVisibleCallback = value; }
+      get lastHomeSurface(): string { return self.session.root.lastHomeSurface; }
+      set lastHomeSurface(value: string) { self.session.root.lastHomeSurface = value; }
       get personOpening(): boolean { return self.personOpening; }
       set personOpening(value: boolean) { self.personOpening = value; }
       get categoryOpening(): boolean { return self.categoryOpening; }
@@ -1760,18 +1756,18 @@ export struct GalleryAlbumTab {
       set recentOpening(value: boolean) { self.recentOpening = value; }
       get collectOpening(): boolean { return self.collectOpening; }
       set collectOpening(value: boolean) { self.collectOpening = value; }
-      get isDraggingOrFling(): boolean { return self.isDraggingOrFling; }
-      set isDraggingOrFling(value: boolean) { self.isDraggingOrFling = value; }
-      get pumpEpoch(): number { return self.pumpEpoch; }
-      set pumpEpoch(value: number) { self.pumpEpoch = value; }
-      get bootstrapDebounceTimer(): number { return self.bootstrapDebounceTimer; }
-      set bootstrapDebounceTimer(value: number) { self.bootstrapDebounceTimer = value; }
+      get isDraggingOrFling(): boolean { return self.session.visible.isDraggingOrFling; }
+      set isDraggingOrFling(value: boolean) { self.session.visible.isDraggingOrFling = value; }
+      get pumpEpoch(): number { return self.session.load.pumpEpoch; }
+      set pumpEpoch(value: number) { self.session.load.pumpEpoch = value; }
+      get bootstrapDebounceTimer(): number { return self.session.load.bootstrapDebounceTimer; }
+      set bootstrapDebounceTimer(value: number) { self.session.load.bootstrapDebounceTimer = value; }
       get galleryTimelineRefreshing(): boolean { return self.galleryTimelineRefreshing; }
       set galleryTimelineRefreshing(value: boolean) { self.galleryTimelineRefreshing = value; }
       get gallerySelectionMode(): boolean { return self.gallerySelectionMode; }
       set gallerySelectionMode(value: boolean) { self.gallerySelectionMode = value; }
-      get loadGen(): number { return self.loadGen; }
-      set loadGen(value: number) { self.loadGen = value; }
+      get loadGen(): number { return self.session.load.loadGen; }
+      set loadGen(value: number) { self.session.load.loadGen = value; }
       currentThumbHeavyItemCount(): number { return self.currentThumbHeavyItemCount(); }
       onSearchModeVisibilityChange(hiddenBottomNav: boolean): void {
         self.onSearchModeVisibilityChange(hiddenBottomNav);
@@ -1787,12 +1783,10 @@ export struct GalleryAlbumTab {
       invalidateNavigationGuard(): void { self.invalidateNavigationGuard(); }
       tryConsumeSurfaceBack(): boolean { return self.tryConsumeSurfaceBack(); }
       setGallerySelectionModeState(value: boolean): void { self.setGallerySelectionModeState(value); }
-      asSelectionGestureHost(): SelectionGestureControllerHost { return self.asSelectionGestureHost(); }
-      asTimelineGestureHost(): TimelineGestureControllerHost { return self.asTimelineGestureHost(); }
-      asLoadOrchestratorHost(): GalleryAlbumLoadOrchestratorHost { return self.asLoadOrchestratorHost(); }
-      asVisibleLoadHost(): GalleryAlbumVisibleLoadHost { return self.asVisibleLoadHost(); }
+      get commands(): GalleryAlbumCommands { return self.albumCommands(); }
     }
-    return new LifecycleHostBridge();
+    this.lifecycleHostCache = new LifecycleHostBridge();
+    return this.lifecycleHostCache;
   }
 
   // ── 扁平列表（供跳转独立预览页） ────────────────────────────────────────
@@ -1819,8 +1813,8 @@ export struct GalleryAlbumTab {
   }
 
   private shouldPreserveVisibleLoadPriorityDuringTimelineRelease(): boolean {
-    return this.timelineSeekInProgress ||
-      (!this.timelineSidebarDragging && Date.now() < this.ignoreListFreezeUntilMs);
+    return this.session.timeline.timelineSeekInProgress ||
+      (!this.timelineSidebarDragging && Date.now() < this.session.visible.ignoreListFreezeUntilMs);
   }
 
   private updateVisibleLoadPriorityFromScrollOffset(offsetVp: number): void {
@@ -1831,21 +1825,21 @@ export struct GalleryAlbumTab {
       return;
     }
     const next = Math.max(0, offsetVp);
-    if (this.lastMainListScrollOffsetHave) {
-      const delta = next - this.lastMainListScrollOffsetVp;
+    if (this.session.visible.lastMainListScrollOffsetHave) {
+      const delta = next - this.session.visible.lastMainListScrollOffsetVp;
       if (Math.abs(delta) >= 0.5) {
-        this.visibleLoadPreferBottomFirst = delta > 0;
+        this.session.visible.visibleLoadPreferBottomFirst = delta > 0;
       }
     }
-    this.lastMainListScrollOffsetVp = next;
-    this.lastMainListScrollOffsetHave = true;
+    this.session.visible.lastMainListScrollOffsetVp = next;
+    this.session.visible.lastMainListScrollOffsetHave = true;
   }
 
   private updateVisibleLoadPriorityFromVisibleRange(firstIdx: number, lastIdx: number): void {
     const first = Math.floor(firstIdx);
     const last = Math.floor(lastIdx);
-    const prevFirst = this.listVisibleFirstNodeIdx;
-    const prevLast = this.listVisibleLastNodeIdx;
+    const prevFirst = this.session.visible.listVisibleFirstNodeIdx;
+    const prevLast = this.session.visible.listVisibleLastNodeIdx;
     if (this.shouldPreserveVisibleLoadPriorityDuringTimelineRelease()) {
       return;
     }
@@ -1856,14 +1850,14 @@ export struct GalleryAlbumTab {
     const deltaLast = last - prevLast;
     const primary = Math.abs(deltaFirst) >= Math.abs(deltaLast) ? deltaFirst : deltaLast;
     if (Math.abs(primary) >= 1) {
-      this.visibleLoadPreferBottomFirst = primary > 0;
+      this.session.visible.visibleLoadPreferBottomFirst = primary > 0;
     }
   }
 
   private resetTimelineSeekStableVisibleState(): void {
-    this.timelineSeekStableVisibleFirstNodeIdx = -1;
-    this.timelineSeekStableVisibleLastNodeIdx = -1;
-    this.timelineSeekStableVisibleHits = 0;
+    this.session.timeline.timelineSeekStableVisibleFirstNodeIdx = -1;
+    this.session.timeline.timelineSeekStableVisibleLastNodeIdx = -1;
+    this.session.timeline.timelineSeekStableVisibleHits = 0;
   }
 
   private resolveTimelineSeekTargetNodeRange(): GalleryVisibleNodeRange | null {
@@ -1871,7 +1865,7 @@ export struct GalleryAlbumTab {
     if (ym === null) {
       return null;
     }
-    return findFlowRoughVisibleRangeForYearMonth(this.flowDataSource, ym.year, ym.month);
+    return findFlowRoughVisibleRangeForYearMonth(this.session.load.flowDataSource, ym.year, ym.month);
   }
 
   private tryHandOffTimelineSeekToListDrivenFromCandidate(
@@ -1879,10 +1873,10 @@ export struct GalleryAlbumTab {
     lastIdx: number,
     source: string
   ): boolean {
-    if (!this.timelineSeekInProgress) {
+    if (!this.session.timeline.timelineSeekInProgress) {
       return false;
     }
-    const total = this.flowDataSource.totalCount();
+    const total = this.session.load.flowDataSource.totalCount();
     if (total <= 0) {
       return false;
     }
@@ -1909,16 +1903,16 @@ export struct GalleryAlbumTab {
       Math.min(24, Math.ceil(span * 0.25))
     );
     let stableHits = 1;
-    if (this.timelineSeekStableVisibleHits > 0 &&
-      this.timelineSeekStableVisibleFirstNodeIdx >= 0 &&
-      this.timelineSeekStableVisibleLastNodeIdx >= 0 &&
-      Math.abs(first - this.timelineSeekStableVisibleFirstNodeIdx) <= driftCap &&
-      Math.abs(last - this.timelineSeekStableVisibleLastNodeIdx) <= driftCap) {
-      stableHits = this.timelineSeekStableVisibleHits + 1;
+    if (this.session.timeline.timelineSeekStableVisibleHits > 0 &&
+      this.session.timeline.timelineSeekStableVisibleFirstNodeIdx >= 0 &&
+      this.session.timeline.timelineSeekStableVisibleLastNodeIdx >= 0 &&
+      Math.abs(first - this.session.timeline.timelineSeekStableVisibleFirstNodeIdx) <= driftCap &&
+      Math.abs(last - this.session.timeline.timelineSeekStableVisibleLastNodeIdx) <= driftCap) {
+      stableHits = this.session.timeline.timelineSeekStableVisibleHits + 1;
     }
-    this.timelineSeekStableVisibleFirstNodeIdx = first;
-    this.timelineSeekStableVisibleLastNodeIdx = last;
-    this.timelineSeekStableVisibleHits = stableHits;
+    this.session.timeline.timelineSeekStableVisibleFirstNodeIdx = first;
+    this.session.timeline.timelineSeekStableVisibleLastNodeIdx = last;
+    this.session.timeline.timelineSeekStableVisibleHits = stableHits;
     timelineGestureLogScrollDebug(
       this.asTimelineGestureHost(),
       `[timeline-seek] observe visible source: source=${source}, range=${first}~${last}, `
@@ -1927,8 +1921,8 @@ export struct GalleryAlbumTab {
     if (stableHits < GALLERY_TIMELINE_SEEK_HANDOFF_STABLE_HITS) {
       return false;
     }
-    this.timelineSeekInProgress = false;
-    this.timelineReleaseAwaitVisibleCallback = false;
+    this.session.timeline.timelineSeekInProgress = false;
+    this.session.timeline.timelineReleaseAwaitVisibleCallback = false;
     this.applyListVisibleNodeRange(first, last);
     this.refreshRootPhotosScrollTitle();
     this.resetTimelineSeekStableVisibleState();
@@ -1940,10 +1934,10 @@ export struct GalleryAlbumTab {
   }
 
   private tryHandOffTimelineSeekToListDrivenFromScroller(reason: string): boolean {
-    if (!this.timelineSeekInProgress) {
+    if (!this.session.timeline.timelineSeekInProgress) {
       return false;
     }
-    const total = this.flowDataSource.totalCount();
+    const total = this.session.load.flowDataSource.totalCount();
     if (total <= 0) {
       return false;
     }
@@ -1951,14 +1945,14 @@ export struct GalleryAlbumTab {
       return false;
     }
     return this.tryHandOffTimelineSeekToListDrivenFromCandidate(
-      this.listVisibleFirstNodeIdx,
-      this.listVisibleLastNodeIdx,
+      this.session.visible.listVisibleFirstNodeIdx,
+      this.session.visible.listVisibleLastNodeIdx,
       `${reason}/scroller`
     );
   }
 
   private applyListVisibleNodeRange(firstIdx: number, lastIdx: number): void {
-    const total = this.flowDataSource.totalCount();
+    const total = this.session.load.flowDataSource.totalCount();
     if (total <= 0) {
       return;
     }
@@ -1969,12 +1963,12 @@ export struct GalleryAlbumTab {
     let preserveSeekAnchor = false;
     const releaseFreezeActive =
       !this.timelineSidebarDragging &&
-      !this.timelineSeekInProgress &&
-      Date.now() < this.ignoreListFreezeUntilMs;
+      !this.session.timeline.timelineSeekInProgress &&
+      Date.now() < this.session.visible.ignoreListFreezeUntilMs;
     if (releaseFreezeActive &&
-      Number.isFinite(this.timelineSeekAnchorNodeIdx) &&
-      this.timelineSeekAnchorNodeIdx >= 0) {
-      const anchor = Math.max(0, Math.min(Math.floor(this.timelineSeekAnchorNodeIdx), total - 1));
+      Number.isFinite(this.session.timeline.timelineSeekAnchorNodeIdx) &&
+      this.session.timeline.timelineSeekAnchorNodeIdx >= 0) {
+      const anchor = Math.max(0, Math.min(Math.floor(this.session.timeline.timelineSeekAnchorNodeIdx), total - 1));
       const guardBacktrack = Math.max(2, Math.floor(GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES / 8));
       first = Math.max(0, anchor - guardBacktrack);
       last = Math.max(first, Math.min(total - 1, anchor + GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES));
@@ -1993,7 +1987,7 @@ export struct GalleryAlbumTab {
         GALLERY_LOAD_VISIBLE_BUFFER_SCAN_WIN_NODES * 5
       );
       if (rawSpan > maxReasonableSpan) {
-        if (this.visibleLoadPreferBottomFirst) {
+        if (this.session.visible.visibleLoadPreferBottomFirst) {
           first = Math.max(0, rawLast - maxReasonableSpan + 1);
           last = rawLast;
         } else {
@@ -2003,15 +1997,15 @@ export struct GalleryAlbumTab {
         timelineGestureLogScrollDebug(
           this.asTimelineGestureHost(),
           `[scroll-release-visible] clamp implausible visible range: raw=${rawFirst}~${rawLast}, `
-          + `apply=${first}~${last}, priority=${this.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
+          + `apply=${first}~${last}, priority=${this.session.visible.visibleLoadPreferBottomFirst ? 'bottom-first' : 'top-first'}`
         );
       }
     }
     if (!preserveSeekAnchor) {
-      this.timelineSeekAnchorNodeIdx = first;
+      this.session.timeline.timelineSeekAnchorNodeIdx = first;
     }
-    this.listVisibleFirstNodeIdx = first;
-    this.listVisibleLastNodeIdx = last;
+    this.session.visible.listVisibleFirstNodeIdx = first;
+    this.session.visible.listVisibleLastNodeIdx = last;
     this.refreshLastKnownGlobalSlotsFromListIndices(first, last);
     this.captureListScrollIndexAnchor();
   }
@@ -2173,10 +2167,10 @@ export struct GalleryAlbumTab {
   }
 
   private endTimelineDrag(): void {
-    this.rootPhotosTitlePreferListAnchorUntilMs = Date.now() + 1400;
-    this.ignoreListFreezeUntilMs = 0;
+    this.session.root.rootPhotosTitlePreferListAnchorUntilMs = Date.now() + 1400;
+    this.session.visible.ignoreListFreezeUntilMs = 0;
     this.resetTimelineSeekStableVisibleState();
-    this.timelineReleaseAwaitVisibleCallback = true;
+    this.session.timeline.timelineReleaseAwaitVisibleCallback = true;
     timelineGestureLogScrollDebug(
       this.asTimelineGestureHost(),
       '[scroll-release-visible] endTimelineDrag: await visible callback = 1'
@@ -2193,8 +2187,8 @@ export struct GalleryAlbumTab {
   }
 
   private createNavigationGuard(): () => boolean {
-    const token = ++this.navigationGuardEpoch;
-    return (): boolean => token === this.navigationGuardEpoch;
+    const token = ++this.session.mode.navigationGuardEpoch;
+    return (): boolean => token === this.session.mode.navigationGuardEpoch;
   }
 
   private currentThumbHeavyItemCount(): number {
@@ -2225,7 +2219,7 @@ export struct GalleryAlbumTab {
   }
 
   private invalidateNavigationGuard(): void {
-    this.navigationGuardEpoch++;
+    this.session.mode.navigationGuardEpoch++;
   }
 
   private async openCategory(cat: MediaCategoryItem): Promise<void> {
@@ -2296,17 +2290,17 @@ export struct GalleryAlbumTab {
 
   /** 只把当前可见列表绑到顶栏；闲置 Scroller 停在 0 会把模糊打回初始态。 */
   private currentTitleBarScrollers(): Scroller[] {
-    let next: Scroller = this.scrollerRef;
+    let next: Scroller = this.session.scrollerRef;
     if (this.inSearchMode) {
-      next = this.searchScroller;
+      next = this.session.searchScroller;
     } else if (this.isAlbumsHomeSurface()) {
-      next = this.albumsScroller;
+      next = this.session.albumsScroller;
     }
-    if (this.titleBarScrollerBindList.length === 1 && this.titleBarScrollerBindList[0] === next) {
-      return this.titleBarScrollerBindList;
+    if (this.session.titleBarScrollerBindList.length === 1 && this.session.titleBarScrollerBindList[0] === next) {
+      return this.session.titleBarScrollerBindList;
     }
-    this.titleBarScrollerBindList = [next];
-    return this.titleBarScrollerBindList;
+    this.session.titleBarScrollerBindList = [next];
+    return this.session.titleBarScrollerBindList;
   }
 
   private setRootPhotosScrollTitle(title: string): void {
@@ -2494,10 +2488,10 @@ export struct GalleryAlbumTab {
   }
 
   private granularitySwitchDirection(nextMode: GalleryViewGranularity): number {
-    if (nextMode === this.lastGranularityMotionMode) {
+    if (nextMode === this.session.root.lastGranularityMotionMode) {
       return 0;
     }
-    return nextMode > this.lastGranularityMotionMode ? 1 : -1;
+    return nextMode > this.session.root.lastGranularityMotionMode ? 1 : -1;
   }
 
   private restoreGranularityAnchorScroll(anchor: TimelineDayModel | null): void {
@@ -2505,7 +2499,7 @@ export struct GalleryAlbumTab {
       return;
     }
     const idx = findFlowScrollIndexForAnchorDate(
-      this.flowDataSource,
+      this.session.load.flowDataSource,
       anchor.year,
       anchor.month,
       anchor.day,
@@ -2515,18 +2509,18 @@ export struct GalleryAlbumTab {
       return;
     }
     try {
-      this.scrollerRef.scrollToIndex(this.mainListIndexFromFlowNodeIndex(idx), false, ScrollAlign.START);
-      this.listVisibleFirstNodeIdx = idx;
+      this.session.scrollerRef.scrollToIndex(this.mainListIndexFromFlowNodeIndex(idx), false, ScrollAlign.START);
+      this.session.visible.listVisibleFirstNodeIdx = idx;
     } catch (_e) {
     }
   }
 
   private commitGranularitySwitch(direction: number): void {
-    const anchor = readFlowAnchorDate(this.flowDataSource, this.listVisibleFirstNodeIdx);
+    const anchor = readFlowAnchorDate(this.session.load.flowDataSource, this.session.visible.listVisibleFirstNodeIdx);
     this.renderedViewGranularity = this.viewGranularity;
-    this.lastGranularityMotionMode = this.renderedViewGranularity;
+    this.session.root.lastGranularityMotionMode = this.renderedViewGranularity;
     // 捏合切等级时列表可能仍处在拖动/惯性标记中，强制清掉以免 rebuild 被推迟、画面卡住。
-    this.isDraggingOrFling = false;
+    this.session.visible.isDraggingOrFling = false;
     timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
     galleryAlbumRebuildFlow(this.asVisibleLoadHost());
     this.restoreGranularityAnchorScroll(anchor);
@@ -2563,8 +2557,8 @@ export struct GalleryAlbumTab {
   }
 
   private onViewGranularityChanged(): void {
-    const fromPinch = this.skipNextGranularityHostMotion;
-    this.skipNextGranularityHostMotion = false;
+    const fromPinch = this.session.root.skipNextGranularityHostMotion;
+    this.session.root.skipNextGranularityHostMotion = false;
     const direction = fromPinch ? 0 : this.granularitySwitchDirection(this.viewGranularity);
     this.commitGranularitySwitch(direction);
   }
@@ -2605,7 +2599,7 @@ export struct GalleryAlbumTab {
   }
 
   private applySearchFilterAndRun(snapshot: GallerySearchFilterSnapshot): void {
-    const kw = this.searchQuery.trim();
+    const kw = this.session.mode.searchQuery.trim();
     this.rememberSearchKeyword(kw);
     gallerySearchSetApplied(snapshot);
     this.searchFilterActiveCount = gallerySearchFilterActiveCount(snapshot);
@@ -2630,7 +2624,7 @@ export struct GalleryAlbumTab {
   private openSlideshowSettings(): void {
     this.dismissMoreMenu();
     if (this.inSearchMode) {
-      if (this.searchQuery.trim().length === 0) {
+      if (this.session.mode.searchQuery.trim().length === 0) {
         this.toast('请先输入搜索关键词');
         return;
       }
@@ -2650,7 +2644,7 @@ export struct GalleryAlbumTab {
     if (this.inSearchMode) {
       return {
         kind: GallerySlideshowScopeKind.SMART_CATEGORY,
-        smartCategoryKeyword: this.searchQuery.trim()
+        smartCategoryKeyword: this.session.mode.searchQuery.trim()
       };
     }
     return { kind: GallerySlideshowScopeKind.ALL_GALLERY };
@@ -2680,7 +2674,7 @@ export struct GalleryAlbumTab {
     const isActive = this.createNavigationGuard();
     try {
       if (this.inSearchMode) {
-        const keyword = this.searchQuery.trim();
+        const keyword = this.session.mode.searchQuery.trim();
         let spins = 0;
         while (this.searchLoading && isActive() && spins < 600) {
           await new Promise<void>((resolve: () => void) => {
@@ -2766,10 +2760,11 @@ export struct GalleryAlbumTab {
   }
 
   aboutToAppear(): void {
+    this.session.selection.galleryMainListDomId = GALLERY_ALBUM_MAIN_LIST_DOM_ID;
     galleryAlbumEnsureSelectionVisualStorage();
-    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.gallerySelectedIds);
+    galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.session.selection.gallerySelectedIds);
     this.renderedViewGranularity = this.viewGranularity;
-    this.lastGranularityMotionMode = this.viewGranularity;
+    this.session.root.lastGranularityMotionMode = this.viewGranularity;
     this.modeSwitchOpacity = 1;
     this.modeSwitchOffsetY = 0;
     galleryAlbumAboutToAppear(this.asLifecycleHost());
@@ -2811,11 +2806,11 @@ export struct GalleryAlbumTab {
           pageShowSignal: this.pageShowSignal,
           scrollerList: this.currentTitleBarScrollers(),
           onSearchQueryChange: (value: string): void => {
-            this.searchQuery = value;
+            this.session.mode.searchQuery = value;
           },
           onSearchSubmit: (): void => {
-            this.rememberSearchKeyword(this.searchQuery);
-            void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.searchQuery);
+            this.rememberSearchKeyword(this.session.mode.searchQuery);
+            void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.session.mode.searchQuery);
           },
           onOpenSearch: (): void => {
             this.openSearchPanel();
@@ -2849,7 +2844,7 @@ export struct GalleryAlbumTab {
       if (this.inSearchMode) {
         GalleryAlbumSearchModeView({
           baseUrl: this.baseUrl,
-          scroller: this.searchScroller,
+          scroller: this.session.searchScroller,
           contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
           contentInsetBottomVp: this.currentBottomDockInsetVp(),
           loading: this.searchLoading,
@@ -2860,7 +2855,7 @@ export struct GalleryAlbumTab {
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
-          galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
+          galleryLongPressIgnoreClickUntil: this.session.selection.galleryLongPressIgnoreClickUntil,
           modeSwitchOpacity: this.modeSwitchOpacity,
           modeSwitchOffsetY: this.modeSwitchOffsetY,
           itemIdOf: (item: GalleryListItem): string => galleryAlbumItemIdOf(item),
@@ -2894,7 +2889,7 @@ export struct GalleryAlbumTab {
             this.galleryMainListScrollEnabled = true;
           },
           clearSearchThumbHitBounds: (): void => {
-            this.searchThumbHitBounds.clear();
+            this.session.selection.searchThumbHitBounds.clear();
           },
           onBatchDownload: (): void => {
             void galleryAlbumConfirmAndBatchDownload(this.asBatchActionHost());
@@ -2908,7 +2903,7 @@ export struct GalleryAlbumTab {
       if (this.shouldKeepAlbumsHomeMounted()) {
         GalleryAlbumAlbumsHomeView({
           baseUrl: this.baseUrl,
-          scroller: this.albumsScroller,
+          scroller: this.session.albumsScroller,
           pageVisible: this.isRootAlbumsSurfaceLayerVisible(),
           pageShowSignal: this.pageShowSignal,
           contentInsetTopVp: this.secondaryModeContentInsetTopVp(),
@@ -3015,7 +3010,7 @@ export struct GalleryAlbumTab {
             return cached >= 0 ? cached : smartCategoryCount(item);
           },
           onRunSearch: (keyword: string): void => {
-            this.searchQuery = keyword;
+            this.session.mode.searchQuery = keyword;
             this.searchSeed = keyword;
             void galleryAlbumRunSearch(this.asModeOrchestratorHost(), keyword);
           },
@@ -3045,7 +3040,7 @@ export struct GalleryAlbumTab {
           getPersonName: (item: AiPersonItem): string => personName(item),
           getPersonFace: (item: AiPersonItem): string => personFace(item),
           getPersonIdentity: (item: AiPersonItem): string => personCacheIdentity(item),
-          getPersonStatText: (item: AiPersonItem): string => personStatText(item, this.personStatOverrides),
+          getPersonStatText: (item: AiPersonItem): string => personStatText(item, this.session.mode.personStatOverrides),
           onOpenPerson: (item: AiPersonItem): void => {
             void galleryAlbumOpenPerson(this.asModeOrchestratorHost(), item);
           }
@@ -3074,10 +3069,10 @@ export struct GalleryAlbumTab {
           galleryBatchDeleting: this.galleryBatchDeleting,
           galleryMainListScrollEnabled: this.galleryMainListScrollEnabled,
           gallerySlideGestureActive: this.gallerySlideGestureActive,
-          galleryLongPressIgnoreClickUntil: this.galleryLongPressIgnoreClickUntil,
+          galleryLongPressIgnoreClickUntil: this.session.selection.galleryLongPressIgnoreClickUntil,
           timelineSidebarDragging: this.timelineSidebarDragging,
           sectionsLength: this.sections.length,
-          orderedDaysLength: this.orderedDays.length,
+          orderedDaysLength: this.session.load.orderedDays.length,
           timelineExpandedChrome: timelineGestureTimelineScrubExpandedChrome(this.asTimelineGestureHost()),
           timelineScrollRailOnly: timelineGestureTimelineScrubScrollRailOnly(this.asTimelineGestureHost()),
           timelineYearMarkers: galleryAlbumGetYearMarkersForTrack(this.asTimelineGestureHost()),
@@ -3087,9 +3082,9 @@ export struct GalleryAlbumTab {
           timelineLongPressExpanded: this.timelineLongPressExpanded,
           timelineIndicatorY: this.timelineIndicatorY,
           timelineSliderRatio: this.timelineSliderRatio,
-          mainListDomId: this.galleryMainListDomId,
-          scrollerRef: this.scrollerRef,
-          flowDataSource: this.flowDataSource,
+          mainListDomId: this.session.selection.galleryMainListDomId,
+          scrollerRef: this.session.scrollerRef,
+          flowDataSource: this.session.load.flowDataSource,
           itemIdOf: (item: GalleryListItem): string => galleryAlbumItemIdOf(item),
           galleryThumbDomId: (photoId: string): string => galleryAlbumGalleryThumbDomId(photoId),
           recordGalleryThumbRectFromDom: (photoId: string, domId: string): void =>
@@ -3125,15 +3120,15 @@ export struct GalleryAlbumTab {
             const flowLastIdx = this.flowNodeIndexFromMainListIndex(lastIdx);
             this.applyListVisibleNodeRange(flowFirstIdx, flowLastIdx);
             this.refreshRootPhotosScrollTitle();
-            if (this.timelineReleaseAwaitVisibleCallback && !this.timelineSidebarDragging) {
+            if (this.session.timeline.timelineReleaseAwaitVisibleCallback && !this.timelineSidebarDragging) {
               timelineGestureLogScrollDebug(
                 this.asTimelineGestureHost(),
                 `[scroll-release-visible] onScrollIndex: raw=${firstIdx}~${lastIdx}, flow=${flowFirstIdx}~${flowLastIdx}`
               );
-              this.timelineReleaseAwaitVisibleCallback = false;
+              this.session.timeline.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
             }
-            if (this.timelineSidebarDragging || this.timelineSeekInProgress) {
+            if (this.timelineSidebarDragging || this.session.timeline.timelineSeekInProgress) {
               return;
             }
             timelineGestureSyncTimelineHandleFromListThrottled(
@@ -3158,57 +3153,57 @@ export struct GalleryAlbumTab {
             const slideAutoScrolling = gallerySlideAutoScrollIsRunning();
             const shouldFreezeByListScroll =
               draggingOrFling && !slideAutoScrolling &&
-              !this.timelineSeekInProgress && !this.granularityPinchActive &&
-              Date.now() >= this.ignoreListFreezeUntilMs;
-            const wasDraggingOrFling = this.isDraggingOrFling;
+              !this.session.timeline.timelineSeekInProgress && !this.session.root.granularityPinchActive &&
+              Date.now() >= this.session.visible.ignoreListFreezeUntilMs;
+            const wasDraggingOrFling = this.session.visible.isDraggingOrFling;
             let refreshedVisibleRangeWhileInteracting = false;
             let stateChanged = false;
             if (shouldFreezeByListScroll) {
-              if (!this.isDraggingOrFling) {
-                this.pumpEpoch++;
+              if (!this.session.visible.isDraggingOrFling) {
+                this.session.load.pumpEpoch++;
                 timelineGestureCancelListSettledTimer(this.asTimelineGestureHost());
-                this.isDraggingOrFling = true;
-                this.lastInteractiveVisibleRangeRefreshAtMs = 0;
+                this.session.visible.isDraggingOrFling = true;
+                this.session.visible.lastInteractiveVisibleRangeRefreshAtMs = 0;
                 trimThumbPixCache(this.currentThumbCacheKeepDuringScroll());
                 stateChanged = true;
               }
-              if (!this.listKineticScrolling) {
-                this.listKineticScrolling = true;
+              if (!this.session.visible.listKineticScrolling) {
+                this.session.visible.listKineticScrolling = true;
                 stateChanged = true;
               }
               if (!this.timelineSidebarDragging) {
                 const now = Date.now();
-                const shouldRefreshVisibleRange = this.lastInteractiveVisibleRangeRefreshAtMs <= 0 ||
-                  now - this.lastInteractiveVisibleRangeRefreshAtMs >= 96;
+                const shouldRefreshVisibleRange = this.session.visible.lastInteractiveVisibleRangeRefreshAtMs <= 0 ||
+                  now - this.session.visible.lastInteractiveVisibleRangeRefreshAtMs >= 96;
                 if (shouldRefreshVisibleRange) {
                   refreshedVisibleRangeWhileInteracting =
                     galleryAlbumVisibleRefreshVisibleRangeIfAvailable(this.asVisibleLoadHost());
                   if (refreshedVisibleRangeWhileInteracting) {
-                    this.lastInteractiveVisibleRangeRefreshAtMs = now;
+                    this.session.visible.lastInteractiveVisibleRangeRefreshAtMs = now;
                   }
                 }
               }
             } else if (_scrollState === ScrollState.Idle) {
-              if (this.isDraggingOrFling) {
-                this.isDraggingOrFling = false;
+              if (this.session.visible.isDraggingOrFling) {
+                this.session.visible.isDraggingOrFling = false;
                 stateChanged = true;
               }
-              if (this.listKineticScrolling) {
-                this.listKineticScrolling = false;
+              if (this.session.visible.listKineticScrolling) {
+                this.session.visible.listKineticScrolling = false;
                 stateChanged = true;
               }
-              this.lastInteractiveVisibleRangeRefreshAtMs = 0;
-              if (this.visualPlaceholderMode) {
-                this.visualPlaceholderMode = false;
+              this.session.visible.lastInteractiveVisibleRangeRefreshAtMs = 0;
+              if (this.session.visible.visualPlaceholderMode) {
+                this.session.visible.visualPlaceholderMode = false;
                 stateChanged = true;
               }
-              if (this.timelineReleaseAwaitVisibleCallback) {
+              if (this.session.timeline.timelineReleaseAwaitVisibleCallback) {
                 if (!this.tryHandOffTimelineSeekToListDrivenFromScroller('onDidScrollIdle')) {
                   timelineGestureLogScrollDebug(
                     this.asTimelineGestureHost(),
                     '[scroll-release-visible] onDidScroll Idle: release still awaiting callback, force immediate visible load'
                   );
-                  this.timelineReleaseAwaitVisibleCallback = false;
+                  this.session.timeline.timelineReleaseAwaitVisibleCallback = false;
                   galleryAlbumVisibleLoadVisibleItemsImmediate(this.asVisibleLoadHost());
                 }
               }
@@ -3221,8 +3216,8 @@ export struct GalleryAlbumTab {
             }
             if (refreshedVisibleRangeWhileInteracting) {
               this.refreshRootPhotosScrollTitle();
-              if (this.timelineReleaseAwaitVisibleCallback) {
-                this.timelineReleaseAwaitVisibleCallback = false;
+              if (this.session.timeline.timelineReleaseAwaitVisibleCallback) {
+                this.session.timeline.timelineReleaseAwaitVisibleCallback = false;
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
               } else {
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), false, true, true);
@@ -3239,19 +3234,19 @@ export struct GalleryAlbumTab {
             const flowStartIdx = this.flowNodeIndexFromMainListIndex(start.index);
             const flowEndIdx = this.flowNodeIndexFromMainListIndex(end.index);
             this.updateVisibleLoadPriorityFromVisibleRange(flowStartIdx, flowEndIdx);
-            if (this.timelineSeekInProgress) {
+            if (this.session.timeline.timelineSeekInProgress) {
               const handedOff = this.tryHandOffTimelineSeekToListDrivenFromCandidate(
                 flowStartIdx,
                 flowEndIdx,
                 'onListVisibleContentChange'
               );
-              if (this.timelineReleaseAwaitVisibleCallback) {
+              if (this.session.timeline.timelineReleaseAwaitVisibleCallback) {
                 timelineGestureLogScrollDebug(
                   this.asTimelineGestureHost(),
                   `[scroll-release-visible] onVisibleContentChange: raw=${start.index}~${end.index}, `
                   + `flow=${flowStartIdx}~${flowEndIdx}`
                 );
-                this.timelineReleaseAwaitVisibleCallback = false;
+                this.session.timeline.timelineReleaseAwaitVisibleCallback = false;
               }
               if (!handedOff) {
                 galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
@@ -3270,19 +3265,19 @@ export struct GalleryAlbumTab {
             }
             const releaseFreezeActive =
               !this.timelineSidebarDragging &&
-              !this.timelineSeekInProgress &&
-              Date.now() < this.ignoreListFreezeUntilMs;
+              !this.session.timeline.timelineSeekInProgress &&
+              Date.now() < this.session.visible.ignoreListFreezeUntilMs;
             const slideAutoScrolling = gallerySlideAutoScrollIsRunning();
-            if (this.timelineReleaseAwaitVisibleCallback) {
+            if (this.session.timeline.timelineReleaseAwaitVisibleCallback) {
               timelineGestureLogScrollDebug(
                 this.asTimelineGestureHost(),
                 `[scroll-release-visible] onVisibleContentChange: raw=${start.index}~${end.index}, `
                 + `flow=${flowStartIdx}~${flowEndIdx}`
               );
-              this.timelineReleaseAwaitVisibleCallback = false;
+              this.session.timeline.timelineReleaseAwaitVisibleCallback = false;
               galleryAlbumVisibleLoadVisibleItemsThrottled(this.asVisibleLoadHost(), true, true, true);
             } else {
-              if (this.isDraggingOrFling || releaseFreezeActive || slideAutoScrolling) {
+              if (this.session.visible.isDraggingOrFling || releaseFreezeActive || slideAutoScrolling) {
                 if (releaseFreezeActive) {
                   timelineGestureLogScrollDebug(
                     this.asTimelineGestureHost(),
@@ -3307,12 +3302,12 @@ export struct GalleryAlbumTab {
             }
             const th = galleryTimelineRefreshTriggerOffsetVp(this.topSafeInsetVp);
             if (offset >= th) {
-              if (!this.galleryPullRefreshThresholdHapticDone) {
-                this.galleryPullRefreshThresholdHapticDone = true;
+              if (!this.session.load.galleryPullRefreshThresholdHapticDone) {
+                this.session.load.galleryPullRefreshThresholdHapticDone = true;
                 playGalleryPullRefreshThresholdHaptic();
               }
             } else if (offset < th * 0.2) {
-              this.galleryPullRefreshThresholdHapticDone = false;
+              this.session.load.galleryPullRefreshThresholdHapticDone = false;
             }
           },
           onRefreshing: (): void => {
@@ -3364,9 +3359,9 @@ export struct GalleryAlbumTab {
             }
             timelineGestureRefreshVisualPlaceholderMode(this.asTimelineGestureHost());
             timelineGestureArmTimelineDragWatchdog(this.asTimelineGestureHost());
-            if (this.timelineHideTimer >= 0) {
-              clearTimeout(this.timelineHideTimer);
-              this.timelineHideTimer = -1;
+            if (this.session.timeline.timelineHideTimer >= 0) {
+              clearTimeout(this.session.timeline.timelineHideTimer);
+              this.session.timeline.timelineHideTimer = -1;
             }
           },
           onTimelinePanUpdate: (event: GestureEvent): void => {
@@ -3386,18 +3381,18 @@ export struct GalleryAlbumTab {
             this.endTimelineDrag();
           },
           onGranularityPinchCommit: (mode: GalleryViewGranularity): void => {
-            this.skipNextGranularityHostMotion = true;
+            this.session.root.skipNextGranularityHostMotion = true;
             this.onViewGranularityChange(mode);
           },
           onGranularityPinchActiveChange: (active: boolean): void => {
-            this.granularityPinchActive = active;
+            this.session.root.granularityPinchActive = active;
             if (active) {
               // 双指捏合可能已把 Refresh 拉进 Refresh 态；先清 refreshing，避免切级重建后动画卡死
               galleryAlbumAbortTimelinePullRefresh(this.asLoadOrchestratorHost());
-              this.ignoreListFreezeUntilMs = Date.now() + 120000;
+              this.session.visible.ignoreListFreezeUntilMs = Date.now() + 120000;
               return;
             }
-            this.ignoreListFreezeUntilMs = Date.now() + 480;
+            this.session.visible.ignoreListFreezeUntilMs = Date.now() + 480;
           }
         })
           .visibility(this.isRootPhotosSurfaceLayerVisible() ? Visibility.Visible : Visibility.None)

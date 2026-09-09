@@ -7,10 +7,10 @@ import {
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { GalleryAlbumLoadOrchestratorHost } from './GalleryAlbumLoadOrchestrator';
-import { GalleryAlbumDaySectionModel } from './GalleryAlbumState';
+import { GalleryAlbumDaySectionModel, GalleryAlbumDaySectionState } from './GalleryAlbumState';
 import { TimelineDayModel } from './GalleryAlbumTabTypes';
 
-function mapStringNumToArrays(map: Map<string, number>): GalleryHomeStringNumMapArrays {
+export function galleryAlbumMapStringNumToArrays(map: Map<string, number>): GalleryHomeStringNumMapArrays {
   const keys: string[] = [];
   const vals: number[] = [];
   map.forEach((value: number, key: string): void => {
@@ -29,25 +29,24 @@ function fillMapFromArrays(map: Map<string, number>, keys: string[], vals: numbe
   }
 }
 
-export function galleryAlbumBuildMainTimelineCacheSnapshot(
-  host: GalleryAlbumLoadOrchestratorHost
-): GalleryHomeTimelineSnapshot | null {
-  if (host.inSearchMode || host.inCategoryMode || host.inSmartCategoryMode || host.inPersonMode) {
-    return null;
-  }
-  if (host.bootLoading) {
-    return null;
-  }
-  if (host.loadError.length > 0 && host.sections.length === 0) {
-    return null;
-  }
-  const emptyNoFoot = host.orderedDays.length === 0 && host.sections.length === 0 && host.footText !== '时间轴暂无数据';
-  if (emptyNoFoot) {
-    return null;
-  }
+export interface GalleryAlbumTimelineCacheSerializeInput {
+  orderedDays: TimelineDayModel[];
+  sections: GalleryAlbumDaySectionState[];
+  dayOffsets: Map<string, number>;
+  dayRounds: Map<string, number>;
+  dayEmptyRounds: Map<string, number>;
+  dayIndex: number;
+  exhausted: boolean;
+  footText: string;
+  refreshVersionAtSave: number;
+}
+
+export function galleryAlbumSerializeTimelineCache(
+  input: GalleryAlbumTimelineCacheSerializeInput
+): GalleryHomeTimelineSnapshot {
   const sectionsPlain: GalleryHomeSectionPlain[] = [];
-  for (let i = 0; i < host.sections.length; i++) {
-    const section = host.sections[i];
+  for (let i = 0; i < input.sections.length; i++) {
+    const section = input.sections[i];
     const offs: number[] = [];
     const imgs: GalleryListItem[] = [];
     const keys = Array.from(section.slotByOffset.keys()).sort((a: number, b: number): number => a - b);
@@ -70,13 +69,13 @@ export function galleryAlbumBuildMainTimelineCacheSnapshot(
     });
   }
   const orderedPlain: GalleryHomeDayPlain[] = [];
-  for (let i = 0; i < host.orderedDays.length; i++) {
-    const day = host.orderedDays[i];
+  for (let i = 0; i < input.orderedDays.length; i++) {
+    const day = input.orderedDays[i];
     orderedPlain.push({ year: day.year, month: day.month, day: day.day, itemCount: day.itemCount });
   }
-  const offsets = mapStringNumToArrays(host.dayOffsets);
-  const rounds = mapStringNumToArrays(host.dayRounds);
-  const emptyRounds = mapStringNumToArrays(host.dayEmptyRounds);
+  const offsets = galleryAlbumMapStringNumToArrays(input.dayOffsets);
+  const rounds = galleryAlbumMapStringNumToArrays(input.dayRounds);
+  const emptyRounds = galleryAlbumMapStringNumToArrays(input.dayEmptyRounds);
   return {
     orderedDays: orderedPlain,
     sections: sectionsPlain,
@@ -86,11 +85,40 @@ export function galleryAlbumBuildMainTimelineCacheSnapshot(
     dayRoundsVals: rounds.vals,
     dayEmptyKeys: emptyRounds.keys,
     dayEmptyVals: emptyRounds.vals,
+    dayIndex: input.dayIndex,
+    exhausted: input.exhausted,
+    footText: input.footText,
+    refreshVersionAtSave: input.refreshVersionAtSave
+  };
+}
+
+export function galleryAlbumBuildMainTimelineCacheSnapshot(
+  host: GalleryAlbumLoadOrchestratorHost
+): GalleryHomeTimelineSnapshot | null {
+  if (host.inSearchMode || host.inCategoryMode || host.inSmartCategoryMode || host.inPersonMode) {
+    return null;
+  }
+  if (host.bootLoading) {
+    return null;
+  }
+  if (host.loadError.length > 0 && host.sections.length === 0) {
+    return null;
+  }
+  const emptyNoFoot = host.orderedDays.length === 0 && host.sections.length === 0 && host.footText !== '时间轴暂无数据';
+  if (emptyNoFoot) {
+    return null;
+  }
+  return galleryAlbumSerializeTimelineCache({
+    orderedDays: host.orderedDays,
+    sections: host.sections,
+    dayOffsets: host.dayOffsets,
+    dayRounds: host.dayRounds,
+    dayEmptyRounds: host.dayEmptyRounds,
     dayIndex: host.dayIndex,
     exhausted: host.exhausted,
     footText: host.footText,
     refreshVersionAtSave: GalleryTimelineRefreshStore.version
-  };
+  });
 }
 
 export function galleryAlbumApplyMainTimelineCacheSnapshot(

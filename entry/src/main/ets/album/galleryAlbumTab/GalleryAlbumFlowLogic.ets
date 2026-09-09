@@ -51,7 +51,7 @@ export function galleryAlbumGalleryFlowLazyKey(node: GalleryFlowNode): string {
   return node.key;
 }
 
-function galleryAlbumBuildRowNodeKey(
+export function galleryAlbumBuildRowNodeKey(
   mode: GalleryViewGranularity,
   year: number,
   month: number,

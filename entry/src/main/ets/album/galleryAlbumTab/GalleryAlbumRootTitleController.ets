@@ -1,7 +1,6 @@
 ﻿import { GalleryWaterFlowDataSource } from '../GalleryFlowDataSource';
-import { TimelineGestureControllerHost } from './TimelineGestureController';
+import { GalleryAlbumCommands } from './GalleryAlbumCommands';
 import { DayGlobalResolveResult, TimelineDayModel } from './GalleryAlbumTabTypes';
-import { galleryAlbumResolveDayByGlobalIndex } from './GalleryAlbumTimelineRuntime';
 import { GalleryViewGranularity, galleryViewGranularityTitle } from './GalleryAlbumGranularity';
 
 export interface GalleryAlbumRootTitleHost {
@@ -26,7 +25,7 @@ export interface GalleryAlbumRootTitleHost {
   setRootPhotosScrollTitle(title: string): void;
   estimateFirstVisibleNodeIndexFromScrollY(yVp: number, total: number): number;
   mainGalleryContentInsetTopVp(): number;
-  asTimelineGestureHost(): TimelineGestureControllerHost;
+  commands: GalleryAlbumCommands;
 }
 
 function isPhotosHomeSurface(host: GalleryAlbumRootTitleHost): boolean {
@@ -84,7 +83,7 @@ export function galleryAlbumResolveDayByGlobalIndexFast(
       return { dayIdx: mid, dayOffset: Math.max(0, g - start) };
     }
   }
-  return galleryAlbumResolveDayByGlobalIndex(host.asTimelineGestureHost(), g);
+  return host.commands.resolveDayByGlobalIndex(g);
 }
 
 export function galleryAlbumReadMainGalleryScrollOffsetVp(host: GalleryAlbumRootTitleHost): number {

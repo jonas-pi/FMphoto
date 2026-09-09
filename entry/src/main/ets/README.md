@@ -45,3 +45,12 @@ Refactor rule for future phases:
 
 - keep request paths, params, response parsing, retries, and error branches semantically unchanged
 - prefer adding thin shells and capability modules over expanding page or client entry files
+
+HostBridge / 状态所有权（图库收敛）：
+
+- 禁止新增 `asXxxHost()` 和页面内 HostBridge。新能力进入已有 Session、Coordinator 或窄 Port。
+- `searchQuery`、`gallerySelectedIds`、滚动/加载热路径不得进入父页响应式树。
+- 每个状态字段只有一份存储；禁止 Session 与页面镜像双写。
+- Coordinator 只暴露跨领域命令，不做成新的状态总线。
+- CategoryGallery / FolderBrowse / RecycleBin / AuthVideo 本轮只禁新增 HostBridge，不迁移。
+- 字段、默认值、写入点和副作用基线见 [docs/gallery-state-refactor-baseline.md](../../../../docs/gallery-state-refactor-baseline.md)。

@@ -41,12 +41,8 @@ import {
   sortDaysDesc,
   TimelineDayModel
 } from './GalleryAlbumTabTypes';
-import {
-  galleryAlbumMergeSectionSilent,
-  galleryAlbumNotifyDayRowsChanged
-} from './GalleryAlbumFlowLogic';
 import { GalleryAlbumDaySectionState } from './GalleryAlbumState';
-import { GalleryAlbumVisibleLoadHost } from './GalleryAlbumVisibleLoadController';
+import { GalleryAlbumCommands } from './GalleryAlbumCommands';
 
 const GALLERY_SCROLL_RELEASE_TRACE_TAG = '[scroll-release-visible]';
 
@@ -111,7 +107,7 @@ export interface GalleryAlbumLoadOrchestratorHost {
   clearBootstrapDebounceTimer(): void;
   loadVisibleItemsImmediate(): void;
   /** 下拉原地刷新需要访问可见加载宿主（flow 节点 + sections）。 */
-  asVisibleLoadHost(): GalleryAlbumVisibleLoadHost;
+  commands: GalleryAlbumCommands;
   onMainTimelineReady?(): void;
 }
 
@@ -357,7 +353,6 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
       }
     }
 
-    const visible = host.asVisibleLoadHost();
     const maxDays = Math.min(host.sections.length, 3);
     for (let i = 0; i < maxDays; i++) {
       const section = host.sections[i];
@@ -377,8 +372,8 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
       if (list.length <= 0) {
         continue;
       }
-      galleryAlbumMergeSectionSilent(visible, day, list, 0);
-      galleryAlbumNotifyDayRowsChanged(visible, day.year, day.month, day.day);
+      host.commands.mergeSectionSilent(day, list, 0);
+      host.commands.notifyDayRowsChanged(day.year, day.month, day.day);
     }
     galleryAlbumMarkTimelineRefreshCaughtUp(host);
     host.loadVisibleItemsImmediate();

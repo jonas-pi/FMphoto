@@ -98,6 +98,7 @@ export struct GalleryAlbumSearchModeView {
   private searchRowBlocks: GallerySearchRowBlock[] = [];
   private searchRowSource: FnListDataSource<GallerySearchRowBlock> = new FnListDataSource<GallerySearchRowBlock>();
   private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
+  private slideTouchHost: GalleryGridSlideTouchHost | undefined = undefined;
 
   private currentRenderedCount(): number {
     return Math.min(this.renderedSearchCount, this.searchResults.length);
@@ -108,6 +109,9 @@ export struct GalleryAlbumSearchModeView {
   }
 
   private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    if (this.slideTouchHost !== undefined) {
+      return this.slideTouchHost;
+    }
     const self = this;
     class SearchSlideTouchHostBridge implements GalleryGridSlideTouchHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -116,7 +120,8 @@ export struct GalleryAlbumSearchModeView {
       endSlide(): void { self.endGallerySlideSelectGesture(); }
       followSlideAtWindowPx(xPx: number, yPx: number): void { self.onGallerySlideTouchMoveWindow(xPx, yPx); }
     }
-    return new SearchSlideTouchHostBridge();
+    this.slideTouchHost = new SearchSlideTouchHostBridge();
+    return this.slideTouchHost;
   }
 
   private beginSearchFirstSlideAtRow(rowStart: number, xPx: number, yPx: number): boolean {

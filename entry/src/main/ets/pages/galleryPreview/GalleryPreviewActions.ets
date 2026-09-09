@@ -188,6 +188,42 @@ function galleryPreviewUpdateDownloadProgress(host: GalleryPreviewActionsHost, r
   host.downloadProgressPct = Math.max(0, Math.min(100, Math.floor(receiveSize * 100 / totalSize)));
 }
 
+export function galleryPreviewCollectSyncShouldApply(
+  startedGen: number,
+  currentGen: number,
+  requestedId: string,
+  currentId: string
+): boolean {
+  return startedGen === currentGen && requestedId === currentId;
+}
+
+export function galleryPreviewIndexAfterDelete(oldIndex: number, remainingCount: number): number {
+  if (remainingCount <= 0) {
+    return -1;
+  }
+  if (oldIndex >= remainingCount) {
+    return remainingCount - 1;
+  }
+  return oldIndex;
+}
+
+export enum GalleryPreviewDetailsVisibleEffect {
+  NONE = 0,
+  PAUSE = 1,
+  RESUME = 2
+}
+
+export function galleryPreviewDetailsVisibleSideEffects(
+  wasVisible: boolean,
+  nextVisible: boolean,
+  slideshowEnabled: boolean
+): GalleryPreviewDetailsVisibleEffect {
+  if (!slideshowEnabled || wasVisible === nextVisible) {
+    return GalleryPreviewDetailsVisibleEffect.NONE;
+  }
+  return nextVisible ? GalleryPreviewDetailsVisibleEffect.PAUSE : GalleryPreviewDetailsVisibleEffect.RESUME;
+}
+
 export function galleryPreviewSyncCollectStateFromCurrentItem(host: GalleryPreviewActionsHost): void {
   host.currentCollectState = galleryPreviewResolveCollectStateFromItem(host.currentItem());
 }
@@ -206,10 +242,7 @@ export async function galleryPreviewRefreshCollectStateFromGetOne(
     return;
   }
   const res = await client.getGalleryPhotoDetail(id, 12000);
-  if (gen !== host.collectSyncGen) {
-    return;
-  }
-  if (id !== host.currentItemId()) {
+  if (!galleryPreviewCollectSyncShouldApply(gen, host.collectSyncGen, id, host.currentItemId())) {
     return;
   }
   if (!res.success || res.data === undefined) {
@@ -320,17 +353,14 @@ export function galleryPreviewApplyDeleteCurrentItem(host: GalleryPreviewActions
     GalleryTimelineRefreshStore.bump();
     galleryPreviewRemoveIdFromCategoryGalleryNavStore(deletedId);
   }
-  if (left <= 0) {
+  const targetIdx = galleryPreviewIndexAfterDelete(oldIdx, left);
+  if (targetIdx < 0) {
     host.itemSource.reloadAll([]);
     GalleryPreviewNavStore.items = [];
     GalleryPreviewNavStore.startIndex = 0;
     host.toast('已移入回收站');
     host.routerBack();
     return;
-  }
-  let targetIdx = oldIdx;
-  if (targetIdx >= left) {
-    targetIdx = left - 1;
   }
   host.swiperIndex = targetIdx;
   host.itemSource.reloadAll(host.previewItems);

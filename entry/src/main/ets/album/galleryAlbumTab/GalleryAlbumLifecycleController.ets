@@ -3,24 +3,7 @@ import { gallerySetAlbumBackHandler } from '../GalleryAlbumHardwareBack';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
 import { trimThumbPixCacheForList } from '../GalleryAlbumCommon';
 import { playGalleryEnterSelectionHaptic } from '../GallerySelectionHaptic';
-import { galleryAlbumSetGallerySelectedIdsState } from './GalleryAlbumSelectionSupport';
-import {
-  galleryAlbumApplyMainTimelineCacheSnapshot,
-  galleryAlbumBuildMainTimelineCacheSnapshot
-} from './GalleryAlbumCacheSnapshot';
-import {
-  GalleryAlbumLoadOrchestratorHost,
-  galleryAlbumBootstrap,
-  galleryAlbumOnTabVisibleAgain
-} from './GalleryAlbumLoadOrchestrator';
-import { galleryAlbumRebuildFlow } from './GalleryAlbumFlowLogic';
-import { GalleryAlbumVisibleLoadHost } from './GalleryAlbumVisibleLoadController';
-import { SelectionGestureControllerHost } from './SelectionGestureController';
-import {
-  TimelineGestureControllerHost,
-  timelineGestureCancelListSettledTimer,
-  timelineGestureRefreshVisualPlaceholderMode
-} from './TimelineGestureController';
+import { GalleryAlbumCommands } from './GalleryAlbumCommands';
 import { GALLERY_BOOTSTRAP_DEBOUNCE_MS } from './GalleryAlbumTabConstants';
 
 export interface GalleryAlbumLifecycleHost {
@@ -56,10 +39,7 @@ export interface GalleryAlbumLifecycleHost {
   invalidateNavigationGuard(): void;
   tryConsumeSurfaceBack(): boolean;
   setGallerySelectionModeState(value: boolean): void;
-  asSelectionGestureHost(): SelectionGestureControllerHost;
-  asTimelineGestureHost(): TimelineGestureControllerHost;
-  asLoadOrchestratorHost(): GalleryAlbumLoadOrchestratorHost;
-  asVisibleLoadHost(): GalleryAlbumVisibleLoadHost;
+  commands: GalleryAlbumCommands;
 }
 
 export function galleryAlbumOnEpochChange(host: GalleryAlbumLifecycleHost): void {
@@ -69,7 +49,7 @@ export function galleryAlbumOnEpochChange(host: GalleryAlbumLifecycleHost): void
 }
 
 export function galleryAlbumOnPageShowSignal(host: GalleryAlbumLifecycleHost): void {
-  galleryAlbumOnTabVisibleAgain(host.asLoadOrchestratorHost());
+  host.commands.onTabVisibleAgain();
   host.refreshRootPhotosScrollTitle();
   host.ensureAlbumsHomeSupplementaryData();
 }
@@ -82,11 +62,11 @@ function tryRestoreMainTimelineSnapshot(host: GalleryAlbumLifecycleHost): boolea
   if (snap === null) {
     return false;
   }
-  galleryAlbumApplyMainTimelineCacheSnapshot(host.asLoadOrchestratorHost(), snap);
+  host.commands.applyMainTimelineCacheSnapshot(snap);
   host.loadGen++;
-  galleryAlbumRebuildFlow(host.asVisibleLoadHost());
+  host.commands.rebuildFlow();
   setTimeout((): void => {
-    host.asTimelineGestureHost().loadVisibleItemsImmediate();
+    host.commands.requestVisibleLoadImmediate();
   }, 0);
   return true;
 }
@@ -119,14 +99,14 @@ export function galleryAlbumAboutToDisappear(host: GalleryAlbumLifecycleHost): v
   host.onSearchModeVisibilityChange(false);
   host.dismissMoreMenu();
   host.notifySelectionDockStateChange();
-  timelineGestureCancelListSettledTimer(host.asTimelineGestureHost());
+  host.commands.cancelListSettledTimer();
   host.isDraggingOrFling = false;
   host.timelineReleaseAwaitVisibleCallback = false;
   host.invalidateNavigationGuard();
   host.pumpEpoch++;
-  timelineGestureRefreshVisualPlaceholderMode(host.asTimelineGestureHost());
+  host.commands.refreshVisualPlaceholderMode();
   gallerySetAlbumBackHandler(null);
-  const snap = galleryAlbumBuildMainTimelineCacheSnapshot(host.asLoadOrchestratorHost());
+  const snap = host.commands.buildMainTimelineCacheSnapshot();
   if (snap !== null) {
     GalleryHomeTimelineCache.save(host.baseUrl, snap);
   }
@@ -134,7 +114,7 @@ export function galleryAlbumAboutToDisappear(host: GalleryAlbumLifecycleHost): v
 }
 
 export function galleryAlbumOnPageShow(host: GalleryAlbumLifecycleHost): void {
-  galleryAlbumOnTabVisibleAgain(host.asLoadOrchestratorHost());
+  host.commands.onTabVisibleAgain();
 }
 
 export function galleryAlbumClearBootstrapDebounceTimer(host: GalleryAlbumLifecycleHost): void {
@@ -152,11 +132,11 @@ export function galleryAlbumRequestBootstrap(host: GalleryAlbumLifecycleHost, de
   if (debounced) {
     host.bootstrapDebounceTimer = setTimeout((): void => {
       host.bootstrapDebounceTimer = -1;
-      void galleryAlbumBootstrap(host.asLoadOrchestratorHost());
+      void host.commands.bootstrap();
     }, GALLERY_BOOTSTRAP_DEBOUNCE_MS);
     return;
   }
-  void galleryAlbumBootstrap(host.asLoadOrchestratorHost());
+  void host.commands.bootstrap();
 }
 
 export function galleryAlbumEnterGallerySelectionModeFromToolbar(host: GalleryAlbumLifecycleHost): void {
@@ -166,5 +146,5 @@ export function galleryAlbumEnterGallerySelectionModeFromToolbar(host: GalleryAl
   playGalleryEnterSelectionHaptic();
   host.setGallerySelectionModeState(true);
   host.galleryTimelineRefreshing = false;
-  galleryAlbumSetGallerySelectedIdsState(host.asSelectionGestureHost(), []);
+  host.commands.setGallerySelectedIds([]);
 }

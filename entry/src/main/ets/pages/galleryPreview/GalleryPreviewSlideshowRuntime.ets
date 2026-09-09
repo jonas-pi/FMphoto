@@ -52,9 +52,26 @@ export function galleryPreviewScheduleSlideshowPrefetch(host: GalleryPreviewSlid
   }, 0);
 }
 
+export function galleryPreviewShouldPauseSlideshowFlags(
+  pinchGestureActive: boolean,
+  previewZoomLocked: boolean,
+  detailsVisible: boolean,
+  downloading: boolean,
+  sharing: boolean,
+  deleting: boolean
+): boolean {
+  return pinchGestureActive || previewZoomLocked || detailsVisible || downloading || sharing || deleting;
+}
+
 export function galleryPreviewShouldPauseSlideshow(host: GalleryPreviewSlideshowHost): boolean {
-  return host.pinchGestureActive || host.previewZoomLocked || host.detailsVisible ||
-    host.downloading || host.sharing || host.deleting;
+  return galleryPreviewShouldPauseSlideshowFlags(
+    host.pinchGestureActive,
+    host.previewZoomLocked,
+    host.detailsVisible,
+    host.downloading,
+    host.sharing,
+    host.deleting
+  );
 }
 
 export function galleryPreviewAdvanceSlideshow(host: GalleryPreviewSlideshowHost): void {

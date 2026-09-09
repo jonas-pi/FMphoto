@@ -80,6 +80,7 @@ export struct GalleryAlbumMainModeView {
   scrollerRef: Scroller = new Scroller();
   flowDataSource: GalleryWaterFlowDataSource = new GalleryWaterFlowDataSource();
   private slideTouch: GalleryGridSlideTouchSession = new GalleryGridSlideTouchSession();
+  private slideTouchHost: GalleryGridSlideTouchHost | undefined = undefined;
   private flowRowHost: GalleryTimelineFlowRowHost | undefined = undefined;
   private thumbThroughputLevel: number = 0;
   private thumbLastAdaptiveDropAtMs: number = 0;
@@ -560,6 +561,9 @@ export struct GalleryAlbumMainModeView {
   }
 
   private asSlideTouchHost(): GalleryGridSlideTouchHost {
+    if (this.slideTouchHost !== undefined) {
+      return this.slideTouchHost;
+    }
     const self = this;
     class MainSlideTouchHostBridge implements GalleryGridSlideTouchHost {
       getUIContext(): UIContext { return self.getUIContext(); }
@@ -568,7 +572,8 @@ export struct GalleryAlbumMainModeView {
       endSlide(): void { self.endGallerySlideSelectGesture(); }
       followSlideAtWindowPx(xPx: number, yPx: number): void { self.onGallerySlideTouchMoveWindow(xPx, yPx); }
     }
-    return new MainSlideTouchHostBridge();
+    this.slideTouchHost = new MainSlideTouchHostBridge();
+    return this.slideTouchHost;
   }
 
   private getFlowRowHost(): GalleryTimelineFlowRowHost {
