@@ -417,6 +417,20 @@ function describeProbeChoice(best: LoginEndpointProbeResult, all: LoginEndpointP
   return `已选择${endpointLabel(best.candidate.kind)}（${parts.join('，')}）`;
 }
 
+function describeAllUnreachable(results: LoginEndpointProbeResult[]): string {
+  if (results.length === 0) {
+    return '没有可探测的地址';
+  }
+  if (results.length === 1) {
+    return `${endpointLabel(results[0].candidate.kind)}不可达`;
+  }
+  const names: string[] = [];
+  for (let i = 0; i < results.length; i++) {
+    names.push(endpointLabel(results[i].candidate.kind));
+  }
+  return `${names.join('、')}均不可达`;
+}
+
 function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidate[] {
   const out: LoginEndpointCandidate[] = [];
   const seen: string[] = [];
@@ -799,7 +813,7 @@ export async function selectAmongEndpointPool(
       fallbackBest,
       scored.length > 0 ? scored : [fallbackBest],
       fallbackPublic,
-      '公网、内网与官方中继均不可达'
+      describeAllUnreachable(scored.length > 0 ? scored : [fallbackBest])
     );
     failed.probeLines = ensureRelayProbeLine(failed.probeLines, pool, scored);
     if (preference !== LOGIN_ENDPOINT_PREF_RELAY) {

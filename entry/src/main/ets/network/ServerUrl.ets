@@ -524,6 +524,43 @@ export function isPrivateLanHost(host: string): boolean {
   return false;
 }
 
+/** 登录共用栏里的直连地址：内网 / 公网 IPv4 / 公网 IPv6 / 主机名 */
+export class DirectNasAddressSlots {
+  lan: string = '';
+  publicIpv4: string = '';
+  publicIpv6: string = '';
+  domain: string = '';
+}
+
+/**
+ * 把 FN ID 栏里的非 FN ID 原文分到探测槽。
+ * 内网字面量走 LAN；公网 IP 走对应公网槽；其余当域名。
+ */
+export function classifyDirectNasAddress(raw: string, useHttps: boolean): DirectNasAddressSlots {
+  const out = new DirectNasAddressSlots();
+  const t = raw.trim();
+  if (t.length === 0) {
+    return out;
+  }
+  const url = normalizeServerUrl(t, useHttps);
+  const parts = parseNormalizedBaseUrl(url);
+  const host = parts !== null ? parts.host : t;
+  if (isPrivateLanHost(host)) {
+    out.lan = t;
+    return out;
+  }
+  if (isIpLiteralHost(host)) {
+    if (parts !== null && parts.useBracket) {
+      out.publicIpv6 = t;
+    } else {
+      out.publicIpv4 = t;
+    }
+    return out;
+  }
+  out.domain = t;
+  return out;
+}
+
 /**
  * 无 LAN 槽位时的兜底：只认家庭网段，10/172 必须靠 NAS 登记的内网槽位。
  */

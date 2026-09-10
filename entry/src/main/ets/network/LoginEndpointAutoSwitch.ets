@@ -51,16 +51,16 @@ function notifyEndpointSwitched(message: string): void {
 
 function applyLookupToStored(stored: StoredSession, lookedLan4: string, lookedLan6: string,
   lookedPub4: string, lookedPub6: string, lookedDomain: string, lookedRelay: string): void {
-  if (lookedLan4.length > 0) {
+  if (stored.lanInput.trim().length === 0 && lookedLan4.length > 0) {
     stored.endpointLanUrl = lookedLan4;
   }
-  if (lookedLan6.length > 0) {
+  if (stored.lanInput.trim().length === 0 && lookedLan6.length > 0) {
     stored.endpointLanIpv6Url = lookedLan6;
   }
-  if (lookedPub4.length > 0) {
+  if (stored.publicIpInput.trim().length === 0 && lookedPub4.length > 0) {
     stored.endpointPublicIpUrl = lookedPub4;
   }
-  if (lookedPub6.length > 0) {
+  if (stored.publicIpv6Input.trim().length === 0 && lookedPub6.length > 0) {
     stored.endpointPublicIpv6Url = lookedPub6;
   }
   if (stored.domainInput.trim().length === 0 && lookedDomain.length > 0) {

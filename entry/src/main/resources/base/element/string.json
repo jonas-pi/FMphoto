@@ -110,11 +110,11 @@
     },
     {
       "name": "fnid_hint",
-      "value": "可填 FN ID（自动解析内网/公网）或直接填内网 IP。"
+      "value": "填 FN ID 会自动解析全部通道；直接填 IP 只探测该地址。有域名时用下方输入框。"
     },
     {
       "name": "hint_fnid",
-      "value": "FN ID 或内网 IP"
+      "value": "FN ID 或 IP 地址"
     },
     {
       "name": "hint_public_domain",
@@ -122,15 +122,23 @@
     },
     {
       "name": "public_domain_hint",
-      "value": "有自有域名时选填；会同时探测域名与解析出的公网 IP。"
+      "value": "有自有域名时选填；会只探测该域名。"
     },
     {
       "name": "hint_lan_ip",
-      "value": "内网 IP（可选）"
+      "value": "内网地址（可选）"
+    },
+    {
+      "name": "hint_public_ipv4",
+      "value": "外网 IPv4（可选）"
+    },
+    {
+      "name": "hint_public_ipv6",
+      "value": "外网 IPv6（可选）"
     },
     {
       "name": "hint_server_or_fnid",
-      "value": "FN ID 或内网 IP"
+      "value": "FN ID 或 IP 地址"
     },
     {
       "name": "login_route_pref_title",

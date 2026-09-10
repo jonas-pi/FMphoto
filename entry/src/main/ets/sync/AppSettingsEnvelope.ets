@@ -43,6 +43,8 @@ export interface AppSettingsLogin {
   fnId: string;
   domain: string;
   lan: string;
+  publicIp: string;
+  publicIpv6: string;
   username: string;
   endpointPref: string;
   useHttps: boolean;
@@ -141,6 +143,8 @@ export function emptyLoginConfig(): AppSettingsLogin {
     fnId: '',
     domain: '',
     lan: '',
+    publicIp: '',
+    publicIpv6: '',
     username: '',
     endpointPref: 'auto',
     useHttps: true,
@@ -244,7 +248,13 @@ export function settingsNasTokensFromParts(
 }
 
 export function settingsNasTokensFromLogin(login: AppSettingsLogin, extra: string[] = []): string[] {
-  return settingsNasTokensFromParts(login.fnId, login.domain, login.lan, extra);
+  const extraWithIps: string[] = [];
+  for (let i = 0; i < extra.length; i++) {
+    extraWithIps.push(extra[i]);
+  }
+  extraWithIps.push(login.publicIp);
+  extraWithIps.push(login.publicIpv6);
+  return settingsNasTokensFromParts(login.fnId, login.domain, login.lan, extraWithIps);
 }
 
 function fnNasTokensOf(tokens: string[]): string[] {
@@ -364,6 +374,8 @@ function mergeLoginUsersFromEnvelope(login: AppSettingsLogin, extra: LoginSavedU
     fnId: login.fnId,
     domain: login.domain,
     lan: login.lan,
+    publicIp: login.publicIp,
+    publicIpv6: login.publicIpv6,
     username: login.username,
     endpointPref: login.endpointPref,
     useHttps: login.useHttps,
@@ -393,6 +405,8 @@ function hydrateLoginFromUsers(login: AppSettingsLogin): AppSettingsLogin {
     fnId: login.fnId,
     domain: login.domain,
     lan: login.lan,
+    publicIp: login.publicIp,
+    publicIpv6: login.publicIpv6,
     username: login.username,
     endpointPref: login.endpointPref,
     useHttps: login.useHttps,
@@ -421,6 +435,8 @@ export function parseLoginConfig(raw: Object | string | number | boolean | undef
       useHttps: arr.length > 5 ? parseBoolFlag(arr[5] as Object | string | number | boolean | undefined | null, true) : true,
       rememberPassword: remember,
       password: remember ? password : '',
+      publicIp: arr.length > 8 ? asString(arr[8] as Object | string | number | boolean | undefined | null, '').trim() : '',
+      publicIpv6: arr.length > 9 ? asString(arr[9] as Object | string | number | boolean | undefined | null, '').trim() : '',
       users: []
     });
   }
@@ -435,6 +451,8 @@ export function parseLoginConfig(raw: Object | string | number | boolean | undef
     fnId: asString(rec['fnId'] !== undefined ? rec['fnId'] : rec['f'], '').trim(),
     domain: asString(rec['domain'] !== undefined ? rec['domain'] : rec['d'], '').trim(),
     lan: asString(rec['lan'] !== undefined ? rec['lan'] : rec['n'], '').trim(),
+    publicIp: asString(rec['publicIp'] !== undefined ? rec['publicIp'] : rec['i4'], '').trim(),
+    publicIpv6: asString(rec['publicIpv6'] !== undefined ? rec['publicIpv6'] : rec['i6'], '').trim(),
     username: asString(rec['username'] !== undefined ? rec['username'] : rec['u'], '').trim(),
     endpointPref: pref.length > 0 ? pref : 'auto',
     useHttps: parseBoolFlag(rec['useHttps'] !== undefined ? rec['useHttps'] : rec['h'], true),
@@ -446,6 +464,7 @@ export function parseLoginConfig(raw: Object | string | number | boolean | undef
 
 export function loginConfigHasContent(login: AppSettingsLogin): boolean {
   return login.fnId.length > 0 || login.domain.length > 0 || login.lan.length > 0 ||
+    login.publicIp.length > 0 || login.publicIpv6.length > 0 ||
     login.username.length > 0 || login.users.length > 0 ||
     (login.endpointPref.length > 0 && login.endpointPref !== 'auto');
 }
@@ -622,6 +641,8 @@ export function serializeEnvelope(envelope: AppSettingsEnvelope): string {
   loginRec['fnId'] = envelope.login.fnId;
   loginRec['domain'] = envelope.login.domain;
   loginRec['lan'] = envelope.login.lan;
+  loginRec['publicIp'] = envelope.login.publicIp;
+  loginRec['publicIpv6'] = envelope.login.publicIpv6;
   loginRec['username'] = envelope.login.username;
   loginRec['endpointPref'] = envelope.login.endpointPref;
   loginRec['useHttps'] = envelope.login.useHttps;
@@ -698,6 +719,8 @@ function compactRootObject(
   loginRow.push(envelope.login.useHttps ? '1' : '0');
   loginRow.push(envelope.login.rememberPassword ? '1' : '0');
   loginRow.push(envelope.login.rememberPassword ? envelope.login.password : '');
+  loginRow.push(envelope.login.publicIp);
+  loginRow.push(envelope.login.publicIpv6);
   root['l'] = loginRow;
   const userRows: string[][] = [];
   for (let i = 0; i < envelope.login.users.length; i++) {

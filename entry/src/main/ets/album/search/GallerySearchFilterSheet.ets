@@ -6,6 +6,10 @@
  */
 import { FN_MEDIA_BASE_URL, AppSession } from '../../auth/AppSession';
 import { GalleryNetworkThumb, nasUrl } from '../GalleryAlbumCommon';
+import {
+  FN_NAV_INDICATOR_INSET_VP_KEY,
+  FN_SYSTEM_BOTTOM_INSET_VP_KEY
+} from '../../common/FnSystemAvoidArea';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
 import {
   gallerySearchLabelsAtPath,
@@ -42,6 +46,9 @@ class GallerySearchDropdownSpec {
   placeholder: string = '';
 }
 
+/** 避让区读到 0 时仍要离开小白条；与登录页 loginBottomChromeInsetVp 兜底一致。 */
+const SEARCH_FILTER_SHEET_BOTTOM_FALLBACK_VP: number = 20;
+
 @Component
 export struct GallerySearchFilterSheet {
   applied: GallerySearchFilterSnapshot = new GallerySearchFilterSnapshot();
@@ -66,6 +73,8 @@ export struct GallerySearchFilterSheet {
   @State private personAvatar: string = '';
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
+  @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
+  @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
   @State private dateLabel: string = '';
   @State private locationLabel: string = '';
   @State private albumLabel: string = '';
@@ -520,6 +529,11 @@ export struct GallerySearchFilterSheet {
     };
   }
 
+  /** 底部按钮避让小白条。外层 Stack 的 padding 会被 height('100%') 子项盖住，必须加在按钮行上。 */
+  private sheetBottomInsetVp(): number {
+    return Math.max(this.navIndicatorInsetVp, this.systemBottomInsetVp, SEARCH_FILTER_SHEET_BOTTOM_FALLBACK_VP);
+  }
+
   private dropdownSpec(field: string, title: string, placeholder: string): GallerySearchDropdownSpec {
     const spec = new GallerySearchDropdownSpec();
     spec.field = field;
@@ -793,6 +807,7 @@ export struct GallerySearchFilterSheet {
     .height('100%')
     .justifyContent(FlexAlign.Start)
     .alignItems(HorizontalAlign.Start)
+    .padding({ bottom: this.sheetBottomInsetVp() })
   }
 
   @LocalBuilder
@@ -974,7 +989,7 @@ export struct GallerySearchFilterSheet {
           })
       }
       .width('100%')
-      .padding({ bottom: 8 })
+      .padding({ bottom: 8 + this.sheetBottomInsetVp() })
     }
     .width('100%')
     .height('100%')

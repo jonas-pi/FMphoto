@@ -252,6 +252,34 @@ export function extractFnId(input: string): string {
   return '';
 }
 
+/**
+ * 拆分「FN ID / 中继门户」与普通主机。
+ * 仅当输入是 FN ID 或官方中继形态时走 FN Connect；其余原样交给地址栏。
+ */
+export class FnIdOrHostParts {
+  fnId: string = '';
+  host: string = '';
+}
+
+export function splitFnIdOrHostInput(raw: string): FnIdOrHostParts {
+  const out = new FnIdOrHostParts();
+  const t = raw.trim();
+  if (t.length === 0) {
+    return out;
+  }
+  if (isFnId(t)) {
+    out.fnId = t;
+    return out;
+  }
+  const id = extractFnId(t);
+  if (id.length > 0) {
+    out.fnId = id;
+    return out;
+  }
+  out.host = t;
+  return out;
+}
+
 function parseHostPort(raw: string, defaultPort: number): FnConnectAddr {
   let address = raw.trim();
   let port = defaultPort;

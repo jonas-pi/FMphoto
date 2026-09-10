@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { createFnWsDeviceId } from '../network/FnWsDeviceId';
+import { splitFnIdOrHostInput, FnIdOrHostParts } from '../network/FnConnectApi';
 import { loginSecretLooksWrapped, loginSecretOpen, loginSecretSeal } from './LoginSecretStore';
 
 const PREF_NAME = 'fnos_client_prefs';
@@ -11,7 +12,9 @@ const K_ACCOUNT = 'account';
 const K_DOMAIN_INPUT = 'domain_input';
 const K_FN_ID_INPUT = 'fn_id_input';
 const K_LAN_INPUT = 'lan_input';
-/** 登录页共用栏原文（FN ID 或内网 IP），退出后按此回填，不依赖拆分结果 */
+const K_PUBLIC_IP_INPUT = 'public_ip_input';
+const K_PUBLIC_IPV6_INPUT = 'public_ipv6_input';
+/** 旧版登录页共用栏原文（FN ID 或内网 IP），仅作回填迁移 */
 const K_LOGIN_SHARED_INPUT = 'login_shared_input';
 const K_ENDPOINT_PUBLIC_URL = 'endpoint_public_url';
 const K_ENDPOINT_PUBLIC_DOMAIN_URL = 'endpoint_public_domain_url';
@@ -41,12 +44,16 @@ export interface StoredSession {
   baseUrl: string;
   token: string;
   account: string;
-  /** 登录表单 FN ID（可选） */
+  /** 登录表单 FN ID（可选，填写后才走 FN Connect） */
   fnIdInput: string;
   /** 登录表单公网域名（可选） */
   domainInput: string;
   /** 登录表单内网栏原文 */
   lanInput: string;
+  /** 登录表单外网 IPv4 原文 */
+  publicIpInput: string;
+  /** 登录表单外网 IPv6 原文 */
+  publicIpv6Input: string;
   /** 可切换的公网地址（域名优先后的首选） */
   endpointPublicUrl: string;
   /** 公网域名 baseUrl（若有） */
@@ -82,6 +89,8 @@ export interface LoginFormDefaults {
   fnIdInput: string;
   domainInput: string;
   lanInput: string;
+  publicIpInput: string;
+  publicIpv6Input: string;
   loginEndpointPreference: string;
   username: string;
   password: string;
@@ -307,6 +316,40 @@ function parseTrustedHostsSafe(raw: string): string[] {
   }
 }
 
+/** 把旧版共用栏拆成 FN ID 与内网地址，避免把 IP 当成 FN ID 去云端解析。 */
+function migrateLoginChannelFields(fnIdPref: string, lanPref: string, shared: string): FnIdOrHostParts {
+  const out = new FnIdOrHostParts();
+  let fnId = fnIdPref.trim();
+  let lan = lanPref.trim();
+  if (fnId.length > 0) {
+    const split = splitFnIdOrHostInput(fnId);
+    if (split.fnId.length > 0) {
+      fnId = split.fnId;
+    } else {
+      if (lan.length === 0) {
+        lan = split.host;
+      }
+      fnId = '';
+    }
+  }
+  const sharedRaw = shared.trim();
+  if (sharedRaw.length === 0) {
+    out.fnId = fnId;
+    out.host = lan;
+    return out;
+  }
+  const sharedSplit = splitFnIdOrHostInput(sharedRaw);
+  if (fnId.length === 0 && sharedSplit.fnId.length > 0) {
+    fnId = sharedSplit.fnId;
+  }
+  if (lan.length === 0 && fnId.length === 0 && sharedSplit.host.length > 0) {
+    lan = sharedSplit.host;
+  }
+  out.fnId = fnId;
+  out.host = lan;
+  return out;
+}
+
 export class SessionPreferences {
   static async isPrivacyPolicyAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
     const p = await openPrefs(ctx);
@@ -346,7 +389,9 @@ export class SessionPreferences {
       prefsGetString(p, K_OPENAPI_AUTHX_KEY, ''),
       prefsGetString(p, K_OPENAPI_AUTHX_SECRET, ''),
       prefsGetString(p, K_ENDPOINT_LAN_IPV6_URL, ''),
-      prefsGetString(p, K_ENDPOINT_PUBLIC_IPV6_URL, '')
+      prefsGetString(p, K_ENDPOINT_PUBLIC_IPV6_URL, ''),
+      prefsGetString(p, K_PUBLIC_IP_INPUT, ''),
+      prefsGetString(p, K_PUBLIC_IPV6_INPUT, '')
     ]);
     return {
       baseUrl: prefsValues[0],
@@ -370,7 +415,9 @@ export class SessionPreferences {
       openApiAuthxKey: prefsValues[17],
       openApiAuthxSecret: prefsValues[18],
       endpointLanIpv6Url: prefsValues[19],
-      endpointPublicIpv6Url: prefsValues[20]
+      endpointPublicIpv6Url: prefsValues[20],
+      publicIpInput: prefsValues[21],
+      publicIpv6Input: prefsValues[22]
     };
   }
 
@@ -382,6 +429,8 @@ export class SessionPreferences {
     await prefsPutString(p, K_FN_ID_INPUT, s.fnIdInput);
     await prefsPutString(p, K_DOMAIN_INPUT, s.domainInput);
     await prefsPutString(p, K_LAN_INPUT, s.lanInput);
+    await prefsPutString(p, K_PUBLIC_IP_INPUT, s.publicIpInput);
+    await prefsPutString(p, K_PUBLIC_IPV6_INPUT, s.publicIpv6Input);
     await prefsPutString(p, K_ENDPOINT_PUBLIC_URL, s.endpointPublicUrl);
     await prefsPutString(p, K_ENDPOINT_PUBLIC_DOMAIN_URL, s.endpointPublicDomainUrl);
     await prefsPutString(p, K_ENDPOINT_PUBLIC_IP_URL, s.endpointPublicIpUrl);
@@ -406,11 +455,14 @@ export class SessionPreferences {
   /** 写登录表单（不含会话 token）。勾选记住密码时口令经 HUKS 封存后再落盘。 */
   static async saveLoginFormDefaults(ctx: common.UIAbilityContext, d: LoginFormDefaults): Promise<void> {
     const p = await openPrefs(ctx);
-    const shared = d.fnIdInput.trim().length > 0 ? d.fnIdInput.trim() :
-      (d.lanInput.trim().length > 0 ? d.lanInput.trim() : '');
-    await prefsPutString(p, K_LOGIN_SHARED_INPUT, shared);
-    await prefsPutString(p, K_DOMAIN_INPUT, d.domainInput);
-    await prefsPutString(p, K_LAN_INPUT, d.lanInput);
+    const fnId = d.fnIdInput.trim();
+    const lan = d.lanInput.trim();
+    await prefsPutString(p, K_FN_ID_INPUT, fnId);
+    await prefsPutString(p, K_LAN_INPUT, lan);
+    await prefsPutString(p, K_DOMAIN_INPUT, d.domainInput.trim());
+    await prefsPutString(p, K_PUBLIC_IP_INPUT, d.publicIpInput.trim());
+    await prefsPutString(p, K_PUBLIC_IPV6_INPUT, d.publicIpv6Input.trim());
+    await prefsPutString(p, K_LOGIN_SHARED_INPUT, fnId.length > 0 ? fnId : lan);
     await prefsPutString(p, K_LOGIN_ENDPOINT_PREF, d.loginEndpointPreference.length > 0 ? d.loginEndpointPreference : 'auto');
     await prefsPutString(p, K_ACCOUNT, d.username);
     await prefsPutString(p, K_USE_HTTPS, d.useHttps ? '1' : '0');
@@ -422,11 +474,12 @@ export class SessionPreferences {
   }
 
   static loginFormFromStored(s: StoredSession): LoginFormDefaults {
-    const shared = s.fnIdInput.trim().length > 0 ? s.fnIdInput.trim() : s.lanInput.trim();
     return {
-      fnIdInput: shared,
+      fnIdInput: s.fnIdInput,
       domainInput: s.domainInput,
       lanInput: s.lanInput,
+      publicIpInput: s.publicIpInput,
+      publicIpv6Input: s.publicIpv6Input,
       loginEndpointPreference: s.loginEndpointPreference,
       username: s.account,
       password: '',
@@ -482,13 +535,14 @@ export class SessionPreferences {
     const rememberPassword = current !== null ? current.rememberPassword : rememberFlag;
     const password = rememberPassword && current !== null ? current.password : '';
     const shared = await prefsGetString(p, K_LOGIN_SHARED_INPUT, '');
-    const fnIdPref = fnId;
     const lanPref = await prefsGetString(p, K_LAN_INPUT, '');
-    const sharedBox = shared.length > 0 ? shared : (fnIdPref.length > 0 ? fnIdPref : lanPref);
+    const channels = migrateLoginChannelFields(fnId, lanPref, shared);
     return {
-      fnIdInput: sharedBox,
+      fnIdInput: channels.fnId,
       domainInput: domain,
-      lanInput: lanPref,
+      lanInput: channels.host,
+      publicIpInput: await prefsGetString(p, K_PUBLIC_IP_INPUT, ''),
+      publicIpv6Input: await prefsGetString(p, K_PUBLIC_IPV6_INPUT, ''),
       loginEndpointPreference: await prefsGetString(p, K_LOGIN_ENDPOINT_PREF, 'auto'),
       username: username,
       password: password,

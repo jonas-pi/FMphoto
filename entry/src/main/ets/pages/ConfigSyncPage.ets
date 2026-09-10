@@ -239,19 +239,26 @@ struct ConfigSyncPage {
     let fnId = d.fnIdInput.trim();
     let domain = d.domainInput.trim();
     let lan = d.lanInput.trim();
+    let publicIp = d.publicIpInput.trim();
+    let publicIpv6 = d.publicIpv6Input.trim();
     let username = d.username.trim();
     let endpointPref = d.loginEndpointPreference.trim().length > 0 ? d.loginEndpointPreference : 'auto';
     let useHttps = d.useHttps;
     if (stored !== null) {
-      const shared = stored.fnIdInput.trim().length > 0 ? stored.fnIdInput.trim() : stored.lanInput.trim();
-      if (shared.length > 0) {
-        fnId = shared;
+      if (stored.fnIdInput.trim().length > 0) {
+        fnId = stored.fnIdInput.trim();
       }
       if (stored.domainInput.trim().length > 0) {
         domain = stored.domainInput.trim();
       }
       if (stored.lanInput.trim().length > 0) {
         lan = stored.lanInput.trim();
+      }
+      if (stored.publicIpInput.trim().length > 0) {
+        publicIp = stored.publicIpInput.trim();
+      }
+      if (stored.publicIpv6Input.trim().length > 0) {
+        publicIpv6 = stored.publicIpv6Input.trim();
       }
       if (stored.account.trim().length > 0) {
         username = stored.account.trim();
@@ -265,17 +272,13 @@ struct ConfigSyncPage {
         const fromBase = extractFnId(stored.baseUrl);
         fnId = fromRelay.length > 0 ? fromRelay : fromBase;
       }
-      if (domain.length === 0 && stored.endpointPublicDomainUrl.trim().length > 0) {
-        domain = stored.endpointPublicDomainUrl.trim();
-      }
-      if (lan.length === 0 && stored.endpointLanUrl.trim().length > 0) {
-        lan = stored.endpointLanUrl.trim();
-      }
     }
     return {
       fnId: fnId,
       domain: domain,
       lan: lan,
+      publicIp: publicIp,
+      publicIpv6: publicIpv6,
       username: username,
       endpointPref: endpointPref,
       useHttps: useHttps,
@@ -298,6 +301,8 @@ struct ConfigSyncPage {
       fnIdInput: login.fnId,
       domainInput: login.domain,
       lanInput: login.lan,
+      publicIpInput: login.publicIp,
+      publicIpv6Input: login.publicIpv6,
       loginEndpointPreference: login.endpointPref.length > 0 ? login.endpointPref : 'auto',
       username: login.username,
       password: login.rememberPassword ? login.password : '',
@@ -379,6 +384,8 @@ struct ConfigSyncPage {
       stored.fnIdInput,
       stored.domainInput,
       stored.lanInput,
+      stored.publicIpInput,
+      stored.publicIpv6Input,
       stored.endpointPublicUrl,
       stored.endpointPublicDomainUrl,
       stored.endpointPublicIpUrl,

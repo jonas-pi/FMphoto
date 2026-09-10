@@ -244,7 +244,7 @@ export struct MePanel {
       return;
     }
     try {
-      // 「我的」页列出全部路径（含中继），不按登录时的内网/公网偏好过滤
+      // 只探测会话里已有的通道：填了 FN ID 会含云端解析结果，未填则只有手填地址
       const selected = await selectAmongEndpointPool(
         endpointPoolFromStored(stored),
         LOGIN_ENDPOINT_PREF_AUTO
@@ -1030,12 +1030,17 @@ export struct MePanel {
                 fnIdInput: fromSnap.fnIdInput.length > 0 ? fromSnap.fnIdInput : existing.fnIdInput,
                 domainInput: fromSnap.domainInput.length > 0 ? fromSnap.domainInput : existing.domainInput,
                 lanInput: fromSnap.lanInput.length > 0 ? fromSnap.lanInput : existing.lanInput,
+                publicIpInput: fromSnap.publicIpInput.length > 0 ? fromSnap.publicIpInput : existing.publicIpInput,
+                publicIpv6Input: fromSnap.publicIpv6Input.length > 0 ? fromSnap.publicIpv6Input : existing.publicIpv6Input,
                 loginEndpointPreference: fromSnap.loginEndpointPreference.length > 0 ?
                   fromSnap.loginEndpointPreference : existing.loginEndpointPreference,
                 username: fromSnap.username.length > 0 ? fromSnap.username : existing.username,
                 password: existing.rememberPassword ?
                   (AppSession.getLoginPassword().length > 0 ? AppSession.getLoginPassword() : existing.password) : '',
-                useHttps: fromSnap.username.length > 0 || fromSnap.fnIdInput.length > 0 ? fromSnap.useHttps : existing.useHttps,
+                useHttps: fromSnap.username.length > 0 || fromSnap.fnIdInput.length > 0 ||
+                  fromSnap.lanInput.length > 0 || fromSnap.domainInput.length > 0 ||
+                  fromSnap.publicIpInput.length > 0 || fromSnap.publicIpv6Input.length > 0 ?
+                  fromSnap.useHttps : existing.useHttps,
                 rememberPassword: existing.rememberPassword,
                 savedUsers: existing.savedUsers
               });

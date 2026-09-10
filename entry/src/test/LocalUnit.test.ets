@@ -1,6 +1,6 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
-import { fnWebViewBaseUrl, normalizeServerUrl } from '../main/ets/network/ServerUrl';
-import { isUnusableIpv6Host } from '../main/ets/network/FnConnectApi';
+import { fnWebViewBaseUrl, normalizeServerUrl, classifyDirectNasAddress } from '../main/ets/network/ServerUrl';
+import { isUnusableIpv6Host, splitFnIdOrHostInput } from '../main/ets/network/FnConnectApi';
 import { wsDeviceDisplayCode } from '../main/ets/network/FnWsDeviceId';
 import { GalleryListItem } from '../main/ets/model/FnApiTypes';
 import {
@@ -64,6 +64,40 @@ export default function localUnitTest() {
       expect(normalizeServerUrl('[fe80::1]', true)).assertEqual('https://[fe80::1]:5667');
       expect(normalizeServerUrl('fe80::1:8080', false)).assertEqual('http://[fe80::1]:8080');
       expect(normalizeServerUrl('http://[::1]/', false)).assertEqual('http://[::1]:5666');
+    });
+
+    it('classifyDirectNasAddress_splits_lan_public_and_domain', 0, () => {
+      const lan = classifyDirectNasAddress('192.168.1.10', true);
+      expect(lan.lan).assertEqual('192.168.1.10');
+      expect(lan.publicIpv4).assertEqual('');
+      expect(lan.publicIpv6).assertEqual('');
+      expect(lan.domain).assertEqual('');
+      const pub4 = classifyDirectNasAddress('8.8.8.8', true);
+      expect(pub4.publicIpv4).assertEqual('8.8.8.8');
+      expect(pub4.lan).assertEqual('');
+      const pub6 = classifyDirectNasAddress('240e:388:9c06:c500::1', true);
+      expect(pub6.publicIpv6).assertEqual('240e:388:9c06:c500::1');
+      expect(pub6.publicIpv4).assertEqual('');
+      const ula = classifyDirectNasAddress('fd12:3456::1', false);
+      expect(ula.lan).assertEqual('fd12:3456::1');
+      const domain = classifyDirectNasAddress('nas.example.com', true);
+      expect(domain.domain).assertEqual('nas.example.com');
+      expect(domain.lan).assertEqual('');
+    });
+
+    it('splitFnIdOrHostInput_only_fnid_triggers_connect', 0, () => {
+      const fn = splitFnIdOrHostInput('alpha');
+      expect(fn.fnId).assertEqual('alpha');
+      expect(fn.host).assertEqual('');
+      const portal = splitFnIdOrHostInput('https://alpha.5ddd.com');
+      expect(portal.fnId).assertEqual('alpha');
+      expect(portal.host).assertEqual('');
+      const lan = splitFnIdOrHostInput('192.168.1.10');
+      expect(lan.fnId).assertEqual('');
+      expect(lan.host).assertEqual('192.168.1.10');
+      const domain = splitFnIdOrHostInput('nas.example.com');
+      expect(domain.fnId).assertEqual('');
+      expect(domain.host).assertEqual('nas.example.com');
     });
 
     it('fnConnect_skips_unusable_ipv6', 0, () => {

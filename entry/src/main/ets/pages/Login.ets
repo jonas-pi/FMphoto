@@ -1,5 +1,6 @@
 /**
- * NAS 登录：FN ID（FN Connect 解析公网/内网/官方中继）或内网 IP 共用一栏，公网域名可选；
+ * NAS 登录：FN ID / IP 共用一栏，另留公网域名。
+ * 填 FN ID 时经 FN Connect 补齐全部通道；直连 IP 按内网/外网只探测对应通道。
  * 经 fnOS WebSocket 主通道（wss …/websocket?type=main）
  * getRSAPub → encrypted(user.login)；会话持久化 token 与 wsSignKeyB64（后续 WS 帧 HMAC 用）
  */
@@ -8,7 +9,14 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { hdsEffect } from '@kit.UIDesignKit';
 import { CertPolicy } from '../network/CertPolicy';
-import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
+import {
+  classifyDirectNasAddress,
+  DirectNasAddressSlots,
+  fnWebViewBaseUrl,
+  isIpLiteralHost,
+  normalizeServerUrl,
+  parseNormalizedBaseUrl
+} from '../network/ServerUrl';
 import {
   LOGIN_ENDPOINT_PREF_AUTO,
   LOGIN_ENDPOINT_PREF_BANDWIDTH,
@@ -16,12 +24,11 @@ import {
   orderedWsLoginServers,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
-import { extractFnId, isFnId, isFnRelayBaseUrl, lookupFnConnect } from '../network/FnConnectApi';
-import { preferPublicEndpointUrl, resolvePublicDomainToIpBaseUrl } from '../network/PublicDns';
-import { isIpLiteralHost, parseNormalizedBaseUrl } from '../network/ServerUrl';
+import { isFnRelayBaseUrl, lookupFnConnect, FnIdOrHostParts, splitFnIdOrHostInput } from '../network/FnConnectApi';
+import { preferPublicEndpointUrl } from '../network/PublicDns';
 import { fnWs2faVerify, fnWsLogin, shouldTryNextLoginEndpoint } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
-import { LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
+import { LoginFormDefaults, LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import { FnLoginPrimaryButton, FnLoginSecondaryButton } from '../common/FnLoginButtons';
@@ -133,7 +140,7 @@ struct Login {
   aboutToAppear(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void SessionPreferences.loadLoginFormDefaults(ctx).then((d) => {
-      this.fnIdInput = d.fnIdInput.length > 0 ? d.fnIdInput : d.lanInput;
+      this.fnIdInput = this.combinedHostFieldFromDefaults(d);
       this.domainInput = d.domainInput;
       if (d.loginEndpointPreference.length > 0) {
         this.endpointPreference = d.loginEndpointPreference;
@@ -200,23 +207,83 @@ struct Login {
   }
 
   /**
-   * 共用输入栏：纯 FN ID / fnos.net / 5ddd.com 形态 → FN Connect；其余按内网地址。
-   * @returns [fnId, lanRaw]
+   * 仅识别 FN ID / 官方中继门户；其它输入不当作 FN Connect。
    */
-  private parseSharedHostInput(raw: string): [string, string] {
-    const t = raw.trim();
-    if (t.length === 0) {
-      return ['', ''];
+  private parsedFnId(): string {
+    return splitFnIdOrHostInput(this.fnIdInput).fnId;
+  }
+
+  /** FN ID 栏里误填的普通地址，按内网/外网/域名分流。 */
+  private leftoverHostFromFnId(): string {
+    const split: FnIdOrHostParts = splitFnIdOrHostInput(this.fnIdInput);
+    if (split.fnId.length > 0) {
+      return '';
     }
-    if (isFnId(t)) {
-      return [t, ''];
+    return split.host;
+  }
+
+  /** 把共用栏直连地址分到探测槽；域名栏优先于共用栏里的主机名。 */
+  private loginDirectSlots(): DirectNasAddressSlots {
+    const slots: DirectNasAddressSlots = classifyDirectNasAddress(this.leftoverHostFromFnId(), this.useHttps);
+    const typedDomain: string = this.domainInput.trim();
+    if (typedDomain.length > 0) {
+      slots.domain = typedDomain;
     }
-    const id = extractFnId(t);
-    if (id.length > 0 && (t.toLowerCase().indexOf('fnos.net') >= 0 ||
-      t.toLowerCase().indexOf('5ddd.com') >= 0)) {
-      return [id, ''];
+    return slots;
+  }
+
+  /** 旧版拆栏回填：有 FN ID 显示 FN ID，否则把直连 IP 合回共用栏。 */
+  private combinedHostFieldFromDefaults(d: LoginFormDefaults): string {
+    if (d.fnIdInput.trim().length > 0) {
+      return d.fnIdInput;
     }
-    return ['', t];
+    if (d.lanInput.trim().length > 0) {
+      return d.lanInput;
+    }
+    if (d.publicIpInput.trim().length > 0) {
+      return d.publicIpInput;
+    }
+    if (d.publicIpv6Input.trim().length > 0) {
+      return d.publicIpv6Input;
+    }
+    return '';
+  }
+
+  private applyLanUrl(url: string): void {
+    if (url.length === 0) {
+      return;
+    }
+    const parts = parseNormalizedBaseUrl(url);
+    if (parts !== null && parts.useBracket) {
+      if (this.pendingEndpointLanIpv6Url.length === 0) {
+        this.pendingEndpointLanIpv6Url = url;
+      }
+      return;
+    }
+    if (this.pendingEndpointLanUrl.length === 0) {
+      this.pendingEndpointLanUrl = url;
+    }
+  }
+
+  private applyPublicUrl(url: string): void {
+    if (url.length === 0 || isFnRelayBaseUrl(url)) {
+      return;
+    }
+    const parts = parseNormalizedBaseUrl(url);
+    const host = parts !== null ? parts.host : '';
+    if (host.length > 0 && isIpLiteralHost(host)) {
+      if (parts !== null && parts.useBracket) {
+        if (this.pendingEndpointPublicIpv6Url.length === 0) {
+          this.pendingEndpointPublicIpv6Url = url;
+        }
+      } else if (this.pendingEndpointPublicIpUrl.length === 0) {
+        this.pendingEndpointPublicIpUrl = url;
+      }
+      return;
+    }
+    if (this.pendingEndpointPublicDomainUrl.length === 0) {
+      this.pendingEndpointPublicDomainUrl = url;
+    }
   }
 
   /** 保存会话并进入主页 */
@@ -234,14 +301,17 @@ struct Login {
     /** 内置 Web 固定 https:5667，与登录 base 可能不同，一并加入信任列表（自签证书） */
     CertPolicy.addTrusted(fnWebViewBaseUrl(base));
     let longTok = longTokenFromWs !== undefined && longTokenFromWs.length > 0 ? longTokenFromWs : '';
-    const sharedParsed = this.parseSharedHostInput(this.fnIdInput);
+    const fnId = this.parsedFnId();
+    const slots = this.loginDirectSlots();
     const stored: StoredSession = {
       baseUrl: base,
       token: token,
       account: user,
-      fnIdInput: sharedParsed[0],
-      domainInput: this.domainInput.trim(),
-      lanInput: sharedParsed[1],
+      fnIdInput: fnId,
+      domainInput: slots.domain,
+      lanInput: slots.lan,
+      publicIpInput: slots.publicIpv4,
+      publicIpv6Input: slots.publicIpv6,
       endpointPublicUrl: this.pendingEndpointPublicUrl,
       endpointPublicDomainUrl: this.pendingEndpointPublicDomainUrl,
       endpointPublicIpUrl: this.pendingEndpointPublicIpUrl,
@@ -282,9 +352,11 @@ struct Login {
     try {
       AppSession.setLoginPassword(pass);
       await SessionPreferences.saveLoginFormDefaults(ctx, {
-        fnIdInput: this.fnIdInput.trim(),
+        fnIdInput: fnId,
         domainInput: stored.domainInput,
         lanInput: stored.lanInput,
+        publicIpInput: stored.publicIpInput,
+        publicIpv6Input: stored.publicIpv6Input,
         loginEndpointPreference: stored.loginEndpointPreference,
         username: stored.account,
         password: this.rememberPassword ? pass : '',
@@ -441,14 +513,16 @@ struct Login {
 
   private async onLoginClick(): Promise<void> {
     this.errorText = '';
-    const sharedRaw = this.fnIdInput.trim();
-    const publicDomainRaw = this.domainInput.trim();
-    const sharedParsed = this.parseSharedHostInput(sharedRaw);
-    const fnId = sharedParsed[0];
-    const lanRaw = sharedParsed[1];
-    const hasAddr = fnId.length > 0 || publicDomainRaw.length > 0 || lanRaw.length > 0;
+    const fnId: string = this.parsedFnId();
+    const slots: DirectNasAddressSlots = this.loginDirectSlots();
+    const lanRaw: string = slots.lan;
+    const publicDomainRaw: string = slots.domain;
+    const publicIpRaw: string = slots.publicIpv4;
+    const publicIpv6Raw: string = slots.publicIpv6;
+    const hasAddr = fnId.length > 0 || publicDomainRaw.length > 0 || lanRaw.length > 0 ||
+      publicIpRaw.length > 0 || publicIpv6Raw.length > 0;
     if (!hasAddr || this.username.trim().length === 0 || this.password.length === 0) {
-      this.errorText = '请填写 FN ID / 内网 IP 或公网域名，以及用户名和密码';
+      this.errorText = '请填写 FN ID、IP 或公网域名，以及用户名和密码';
       return;
     }
     this.loading = true;
@@ -465,34 +539,20 @@ struct Login {
       this.pendingEndpointPublicIpv6Url = '';
       this.pendingEndpointRelayUrl = '';
 
-      // 可选公网域名；误填 FN Connect 门户时忽略
       if (publicDomainRaw.length > 0) {
-        const domainUrl = normalizeServerUrl(publicDomainRaw, this.useHttps);
-        if (domainUrl.length > 0 && !isFnRelayBaseUrl(domainUrl)) {
-          const hostParts = parseNormalizedBaseUrl(domainUrl);
-          const host = hostParts !== null ? hostParts.host : '';
-          if (host.length > 0 && isIpLiteralHost(host)) {
-            this.pendingEndpointPublicIpUrl = domainUrl;
-          } else {
-            this.pendingEndpointPublicDomainUrl = domainUrl;
-            this.pendingEndpointPublicIpUrl = await resolvePublicDomainToIpBaseUrl(domainUrl);
-          }
-        }
+        this.applyPublicUrl(normalizeServerUrl(publicDomainRaw, this.useHttps));
       }
-
+      if (publicIpRaw.length > 0) {
+        this.applyPublicUrl(normalizeServerUrl(publicIpRaw, this.useHttps));
+      }
+      if (publicIpv6Raw.length > 0) {
+        this.applyPublicUrl(normalizeServerUrl(publicIpv6Raw, this.useHttps));
+      }
       if (lanRaw.length > 0) {
-        const lanUrl = normalizeServerUrl(lanRaw, this.useHttps);
-        if (lanUrl.length > 0) {
-          const lanParts = parseNormalizedBaseUrl(lanUrl);
-          if (lanParts !== null && lanParts.useBracket) {
-            this.pendingEndpointLanIpv6Url = lanUrl;
-          } else {
-            this.pendingEndpointLanUrl = lanUrl;
-          }
-        }
+        this.applyLanUrl(normalizeServerUrl(lanRaw, this.useHttps));
       }
 
-      // FN ID：FN Connect 补齐公网 / 内网 V4/V6 以及官方中继；手填域名优先于云端 DDNS
+      // 仅在填写了 FN ID 时走 FN Connect；手填地址优先于云端结果
       if (fnId.length > 0) {
         const looked = await lookupFnConnect(fnId, this.useHttps);
         const hasAny = looked.publicDomainServer.length > 0 || looked.publicIpServer.length > 0 ||
@@ -538,7 +598,7 @@ struct Login {
       if (selected.server.length === 0 || !selected.selectedOk) {
         this.errorText = selected.summary.length > 0
           ? selected.summary
-          : '公网、内网与官方中继均不可达';
+          : '已填写的地址均不可达';
         return;
       }
       if (selected.preferredPublicUrl.length > 0) {
@@ -884,17 +944,12 @@ struct Login {
         this.fnIdInput = v;
       })
 
-      Text($r('app.string.fnid_hint'))
-        .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-
       this.loginField(this.domainInput, $r('app.string.hint_public_domain'), InputType.Normal, !this.show2faStep,
         (v: string) => {
           this.domainInput = v;
         })
 
-      Text($r('app.string.public_domain_hint'))
+      Text($r('app.string.fnid_hint'))
         .fontSize(12)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
