@@ -18,12 +18,12 @@ import {
 import { galleryIsVideoBrightnessVolumeZone } from './GalleryPreviewVerticalGesture';
 import { playGalleryLongPressMenuHaptic } from './GallerySelectionHaptic';
 
-const OVERLAY_PILL_HEIGHT_VP: number = 28;
-const OVERLAY_SPEED_WIDTH_VP: number = 52;
-const OVERLAY_QUALITY_WIDTH_VP: number = 60;
-const OVERLAY_LANDSCAPE_SIZE_VP: number = 28;
+const OVERLAY_PILL_HEIGHT_VP: number = 40;
+const OVERLAY_SPEED_WIDTH_VP: number = 64;
+const OVERLAY_QUALITY_WIDTH_VP: number = 64;
+const OVERLAY_LANDSCAPE_SIZE_VP: number = 40;
 const OVERLAY_PLAY_SIZE_VP: number = 72;
-const OVERLAY_PILL_FONT_VP: number = 12;
+const OVERLAY_PILL_FONT_VP: number = 13;
 const OVERLAY_FULLSCREEN_FONT_VP: number = 15;
 const OVERLAY_CTRL_ROW_SPACE_VP: number = 6;
 const OVERLAY_CTRL_COL_SPACE_VP: number = 6;
@@ -230,7 +230,8 @@ export struct GalleryVideoOverlayChrome {
           if (fingers !== undefined && fingers.length > 0 && this.visible) {
             // 底栏控件区（倍速/清晰度/进度）不走全屏按住倍速
             const y = fingers[0].localY;
-            if (y > this.overlayH - OVERLAY_PILL_HEIGHT_VP - OVERLAY_CHROME_HIT_EXTRA_VP - this.bottomPadding) {
+            if (y > this.overlayH - fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP) -
+              OVERLAY_CHROME_HIT_EXTRA_VP - this.bottomPadding) {
               return GestureJudgeResult.REJECT;
             }
           }
@@ -396,7 +397,7 @@ export struct GalleryVideoOverlayChrome {
             })
           }
           .width('100%')
-          .height(OVERLAY_PILL_HEIGHT_VP)
+          .height(fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP))
           .alignItems(VerticalAlign.Center)
           .clip(false)
 

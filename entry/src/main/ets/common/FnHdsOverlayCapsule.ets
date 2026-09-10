@@ -1,6 +1,7 @@
 /**
  * 离中 HdsTabs 胶囊：容器比栏身大一圈，果冻可向外膨胀。
- * 点击走栏身 onTabBarClick，不要再叠一层全尺寸 Row，否则会挡住高光和果冻。
+ * 栏身 onTabBarClick 与外层 onClick 都会进 handleBarClick（200ms 去重），
+ * 避免只点到果冻边而点不中栏身。不要再叠一层全尺寸 Row，否则会挡住高光。
  */
 import { DividerMode, hdsEffect, HdsTabs } from '@kit.UIDesignKit';
 import {
@@ -27,6 +28,7 @@ export struct FnHdsOverlayCapsule {
   private pressActive: boolean = false;
   private longPressTimerId: number = -1;
   private lastLongPressAt: number = 0;
+  private lastClickAt: number = 0;
 
   aboutToDisappear(): void {
     this.pressActive = false;
@@ -90,6 +92,11 @@ export struct FnHdsOverlayCapsule {
       this.skipNextBarClick = false;
       return;
     }
+    const now = Date.now();
+    if (now - this.lastClickAt < 200) {
+      return;
+    }
+    this.lastClickAt = now;
     this.onBarClick();
   }
 
@@ -162,10 +169,13 @@ export struct FnHdsOverlayCapsule {
     .height(this.overlayHeight())
     .clip(false)
     .shadow({ radius: 0, color: Color.Transparent })
+    .onClick((): void => {
+      this.handleBarClick();
+    })
     .onTouch((event: TouchEvent): void => {
       this.onPressTouch(event);
     })
-    .parallelGesture(
+    .priorityGesture(
       LongPressGesture({ repeat: false })
         .onAction((): void => {
           this.fireLongPress();

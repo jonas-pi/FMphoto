@@ -628,10 +628,16 @@ struct GalleryPreview {
       return;
     }
     this.originalLocked = GalleryPreviewSessionPrefs.toggleOriginalLock();
-    if (this.originalLocked && this.currentHasOriginal() && !this.originalPreviewEnabled) {
-      this.originalPreviewEnabled = true;
-      this.loadOriginalToken++;
+    if (this.originalLocked) {
+      if (this.currentHasOriginal() && !this.originalPreviewEnabled) {
+        this.originalPreviewEnabled = true;
+        this.loadOriginalToken++;
+      }
+      return;
     }
+    // 再次长按：解除后续沿用，同时关掉当前原图。
+    this.originalPreviewEnabled = false;
+    this.originalShowing = false;
   }
 
   private syncCollectStateFromCurrentItem(): void {
