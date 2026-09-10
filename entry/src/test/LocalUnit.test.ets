@@ -2,11 +2,13 @@ import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../main/ets/network/ServerUrl';
 import { isUnusableIpv6Host } from '../main/ets/network/FnConnectApi';
 import { wsDeviceDisplayCode } from '../main/ets/network/FnWsDeviceId';
+import { GalleryListItem } from '../main/ets/model/FnApiTypes';
 import {
   buildNasDedupeIndex,
   nasDedupeIndexHasLocal,
   nasDedupeIndexMatchKind,
   nasDedupeMatchIsStrong,
+  NasDedupeIndex,
   officialSizeMtimeSetHas
 } from '../main/ets/album/GalleryAutoSyncOfficialFingerprint';
 import { smartCategoryCount } from '../main/ets/album/GalleryAlbumEntityData';
@@ -74,7 +76,7 @@ export default function localUnitTest() {
     });
 
     it('autoSync_sizeMtime_matches_without_name', 0, () => {
-      const index = {
+      const index: NasDedupeIndex = {
         fingerprints: new Set<string>(),
         sizeMtimeKeys: new Set<string>(['2048:1000']),
         nameSizeKeys: new Set<string>()
@@ -87,7 +89,7 @@ export default function localUnitTest() {
     });
 
     it('autoSync_strong_match_fingerprint_and_nameSize', 0, () => {
-      const index = {
+      const index: NasDedupeIndex = {
         fingerprints: new Set<string>(['IMG_0001.jpg:2048:1000']),
         sizeMtimeKeys: new Set<string>(),
         nameSizeKeys: new Set<string>(['shot.png:4096'])
@@ -105,12 +107,12 @@ export default function localUnitTest() {
     });
 
     it('autoSync_index_collects_sizeMtime', 0, () => {
-      const item = {
-        fileName: 'IMG_0001.jpg',
-        fileSize: 2048,
-        fileCreateTime: 1000
+      const rec: Record<string, string | number> = {
+        'fileName': 'IMG_0001.jpg',
+        'fileSize': 2048,
+        'fileCreateTime': 1000
       };
-      const index = buildNasDedupeIndex([item]);
+      const index = buildNasDedupeIndex([rec as GalleryListItem]);
       expect(index.sizeMtimeKeys.has('2048:1000')).assertTrue();
     });
 
@@ -146,12 +148,10 @@ export default function localUnitTest() {
 
     it('parseSavedUsersJson_reads_sealed_s_not_password', 0, () => {
       const sealed = 'v1.aaa.bbb.ccc';
-      const rows: Object[] = [
-        { username: 'alice', rememberPassword: true, s: sealed, password: 'should-not-win' },
-        { username: 'bob', rememberPassword: true, password: 'legacy-plain' },
-        { username: 'carol', rememberPassword: false, password: 'ignored' }
-      ];
-      const users = parseSavedUsersJson(JSON.stringify(rows));
+      const raw: string = '[{"username":"alice","rememberPassword":true,"s":"' + sealed +
+        '","password":"should-not-win"},{"username":"bob","rememberPassword":true,"password":"legacy-plain"},' +
+        '{"username":"carol","rememberPassword":false,"password":"ignored"}]';
+      const users = parseSavedUsersJson(raw);
       expect(users.length).assertEqual(3);
       expect(users[0].password).assertEqual(sealed);
       expect(users[1].password).assertEqual('legacy-plain');

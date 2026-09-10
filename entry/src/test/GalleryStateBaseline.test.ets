@@ -18,7 +18,11 @@ import {
   galleryAlbumSerializeTimelineCache
 } from '../main/ets/album/galleryAlbumTab/GalleryAlbumCacheSnapshot';
 import { GalleryFlowNode } from '../main/ets/album/GalleryFlowDataSource';
-import { PreviewItemsDataSource } from '../main/ets/pages/galleryPreview/GalleryPreviewDataSource';
+import { GalleryListItem } from '../main/ets/model/FnApiTypes';
+import {
+  PreviewDataChangeListener,
+  PreviewItemsDataSource
+} from '../main/ets/pages/galleryPreview/GalleryPreviewDataSource';
 import {
   GalleryPreviewDetailsVisibleEffect,
   galleryPreviewCollectSyncShouldApply,
@@ -36,6 +40,21 @@ import {
   GalleryAlbumVisibleRuntime
 } from '../main/ets/album/galleryAlbumTab/GalleryAlbumSession';
 import { GalleryPreviewSession } from '../main/ets/pages/galleryPreview/GalleryPreviewSession';
+
+class PreviewReloadSpy implements PreviewDataChangeListener {
+  reloadCount: number = 0;
+  addCount: number = 0;
+  added: number[] = [];
+
+  onDataReloaded(): void {
+    this.reloadCount++;
+  }
+
+  onDataAdd(index: number): void {
+    this.addCount++;
+    this.added.push(index);
+  }
+}
 
 export default function galleryStateBaselineTest() {
   describe('galleryStateBaselineTest', () => {
@@ -150,8 +169,10 @@ export default function galleryStateBaselineTest() {
       section.day = 8;
       section.itemCount = 4;
       section.nextOffset = 2;
-      section.slotByOffset.set(1, { id: 'b' });
-      section.slotByOffset.set(0, { id: 'a' });
+      const slotB: GalleryListItem = { id: 'b' };
+      const slotA: GalleryListItem = { id: 'a' };
+      section.slotByOffset.set(1, slotB);
+      section.slotByOffset.set(0, slotA);
       const offsets = new Map<string, number>();
       offsets.set('2026-9-8', 2);
       const rounds = new Map<string, number>();
@@ -199,54 +220,34 @@ export default function galleryStateBaselineTest() {
       const first: GalleryListItem = { id: '1' };
       const second: GalleryListItem = { id: '2' };
       source.reloadAll([first]);
-      let reloadCount = 0;
-      let addCount = 0;
-      const added: number[] = [];
-      source.registerDataChangeListener({
-        onDataReloaded(): void {
-          reloadCount++;
-        },
-        onDataAdd(index: number): void {
-          addCount++;
-          added.push(index);
-        }
-      });
+      const listener = new PreviewReloadSpy();
+      source.registerDataChangeListener(listener);
       source.appendItems([second]);
       expect(source.totalCount()).assertEqual(2);
-      expect(addCount).assertEqual(1);
-      expect(added[0]).assertEqual(1);
-      expect(reloadCount).assertEqual(0);
+      expect(listener.addCount).assertEqual(1);
+      expect(listener.added[0]).assertEqual(1);
+      expect(listener.reloadCount).assertEqual(0);
     });
 
     it('preview_appendItems_empty_is_noop', 0, () => {
       const source = new PreviewItemsDataSource();
-      let reloadCount = 0;
-      let addCount = 0;
-      source.registerDataChangeListener({
-        onDataReloaded(): void {
-          reloadCount++;
-        },
-        onDataAdd(_index: number): void {
-          addCount++;
-        }
-      });
+      const listener = new PreviewReloadSpy();
+      source.registerDataChangeListener(listener);
       source.appendItems([]);
       expect(source.totalCount()).assertEqual(0);
-      expect(addCount).assertEqual(0);
-      expect(reloadCount).assertEqual(0);
+      expect(listener.addCount).assertEqual(0);
+      expect(listener.reloadCount).assertEqual(0);
     });
 
     it('preview_reloadAll_notifies_onDataReloaded', 0, () => {
       const source = new PreviewItemsDataSource();
-      let reloadCount = 0;
-      source.registerDataChangeListener({
-        onDataReloaded(): void {
-          reloadCount++;
-        }
-      });
-      source.reloadAll([{ id: '1' }, { id: '2' }]);
+      const listener = new PreviewReloadSpy();
+      source.registerDataChangeListener(listener);
+      const first: GalleryListItem = { id: '1' };
+      const second: GalleryListItem = { id: '2' };
+      source.reloadAll([first, second]);
       expect(source.totalCount()).assertEqual(2);
-      expect(reloadCount).assertEqual(1);
+      expect(listener.reloadCount).assertEqual(1);
     });
 
     it('preview_collect_sync_stale_guard', 0, () => {

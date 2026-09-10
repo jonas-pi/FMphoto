@@ -119,7 +119,10 @@ function normalizeBareAuthority(input: string, useHttps: boolean): string {
       if (isBareIpv6Shape(hostPart)) {
         return `[${hostPart}]:${p}`;
       }
-      return `${hostPart}:${p}`;
+      // fe80::1 末段是数字，不能当成端口，否则会拆成 host=fe80: port=1
+      if (!isBareIpv6Shape(t)) {
+        return `${hostPart}:${p}`;
+      }
     }
   }
   if (isBareIpv6Shape(t)) {
@@ -169,7 +172,7 @@ function parseAuthority(authority: string): ParsedAuthority {
     const tail = authority.substring(lastColon + 1);
     if (/^\d+$/.test(tail)) {
       const hostPart = authority.substring(0, lastColon);
-      if (!isBareIpv6Shape(hostPart)) {
+      if (!isBareIpv6Shape(hostPart) && !isBareIpv6Shape(authority)) {
         out.useBracket = false;
         out.hostRaw = hostPart;
         out.port = parseInt(tail, 10);
