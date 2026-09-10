@@ -35,6 +35,7 @@ import {
 } from './GalleryTopBarLayout';
 import {
   fnCanUseHdsImmersive,
+  fnDeviceSupportsHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from './FnSystemAvoidArea';
@@ -171,7 +172,8 @@ export function fnHdsMiniTitleBarOptions(
   avoidLayoutSafeArea: boolean
 ): HdsNavigationTitleBarOptions {
   const originalStyle = fnHdsMiniTitleBarOriginalStyle(canUseHds);
-  if (canUseHds) {
+  const material = canUseHds ? fnHdsImmersiveSystemMaterialEffect() : undefined;
+  if (material !== undefined) {
     return {
       padding: fnHdsNavTitleBarPadding(),
       avoidLayoutSafeArea: avoidLayoutSafeArea,
@@ -180,7 +182,7 @@ export function fnHdsMiniTitleBarOptions(
         blurStrategy: BlurStrategy.ADAPTIVE,
         scrollEffectOpts: fnHdsNavChromeScrollEffectOpts(),
         // @SuppressWarnings compatibility
-        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
+        systemMaterialEffect: material,
         originalStyle: originalStyle,
         scrollEffectStyle: {
           backgroundStyle: fnHdsNavChromeScrolledBackgroundStyle()
@@ -253,12 +255,15 @@ export function fnImmersiveBackgroundEffect(strong: boolean = false, color?: Res
   };
 }
 
-export function fnHdsImmersiveSystemMaterialEffect(): SystemMaterialParams {
-  // @SuppressWarnings compatibility
-  let materialType: hdsMaterial.MaterialType = hdsMaterial.MaterialType.IMMERSIVE;
-  // @SuppressWarnings compatibility
-  let materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.EXQUISITE;
+export function fnHdsImmersiveSystemMaterialEffect(): SystemMaterialParams | undefined {
+  if (!fnDeviceSupportsHdsImmersive()) {
+    return undefined;
+  }
   try {
+    // @SuppressWarnings compatibility
+    let materialType: hdsMaterial.MaterialType = hdsMaterial.MaterialType.IMMERSIVE;
+    // @SuppressWarnings compatibility
+    let materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.EXQUISITE;
     // @SuppressWarnings compatibility
     const materialTypes: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes();
     // @SuppressWarnings compatibility
@@ -268,13 +273,10 @@ export function fnHdsImmersiveSystemMaterialEffect(): SystemMaterialParams {
       // @SuppressWarnings compatibility
       materialLevel = hdsMaterial.MaterialLevel.SMOOTH;
     }
+    return { materialType: materialType, materialLevel: materialLevel };
   } catch (_e) {
-    // @SuppressWarnings compatibility
-    materialType = hdsMaterial.MaterialType.ADAPTIVE;
-    // @SuppressWarnings compatibility
-    materialLevel = hdsMaterial.MaterialLevel.ADAPTIVE;
+    return undefined;
   }
-  return { materialType: materialType, materialLevel: materialLevel };
 }
 
 /**
@@ -290,6 +292,29 @@ export function fnHdsImmersiveTabsFloatingStyle(
   barBottomMargin: number = 0,
   barSideMargin: number = 0
 ): HdsTabsFloatingStyle {
+  const material = fnCanUseHdsImmersive() ? fnHdsImmersiveSystemMaterialEffect() : undefined;
+  if (material !== undefined) {
+    return {
+      barWidth: {
+        smallWidth: width,
+        mediumWidth: width,
+        largeWidth: width
+      },
+      barSideMargin: barSideMargin,
+      barBottomMargin: barBottomMargin,
+      // @SuppressWarnings compatibility
+      adaptToHandedness: false,
+      // 官方 gradientMask 默认深色 #99000000、高度=栏高+16，overlay 上会铺成黑矩形。
+      // 关闭遮罩不能省略字段（省略即走默认），须显式全透明；maskHeight 不能为 0。
+      gradientMask: {
+        maskColor: '#00000000',
+        maskHeight: barHeight > 0 ? 1 : 1
+      },
+      lightColor: lightColor,
+      // @SuppressWarnings compatibility
+      systemMaterialEffect: material
+    };
+  }
   return {
     barWidth: {
       smallWidth: width,
@@ -306,9 +331,7 @@ export function fnHdsImmersiveTabsFloatingStyle(
       maskColor: '#00000000',
       maskHeight: barHeight > 0 ? 1 : 1
     },
-    lightColor: lightColor,
-    // @SuppressWarnings compatibility
-    systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
+    lightColor: lightColor
   };
 }
 
@@ -332,6 +355,26 @@ export function fnHdsDockTabsFloatingStyle(
   barBottomMargin: number,
   barSideMargin: number = 0
 ): HdsTabsFloatingStyle {
+  const material = fnCanUseHdsImmersive() ? fnHdsImmersiveSystemMaterialEffect() : undefined;
+  if (material !== undefined) {
+    return {
+      barWidth: {
+        smallWidth: barWidth,
+        mediumWidth: barWidth,
+        largeWidth: barWidth
+      },
+      barSideMargin: barSideMargin,
+      barBottomMargin: barBottomMargin,
+      // @SuppressWarnings compatibility
+      adaptToHandedness: false,
+      gradientMask: {
+        maskColor: '#00000000',
+        maskHeight: 1
+      },
+      // @SuppressWarnings compatibility
+      systemMaterialEffect: material
+    };
+  }
   return {
     barWidth: {
       smallWidth: barWidth,
@@ -345,9 +388,7 @@ export function fnHdsDockTabsFloatingStyle(
     gradientMask: {
       maskColor: '#00000000',
       maskHeight: 1
-    },
-    // @SuppressWarnings compatibility
-    systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect()
+    }
   };
 }
 

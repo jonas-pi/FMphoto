@@ -15,6 +15,7 @@ import {
   fnHdsCapsuleOverlayWidth,
   fnHdsImmersiveTabsFloatingStyle
 } from './FnUiCommon';
+import { fnDeviceSupportsHdsImmersive } from './FnImmersiveSettings';
 
 const LOGIN_ROUTE_PREF_VALUES: string[] = [
   LOGIN_ENDPOINT_PREF_AUTO,
@@ -174,6 +175,10 @@ export struct FnLoginRoutePrefSegment {
     this.commitIndex(this.indexFromLocalX(localX));
   }
 
+  private useHdsJellyTrack(): boolean {
+    return fnDeviceSupportsHdsImmersive();
+  }
+
   @Builder
   private segmentTrackBar() {
     Row()
@@ -224,7 +229,7 @@ export struct FnLoginRoutePrefSegment {
         .textAlign(TextAlign.Center)
 
       Stack({ alignContent: Alignment.Center }) {
-        if (this.trackWidthVp > 0) {
+        if (this.trackWidthVp > 0 && this.useHdsJellyTrack()) {
           HdsTabs({ index: 0 }) {
             TabContent() {
               Column()
@@ -258,6 +263,12 @@ export struct FnLoginRoutePrefSegment {
           .onContentWillChange((_currentIndex: number, _comingIndex: number): boolean => {
             return false;
           })
+        } else if (this.trackWidthVp > 0) {
+          Row()
+            .width('100%')
+            .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
+            .borderRadius(LOGIN_ROUTE_SEGMENT_HEIGHT_VP / 2)
+            .backgroundColor($r('app.color.login_input_fill'))
         }
 
         Stack({ alignContent: Alignment.TopStart }) {

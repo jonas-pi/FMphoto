@@ -5,6 +5,7 @@ import {
   HdsNavigationBackButtonItemOptions,
   HdsNavigationIconOptions,
   HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
   HdsNavigationTitleBarStyle,
   HdsNavigationTitleMode,
   HdsTabs,
@@ -183,6 +184,41 @@ export struct GalleryPreviewChrome {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
+  private previewTitleBarOptions(): HdsNavigationTitleBarOptions {
+    const material = this.canUseHds() ? fnHdsImmersiveSystemMaterialEffect() : undefined;
+    if (material !== undefined) {
+      return {
+        padding: fnHdsNavTitleBarPadding(),
+        avoidLayoutSafeArea: false,
+        enableComponentSafeArea: false,
+        style: {
+          blurStrategy: BlurStrategy.ADAPTIVE,
+          scrollEffectOpts: this.overlayScrollEffectOpts(),
+          systemMaterialEffect: material,
+          originalStyle: this.topTitleBarOriginalStyle(),
+          scrollEffectStyle: {
+            backgroundStyle: fnHdsNavChromeBackgroundStyle()
+          }
+        },
+        content: this.topTitleBarContent()
+      };
+    }
+    return {
+      padding: fnHdsNavTitleBarPadding(),
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: false,
+      style: {
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        scrollEffectOpts: this.overlayScrollEffectOpts(),
+        originalStyle: this.topTitleBarOriginalStyle(),
+        scrollEffectStyle: {
+          backgroundStyle: fnHdsNavChromeBackgroundStyle()
+        }
+      },
+      content: this.topTitleBarContent()
+    };
+  }
+
   private topMenuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
     const item: HdsNavigationMenuItemOptions = { content: content };
     return item;
@@ -325,35 +361,7 @@ export struct GalleryPreviewChrome {
     .mode(NavigationMode.Stack)
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(false)
-    .titleBar(this.canUseHds() ? {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: false,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: this.overlayScrollEffectOpts(),
-        // 材质只作用在返回/菜单圆钮上；顶栏背板仍透明（blurRadius 0）
-        systemMaterialEffect: fnHdsImmersiveSystemMaterialEffect(),
-        originalStyle: this.topTitleBarOriginalStyle(),
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
-        }
-      },
-      content: this.topTitleBarContent()
-    } : {
-      padding: fnHdsNavTitleBarPadding(),
-      avoidLayoutSafeArea: false,
-      enableComponentSafeArea: false,
-      style: {
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        scrollEffectOpts: this.overlayScrollEffectOpts(),
-        originalStyle: this.topTitleBarOriginalStyle(),
-        scrollEffectStyle: {
-          backgroundStyle: fnHdsNavChromeBackgroundStyle()
-        }
-      },
-      content: this.topTitleBarContent()
-    })
+    .titleBar(this.previewTitleBarOptions())
   }
 
   private showVideoPlayingDock(): boolean {
