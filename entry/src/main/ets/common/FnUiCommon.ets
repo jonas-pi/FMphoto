@@ -392,6 +392,8 @@ export struct FnHdsPillButton {
   @Prop lightColorValue: ResourceColor = $r('app.color.gallery_material_surface_bg');
   @Prop prominent: boolean = false;
   @Prop active: boolean = false;
+  /** 白底卡片上强制画出胶囊描边；顶栏沉浸按钮不要开。 */
+  @Prop outlined: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private isPressed: boolean = false;
   @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
@@ -441,7 +443,17 @@ export struct FnHdsPillButton {
 
   @Builder
   private glassLayer() {
-    if (this.shouldUseHds()) {
+    if (this.outlined) {
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.page_background'))
+        .borderRadius(this.shapeRadius())
+        .borderWidth(1)
+        .borderColor($r('app.color.card_border'))
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+    } else if (this.shouldUseHds()) {
       // 官方 FAQ：不透明底/渐变/自定义阴影会盖住沉浸材质；与系统 Menu 一样走透明 + ULTRA_THICK
       Row()
         .width('100%')

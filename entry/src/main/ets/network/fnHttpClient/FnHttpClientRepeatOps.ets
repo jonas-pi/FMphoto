@@ -103,6 +103,10 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
     return { success: true, data: parseRepeatPhotoTaskProgress(res.data) };
   }
 
+  /**
+   * 官方 similarApi：startCheckSimilar / startCheckRepeat 同走 `/repeat-photo/check`，
+   * 仅 body.checkSimilarity 不同。
+   */
   async startRepeatPhotoCheck(
     checkSimilarity: boolean,
     timeoutMs: number = 20000
@@ -143,6 +147,11 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
       timeoutMs,
       '保留此组失败'
     );
+  }
+
+  /** 官方退出：不对剩余检查结果做合并/保留，整次会话从结果里拿掉。 */
+  async excludeRepeatPhotoAll(timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
+    return this.postRepeatJson(REPEAT_PHOTO_EXCLUDE_PATH, '{"type":"All"}', timeoutMs, '退出失败');
   }
 
   async mergeRepeatPhotos(

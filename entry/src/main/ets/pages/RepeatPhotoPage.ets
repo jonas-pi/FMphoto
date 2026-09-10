@@ -29,6 +29,8 @@ import {
   repeatPhotoBootstrap,
   repeatPhotoConfirmMergeAll,
   repeatPhotoConfirmMergeGroup,
+  repeatPhotoExitWithoutAction,
+  repeatPhotoHasPendingResults,
   repeatPhotoKeepGroup,
   repeatPhotoOpenPreview,
   repeatPhotoPollTask,
@@ -62,8 +64,18 @@ struct RepeatPhotoPage {
   private actionsHostCache: RepeatPhotoActionsHost | undefined = undefined;
 
   onBackPress(): boolean {
-    this.navigateBack();
+    void this.tryExit();
     return true;
+  }
+
+  private async tryExit(): Promise<void> {
+    if (repeatPhotoHasPendingResults(this.asActionsHost())) {
+      const leave = await repeatPhotoExitWithoutAction(this.asActionsHost());
+      if (!leave) {
+        return;
+      }
+    }
+    this.navigateBack();
   }
 
   private navigateBack(): void {
@@ -279,19 +291,24 @@ struct RepeatPhotoPage {
   private startCard(title: string, desc: string, similar: boolean) {
     Column({ space: 10 }) {
       Text(title)
+        .width('100%')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
+        .textAlign(TextAlign.Start)
       Text(desc)
+        .width('100%')
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
         .lineHeight(20)
+        .textAlign(TextAlign.Start)
       FnHdsPillButton({
         text: this.starting ? '启动中…' : '立即检查',
         widthValue: 120,
         heightValue: 40,
         fontSizeValue: 15,
         fontColorValue: $r('app.color.brand_primary'),
+        outlined: true,
         action: (): void => {
           void repeatPhotoStartCheck(this.asActionsHost(), similar);
         }
@@ -299,7 +316,7 @@ struct RepeatPhotoPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(20)
+    .padding({ left: 16, right: 16, top: 16, bottom: 16 })
     .borderRadius(REPEAT_CARD_RADIUS_VP)
     .backgroundColor($r('app.color.album_shortcut_group_bg'))
   }
@@ -320,12 +337,13 @@ struct RepeatPhotoPage {
         )
       }
       .width('100%')
+      .alignItems(HorizontalAlign.Start)
       .padding({ left: 16, right: 16, top: 12, bottom: 32 })
     }
     .width('100%')
     .layoutWeight(1)
     .scrollBar(BarState.Off)
-    .align(Alignment.Top)
+    .align(Alignment.TopStart)
   }
 
   @Builder
@@ -382,7 +400,7 @@ struct RepeatPhotoPage {
   @Builder
   private groupCard(group: RepeatPhotoGroup, _index: number) {
     Column({ space: 12 }) {
-      Row() {
+      Row({ space: 8 }) {
         Text(repeatPhotoGroupDateText(group))
           .layoutWeight(1)
           .fontSize(15)
@@ -390,11 +408,14 @@ struct RepeatPhotoPage {
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Start)
         Text(`${group.photos.length}项`)
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
+          .flexShrink(0)
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       Scroll() {
         Row({ space: 8 }) {
@@ -406,6 +427,7 @@ struct RepeatPhotoPage {
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .width('100%')
+      .align(Alignment.Start)
 
       Row({ space: 10 }) {
         FnHdsPillButton({
@@ -413,6 +435,7 @@ struct RepeatPhotoPage {
           widthValue: 96,
           heightValue: 36,
           fontSizeValue: 14,
+          outlined: true,
           action: (): void => {
             void repeatPhotoKeepGroup(this.asActionsHost(), group);
           }
@@ -423,14 +446,17 @@ struct RepeatPhotoPage {
           heightValue: 36,
           fontSizeValue: 14,
           fontColorValue: '#E5484D',
+          outlined: true,
           action: (): void => {
             void repeatPhotoConfirmMergeGroup(this.asActionsHost(), group);
           }
         })
       }
       .width('100%')
+      .justifyContent(FlexAlign.Start)
     }
     .width('100%')
+    .alignItems(HorizontalAlign.Start)
     .padding(16)
     .borderRadius(REPEAT_CARD_RADIUS_VP)
     .backgroundColor($r('app.color.album_shortcut_group_bg'))
@@ -470,6 +496,7 @@ struct RepeatPhotoPage {
         heightValue: 40,
         fontSizeValue: 15,
         fontColorValue: $r('app.color.brand_primary'),
+        outlined: true,
         action: (): void => {
           this.step = 'start';
           this.error = '';

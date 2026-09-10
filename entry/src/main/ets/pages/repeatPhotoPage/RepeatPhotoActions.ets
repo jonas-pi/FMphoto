@@ -238,6 +238,49 @@ export async function repeatPhotoMerge(host: RepeatPhotoActionsHost, groupId: st
   await repeatPhotoLoadGroups(host);
 }
 
+export function repeatPhotoHasPendingResults(host: RepeatPhotoActionsHost): boolean {
+  return host.step === 'list' && host.groups.length > 0 && !host.merging;
+}
+
+/**
+ * 官方退出：不对剩余结果做合并/保留。确认后 POST exclude type=All，再离开页面。
+ * 返回 false 表示用户取消或接口失败，应留在结果页。
+ */
+export async function repeatPhotoExitWithoutAction(host: RepeatPhotoActionsHost): Promise<boolean> {
+  if (!repeatPhotoHasPendingResults(host)) {
+    return true;
+  }
+  try {
+    const dlg = await host.getUIContext().getPromptAction().showDialog({
+      title: '退出',
+      message: '退出后将不处理本次检查结果。',
+      buttons: [
+        { text: '取消', color: '#99000000' },
+        { text: '退出', color: '#E5484D' }
+      ]
+    });
+    if (dlg.index !== 1) {
+      return false;
+    }
+  } catch (_e) {
+    return false;
+  }
+  const client = AppSession.getClient();
+  if (client === null) {
+    return true;
+  }
+  const res: FnClientResult<Object> = await client.excludeRepeatPhotoAll();
+  if (!res.success) {
+    host.toast(res.message ?? '退出失败');
+    return false;
+  }
+  host.groups = [];
+  host.totalCount = 0;
+  host.strategy = '';
+  host.step = 'start';
+  return true;
+}
+
 export async function repeatPhotoKeepGroup(host: RepeatPhotoActionsHost, group: RepeatPhotoGroup): Promise<void> {
   const client = AppSession.getClient();
   if (client === null) {
