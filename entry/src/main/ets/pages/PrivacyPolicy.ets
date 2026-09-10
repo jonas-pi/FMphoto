@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { SessionPreferences } from '../auth/SessionPreferences';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
   FN_NAV_INDICATOR_INSET_VP_KEY,
@@ -19,13 +20,23 @@ struct PrivacyPolicy {
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
+  /** 本地已持久化同意。已同意后再次打开只是查看，不重新拦截。 */
+  @State private accepted: boolean = false;
+  /** 未同意时必须决断，系统返回无效。 */
+  @State private decisionRequired: boolean = false;
+  @State private submitting: boolean = false;
 
   aboutToAppear(): void {
     this.applySystemBar();
+    void this.loadConsentState();
   }
 
   onPageShow(): void {
     this.applySystemBar();
+  }
+
+  onBackPress(): boolean {
+    return this.decisionRequired;
   }
 
   private onColorModeChanged(): void {
@@ -45,8 +56,81 @@ struct PrivacyPolicy {
     }
   }
 
+  private async loadConsentState(): Promise<void> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      const ok = await SessionPreferences.isPrivacyPolicyAccepted(ctx);
+      this.accepted = ok;
+      this.decisionRequired = !ok;
+    } catch (_e) {
+      this.accepted = false;
+      this.decisionRequired = true;
+    }
+  }
+
   private goBack(): void {
+    if (this.decisionRequired) {
+      return;
+    }
     this.getUIContext().getRouter().back();
+  }
+
+  private async agreeConsent(): Promise<void> {
+    if (this.submitting) {
+      return;
+    }
+    this.submitting = true;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      await SessionPreferences.setPrivacyPolicyAccepted(ctx, true);
+      this.accepted = true;
+      this.decisionRequired = false;
+      this.getUIContext().getRouter().back();
+    } catch (_e) {
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: $r('app.string.privacy_consent_save_failed'),
+          duration: 2500
+        });
+      } catch (_ignored) {
+      }
+    } finally {
+      this.submitting = false;
+    }
+  }
+
+  private async rejectConsent(): Promise<void> {
+    if (this.submitting) {
+      return;
+    }
+    if (this.accepted) {
+      try {
+        const dlg = await this.getUIContext().getPromptAction().showDialog({
+          title: $r('app.string.privacy_consent_withdraw_title'),
+          message: $r('app.string.privacy_consent_withdraw_message'),
+          buttons: [
+            { text: $r('app.string.cancel'), color: '#99000000' },
+            { text: $r('app.string.privacy_consent_withdraw'), color: '#E5484D' }
+          ]
+        });
+        if (dlg.index !== 1) {
+          return;
+        }
+      } catch (_e) {
+        return;
+      }
+    }
+    this.submitting = true;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      await SessionPreferences.setPrivacyPolicyAccepted(ctx, false);
+    } catch (_e) {
+    }
+    try {
+      await ctx.terminateSelf();
+    } catch (_e) {
+    }
+    this.submitting = false;
   }
 
   @Builder
@@ -89,17 +173,23 @@ struct PrivacyPolicy {
   build() {
     Column() {
       Row({ space: 10 }) {
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(22)
-            .fontColor([$r('app.color.text_primary')])
+        if (this.decisionRequired) {
+          Blank()
+            .width(40)
+            .height(40)
+        } else {
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.chevron_left'))
+              .fontSize(22)
+              .fontColor([$r('app.color.text_primary')])
+          }
+          .width(40)
+          .height(40)
+          .backgroundColor($r('app.color.card_background'))
+          .onClick((): void => {
+            this.goBack();
+          })
         }
-        .width(40)
-        .height(40)
-        .backgroundColor($r('app.color.card_background'))
-        .onClick((): void => {
-          this.goBack();
-        })
 
         Text($r('app.string.privacy_policy_title'))
           .fontSize(20)
@@ -129,6 +219,14 @@ struct PrivacyPolicy {
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
             .margin({ bottom: 10 })
+
+          if (this.decisionRequired) {
+            Text($r('app.string.privacy_consent_locked_hint'))
+              .fontSize(14)
+              .fontColor($r('app.color.brand_primary'))
+              .lineHeight(22)
+              .width('100%')
+          }
 
           this.paragraph($r('app.string.privacy_policy_intro'))
 
@@ -188,12 +286,45 @@ struct PrivacyPolicy {
             .height(18)
         }
         .width('100%')
-        .padding({ left: 20, right: 20, top: 18, bottom: 18 + this.navIndicatorInsetVp })
+        .padding({ left: 20, right: 20, top: 18, bottom: 18 })
       }
       .width('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
+
+      Row({ space: 12 }) {
+        Button(this.accepted ? $r('app.string.privacy_consent_withdraw') : $r('app.string.privacy_consent_disagree'))
+          .layoutWeight(1)
+          .height(42)
+          .fontSize(14)
+          .fontColor('#FFFF3B30')
+          .backgroundColor('#1AFF3B30')
+          .borderRadius(14)
+          .enabled(!this.submitting)
+          .onClick((): void => {
+            void this.rejectConsent();
+          })
+
+        Button($r('app.string.privacy_consent_agree'))
+          .layoutWeight(1)
+          .height(42)
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor($r('app.color.brand_primary'))
+          .borderRadius(14)
+          .enabled(!this.submitting)
+          .onClick((): void => {
+            void this.agreeConsent();
+          })
+      }
+      .width('100%')
+      .padding({
+        left: 20,
+        right: 20,
+        top: 10,
+        bottom: 12 + this.navIndicatorInsetVp
+      })
     }
     .width('100%')
     .height('100%')

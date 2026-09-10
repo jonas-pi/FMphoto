@@ -325,8 +325,32 @@
       "value": "保存同意状态失败，请重试"
     },
     {
+      "name": "privacy_consent_withdraw",
+      "value": "撤回同意"
+    },
+    {
+      "name": "privacy_consent_withdraw_title",
+      "value": "撤回同意"
+    },
+    {
+      "name": "privacy_consent_withdraw_message",
+      "value": "撤回后将退出应用。再次打开需重新同意后才能使用。"
+    },
+    {
+      "name": "privacy_consent_locked_hint",
+      "value": "请阅读后点击同意，未同意前无法离开此页。"
+    },
+    {
       "name": "privacy_policy_title",
       "value": "隐私政策"
+    },
+    {
+      "name": "privacy_policy_entry_title",
+      "value": "隐私政策"
+    },
+    {
+      "name": "privacy_policy_entry_subtitle",
+      "value": "查看全文，也可重新同意或撤回"
     },
     {
       "name": "privacy_policy_heading",

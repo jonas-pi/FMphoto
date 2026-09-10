@@ -6,6 +6,30 @@
 
 ---
 
+## [1.4.2-beta.1] - 2026-09-10
+
+在 [1.4.1] 上补齐隐私政策入口与同意持久化，并修重复检测退出与隐私页顶栏避让。
+
+### 新增
+
+- **重新查看隐私政策**：启动确认、登录页和「我的」均可打开全文。同意状态写入本地偏好，下次启动不再询问。
+- **撤回同意**：已同意后可撤回；确认后清除持久化并退出应用，再次打开需重新同意。未同意时无法离开政策页，不同意即退出。
+
+### 修复
+
+- **重复/相似检测退出**：不再调用 NAS 不支持的 `exclude type=All`，避免提示 `invalid type`；结果保留，下次可继续处理。
+- **隐私政策顶栏**：标题栏避开状态栏，返回按钮不再被遮挡。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> **Beta 预发布**：仅上传未签名包，供测试验证。已安装 `1.4.1` 的设备可直接覆盖升级（`versionCode` 1004004）。
+
+---
+
 ## [1.4.1] - 2026-09-09
 
 在 [1.4.1-beta.1] 上发布的正式版，纳入文件夹浏览、搜索筛选与视频原片播放，并补文件夹封面遮罩。
@@ -650,6 +674,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.4.2-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.4.1...v1.4.2-beta.1
 [1.4.1]: https://github.com/jonas-pi/FMphoto/compare/v1.4.1-beta.1...v1.4.1
 [1.4.1-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.4.0...v1.4.1-beta.1
 [1.4.0]: https://github.com/jonas-pi/FMphoto/compare/v1.3.4...v1.4.0

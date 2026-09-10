@@ -28,6 +28,7 @@ import { isFnRelayBaseUrl, lookupFnConnect, FnIdOrHostParts, splitFnIdOrHostInpu
 import { preferPublicEndpointUrl } from '../network/PublicDns';
 import { fnWs2faVerify, fnWsLogin, shouldTryNextLoginEndpoint } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
+import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
 import { LoginFormDefaults, LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
@@ -1108,6 +1109,15 @@ struct Login {
         .fontColor($r('app.color.text_secondary'))
         .textAlign(TextAlign.Center)
         .width('100%')
+
+      Text($r('app.string.privacy_policy_title'))
+        .fontSize(13)
+        .fontColor($r('app.color.brand_primary'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .onClick((): void => {
+          openPrivacyPolicyPage(this.getUIContext());
+        })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)

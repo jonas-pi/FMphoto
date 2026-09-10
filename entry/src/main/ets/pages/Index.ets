@@ -11,6 +11,7 @@ import { scheduleCheck } from '../network/LoginEndpointAutoSwitch';
 import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
+import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
 
 @Entry
 @Component
@@ -21,6 +22,7 @@ struct Index {
   @State private privacyConsentSubmitting: boolean = false;
   @State private splashOpacity: number = 1.0;
   @State private splashLoadingVisible: boolean = false;
+  private bootstrapStarted: boolean = false;
 
   aboutToAppear(): void {
     this.syncSplashWindowChrome();
@@ -32,6 +34,13 @@ struct Index {
       this.splashLoadingVisible = true;
     }, 400);
     void this.bootstrapFlow();
+  }
+
+  onPageShow(): void {
+    if (!this.privacyConsentRequired) {
+      return;
+    }
+    void this.resumeIfPrivacyAccepted();
   }
 
   private onColorModeChanged(): void {
@@ -83,16 +92,22 @@ struct Index {
     }
   }
 
-  private openPrivacyPolicy(): void {
-    this.getUIContext().getRouter().pushUrl({ url: 'pages/PrivacyPolicy' }).catch((): void => {
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: $r('app.string.privacy_consent_open_failed'),
-          duration: 2500
-        });
-      } catch (_e) {
+  private async resumeIfPrivacyAccepted(): Promise<void> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      const accepted = await SessionPreferences.isPrivacyPolicyAccepted(ctx);
+      if (!accepted) {
+        return;
       }
-    });
+      this.privacyConsentRequired = false;
+      this.hint = '正在初始化…';
+      this.restoreSessionAndRoute();
+    } catch (_e) {
+    }
+  }
+
+  private openPrivacyPolicy(): void {
+    openPrivacyPolicyPage(this.getUIContext());
   }
 
   private async agreePrivacyConsent(): Promise<void> {
@@ -150,6 +165,10 @@ struct Index {
 
   /** 恢复会话并跳转登录或主页。 */
   private restoreSessionAndRoute(): void {
+    if (this.bootstrapStarted) {
+      return;
+    }
+    this.bootstrapStarted = true;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     AppSession.restore(ctx).then((s) => {
       if (s === null || s.token.length === 0) {
