@@ -2,7 +2,7 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "飞牛 NAS 客户端（鸿蒙）"
+      "value": "飞马相册"
     },
     {
       "name": "EntryAbility_desc",
@@ -30,7 +30,7 @@
     },
     {
       "name": "login_title",
-      "value": "登录飞牛？马！ NAS"
+      "value": "飞马相册"
     },
     {
       "name": "hint_server",
@@ -302,7 +302,7 @@
     },
     {
       "name": "privacy_consent_message",
-      "value": "使用 FMphoto 前，请阅读并同意《隐私政策》。本应用需要你主动填写 NAS 地址、账号和密码后才会连接你的 NAS；登录凭据、会话 token、证书信任记录和相册相关数据会在本机与用户配置的 NAS 之间处理。未同意前，应用不会恢复会话或进入登录流程。"
+      "value": "欢迎使用「飞马相册」。请阅读并同意《隐私政策》。本应用需要你主动填写 NAS 地址、账号和密码后才会连接你的 NAS；登录凭据、会话 token、证书信任记录和相册相关数据会在本机与用户配置的 NAS 之间处理。未同意前，应用不会恢复会话或进入登录流程。"
     },
     {
       "name": "privacy_consent_view",
@@ -327,6 +327,18 @@
     {
       "name": "privacy_policy_title",
       "value": "隐私政策"
+    },
+    {
+      "name": "privacy_policy_heading",
+      "value": "飞马相册隐私政策"
+    },
+    {
+      "name": "privacy_policy_intro",
+      "value": "飞马相册是一个面向飞牛 NAS 相册的非官方 HarmonyOS 客户端。应用的核心用途是在用户指定的 NAS 服务之间登录、浏览、搜索、预览、上传、下载和管理相册内容。除用户自行配置的 NAS 地址外，应用本身不运营开发者云端服务，不包含广告、第三方统计或第三方崩溃上报 SDK，也不会主动把用户数据发送给开发者服务器。"
+    },
+    {
+      "name": "login_subtitle",
+      "value": "飞牛 NAS 相册客户端"
     },
     {
       "name": "config_sync_title",

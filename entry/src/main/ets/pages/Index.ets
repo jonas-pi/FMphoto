@@ -198,12 +198,24 @@ struct Index {
   @Builder
   private privacyConsentPanel() {
     Column({ space: 16 }) {
-      Text($r('app.string.privacy_consent_title'))
+      Image($r('app.media.app_icon'))
+        .width(56)
+        .height(56)
+        .borderRadius(14)
+
+      Text($r('app.string.EntryAbility_label'))
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
-        .textAlign(TextAlign.Start)
+        .textAlign(TextAlign.Center)
+
+      Text($r('app.string.privacy_consent_title'))
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
 
       Text($r('app.string.privacy_consent_message'))
         .fontSize(14)

@@ -149,11 +149,6 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
     );
   }
 
-  /** 官方退出：不对剩余检查结果做合并/保留，整次会话从结果里拿掉。 */
-  async excludeRepeatPhotoAll(timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
-    return this.postRepeatJson(REPEAT_PHOTO_EXCLUDE_PATH, '{"type":"All"}', timeoutMs, '退出失败');
-  }
-
   async mergeRepeatPhotos(
     groupId: string,
     timeoutMs: number = 30000

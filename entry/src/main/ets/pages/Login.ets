@@ -1103,7 +1103,7 @@ struct Login {
         .textAlign(TextAlign.Center)
         .width('100%')
 
-      Text($r('app.string.EntryAbility_label'))
+      Text($r('app.string.login_subtitle'))
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
         .textAlign(TextAlign.Center)

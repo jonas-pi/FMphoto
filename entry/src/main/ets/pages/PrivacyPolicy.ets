@@ -1,3 +1,11 @@
+import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
+import {
+  FN_NAV_INDICATOR_INSET_VP_KEY,
+  FN_SYSTEM_TOP_INSET_VP_KEY,
+  fnPublishSystemAvoidArea
+} from '../common/FnSystemAvoidArea';
 import {
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
@@ -8,12 +16,41 @@ import {
 @Entry
 @Component
 struct PrivacyPolicy {
+  @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
+  @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
+
+  aboutToAppear(): void {
+    this.applySystemBar();
+  }
+
+  onPageShow(): void {
+    this.applySystemBar();
+  }
+
+  private onColorModeChanged(): void {
+    this.applySystemBar();
+  }
+
+  /** 沉浸式窗口下背景可延伸，标题栏与正文用动态避让区垫开。 */
+  private applySystemBar(): void {
+    try {
+      const dark = this.colorMode === 1;
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        fnApplyImmersiveSystemBarColors(win, dark);
+        fnPublishSystemAvoidArea(win, this.getUIContext());
+      }).catch((_e: Error): void => {});
+    } catch (_e) {
+    }
+  }
+
   private goBack(): void {
     this.getUIContext().getRouter().back();
   }
 
   @Builder
-  private sectionTitle(text: string) {
+  private sectionTitle(text: ResourceStr) {
     Text(text)
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
@@ -23,7 +60,7 @@ struct PrivacyPolicy {
   }
 
   @Builder
-  private paragraph(text: string) {
+  private paragraph(text: ResourceStr) {
     Text(text)
       .fontSize(14)
       .fontColor($r('app.color.text_secondary'))
@@ -32,7 +69,7 @@ struct PrivacyPolicy {
   }
 
   @Builder
-  private bullet(text: string) {
+  private bullet(text: ResourceStr) {
     Row({ space: 8 }) {
       Text('•')
         .fontSize(15)
@@ -75,13 +112,13 @@ struct PrivacyPolicy {
           .height(40)
       }
       .width('100%')
-      .height(56)
-      .padding({ left: 14, right: 14 })
+      .height(56 + this.systemTopInsetVp)
+      .padding({ left: 14, right: 14, top: this.systemTopInsetVp })
       .backgroundColor($r('app.color.page_background'))
 
       Scroll() {
         Column({ space: 10 }) {
-          Text('FMphoto 隐私政策')
+          Text($r('app.string.privacy_policy_heading'))
             .fontSize(26)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
@@ -93,7 +130,7 @@ struct PrivacyPolicy {
             .width('100%')
             .margin({ bottom: 10 })
 
-          this.paragraph('FMphoto 是一个面向飞牛 NAS 相册的非官方 HarmonyOS 客户端。应用的核心用途是在用户指定的 NAS 服务之间登录、浏览、搜索、预览、上传、下载和管理相册内容。除用户自行配置的 NAS 地址外，应用本身不运营开发者云端服务，不包含广告、第三方统计或第三方崩溃上报 SDK，也不会主动把用户数据发送给开发者服务器。')
+          this.paragraph($r('app.string.privacy_policy_intro'))
 
           this.sectionTitle('我们处理哪些信息')
           this.paragraph('为实现相册客户端功能，应用会在设备本地和用户配置的 NAS 之间处理以下信息：')
@@ -151,7 +188,7 @@ struct PrivacyPolicy {
             .height(18)
         }
         .width('100%')
-        .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+        .padding({ left: 20, right: 20, top: 18, bottom: 18 + this.navIndicatorInsetVp })
       }
       .width('100%')
       .layoutWeight(1)

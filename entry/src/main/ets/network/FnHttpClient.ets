@@ -1267,10 +1267,6 @@ export class FnHttpClient {
     return this.galleryOps.excludeRepeatPhotoGroup(groupId, timeoutMs);
   }
 
-  async excludeRepeatPhotoAll(timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
-    return this.galleryOps.excludeRepeatPhotoAll(timeoutMs);
-  }
-
   async mergeRepeatPhotos(groupId: string, timeoutMs: number = 30000): Promise<FnClientResult<RepeatPhotoMergeData>> {
     return this.galleryOps.mergeRepeatPhotos(groupId, timeoutMs);
   }
