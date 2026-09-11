@@ -249,8 +249,8 @@ export struct GalleryPreviewChrome {
   }
 
   private originalHitRight(): number {
-    // 右起依次是更多、详情；原图再往左一格。无更多时详情在最右。
-    return this.showSearchSimilarAction ? GALLERY_PREVIEW_TOP_MENU_SLOT_VP * 2 : GALLERY_PREVIEW_TOP_MENU_SLOT_VP;
+    // 更多在最右，原图在它左侧一格。
+    return GALLERY_PREVIEW_TOP_MENU_SLOT_VP;
   }
 
   private originalHitTop(): number {
@@ -260,9 +260,15 @@ export struct GalleryPreviewChrome {
   @Builder
   private previewMoreMenuBuilder() {
     Menu() {
-      MenuItem({ content: '搜索相似照片' })
+      if (this.showSearchSimilarAction) {
+        MenuItem({ content: '搜索相似照片' })
+          .onClick((): void => {
+            this.onSearchSimilar();
+          })
+      }
+      MenuItem({ content: '查看详情' })
         .onClick((): void => {
-          this.onSearchSimilar();
+          this.onOpenDetails();
         })
     }
   }
@@ -294,32 +300,18 @@ export struct GalleryPreviewChrome {
       };
       items.push(this.topMenuItem(originalContent));
     }
-    const detailsContent: HdsNavigationIconOptions = {
-      label: '详情',
-      icon: new SymbolGlyphModifier($r('sys.symbol.info_circle'))
+    const moreContent: HdsNavigationIconOptions = {
+      label: '更多',
+      icon: new SymbolGlyphModifier($r('sys.symbol.dot_grid_2x2'))
         .fontSize(24)
         .fontColor([this.fgColor]),
       type: IconStyleMode.NORMAL,
       isEnabled: this.toolbarVisible,
       action: (): void => {
-        this.onOpenDetails();
+        this.onToggleMoreMenu();
       }
     };
-    items.push(this.topMenuItem(detailsContent));
-    if (this.showSearchSimilarAction) {
-      const moreContent: HdsNavigationIconOptions = {
-        label: '更多',
-        icon: new SymbolGlyphModifier($r('sys.symbol.dot_grid_2x2'))
-          .fontSize(24)
-          .fontColor([this.fgColor]),
-        type: IconStyleMode.NORMAL,
-        isEnabled: this.toolbarVisible,
-        action: (): void => {
-          this.onToggleMoreMenu();
-        }
-      };
-      items.push(this.topMenuItem(moreContent));
-    }
+    items.push(this.topMenuItem(moreContent));
     return items;
   }
 
@@ -727,8 +719,7 @@ export struct GalleryPreviewChrome {
           .hitTestBehavior(HitTestMode.Transparent)
         }
 
-        if (this.showSearchSimilarAction) {
-          Stack({ alignContent: Alignment.TopEnd }) {
+        Stack({ alignContent: Alignment.TopEnd }) {
             Row()
               .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
               .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
@@ -747,7 +738,6 @@ export struct GalleryPreviewChrome {
           .width('100%')
           .height('100%')
           .hitTestBehavior(HitTestMode.Transparent)
-        }
       }
       .width('100%')
       .height('100%')

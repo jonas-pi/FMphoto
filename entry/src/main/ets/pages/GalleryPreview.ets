@@ -1,7 +1,7 @@
 /**
  * 图库大图预览（独立页面）。
  *
- * 布局：顶栏（← | 计数 | 原图⊙ | 详情 | ···）/ 全屏 Swiper / 底栏（分享 下载 收藏 删除）
+ * 布局：顶栏（← | 计数 | 原图⊙ | ···）/ 全屏 Swiper / 底栏（分享 下载 收藏 删除）
  *
  * 注：分享功能使用 @kit.ShareKit（@hms.collaboration.systemShare）。
  * 该模块属 HarmonyOS HMS SDK，DevEco Studio + hvigor 编译时可正常解析；
@@ -1269,6 +1269,7 @@ struct GalleryPreview {
           this.toggleOriginalLock();
         },
         onOpenDetails: (): void => {
+          this.dismissMoreMenu();
           this.openDetailsPanel();
         },
         onToggleMoreMenu: (): void => {
