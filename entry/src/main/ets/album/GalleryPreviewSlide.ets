@@ -359,6 +359,10 @@ export struct GalleryPreviewSlide {
       this.heroIdFrozen = true;
     }
     this.syncBoundItemAndPrepare();
+    // 首张创建时 originalPreviewEnabled 已是 true，@Watch 不会再触发，这里补一次原图加载。
+    if (this.originalPreviewEnabled) {
+      this.loadOriginal();
+    }
     this.armVideoOverlayReveal();
     this.armHeroIdFreeze(this.active);
     addGalleryPreviewDetailsFitListener(this.onDetailsFitHeight);

@@ -81,7 +81,7 @@ import {
 } from './galleryAlbumTab/GalleryAlbumTopBar';
 import {
   gallerySlideshowLaunch,
-  gallerySlideshowLaunchForSmartCategory
+  gallerySlideshowLaunchForItems
 } from './slideshow/GallerySlideshowLauncher';
 import {
   GallerySlideshowConfig,
@@ -2630,10 +2630,6 @@ export struct GalleryAlbumTab {
   private openSlideshowSettings(): void {
     this.dismissMoreMenu();
     if (this.inSearchMode) {
-      if (this.session.mode.searchQuery.trim().length === 0) {
-        this.toast('请先输入搜索关键词');
-        return;
-      }
       if (!this.searchLoading && this.searchResults.length === 0) {
         this.toast('暂无可播放媒体');
         return;
@@ -2648,9 +2644,10 @@ export struct GalleryAlbumTab {
 
   private gallerySlideshowScope(): GallerySlideshowScope {
     if (this.inSearchMode) {
+      const keyword = this.session.mode.searchQuery.trim();
       return {
-        kind: GallerySlideshowScopeKind.SMART_CATEGORY,
-        smartCategoryKeyword: this.session.mode.searchQuery.trim()
+        kind: GallerySlideshowScopeKind.FLAT_ITEMS,
+        scopeLabel: keyword.length > 0 ? keyword : '搜索'
       };
     }
     return { kind: GallerySlideshowScopeKind.ALL_GALLERY };
@@ -2680,7 +2677,6 @@ export struct GalleryAlbumTab {
     const isActive = this.createNavigationGuard();
     try {
       if (this.inSearchMode) {
-        const keyword = this.session.mode.searchQuery.trim();
         let spins = 0;
         while (this.searchLoading && isActive() && spins < 600) {
           await new Promise<void>((resolve: () => void) => {
@@ -2693,16 +2689,18 @@ export struct GalleryAlbumTab {
         if (!isActive()) {
           return;
         }
-        // 不传当前页已渲染子集，按关键词重拉搜索全集
-        await gallerySlideshowLaunchForSmartCategory(
+        // 与当前搜索页一致：关键词 + 筛选的交集，不再按关键词重拉全集
+        const keyword = this.session.mode.searchQuery.trim();
+        await gallerySlideshowLaunchForItems(
           this.getUIContext(),
           this.baseUrl,
-          keyword,
+          this.searchResults,
           config,
           (msg: string): void => {
             this.toast(msg);
           },
-          isActive
+          isActive,
+          keyword.length > 0 ? keyword : '搜索'
         );
       } else {
         await gallerySlideshowLaunch(
