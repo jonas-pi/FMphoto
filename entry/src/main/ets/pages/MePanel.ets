@@ -633,41 +633,15 @@ export struct MePanel {
   }
 
   @Builder
-  private privacyPolicyEntryRow() {
-    Row({ space: 10 }) {
-      Column({ space: 6 }) {
-        Text($r('app.string.privacy_policy_entry_title'))
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-        Text($r('app.string.privacy_policy_entry_subtitle'))
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .layoutWeight(1)
-
-      SymbolGlyph($r('sys.symbol.info_circle'))
-        .fontSize(18)
-        .fontColor([$r('app.color.text_secondary')])
-
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(16)
-        .fontColor([$r('app.color.text_secondary')])
-    }
-    .width('100%')
-    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-    .backgroundColor($r('app.color.card_background'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
-    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .clip(true)
-    .onClick((): void => {
-      openPrivacyPolicyPage(this.getUIContext());
-    })
+  private privacyPolicyLink() {
+    Text($r('app.string.privacy_policy_title'))
+      .fontSize(13)
+      .fontColor($r('app.color.brand_primary'))
+      .textAlign(TextAlign.Center)
+      .width('100%')
+      .onClick((): void => {
+        openPrivacyPolicyPage(this.getUIContext());
+      })
   }
 
   @Builder
@@ -1054,12 +1028,6 @@ export struct MePanel {
           .width('100%')
           .height(ME_ACTION_GAP_VP)
 
-        this.privacyPolicyEntryRow()
-
-        Blank()
-          .width('100%')
-          .height(ME_ACTION_GAP_VP)
-
         this.immersiveSwitchRow()
 
         Blank()
@@ -1107,6 +1075,12 @@ export struct MePanel {
             })();
           }
         })
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.privacyPolicyLink()
         }
         .width('100%')
         .justifyContent(FlexAlign.Start)

@@ -13,6 +13,7 @@ import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
 import { GalleryPreviewSessionPrefs } from '../album/GalleryPreviewSessionPrefs';
+import { prefetchSlideshowNextItem } from '../album/slideshow/GallerySlideshowMediaPrefetch';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import {
   GalleryListBackStep,
@@ -308,6 +309,7 @@ struct GalleryPreview {
     if (this.session.slideshow.slideshowEnabled) {
       this.logSlideshowPage();
       this.maybePrefetchSlideshowItems();
+      this.prefetchNextSlideshowMedia();
     }
   }
 
@@ -361,6 +363,35 @@ struct GalleryPreview {
 
   private onSlideshowVideoEnded(): void {
     galleryPreviewOnSlideshowVideoEnded(this.asSlideshowHost());
+  }
+
+  private slideshowPrefetchCacheDir(): string {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      return ctx.cacheDir;
+    } catch (_e) {
+      return '';
+    }
+  }
+
+  /** 幻灯片预拉下一张中档图；当前原图就绪后再预拉下一张原图，避免和当前张抢带宽。 */
+  private prefetchNextSlideshowMedia(): void {
+    if (!this.session.slideshow.slideshowEnabled) {
+      return;
+    }
+    const nextIdx = this.swiperIndex + 1;
+    if (nextIdx < 0 || nextIdx >= this.previewItems.length) {
+      return;
+    }
+    const next = this.previewItems[nextIdx];
+    const waitingCurrentOriginal =
+      this.originalLocked && this.originalPreviewEnabled && !this.originalShowing;
+    prefetchSlideshowNextItem(
+      next,
+      this.baseUrl,
+      this.originalLocked && !waitingCurrentOriginal,
+      this.slideshowPrefetchCacheDir()
+    );
   }
 
   aboutToDisappear(): void {
@@ -507,6 +538,11 @@ struct GalleryPreview {
     );
   }
 
+  /** 锁定原图后等当前项原图落地（或失败）再开始幻灯片间隔，避免切页时只闪缩略图。 */
+  private currentSlideshowWaitsForOriginal(): boolean {
+    return this.originalLocked && this.originalPreviewEnabled && !this.originalShowing;
+  }
+
   private currentItemId(): string {
     const item = this.currentItem();
     if (item === null || item.id === undefined || item.id === null) {
@@ -603,7 +639,8 @@ struct GalleryPreview {
   }
 
   private applySessionOriginalIfNeeded(): void {
-    if (this.session.slideshow.slideshowEnabled || !this.originalLocked || !this.currentHasOriginal()) {
+    // 幻灯片只是自动切页，长按锁定的原图仍应对后续项生效。
+    if (!this.originalLocked || !this.currentHasOriginal()) {
       return;
     }
     this.originalPreviewEnabled = true;
@@ -633,11 +670,15 @@ struct GalleryPreview {
         this.originalPreviewEnabled = true;
         this.loadOriginalToken++;
       }
-      return;
+    } else {
+      // 再次长按：解除后续沿用，同时关掉当前原图。
+      this.originalPreviewEnabled = false;
+      this.originalShowing = false;
     }
-    // 再次长按：解除后续沿用，同时关掉当前原图。
-    this.originalPreviewEnabled = false;
-    this.originalShowing = false;
+    if (this.session.slideshow.slideshowEnabled) {
+      this.armSlideshowTimer();
+      this.prefetchNextSlideshowMedia();
+    }
   }
 
   private syncCollectStateFromCurrentItem(): void {
@@ -838,6 +879,8 @@ struct GalleryPreview {
       currentItem(): GalleryListItem | null { return self.currentItem(); }
       currentItemIsVideo(): boolean { return self.currentItemIsVideo(); }
       currentSlideshowWaitsForMediaEnd(): boolean { return self.currentSlideshowWaitsForMediaEnd(); }
+      currentSlideshowWaitsForOriginal(): boolean { return self.currentSlideshowWaitsForOriginal(); }
+      prefetchNextSlideshowMedia(): void { self.prefetchNextSlideshowMedia(); }
     }
     this.slideshowHostCache = new GalleryPreviewSlideshowHostBridge();
     return this.slideshowHostCache;
@@ -1037,12 +1080,20 @@ struct GalleryPreview {
                 if (this.originalPreviewEnabled) {
                   this.originalShowing = true;
                 }
+                if (this.session.slideshow.slideshowEnabled) {
+                  this.armSlideshowTimer();
+                  this.prefetchNextSlideshowMedia();
+                }
               },
               onOriginalLoadFailed: (msg: string): void => {
                 if (this.originalPreviewEnabled) {
                   this.originalPreviewEnabled = false;
                   this.originalShowing = false;
                   this.toast(msg);
+                }
+                if (this.session.slideshow.slideshowEnabled) {
+                  this.armSlideshowTimer();
+                  this.prefetchNextSlideshowMedia();
                 }
               },
               onSlideshowVideoEnded: (): void => {
@@ -1133,6 +1184,7 @@ struct GalleryPreview {
             this.logSlideshowPage();
             this.armSlideshowTimer();
             this.scheduleSlideshowPrefetch();
+            this.prefetchNextSlideshowMedia();
           }
         })
         .onAreaChange((_old, area): void => {

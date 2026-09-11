@@ -29,6 +29,8 @@ export interface GalleryPreviewSlideshowHost {
   currentItem(): GalleryListItem | null;
   currentItemIsVideo(): boolean;
   currentSlideshowWaitsForMediaEnd(): boolean;
+  currentSlideshowWaitsForOriginal(): boolean;
+  prefetchNextSlideshowMedia(): void;
 }
 
 export function galleryPreviewClearSlideshowTimer(host: GalleryPreviewSlideshowHost): void {
@@ -189,6 +191,7 @@ export function galleryPreviewAppendSlideshowEntries(
   GallerySlideshowStreamStore.rememberEntries(unique);
   slideshowLogAppend(entries.length, unique.length, dropGlobal, dropKey, host.previewItems.length,
     host.slideshowGlobalIndices.length);
+  host.prefetchNextSlideshowMedia();
 }
 
 export function galleryPreviewLogSlideshowPage(host: GalleryPreviewSlideshowHost): void {
@@ -237,7 +240,7 @@ export function galleryPreviewArmSlideshowTimer(host: GalleryPreviewSlideshowHos
   if (host.detailsVisible) {
     return;
   }
-  if (host.currentSlideshowWaitsForMediaEnd()) {
+  if (host.currentSlideshowWaitsForMediaEnd() || host.currentSlideshowWaitsForOriginal()) {
     return;
   }
   host.slideshowTimerId = setTimeout((): void => {
@@ -246,7 +249,7 @@ export function galleryPreviewArmSlideshowTimer(host: GalleryPreviewSlideshowHos
       galleryPreviewArmSlideshowTimer(host);
       return;
     }
-    if (host.currentSlideshowWaitsForMediaEnd()) {
+    if (host.currentSlideshowWaitsForMediaEnd() || host.currentSlideshowWaitsForOriginal()) {
       return;
     }
     galleryPreviewAdvanceSlideshow(host);

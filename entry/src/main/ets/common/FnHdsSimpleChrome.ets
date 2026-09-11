@@ -26,6 +26,8 @@ export struct FnHdsSimpleChrome {
   /** 官方圆形菜单图标；rightAsIcon 为 true 时与返回按钮同款圆形背板 */
   @Prop rightIcon: Resource = $r('sys.symbol.pencil_line');
   @Prop rightAsIcon: boolean = false;
+  /** 未同意隐私政策等必须决断的页面可隐藏返回 */
+  @Prop showBack: boolean = true;
   @Prop topSafeInsetVp: number = 0;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   scrollerList: Scroller[] = [];
@@ -61,7 +63,7 @@ export struct FnHdsSimpleChrome {
   private backIconOptions(): HdsNavigationBackButtonItemOptions {
     const backIcon: HdsNavigationBackButtonItemOptions = {
       label: '返回',
-      isEnabled: true,
+      isEnabled: this.showBack,
       action: (): void => {
         this.onBack();
       }
@@ -104,7 +106,7 @@ export struct FnHdsSimpleChrome {
       .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
       .mode(NavigationMode.Stack)
       .titleMode(HdsNavigationTitleMode.MINI)
-      .hideBackButton(false)
+      .hideBackButton(!this.showBack)
       .bindToScrollable(this.scrollerList)
       .titleBar(this.titleBarOptions())
       .hitTestBehavior(HitTestMode.Default)

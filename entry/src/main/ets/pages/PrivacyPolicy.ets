@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { SessionPreferences } from '../auth/SessionPreferences';
+import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
   FN_NAV_INDICATOR_INSET_VP_KEY,
@@ -172,39 +173,14 @@ struct PrivacyPolicy {
 
   build() {
     Column() {
-      Row({ space: 10 }) {
-        if (this.decisionRequired) {
-          Blank()
-            .width(40)
-            .height(40)
-        } else {
-          Button({ type: ButtonType.Circle }) {
-            SymbolGlyph($r('sys.symbol.chevron_left'))
-              .fontSize(22)
-              .fontColor([$r('app.color.text_primary')])
-          }
-          .width(40)
-          .height(40)
-          .backgroundColor($r('app.color.card_background'))
-          .onClick((): void => {
-            this.goBack();
-          })
+      FnHdsSimpleChrome({
+        title: '隐私政策',
+        showBack: !this.decisionRequired,
+        topSafeInsetVp: this.systemTopInsetVp,
+        onBack: (): void => {
+          this.goBack();
         }
-
-        Text($r('app.string.privacy_policy_title'))
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        Blank()
-          .width(40)
-          .height(40)
-      }
-      .width('100%')
-      .height(56 + this.systemTopInsetVp)
-      .padding({ left: 14, right: 14, top: this.systemTopInsetVp })
-      .backgroundColor($r('app.color.page_background'))
+      })
 
       Scroll() {
         Column({ space: 10 }) {

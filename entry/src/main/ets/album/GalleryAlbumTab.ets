@@ -2581,6 +2581,7 @@ export struct GalleryAlbumTab {
 
   private openSearchPanel(): void {
     galleryAlbumOpenSearchPanel(this.asRootSurfaceHost());
+    this.searchFilterActiveCount = gallerySearchFilterActiveCount(gallerySearchGetApplied());
   }
 
   private showMoreMenu(): void {
@@ -2815,6 +2816,7 @@ export struct GalleryAlbumTab {
           },
           onSearchSubmit: (): void => {
             this.rememberSearchKeyword(this.session.mode.searchQuery);
+            this.searchFilterActiveCount = gallerySearchFilterActiveCount(gallerySearchGetApplied());
             void galleryAlbumRunSearch(this.asModeOrchestratorHost(), this.session.mode.searchQuery);
           },
           onOpenSearch: (): void => {
@@ -2836,6 +2838,7 @@ export struct GalleryAlbumTab {
             this.openSearchFilterSheet();
           },
           searchFilterActive: this.searchFilterActiveCount > 0,
+          searchFilterActiveCount: this.searchFilterActiveCount,
           albumsHomeEditMode: this.albumsHomeEditMode,
           onAlbumsHomeEditCancel: (): void => {
             this.albumsHomeEditCancelSignal++;

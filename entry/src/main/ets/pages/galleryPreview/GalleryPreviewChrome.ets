@@ -1,3 +1,4 @@
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import {
   BlurStrategy,
   DividerMode,
@@ -224,9 +225,20 @@ export struct GalleryPreviewChrome {
     return item;
   }
 
-  private originalIcon(): Resource {
-    return (this.originalLocked || this.originalShowing) ?
-      $r('sys.symbol.picture_fill') : $r('sys.symbol.picture');
+  private originalActivated(): boolean {
+    return this.originalLocked || this.originalShowing;
+  }
+
+  /** 单项图标走 SymbolGlyphModifier，避免 menuStyle.iconColor 整组盖色，也避免叠第二层。 */
+  private originalMenuGlyph(): SymbolGlyphModifier {
+    if (this.originalActivated()) {
+      return new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
+        .fontSize(24)
+        .fontColor([$r('app.color.brand_primary')]);
+    }
+    return new SymbolGlyphModifier($r('sys.symbol.picture'))
+      .fontSize(24)
+      .fontColor([this.fgColor]);
   }
 
   private originalHitRight(): number {
@@ -256,7 +268,7 @@ export struct GalleryPreviewChrome {
     if (this.showOriginalAction) {
       const originalContent: HdsNavigationIconOptions = {
         label: '原图',
-        icon: this.originalIcon(),
+        icon: this.originalMenuGlyph(),
         type: IconStyleMode.NORMAL,
         isEnabled: this.toolbarVisible,
         action: (): void => {
@@ -267,7 +279,9 @@ export struct GalleryPreviewChrome {
     }
     const detailsContent: HdsNavigationIconOptions = {
       label: '详情',
-      icon: $r('sys.symbol.info_circle'),
+      icon: new SymbolGlyphModifier($r('sys.symbol.info_circle'))
+        .fontSize(24)
+        .fontColor([this.fgColor]),
       type: IconStyleMode.NORMAL,
       isEnabled: this.toolbarVisible,
       action: (): void => {
@@ -321,7 +335,6 @@ export struct GalleryPreviewChrome {
         // 官方悬浮按钮：menu / back 各自一块圆形背板，不是整条顶栏
         menuStyle: {
           backgroundColor: chipBg,
-          iconColor: this.fgColor,
           textColor: this.fgColor
         },
         backIconStyle: {
