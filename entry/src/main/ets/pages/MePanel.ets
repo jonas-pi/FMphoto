@@ -85,6 +85,8 @@ const LAN_BURST_TOAST_BOTTOM_VP: string = '168vp';
 @Component
 export struct MePanel {
   @Prop topSafeInsetVp: number = 0;
+  /** 给悬浮底栏留空，滚动到底时退出登录仍露在 dock 上方。 */
+  @Prop floatingDockInsetBottomVp: number = 0;
   @Prop @Watch('onPageShowSignalChanged') pageShowSignal: number = 0;
   onEndpointSwitched: () => void = () => {};
   @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
@@ -153,6 +155,10 @@ export struct MePanel {
   private onPageShowSignalChanged(): void {
     this.refreshEndpointInfo();
     this.refreshTransferQueueTasks();
+  }
+
+  private meScrollBottomPaddingVp(): number {
+    return Math.max(24, this.floatingDockInsetBottomVp);
   }
 
   private endpointKindBadgeColor(kind: string): ResourceColor {
@@ -971,7 +977,8 @@ export struct MePanel {
         bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
       })
 
-      Column({ space: 0 }) {
+      Scroll() {
+        Column({ space: 0 }) {
         Column({ space: 10 }) {
           Text('FNOS \u4e2a\u4eba\u4e2d\u5fc3')
             .fontSize(20)
@@ -1100,11 +1107,18 @@ export struct MePanel {
             })();
           }
         })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+        .padding({ left: 24, right: 24, top: 8, bottom: this.meScrollBottomPaddingVp() })
       }
       .width('100%')
       .layoutWeight(1)
-      .justifyContent(FlexAlign.Start)
-      .padding({ left: 24, right: 24, top: 8, bottom: 24 })
+      .constraintSize({ minHeight: 0 })
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .align(Alignment.TopStart)
+      .clip(true)
     }
     .width('100%')
     .height('100%')

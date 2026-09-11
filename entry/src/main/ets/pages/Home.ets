@@ -972,6 +972,7 @@ struct Home {
 
             MePanel({
               topSafeInsetVp: this.systemTopInsetVp,
+              floatingDockInsetBottomVp: this.dockReserveHeight(),
               pageShowSignal: this.pageShowSignal,
               onEndpointSwitched: (): void => {
                 const stored = AppSession.getStored();
@@ -983,7 +984,6 @@ struct Home {
             })
               .width('100%')
               .height('100%')
-              .padding({ bottom: this.dockReserveHeight() })
               .translate({ x: this.mePanelTranslateX, y: 0 })
               .opacity(this.mePanelOpacity)
               .enabled(this.bottomNavIndex === 2)
