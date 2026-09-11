@@ -1035,11 +1035,11 @@ export struct GalleryAuthVideo {
   private async initMediaVolume(): Promise<void> {
     try {
       const volumeManager = audio.getAudioManager().getVolumeManager();
-      const maxV = await volumeManager.getMaxVolumeByStream(audio.StreamUsage.STREAM_USAGE_MOVIE);
+      const maxV = volumeManager.getMaxVolumeByStream(audio.StreamUsage.STREAM_USAGE_MOVIE);
       if (Number.isFinite(maxV) && maxV > 0) {
         this.mediaVolumeMax = maxV;
       }
-      const cur = await volumeManager.getVolumeByStream(audio.StreamUsage.STREAM_USAGE_MOVIE);
+      const cur = volumeManager.getVolumeByStream(audio.StreamUsage.STREAM_USAGE_MOVIE);
       if (Number.isFinite(cur)) {
         this.mediaVolume = this.clampAdjust(cur, 0, this.mediaVolumeMax);
       }
