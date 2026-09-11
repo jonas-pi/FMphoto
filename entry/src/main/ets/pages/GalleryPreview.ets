@@ -1,7 +1,7 @@
 /**
  * 图库大图预览（独立页面）。
  *
- * 布局：顶栏（← | 计数 | 原图⊙ | ···）/ 全屏 Swiper / 底栏（分享 下载 收藏 删除）
+ * 布局：顶栏（← | 计数 | 原图⊙ | 详情 | ···）/ 全屏 Swiper / 底栏（分享 下载 收藏 删除）
  *
  * 注：分享功能使用 @kit.ShareKit（@hms.collaboration.systemShare）。
  * 该模块属 HarmonyOS HMS SDK，DevEco Studio + hvigor 编译时可正常解析；
@@ -12,6 +12,7 @@ import { curves, display, UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import { GALLERY_PREVIEW_SOURCE_RECYCLE_ID } from '../album/GallerySharedTransition';
 import { GalleryPreviewSessionPrefs } from '../album/GalleryPreviewSessionPrefs';
 import { prefetchSlideshowNextItem } from '../album/slideshow/GallerySlideshowMediaPrefetch';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
@@ -102,6 +103,7 @@ import {
   galleryPreviewToggleFavorite
 } from './galleryPreview/GalleryPreviewActions';
 import { GalleryPreviewChrome } from './galleryPreview/GalleryPreviewChrome';
+import { galleryPreviewSearchSimilar } from './galleryPreview/GalleryPreviewSimilarSearch';
 import { PreviewItemsDataSource } from './galleryPreview/GalleryPreviewDataSource';
 import { GalleryPreviewSession } from './galleryPreview/GalleryPreviewSession';
 import { GalleryPreviewDetailsSheet } from './galleryPreview/GalleryPreviewDetailsSheet';
@@ -174,6 +176,8 @@ struct GalleryPreview {
   @State private personsInPhoto: PersonInPhotoItem[] = [];
   @State private folderOpening: boolean = false;
   @State private personOpening: boolean = false;
+  @State private similarSearching: boolean = false;
+  @State private moreMenuExpanded: boolean = false;
   @State private favoriteToggling: boolean = false;
   @State private currentCollectState: number = -1;
   @State private bottomBarHeight: number = 80;
@@ -224,6 +228,9 @@ struct GalleryPreview {
       }),
       new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
         this.completeLivePhotoSave('cancel');
+      }),
+      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+        this.dismissMoreMenu();
       }),
       new GalleryListBackStep(this.detailsVisible, (): void => {
         this.closeDetailsPanel();
@@ -411,6 +418,8 @@ struct GalleryPreview {
     this.personsInPhoto = [];
     this.folderOpening = false;
     this.personOpening = false;
+    this.similarSearching = false;
+    this.moreMenuExpanded = false;
     this.downloadProgressPct = 0;
     this.downloadProgressKnown = false;
     trimThumbPixCache(24);
@@ -725,6 +734,32 @@ struct GalleryPreview {
     await galleryPreviewOnPersonInPhotoClick(this.asActionsHost(), p);
   }
 
+  private canSearchSimilar(): boolean {
+    if (this.session.slideshow.slideshowEnabled) {
+      return false;
+    }
+    if (GalleryPreviewNavStore.sourceRootId === GALLERY_PREVIEW_SOURCE_RECYCLE_ID) {
+      return false;
+    }
+    return this.currentItemId().length > 0;
+  }
+
+  private dismissMoreMenu(): void {
+    if (!this.moreMenuExpanded) {
+      return;
+    }
+    this.moreMenuExpanded = false;
+  }
+
+  private toggleMoreMenu(): void {
+    this.moreMenuExpanded = !this.moreMenuExpanded;
+  }
+
+  private searchSimilarPhotos(): void {
+    this.dismissMoreMenu();
+    void galleryPreviewSearchSimilar(this.asActionsHost());
+  }
+
   private askChoice(title: string, buttons: string[]): Promise<number> {
     if (this.choiceSheetVisible) {
       return Promise.resolve(-1);
@@ -940,6 +975,9 @@ struct GalleryPreview {
 
       get personOpening(): boolean { return self.personOpening; }
       set personOpening(v: boolean) { self.personOpening = v; }
+
+      get similarSearching(): boolean { return self.similarSearching; }
+      set similarSearching(v: boolean) { self.similarSearching = v; }
 
       get favoriteToggling(): boolean { return self.favoriteToggling; }
       set favoriteToggling(v: boolean) { self.favoriteToggling = v; }
@@ -1209,6 +1247,8 @@ struct GalleryPreview {
         bottomSafeInsetVp: this.systemBottomInsetVp,
         fgColor: this.fgColor(),
         showOriginalAction: this.currentHasOriginal() || this.originalLocked,
+        showSearchSimilarAction: this.canSearchSimilar(),
+        moreMenuExpanded: this.moreMenuExpanded,
         originalShowing: this.originalPreviewEnabled,
         originalLocked: this.originalLocked,
         sharing: this.sharing,
@@ -1230,6 +1270,15 @@ struct GalleryPreview {
         },
         onOpenDetails: (): void => {
           this.openDetailsPanel();
+        },
+        onToggleMoreMenu: (): void => {
+          this.toggleMoreMenu();
+        },
+        onDismissMoreMenu: (): void => {
+          this.dismissMoreMenu();
+        },
+        onSearchSimilar: (): void => {
+          this.searchSimilarPhotos();
         },
         onShare: (): void => {
           this.shareCurrentImage();
@@ -1272,6 +1321,13 @@ struct GalleryPreview {
       if (this.personOpening) {
         FnFullLoadingMask({
           text: '加载人物媒体中…',
+          topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
+        })
+      }
+
+      if (this.similarSearching) {
+        FnFullLoadingMask({
+          text: '搜索相似照片中…',
           topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
         })
       }

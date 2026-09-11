@@ -120,7 +120,9 @@ export class CategoryGalleryNavStore {
     meta?: CategoryGalleryOpenMeta,
     replaceCurrentRouter: boolean = false
   ): Promise<boolean> {
-    const allowEmptyPage = meta?.sourceKind === 'collect' || meta?.sourceKind === 'user-album';
+    const allowEmptyPage = meta?.sourceKind === 'collect' ||
+      meta?.sourceKind === 'user-album' ||
+      meta?.sourceKind === 'similar';
     if (items.length === 0 && !allowEmptyPage) {
       hilog.warn(DOMAIN, TAG, 'open skipped: empty items');
       return Promise.resolve(false);

@@ -131,6 +131,12 @@ export const MAP_GET_IDS_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/map/getIds`,
   '/api/v1/map/getIds'
 ];
+/** 以图搜图：GET /p/api/v1/magic-search/similar?id=&compareSelf=1 */
+export const MAGIC_SEARCH_SIMILAR_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/magic-search/similar`;
+export const MAGIC_SEARCH_SIMILAR_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/magic-search/similar`,
+  '/api/v1/magic-search/similar'
+];
 /** 搜索筛选项：GET /p/api/v1/search/filterlist */
 export const SEARCH_FILTERLIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/search/filterlist`;
 export const SEARCH_FILTERLIST_PATH_CANDIDATES: string[] = [

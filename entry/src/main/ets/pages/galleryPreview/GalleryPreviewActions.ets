@@ -46,6 +46,7 @@ export interface GalleryPreviewActionsHost {
   personsInPhoto: PersonInPhotoItem[];
   folderOpening: boolean;
   personOpening: boolean;
+  similarSearching: boolean;
   favoriteToggling: boolean;
   currentCollectState: number;
   originalShowing: boolean;

@@ -11,6 +11,8 @@ import {
   DOMAIN,
   GALLERY_GETLIST_PATH_CANDIDATES,
   GALLERY_GETLIST_SIGN_PATH,
+  MAGIC_SEARCH_SIMILAR_PATH_CANDIDATES,
+  MAGIC_SEARCH_SIMILAR_SIGN_PATH,
   SEARCH_FILTERLIST_PATH_CANDIDATES,
   SEARCH_FILTERLIST_SIGN_PATH,
   TAG,
@@ -23,6 +25,7 @@ import {
   GalleryGetListData,
   GalleryListItem,
   MagicSearchData,
+  MagicSearchItem,
   MediaCategoryItem,
   SearchFilterListData
 } from '../../model/FnApiTypes';
@@ -81,6 +84,42 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: true, data: parsed['data'] as MagicSearchData };
     } catch (e) {
       return { success: false, message: String(e) || '搜索请求异常' };
+    }
+  }
+
+  /**
+   * 预览「搜索相似照片」：GET /p/api/v1/magic-search/similar
+   * 与官方 Web 一致：id 为当前照片，compareSelf=1 表示结果含自己。
+   */
+  async getMagicSearchSimilar(
+    photoId: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<MagicSearchData>> {
+    try {
+      const id = photoId.trim();
+      if (id.length === 0) {
+        return { success: false, message: '当前媒体无有效 ID' };
+      }
+      const params: Record<string, string | number | boolean> = {};
+      params['id'] = id;
+      params['compareSelf'] = 1;
+      const qs = buildGallerySortedQuery(params);
+      const pathCandidates: string[] = [];
+      for (let i = 0; i < MAGIC_SEARCH_SIMILAR_PATH_CANDIDATES.length; i++) {
+        pathCandidates.push(`${MAGIC_SEARCH_SIMILAR_PATH_CANDIDATES[i]}?${qs}`);
+      }
+      const gallerySign: FnGalleryGetSignSpec = {
+        signPathOnly: MAGIC_SEARCH_SIMILAR_SIGN_PATH,
+        queryParams: params
+      };
+      const res = await this.requestGalleryGetJson<Object>(pathCandidates, gallerySign, timeoutMs, 3);
+      if (!res.success || res.data === undefined) {
+        return { success: false, message: res.message ?? '相似搜索失败' };
+      }
+      const list = FnHttpClientGalleryRequest.searchResultItemsFromData(res.data as Object);
+      return { success: true, data: { list: list as MagicSearchItem[] } };
+    } catch (e) {
+      return { success: false, message: String(e) || '相似搜索异常' };
     }
   }
 

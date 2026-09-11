@@ -190,6 +190,13 @@ export class FnHttpClientGalleryOps {
     return this.search.doMagicSearch(keyword, timeoutMs, antiFiltersJson, filtersJson);
   }
 
+  async getMagicSearchSimilar(
+    photoId: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<MagicSearchData>> {
+    return this.search.getMagicSearchSimilar(photoId, timeoutMs);
+  }
+
   async getSearchFilterList(
     showShootingInformation: boolean = true,
     timeoutMs: number = 20000

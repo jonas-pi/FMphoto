@@ -457,7 +457,17 @@ struct CategoryGallery {
     if (this.session.sync.pageSourceKind === 'recent') {
       return '最近添加为空';
     }
+    if (this.session.sync.pageSourceKind === 'similar') {
+      return '暂未发现相似照片';
+    }
     return '暂无媒体';
+  }
+
+  private chromeFallbackTitle(): string {
+    if (this.session.sync.pageSourceKind === 'similar') {
+      return '相似照片';
+    }
+    return '媒体分类';
   }
 
   private applySystemBar(relayout: boolean): void {
@@ -1293,7 +1303,7 @@ struct CategoryGallery {
             selectionMode: this.selectionMode,
             selectedCount: this.selectedCount,
             title: this.title,
-            fallbackTitle: '媒体分类',
+            fallbackTitle: this.chromeFallbackTitle(),
             totalCount: this.totalCount,
             topSafeInsetVp: this.systemTopInsetVp,
             useMoreMenu: this.usesMoreMenuMode(),

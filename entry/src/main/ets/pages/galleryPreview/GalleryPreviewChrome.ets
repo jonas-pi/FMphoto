@@ -1,4 +1,5 @@
 import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
 import {
   BlurStrategy,
   DividerMode,
@@ -65,6 +66,7 @@ import {
 
 const GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP: number = 268;
 const GALLERY_PREVIEW_VIDEO_PLAYING_DOCK_WIDTH_VP: number = 372;
+const GALLERY_PREVIEW_TOP_MENU_SLOT_VP: number = 64;
 
 @Component
 export struct GalleryPreviewChrome {
@@ -82,6 +84,8 @@ export struct GalleryPreviewChrome {
   @Prop buttonBg: string = '#33000000';
   @Prop fgColor: ResourceColor = Color.White;
   @Prop showOriginalAction: boolean = false;
+  @Prop showSearchSimilarAction: boolean = false;
+  @Prop moreMenuExpanded: boolean = false;
   @Prop originalShowing: boolean = false;
   @Prop originalLocked: boolean = false;
   @Prop sharing: boolean = false;
@@ -103,6 +107,9 @@ export struct GalleryPreviewChrome {
   onLoadOriginal: () => void = () => {};
   onLockOriginal: () => void = () => {};
   onOpenDetails: () => void = () => {};
+  onToggleMoreMenu: () => void = () => {};
+  onDismissMoreMenu: () => void = () => {};
+  onSearchSimilar: () => void = () => {};
   onShare: () => void = () => {};
   onDownload: () => void = () => {};
   onFavorite: () => void = () => {};
@@ -242,12 +249,22 @@ export struct GalleryPreviewChrome {
   }
 
   private originalHitRight(): number {
-    // 盖住顶栏「原图」菜单圆钮：详情在右，原图在它左侧一格。
-    return 64;
+    // 右起依次是更多、详情；原图再往左一格。无更多时详情在最右。
+    return this.showSearchSimilarAction ? GALLERY_PREVIEW_TOP_MENU_SLOT_VP * 2 : GALLERY_PREVIEW_TOP_MENU_SLOT_VP;
   }
 
   private originalHitTop(): number {
     return (FN_HDS_NAV_CHROME_HEIGHT_VP - FN_FLOATING_TOP_CONTROL_SIZE_VP) / 2;
+  }
+
+  @Builder
+  private previewMoreMenuBuilder() {
+    Menu() {
+      MenuItem({ content: '搜索相似照片' })
+        .onClick((): void => {
+          this.onSearchSimilar();
+        })
+    }
   }
 
   private onOriginalMenuClick(): void {
@@ -289,6 +306,20 @@ export struct GalleryPreviewChrome {
       }
     };
     items.push(this.topMenuItem(detailsContent));
+    if (this.showSearchSimilarAction) {
+      const moreContent: HdsNavigationIconOptions = {
+        label: '更多',
+        icon: new SymbolGlyphModifier($r('sys.symbol.dot_grid_2x2'))
+          .fontSize(24)
+          .fontColor([this.fgColor]),
+        type: IconStyleMode.NORMAL,
+        isEnabled: this.toolbarVisible,
+        action: (): void => {
+          this.onToggleMoreMenu();
+        }
+      };
+      items.push(this.topMenuItem(moreContent));
+    }
     return items;
   }
 
@@ -690,6 +721,28 @@ export struct GalleryPreviewChrome {
                     this.onLockOriginal();
                   })
               )
+          }
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.Transparent)
+        }
+
+        if (this.showSearchSimilarAction) {
+          Stack({ alignContent: Alignment.TopEnd }) {
+            Row()
+              .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+              .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+              .margin({
+                top: this.topSafeInsetVp + this.originalHitTop(),
+                right: $r('app.float.hds_title_bar_padding_horizontal')
+              })
+              .hitTestBehavior(HitTestMode.None)
+              .bindMenu(this.moreMenuExpanded, this.previewMoreMenuBuilder, fnHdsBindMenuOptions(
+                Placement.BottomLeft,
+                (): void => {
+                  this.onDismissMoreMenu();
+                }
+              ))
           }
           .width('100%')
           .height('100%')
