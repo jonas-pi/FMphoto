@@ -249,6 +249,14 @@ export class GalleryPreviewSlideTransformUpdater extends AttributeUpdater<StackA
     this.translateLocked = locked;
   }
 
+  getScale(): number {
+    return this.lastScale;
+  }
+
+  getTranslateX(): number {
+    return this.lastX;
+  }
+
   getTranslateY(): number {
     return this.lastY;
   }
@@ -282,6 +290,47 @@ export class GalleryPreviewSlideTransformUpdater extends AttributeUpdater<StackA
   reset(): void {
     this.translateLocked = false;
     this.apply(1, 0, 0);
+  }
+}
+
+/**
+ * 下滑退出时把跟手几何写成共享节点的真实布局。
+ * 宽高与位置必须同一帧落地，否则会先露出全屏框再飞，像换了一张图。
+ */
+export class GalleryPreviewDismissPositionUpdater extends AttributeUpdater<CommonAttribute> {
+  private lastX: number = 0;
+  private lastY: number = 0;
+  private lastW: number = 0;
+  private lastH: number = 0;
+  private active: boolean = false;
+
+  initializeModifier(instance: CommonAttribute): void {
+    if (!this.active || this.lastW <= 0 || this.lastH <= 0) {
+      return;
+    }
+    instance.width(this.lastW);
+    instance.height(this.lastH);
+    instance.position({ x: this.lastX, y: this.lastY });
+  }
+
+  onComponentChanged(component: CommonAttribute): void {
+    if (!this.active || this.lastW <= 0 || this.lastH <= 0) {
+      return;
+    }
+    component.width(this.lastW);
+    component.height(this.lastH);
+    component.position({ x: this.lastX, y: this.lastY });
+  }
+
+  apply(x: number, y: number, w: number, h: number): void {
+    this.lastX = x;
+    this.lastY = y;
+    this.lastW = w;
+    this.lastH = h;
+    this.active = true;
+    this.attribute?.width(w);
+    this.attribute?.height(h);
+    this.attribute?.position({ x, y });
   }
 }
 

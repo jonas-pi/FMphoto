@@ -6,7 +6,7 @@
  * 官方示例把转场绑在 clip 容器上、子图铺满，宽高分别插值（非四边等比）。
  *
  * 平移限位：基于视口尺寸精确计算，超界 50% 阻力，松手 EaseOut 弹回。
- * 未放大时纵向手势对齐系统图库：下滑跟手退出（sharedTransition 收回），
+ * 未放大时纵向手势对齐系统图库：下滑跟手退出（同一张图飞回槽位），
  * 上滑打开与照片同层的页内详情面板。
  */
 import {
@@ -52,9 +52,12 @@ import {
   unlinkLivePhotoPair
 } from './livephoto/LivePhotoSandbox';
 import { GalleryPreviewEntryCache } from './GalleryPreviewEntryGate';
+import { GalleryPreviewNavStore } from './GalleryPreviewNavStore';
 import {
   GALLERY_SHARED_TRANSITION_DURATION,
   galleryContainFrame,
+  GalleryDismissVisualRect,
+  galleryDismissVisualRect,
   galleryPixelAspect,
   gallerySharedTransitionId,
   gallerySharedTransitionOptions
@@ -73,6 +76,7 @@ import {
   galleryDismissProgress,
   galleryDismissScale,
   galleryIsVideoBrightnessVolumeZone,
+  GalleryPreviewDismissPositionUpdater,
   GalleryPreviewSlideTransformUpdater,
   galleryShouldCloseDetails,
   galleryShouldDismissPage,
@@ -80,6 +84,7 @@ import {
   gallerySheetHeightFromAvoidY,
   galleryVerticalPanIsHorizontal,
   getGalleryPreviewDetailsFitNormVel,
+  getGalleryPreviewDismissProgress,
   getGalleryPreviewDetailsSheetHeight,
   isGalleryPreviewDetailsAvoidAnimating,
   quietFinishAnimator,
@@ -91,6 +96,7 @@ import {
   setGalleryPreviewDismissProgress
 } from './GalleryPreviewVerticalGesture';
 import { galleryGifLoopDurationFromDelays } from './slideshow/GallerySlideshowMedia';
+import { setGalleryPreviewToolbarVisible } from '../pages/galleryPreview/GalleryPreviewToolbarStore';
 
 // 越界阻尼系数：减小阻尼穿透，降低大图拖动时的重绘压力与抖动
 const PAN_RESISTANCE = 0.55;
@@ -173,6 +179,8 @@ export struct GalleryPreviewSlide {
   /** 弹出避让走官方 animateTo；为 true 时 translate 由本状态驱动，系统渲染线程插值 */
   @State private avoidAnimOn: boolean = false;
   @State private avoidAnimY: number = 0;
+  /** 下滑退出已把跟手几何写进共享元素，消失时不能再清回全屏中心 */
+  @State private dismissHeroActive: boolean = false;
   /** 打断上一次 animateTo 时作废旧 onFinish，避免把位移写回已取消的终点 */
   private avoidAnimGen: number = 0;
 
@@ -221,6 +229,7 @@ export struct GalleryPreviewSlide {
   private panX: number = 0;
   private panY: number = 0;
   private transformUpdater: GalleryPreviewSlideTransformUpdater = new GalleryPreviewSlideTransformUpdater();
+  private dismissPositionUpdater: GalleryPreviewDismissPositionUpdater = new GalleryPreviewDismissPositionUpdater();
   private transformAnimator: AnimatorResult | undefined = undefined;
   private readonly onDetailsFitHeight = (): void => {
     this.syncDetailsAvoidTransform();
@@ -318,7 +327,7 @@ export struct GalleryPreviewSlide {
       this.armHeroIdFreeze(true);
       this.upgradeToPreviewMid();
     }
-    if (!this.active) {
+    if (!this.active && !this.dismissHeroActive) {
       this.resetVerticalDragInstant();
       this.clearGifSlideshowTimer();
       this.clearLiveSlideshowWatchdog();
@@ -381,12 +390,14 @@ export struct GalleryPreviewSlide {
       this.heroIdFrozen = true;
     }
     this.invalidateAsyncLoads();
-    this.disposeTransientMedia();
+    if (!this.dismissHeroActive) {
+      this.disposeTransientMedia();
+      this.resetVerticalDragInstant();
+    }
     this.boundItemKey = '';
     this.pinchGestureRecognizing = false;
     this.pinchParticipationActive = false;
     this.scheduleDeferredParentGestureReset();
-    this.resetVerticalDragInstant();
   }
 
   // ── 数据加载 ─────────────────────────────────────────────────────────────
@@ -490,6 +501,9 @@ export struct GalleryPreviewSlide {
 
   /** 仅当前可见页参与配对；转场窗口内冻结 id，避免空串导致官方定义下不构成共享元素 */
   private heroShareId(): string {
+    if (this.dismissHeroActive) {
+      return '';
+    }
     if (!this.enableSharedTransition) {
       this.frozenHeroShareId = '';
       this.heroIdFrozen = false;
@@ -544,6 +558,9 @@ export struct GalleryPreviewSlide {
   }
 
   private finishHeroFreeze(): void {
+    if (this.dismissHeroActive) {
+      return;
+    }
     this.heroIdFrozen = false;
     this.heroFrameFrozen = false;
     if (this.pendingMidUpgrade) {
@@ -1090,6 +1107,102 @@ export struct GalleryPreviewSlide {
     this.verticalLastTs = now;
   }
 
+  /** 飞回槽位前先收掉顶底栏和视频浮层，避免控件停在全屏上。 */
+  private hideSwipeDismissChrome(): void {
+    this.clearVideoOverlayRevealTimer();
+    this.videoOverlayRevealed = false;
+    setGalleryPreviewToolbarVisible(false);
+  }
+
+  /**
+   * 下滑退出：同一张图从跟手位置飞回槽位，不再走 sharedTransition Exchange。
+   * Exchange 会另起一张快照且只匹配布局矩形，松手就像从别处换了一张同图。
+   * 文档：ts-transition-animation-shared-elements
+   */
+  private beginSwipeDismiss(): void {
+    this.clearHeroFreezeTimer();
+    this.cancelTransformAnimator();
+    this.hideSwipeDismissChrome();
+    const rect: GalleryDismissVisualRect = galleryDismissVisualRect(
+      this.heroAspectForFrame(),
+      this.viewW,
+      this.viewH,
+      this.transformUpdater.getScale(),
+      this.transformUpdater.getTranslateX(),
+      this.transformUpdater.getTranslateY()
+    );
+    if (rect.w <= 1 || rect.h <= 1) {
+      this.dismissHeroActive = true;
+      this.onVerticalDismiss();
+      return;
+    }
+    this.frozenHeroFrameW = rect.w;
+    this.frozenHeroFrameH = rect.h;
+    this.heroFrameFrozen = true;
+    this.heroIdFrozen = true;
+    this.dismissHeroActive = true;
+    this.dismissPositionUpdater.apply(rect.x, rect.y, rect.w, rect.h);
+    this.panScale = 1;
+    this.panX = 0;
+    this.panY = 0;
+    this.transformUpdater.apply(1, 0, 0);
+    const slot: GalleryDismissVisualRect = this.sourcePlaceholderVp();
+    if (slot.w <= 1 || slot.h <= 1) {
+      this.onVerticalDismiss();
+      return;
+    }
+    this.playSwipeDismissToSlot(rect, slot);
+  }
+
+  /** 源槽位相对预览页的 vp 矩形，与底图占位遮罩同一套坐标。 */
+  private sourcePlaceholderVp(): GalleryDismissVisualRect {
+    const out = new GalleryDismissVisualRect();
+    const ui = this.getUIContext();
+    out.x = ui.px2vp(GalleryPreviewNavStore.sourcePlaceholderX);
+    out.y = ui.px2vp(GalleryPreviewNavStore.sourcePlaceholderY);
+    out.w = ui.px2vp(GalleryPreviewNavStore.sourcePlaceholderW);
+    out.h = ui.px2vp(GalleryPreviewNavStore.sourcePlaceholderH);
+    return out;
+  }
+
+  private playSwipeDismissToSlot(from: GalleryDismissVisualRect, to: GalleryDismissVisualRect): void {
+    const fromProgress = getGalleryPreviewDismissProgress();
+    try {
+      const animator = this.getUIContext().createAnimator({
+        duration: GALLERY_SHARED_TRANSITION_DURATION,
+        easing: 'cubic-bezier(0.2, 0.0, 0.0, 1.0)',
+        delay: 0,
+        fill: 'forwards',
+        direction: 'normal',
+        iterations: 1,
+        begin: 0,
+        end: 1
+      });
+      animator.setExpectedFrameRateRange(GALLERY_ANIMATOR_FRAME_RATE);
+      animator.onFrame = (t: number): void => {
+        this.dismissPositionUpdater.apply(
+          from.x + (to.x - from.x) * t,
+          from.y + (to.y - from.y) * t,
+          from.w + (to.w - from.w) * t,
+          from.h + (to.h - from.h) * t
+        );
+        setGalleryPreviewDismissProgress(fromProgress + (1 - fromProgress) * t);
+      };
+      animator.onFinish = (): void => {
+        this.transformAnimator = undefined;
+        this.frozenHeroFrameW = to.w;
+        this.frozenHeroFrameH = to.h;
+        this.dismissPositionUpdater.apply(to.x, to.y, to.w, to.h);
+        this.onVerticalDismiss();
+      };
+      this.transformAnimator = animator;
+      animator.play();
+    } catch (_e) {
+      this.dismissPositionUpdater.apply(to.x, to.y, to.w, to.h);
+      this.onVerticalDismiss();
+    }
+  }
+
   private resetVerticalDragInstant(): void {
     this.cancelTransformAnimator();
     this.verticalPanActive = false;
@@ -1360,7 +1473,7 @@ export struct GalleryPreviewSlide {
     }
     if (galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH)) {
       this.lockParentForVertical(false);
-      this.onVerticalDismiss();
+      this.beginSwipeDismiss();
       return;
     }
     if (galleryShouldOpenDetails(this.verticalOffsetY, this.verticalVelocityY)) {
@@ -1677,6 +1790,7 @@ export struct GalleryPreviewSlide {
     .height(this.heroFrameH())
     .clip(true)
     .sharedTransition(this.heroShareId(), gallerySharedTransitionOptions())
+    .attributeModifier(this.dismissPositionUpdater)
   }
 
   build() {

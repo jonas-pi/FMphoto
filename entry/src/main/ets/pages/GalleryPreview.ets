@@ -410,7 +410,6 @@ struct GalleryPreview {
     this.detailsVisible = false;
     resetGalleryPreviewDetailsFit();
     setGalleryPreviewDetailsCover(false);
-    setGalleryPreviewDismissProgress(0);
     this.detailsLoading = false;
     this.detailsError = '';
     this.detailsData = undefined;

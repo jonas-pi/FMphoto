@@ -104,6 +104,37 @@ export function galleryPixelAspect(pix: PixelMap | undefined): number {
  * 系统分别插值宽高与位置（80x80 → 300x400），收回时不是四边等比缩放。
  * 文档：https://developer.huawei.com/consumer/cn/doc/harmonyos-references/ts-transition-animation-geometrytransition
  */
+/** 下滑跟手后的可见框：contain 框按中心缩放再叠加位移。 */
+export class GalleryDismissVisualRect {
+  x: number = 0;
+  y: number = 0;
+  w: number = 0;
+  h: number = 0;
+}
+
+/**
+ * 把 AttributeUpdater 上的 scale/translate 折算成节点真实布局矩形。
+ * 官方 sharedTransition Exchange 只过渡位置与大小、不过渡绘制内容，
+ * 下滑退出若再走 Exchange 会另起一张快照，看起来像换了一张同图。
+ */
+export function galleryDismissVisualRect(
+  aspect: number,
+  viewW: number,
+  viewH: number,
+  scale: number,
+  panX: number,
+  panY: number
+): GalleryDismissVisualRect {
+  const out = new GalleryDismissVisualRect();
+  const frame = galleryContainFrame(aspect, viewW, viewH);
+  const s = Math.max(0.01, scale);
+  out.w = frame.w * s;
+  out.h = frame.h * s;
+  out.x = (viewW - out.w) / 2 + panX;
+  out.y = (viewH - out.h) / 2 + panY;
+  return out;
+}
+
 export function galleryContainFrame(aspect: number, boxW: number, boxH: number): GalleryHeroFrame {
   const out = new GalleryHeroFrame();
   if (aspect <= 0 || boxW <= 0 || boxH <= 0) {
