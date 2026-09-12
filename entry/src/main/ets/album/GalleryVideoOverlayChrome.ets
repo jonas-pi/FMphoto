@@ -15,7 +15,10 @@ import {
   FN_SYSTEM_LEFT_INSET_VP_KEY,
   FN_SYSTEM_RIGHT_INSET_VP_KEY
 } from '../common/FnSystemAvoidArea';
-import { galleryIsVideoBrightnessVolumeZone } from './GalleryPreviewVerticalGesture';
+import {
+  galleryVideoSideAdjustInset,
+  galleryVideoSideAdjustWidth
+} from './GalleryPreviewVerticalGesture';
 import { playGalleryLongPressMenuHaptic } from './GallerySelectionHaptic';
 
 const OVERLAY_PILL_HEIGHT_VP: number = 40;
@@ -69,7 +72,8 @@ export struct GalleryVideoOverlayChrome {
   onDoubleTap: () => void = () => {};
   onHoldSpeedStart: () => void = () => {};
   onHoldSpeedEnd: () => void = () => {};
-  onVerticalAdjustStart: (event: GestureEvent) => void = (_: GestureEvent) => {};
+  onVerticalAdjustStart: (event: GestureEvent, isBrightness: boolean) => void =
+    (_event: GestureEvent, _isBrightness: boolean) => {};
   onVerticalAdjustUpdate: (event: GestureEvent) => void = (_: GestureEvent) => {};
   onVerticalAdjustEnd: () => void = () => {};
 
@@ -83,10 +87,6 @@ export struct GalleryVideoOverlayChrome {
   @StorageProp(FN_SYSTEM_RIGHT_INSET_VP_KEY) private systemRightInsetVp: number = 0;
   /** 本次手势已按拖动处理时，抬起不再走点击 seek，避免二次跳点 */
   private seekPanUsed: boolean = false;
-
-  private isBrightnessVolumeZone(localX: number, localY: number): boolean {
-    return galleryIsVideoBrightnessVolumeZone(localX, localY, this.overlayW, this.overlayH);
-  }
 
   private fillPercent(): number {
     return Math.round(Math.max(0, Math.min(1, this.progress)) * 100);
@@ -224,47 +224,23 @@ export struct GalleryVideoOverlayChrome {
         }
       })
       .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
-        if (info.type === GestureControl.GestureType.LONG_PRESS_GESTURE) {
-          const lp = event as BaseGestureEvent;
-          const fingers = lp.fingerList;
-          if (fingers !== undefined && fingers.length > 0 && this.visible) {
-            // 底栏控件区（倍速/清晰度/进度）不走全屏按住倍速
-            const y = fingers[0].localY;
-            if (y > this.overlayH - fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP) -
-              OVERLAY_CHROME_HIT_EXTRA_VP - this.bottomPadding) {
-              return GestureJudgeResult.REJECT;
-            }
-          }
-        }
-        if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+        if (info.type !== GestureControl.GestureType.LONG_PRESS_GESTURE) {
           return GestureJudgeResult.CONTINUE;
         }
-        const pan = event as PanGestureEvent;
-        if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
-          return GestureJudgeResult.REJECT;
-        }
-        const fingers = pan.fingerList;
-        if (fingers !== undefined && fingers.length > 0 &&
-          !this.isBrightnessVolumeZone(fingers[0].localX, fingers[0].localY)) {
-          return GestureJudgeResult.REJECT;
+        const lp = event as BaseGestureEvent;
+        const fingers = lp.fingerList;
+        if (fingers !== undefined && fingers.length > 0 && this.visible) {
+          // 底栏控件区（倍速/清晰度/进度）不走全屏按住倍速
+          const y = fingers[0].localY;
+          if (y > this.overlayH - fnHdsCapsuleOverlayHeight(OVERLAY_PILL_HEIGHT_VP) -
+            OVERLAY_CHROME_HIT_EXTRA_VP - this.bottomPadding) {
+            return GestureJudgeResult.REJECT;
+          }
         }
         return GestureJudgeResult.CONTINUE;
       })
       .gesture(
         GestureGroup(GestureMode.Exclusive,
-          PanGesture({ direction: PanDirection.Vertical, distance: 8 })
-            .onActionStart((event: GestureEvent): void => {
-              this.onVerticalAdjustStart(event);
-            })
-            .onActionUpdate((event: GestureEvent): void => {
-              this.onVerticalAdjustUpdate(event);
-            })
-            .onActionEnd((): void => {
-              this.onVerticalAdjustEnd();
-            })
-            .onActionCancel((): void => {
-              this.onVerticalAdjustEnd();
-            }),
           LongPressGesture({ repeat: false })
             .onAction((): void => {
               playGalleryLongPressMenuHaptic();
@@ -288,9 +264,67 @@ export struct GalleryVideoOverlayChrome {
       )
   }
 
+  /**
+   * 官方：用独立侧条收窄亮度/音量命中，避免全屏 Pan 和上滑详情抢手势。
+   * 文档：ts-universal-attributes-touch-target、arkts-gesture-events-multi-level-gesture、
+   * avplayer-long-video（右侧区域调亮度）
+   */
+  @Builder
+  private sideAdjustStrip(isBrightness: boolean) {
+    Column()
+      .width(galleryVideoSideAdjustWidth(this.overlayW))
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
+      .gesture(
+        PanGesture({ direction: PanDirection.Vertical, distance: 8 })
+          .onActionStart((event: GestureEvent): void => {
+            // localX 相对侧条自身，不能再拿来判断左右
+            this.onVerticalAdjustStart(event, isBrightness);
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            this.onVerticalAdjustUpdate(event);
+          })
+          .onActionEnd((): void => {
+            this.onVerticalAdjustEnd();
+          })
+          .onActionCancel((): void => {
+            this.onVerticalAdjustEnd();
+          })
+      )
+      .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+        if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+          return GestureJudgeResult.CONTINUE;
+        }
+        const pan = event as PanGestureEvent;
+        if (Math.abs(pan.offsetX) > Math.abs(pan.offsetY)) {
+          return GestureJudgeResult.REJECT;
+        }
+        return GestureJudgeResult.CONTINUE;
+      })
+  }
+
+  @Builder
+  private videoSideAdjustLayer() {
+    Row() {
+      this.sideAdjustStrip(true)
+      Blank()
+        .layoutWeight(1)
+        .hitTestBehavior(HitTestMode.None)
+      this.sideAdjustStrip(false)
+    }
+    .width('100%')
+    .height('100%')
+    .padding({
+      top: galleryVideoSideAdjustInset(this.overlayH),
+      bottom: galleryVideoSideAdjustInset(this.overlayH)
+    })
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
   build() {
     Stack() {
       this.videoGestureLayer()
+      this.videoSideAdjustLayer()
 
       if (this.visible && this.showCenterPlay) {
         Stack({ alignContent: Alignment.Center }) {

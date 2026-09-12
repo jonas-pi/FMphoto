@@ -31,10 +31,19 @@ export const GALLERY_DISMISS_SCALE_MIN: number = 0.62;
 const GALLERY_DISMISS_SCALE_PROGRESS_EXPONENT: number = 0.72;
 /** 上滑预览详情时照片跟手增益，避免先把画面拖出太多 */
 export const GALLERY_DETAILS_DRAG_GAIN: number = 0.28;
-/** 左亮度 / 右音量热区宽度占屏比 */
-export const VIDEO_SIDE_ADJUST_WIDTH_RATIO: number = 0.28;
-/** 上下各留出一段，避免抢占上滑详情 / 下滑退出 */
-export const VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO: number = 0.20;
+/**
+ * 左亮度 / 右音量热区宽度占屏比。
+ * 官方长视频把亮度条放在播放界面右侧区域，不宜铺到近半屏；
+ * 过宽会让父级上滑详情在两侧被拒掉。
+ * 文档：avplayer-long-video、arkts-gesture-events-multi-level-gesture
+ */
+export const VIDEO_SIDE_ADJUST_WIDTH_RATIO: number = 0.16;
+/** 热区宽度上限，避免平板 / 横屏两侧过宽 */
+export const VIDEO_SIDE_ADJUST_WIDTH_MAX_VP: number = 72;
+/** 热区宽度下限，保证单手仍能摸到侧边 */
+export const VIDEO_SIDE_ADJUST_WIDTH_MIN_VP: number = 56;
+/** 上下各留出一段，避免抢占上滑详情 / 下滑退出 / 底栏 */
+export const VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO: number = 0.26;
 /**
  * 官方：interpolatingSpring 是 0→1 阻尼弹簧，初速度要归一化（绝对速度/改变量），
  * 时长由物理参数决定。ζ<1 会过冲，createAnimator 采样超出 [begin,end] 就是「动画逃逸」。
@@ -314,6 +323,24 @@ export class GalleryPreviewTranslateYUpdater extends AttributeUpdater<ColumnAttr
   }
 }
 
+export function galleryVideoSideAdjustWidth(viewW: number): number {
+  if (viewW <= 1) {
+    return 0;
+  }
+  const raw = viewW * VIDEO_SIDE_ADJUST_WIDTH_RATIO;
+  if (raw < VIDEO_SIDE_ADJUST_WIDTH_MIN_VP) {
+    return Math.min(VIDEO_SIDE_ADJUST_WIDTH_MIN_VP, viewW * 0.22);
+  }
+  return Math.min(VIDEO_SIDE_ADJUST_WIDTH_MAX_VP, raw);
+}
+
+export function galleryVideoSideAdjustInset(viewH: number): number {
+  if (viewH <= 1) {
+    return 0;
+  }
+  return viewH * VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO;
+}
+
 export function galleryIsVideoBrightnessVolumeZone(
   localX: number,
   localY: number,
@@ -323,11 +350,11 @@ export function galleryIsVideoBrightnessVolumeZone(
   if (viewW <= 1 || viewH <= 1) {
     return false;
   }
-  const edgeW = viewW * VIDEO_SIDE_ADJUST_WIDTH_RATIO;
+  const edgeW = galleryVideoSideAdjustWidth(viewW);
   if (localX > edgeW && localX < viewW - edgeW) {
     return false;
   }
-  const insetH = viewH * VIDEO_SIDE_ADJUST_VERTICAL_INSET_RATIO;
+  const insetH = galleryVideoSideAdjustInset(viewH);
   return localY >= insetH && localY <= viewH - insetH;
 }
 
