@@ -261,6 +261,10 @@
       "value": "移入回收站"
     },
     {
+      "name": "gallery_batch_delete_permanent",
+      "value": "永久删除"
+    },
+    {
       "name": "gallery_batch_download",
       "value": "下载"
     },

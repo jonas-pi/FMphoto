@@ -30,6 +30,8 @@ export struct GalleryAlbumBatchActionBar {
   @Prop deleting: boolean = false;
   /** 所选含文件夹时置灰删除，仍回调 onDelete 由页面提示 */
   @Prop deleteEnabled: boolean = true;
+  /** 选了文件夹时走官方 file/delete，文案改为永久删除 */
+  @Prop deletePermanent: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   onDownload: () => void = () => {};
@@ -58,6 +60,12 @@ export struct GalleryAlbumBatchActionBar {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
+  private deleteLabel(): ResourceStr {
+    return this.deletePermanent ?
+      $r('app.string.gallery_batch_delete_permanent') :
+      $r('app.string.gallery_batch_delete');
+  }
+
   @Builder
   private batchHdsTabs() {
     HdsTabs({ index: 0 }) {
@@ -81,7 +89,7 @@ export struct GalleryAlbumBatchActionBar {
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.trash'),
-        $r('app.string.gallery_batch_delete'),
+        this.deleteLabel(),
         this.actionColor(this.deleting, true)
       ))
     }
@@ -146,7 +154,7 @@ export struct GalleryAlbumBatchActionBar {
       this.batchFallbackAction(
         1,
         $r('sys.symbol.trash'),
-        $r('app.string.gallery_batch_delete'),
+        this.deleteLabel(),
         this.actionColor(this.deleting, true)
       )
     }

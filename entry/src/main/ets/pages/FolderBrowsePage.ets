@@ -1295,6 +1295,7 @@ struct FolderBrowsePage {
                 downloading: this.batchDownloading,
                 deleting: this.batchDeleting,
                 deleteEnabled: true,
+                deletePermanent: this.hasFolderSelected,
                 onDownload: (): void => {
                   void folderBrowseConfirmBatchDownload(this.asBatchActionsHost());
                 },
