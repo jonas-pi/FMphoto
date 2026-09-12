@@ -30,6 +30,51 @@ import {
   SearchFilterListData
 } from '../../model/FnApiTypes';
 
+/** search/results 单页条数；服务端若忽略 limit 仍按默认几百张返回，再靠 offset 续拉 */
+const SEARCH_RESULTS_PAGE_SIZE: number = 1000;
+const SEARCH_RESULTS_MAX_PAGES: number = 40;
+
+class FnSearchResultsPage {
+  items: GalleryListItem[] = [];
+  total: number = -1;
+}
+
+function fnSearchItemId(item: GalleryListItem): string {
+  const id = item.id;
+  if (id !== undefined) {
+    const text = String(id).trim();
+    if (text.length > 0 && text !== 'null') {
+      return text;
+    }
+  }
+  const photoId = item.photoId;
+  if (photoId !== undefined) {
+    const text = String(photoId).trim();
+    if (text.length > 0 && text !== 'null') {
+      return text;
+    }
+  }
+  return '';
+}
+
+function fnSearchTotalOf(dataObj: Object | undefined): number {
+  if (dataObj === undefined || dataObj === null || Array.isArray(dataObj)) {
+    return -1;
+  }
+  const rec = dataObj as Record<string, Object | string | number | undefined>;
+  const raw = rec['total'];
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n >= 0) {
+      return n;
+    }
+  }
+  return -1;
+}
+
 export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
   constructor(host: FnHttpClientGalleryHost) {
     super(host);
@@ -149,64 +194,156 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
     }
   }
 
+  /**
+   * 官方 Web 只打一枪；服务端常按时间倒序且默认只回最新一页（约几百张）。
+   * 组合搜索要拿完整 ID 集，这里按 offset 续拉直到没有新照片。
+   */
   async searchResultsByFilters(
     keyword: string,
     filtersJson: string,
     antiFiltersJson: string,
     timeoutMs: number = 20000
   ): Promise<FnClientResult<GalleryListItem[]>> {
+    const filters = filtersJson.trim().length > 0 ? filtersJson.trim() : '[]';
+    const anti = antiFiltersJson.trim().length > 0 ? antiFiltersJson.trim() : '[]';
+    const merged: GalleryListItem[] = [];
+    const seen = new Set<string>();
+    let offset = 0;
+    let totalHint = -1;
+    let includePaging = true;
+    let page = 0;
+    let retriedWithoutPaging = false;
     try {
-      const activeBase = fnWebViewBaseUrl(this.baseUrl);
-      const searchResultPaths: string[] = [
-        `${FN_PHOTO_API_V2_PREFIX}/search/results`,
-        `${FN_PHOTO_API_PREFIX}/search/results`,
-      ];
-      const cookie = mergeGalleryWebCookieIntoNativeHeader(
-        buildFnApiCookieHeader(this.token, this.longToken),
-        activeBase
-      );
-      const filters = filtersJson.trim().length > 0 ? filtersJson.trim() : '[]';
-      const anti = antiFiltersJson.trim().length > 0 ? antiFiltersJson.trim() : '[]';
-      const bodyStr =
-        `{"keyword":${JSON.stringify(keyword)},"filters":${filters},"antiFilters":${anti}}`;
-      hilog.info(DOMAIN, TAG, 'searchFilters body: %{public}s', bodyStr);
-      for (let pi = 0; pi < searchResultPaths.length; pi++) {
-        const pathTry = searchResultPaths[pi];
-        const authx = await genFnGalleryAuthxPostRaw(pathTry, bodyStr);
-        const headers = this.buildGalleryFetchHeaders(authx, cookie);
-        headers['Content-Type'] = 'application/json';
-        const raw = await this.rawRequest(
-          `${activeBase}${pathTry}`,
-          http.RequestMethod.POST,
-          headers,
-          bodyStr,
+      while (page < SEARCH_RESULTS_MAX_PAGES) {
+        const once = await this.searchResultsByFiltersOnce(
+          keyword,
+          filters,
+          anti,
           timeoutMs,
-          CertPolicy.isTrusted(activeBase)
+          SEARCH_RESULTS_PAGE_SIZE,
+          offset,
+          includePaging
         );
-        if (raw.code < 200 || raw.code >= 300) {
-          continue;
+        if (!once.success || once.data === undefined) {
+          if (page === 0 && includePaging && !retriedWithoutPaging) {
+            includePaging = false;
+            retriedWithoutPaging = true;
+            continue;
+          }
+          if (page === 0) {
+            return { success: false, message: once.message ?? '搜索结果为空' };
+          }
+          break;
         }
-        let parsed: Record<string, string | number | Object | undefined> | undefined;
-        try {
-          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
-        } catch (_e) {
-          parsed = undefined;
+        const items = once.data.items;
+        if (once.data.total >= 0) {
+          totalHint = once.data.total;
         }
-        if (parsed === undefined || !FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
-          continue;
+        let newCount = 0;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const id = fnSearchItemId(item);
+          if (id.length > 0 && seen.has(id)) {
+            continue;
+          }
+          if (id.length > 0) {
+            seen.add(id);
+          }
+          merged.push(item);
+          newCount += 1;
         }
-        const arr = FnHttpClientGalleryRequest.searchResultItemsFromData(
-          FnHttpClientGalleryRequest.galleryEnvelopeData(parsed)
+        hilog.info(
+          DOMAIN,
+          TAG,
+          'searchFilters page=%{public}d got=%{public}d new=%{public}d merged=%{public}d total=%{public}d',
+          page,
+          items.length,
+          newCount,
+          merged.length,
+          totalHint
         );
-        return {
-          success: true,
-          data: FnHttpClientGalleryRequest.normalizeSearchResultGalleryItems(arr)
-        };
+        if (items.length === 0 || newCount === 0) {
+          break;
+        }
+        if (totalHint >= 0 && merged.length >= totalHint) {
+          break;
+        }
+        offset += items.length;
+        page += 1;
+        if (!includePaging) {
+          includePaging = true;
+        }
+        if (items.length < 200) {
+          break;
+        }
       }
-      return { success: false, message: '搜索结果为空' };
+      if (merged.length === 0) {
+        return { success: false, message: '搜索结果为空' };
+      }
+      return { success: true, data: merged };
     } catch (e) {
       return { success: false, message: String(e) || '筛选搜索异常' };
     }
+  }
+
+  private async searchResultsByFiltersOnce(
+    keyword: string,
+    filters: string,
+    anti: string,
+    timeoutMs: number,
+    limit: number,
+    offset: number,
+    includePaging: boolean
+  ): Promise<FnClientResult<FnSearchResultsPage>> {
+    const activeBase = fnWebViewBaseUrl(this.baseUrl);
+    const searchResultPaths: string[] = [
+      `${FN_PHOTO_API_V2_PREFIX}/search/results`,
+      `${FN_PHOTO_API_PREFIX}/search/results`,
+    ];
+    const cookie = mergeGalleryWebCookieIntoNativeHeader(
+      buildFnApiCookieHeader(this.token, this.longToken),
+      activeBase
+    );
+    const bodyStr = includePaging ?
+      `{"keyword":${JSON.stringify(keyword)},"filters":${filters},"antiFilters":${anti},"limit":${limit},"offset":${offset}}` :
+      `{"keyword":${JSON.stringify(keyword)},"filters":${filters},"antiFilters":${anti}}`;
+    if (offset === 0) {
+      hilog.info(DOMAIN, TAG, 'searchFilters body: %{public}s', bodyStr);
+    }
+    for (let pi = 0; pi < searchResultPaths.length; pi++) {
+      const pathTry = searchResultPaths[pi];
+      const authx = await genFnGalleryAuthxPostRaw(pathTry, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${pathTry}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        continue;
+      }
+      let parsed: Record<string, string | number | Object | undefined> | undefined;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        parsed = undefined;
+      }
+      if (parsed === undefined || !FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
+        continue;
+      }
+      const dataObj = FnHttpClientGalleryRequest.galleryEnvelopeData(parsed);
+      const page = new FnSearchResultsPage();
+      page.items = FnHttpClientGalleryRequest.normalizeSearchResultGalleryItems(
+        FnHttpClientGalleryRequest.searchResultItemsFromData(dataObj)
+      );
+      page.total = fnSearchTotalOf(dataObj);
+      return { success: true, data: page };
+    }
+    return { success: false, message: '搜索结果为空' };
   }
 
   async searchResultsByCategory(item: MediaCategoryItem, timeoutMs: number = 20000): Promise<FnClientResult<GalleryListItem[]>> {
