@@ -592,6 +592,27 @@ struct FolderBrowsePage {
     this.publishGrid();
   }
 
+  private removeFoldersByPaths(paths: string[]): void {
+    if (paths.length === 0) {
+      return;
+    }
+    const drop = new Set<string>();
+    for (let i = 0; i < paths.length; i++) {
+      if (paths[i].length > 0) {
+        drop.add(paths[i]);
+      }
+    }
+    const next: FolderBrowseFolderItem[] = [];
+    for (let i = 0; i < this.session.nav.folders.length; i++) {
+      const item = this.session.nav.folders[i];
+      if (!drop.has(item.path)) {
+        next.push(item);
+      }
+    }
+    this.session.nav.folders = next;
+    this.publishGrid();
+  }
+
   private vpToPx(value: number): number {
     try {
       return this.getUIContext().vp2px(value);
@@ -786,7 +807,9 @@ struct FolderBrowsePage {
 
       toast(msg: string): void { self.toast(msg); }
       exitSelection(): void { self.exitSelection(); }
+      currentPath(): string { return self.currentPath(); }
       removeMediaByIds(ids: string[]): void { self.removeMediaByIds(ids); }
+      removeFoldersByPaths(paths: string[]): void { self.removeFoldersByPaths(paths); }
       askLivePhotoSave(): Promise<LivePhotoSaveChoice> { return self.askLivePhotoSave(); }
       askChoice(title: string, buttons: string[]): Promise<number> { return self.askChoice(title, buttons); }
     }
@@ -1271,7 +1294,7 @@ struct FolderBrowsePage {
               GalleryAlbumBatchActionBar({
                 downloading: this.batchDownloading,
                 deleting: this.batchDeleting,
-                deleteEnabled: !this.hasFolderSelected,
+                deleteEnabled: true,
                 onDownload: (): void => {
                   void folderBrowseConfirmBatchDownload(this.asBatchActionsHost());
                 },
@@ -1285,7 +1308,9 @@ struct FolderBrowsePage {
 
             if (this.batchDeleting || this.batchDownloading) {
               FnFullLoadingMask({
-                text: this.batchDeleting ? '移入回收站中…' : (this.hasFolderSelected ? '正在收集文件夹媒体…' : '下载中…'),
+                text: this.batchDeleting ?
+                  (this.hasFolderSelected ? '删除中…' : '移入回收站中…') :
+                  (this.hasFolderSelected ? '正在收集文件夹媒体…' : '下载中…'),
                 topOffsetVp: 0
               })
             }

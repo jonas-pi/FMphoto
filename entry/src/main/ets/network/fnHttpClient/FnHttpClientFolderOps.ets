@@ -1,6 +1,7 @@
 import { http } from '@kit.NetworkKit';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
+import { FN_PHOTO_API_PREFIX } from '../FnPhotoRoutes';
 import { mergeGalleryWebCookieIntoNativeHeader } from '../FnWebCookies';
 import { fnWebViewBaseUrl } from '../ServerUrl';
 import { buildFnApiCookieHeader } from './FnHttpClientCookie';
@@ -281,5 +282,90 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
       return { success: true, data: [] };
     }
     return { success: true, data: FnHttpClientGalleryRequest.normalizeFolderViewItems(list as GalleryListItem[]) };
+  }
+
+  /**
+   * 删除当前目录下的文件夹和文件：POST /p/api/v1/file/delete
+   * 官方 folderView.removeFolderOrFile：{ path, ids, dirList }，dirList 为子目录名。
+   * 含文件夹时不可恢复，与回收站接口不同。
+   */
+  async deleteFolderOrFile(
+    parentPath: string,
+    fileIds: string[],
+    dirNames: string[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<Object>> {
+    if (fileIds.length === 0 && dirNames.length === 0) {
+      return { success: false, message: '没有可删除的项' };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/file/delete`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const bodyStr = FnHttpClientFolderOps.buildFileDeleteBody(parentPath, fileIds, dirNames);
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '删除响应解析失败' };
+      }
+      if (FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
+        return { success: true, data: parsed['data'] as Object };
+      }
+      const errLine = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
+      return { success: false, message: errLine.length > 0 ? errLine : '删除失败' };
+    } catch (e) {
+      return { success: false, message: String(e) || '删除请求异常' };
+    }
+  }
+
+  private static buildFileDeleteBody(parentPath: string, fileIds: string[], dirNames: string[]): string {
+    return `{"path":"${escapeJsonString(parentPath)}","ids":${FnHttpClientFolderOps.jsonIdArray(fileIds)},"dirList":${FnHttpClientFolderOps.jsonStringArray(dirNames)}}`;
+  }
+
+  private static jsonIdArray(ids: string[]): string {
+    const parts: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const raw = ids[i].trim();
+      if (raw.length === 0) {
+        continue;
+      }
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 0 && String(Math.floor(n)) === raw) {
+        parts.push(`${Math.floor(n)}`);
+      } else {
+        parts.push(`"${escapeJsonString(raw)}"`);
+      }
+    }
+    return `[${parts.join(',')}]`;
+  }
+
+  private static jsonStringArray(values: string[]): string {
+    const parts: string[] = [];
+    for (let i = 0; i < values.length; i++) {
+      const raw = values[i].trim();
+      if (raw.length === 0) {
+        continue;
+      }
+      parts.push(`"${escapeJsonString(raw)}"`);
+    }
+    return `[${parts.join(',')}]`;
   }
 }

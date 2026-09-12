@@ -69,6 +69,8 @@ export const GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES: string[] = [
 ];
 /** 文件夹封面：POST /p/api/v1/folder_view/cover */
 export const GALLERY_FOLDER_COVER_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/folder_view/cover`;
+/** 删除文件夹/文件：POST /p/api/v1/file/delete，body { path, ids, dirList } */
+export const FILE_DELETE_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/file/delete`;
 /** 回收站列表：签名 path 与 gallery 系列一致为 /p/api/v1/... */
 export const RECYCLE_BIN_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/recycle-bin/list`;
 /** 重复/相似检查列表 */

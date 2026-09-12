@@ -13,6 +13,7 @@ import {
   folderBrowseDirPathFromSelectionId,
   folderBrowseFoldersFromList,
   folderBrowseIsDirSelectionId,
+  folderBrowseLabelOf,
   folderBrowseMergeMediaUnique,
   folderBrowseSelectionHasFolder
 } from './FolderBrowseLogic';
@@ -31,7 +32,9 @@ export interface FolderBrowseBatchActionsHost {
   batchDownloading: boolean;
   toast(msg: string): void;
   exitSelection(): void;
+  currentPath(): string;
   removeMediaByIds(ids: string[]): void;
+  removeFoldersByPaths(paths: string[]): void;
   askLivePhotoSave(): Promise<LivePhotoSaveChoice>;
   askChoice(title: string, buttons: string[]): Promise<number>;
 }
@@ -170,7 +173,7 @@ export async function folderBrowseConfirmBatchDelete(host: FolderBrowseBatchActi
     return;
   }
   if (folderBrowseSelectionHasFolder(host.selectedIds)) {
-    host.toast('所选包含文件夹，无法移入回收站');
+    await folderBrowseConfirmPermanentDelete(host);
     return;
   }
   try {
@@ -211,4 +214,68 @@ export async function folderBrowseConfirmBatchDelete(host: FolderBrowseBatchActi
   host.toast(`已移入回收站 ${ok}/${ids.length}`);
   host.removeMediaByIds(ids);
   host.exitSelection();
+}
+
+/** 官方：含文件夹走 POST /p/api/v1/file/delete，删除后不可恢复。 */
+async function folderBrowseConfirmPermanentDelete(host: FolderBrowseBatchActionsHost): Promise<void> {
+  const mediaIds: string[] = [];
+  const folderPaths: string[] = [];
+  const dirNames: string[] = [];
+  for (let i = 0; i < host.selectedIds.length; i++) {
+    const id = host.selectedIds[i];
+    if (folderBrowseIsDirSelectionId(id)) {
+      const path = folderBrowseDirPathFromSelectionId(id);
+      if (path.length > 0) {
+        folderPaths.push(path);
+        dirNames.push(folderBrowseLabelOf(path));
+      }
+    } else if (id.length > 0) {
+      mediaIds.push(id);
+    }
+  }
+  if (folderPaths.length === 0 && mediaIds.length === 0) {
+    host.toast('没有可删除的项');
+    return;
+  }
+  const folderCount = folderPaths.length;
+  try {
+    const dlg = await host.getUIContext().getPromptAction().showDialog({
+      title: folderCount > 0 ? '删除文件夹' : '删除文件',
+      message: folderCount > 0 ?
+        `确定删除所选 ${folderCount} 个文件夹？将同时删除其中的照片和视频，删除后无法恢复。` :
+        '确定删除所选文件？删除后将无法恢复。',
+      buttons: [
+        { text: '取消', color: '#99000000' },
+        { text: '删除', color: '#E5484D' }
+      ]
+    });
+    if (dlg.index !== 1) {
+      return;
+    }
+  } catch (_e) {
+    return;
+  }
+  const client = AppSession.getClient();
+  if (client === null) {
+    host.toast('未登录');
+    return;
+  }
+  host.batchDeleting = true;
+  try {
+    const res = await client.deleteFolderOrFile(host.currentPath(), mediaIds, dirNames, 30000);
+    if (!res.success) {
+      host.toast(res.message ?? '删除失败');
+      return;
+    }
+    for (let i = 0; i < mediaIds.length; i++) {
+      GalleryDeleteSyncStore.markDeleted(mediaIds[i]);
+    }
+    host.removeMediaByIds(mediaIds);
+    host.removeFoldersByPaths(folderPaths);
+    GalleryTimelineRefreshStore.bump();
+    host.toast('已删除');
+    host.exitSelection();
+  } finally {
+    host.batchDeleting = false;
+  }
 }

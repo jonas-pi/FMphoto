@@ -380,6 +380,15 @@ export class FnHttpClientGalleryOps {
     return this.folder.getFolderViewFileList(folderPath, limit, offset, desc, orderBy, timeoutMs);
   }
 
+  async deleteFolderOrFile(
+    parentPath: string,
+    fileIds: string[],
+    dirNames: string[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<Object>> {
+    return this.folder.deleteFolderOrFile(parentPath, fileIds, dirNames, timeoutMs);
+  }
+
   async getRecycleBinList(
     offset: number,
     limit: number,
