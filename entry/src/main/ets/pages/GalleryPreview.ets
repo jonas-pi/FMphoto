@@ -1378,7 +1378,7 @@ struct GalleryPreview {
 @Component
 struct GalleryPreviewInlineDetails {
   @Prop expandedHeight: number = 0;
-  @Prop visible: boolean = false;
+  @Prop @Watch('onDetailsVisibleChanged') visible: boolean = false;
   @Prop panelBg: ResourceColor = Color.White;
   @Prop detailsLoading: boolean = false;
   @Prop detailsError: string = '';
@@ -1390,6 +1390,7 @@ struct GalleryPreviewInlineDetails {
   onPersonClick: (p: PersonInPhotoItem) => void = (_p: PersonInPhotoItem): void => {};
   onFolderClick: () => void = () => {};
 
+  @State private detailsScrollAtTop: boolean = true;
   private translateUpdater: GalleryPreviewTranslateYUpdater = new GalleryPreviewTranslateYUpdater();
   private dragStartHeight: number = 0;
   private readonly onDetailsHeightChanged = (): void => {
@@ -1398,7 +1399,22 @@ struct GalleryPreviewInlineDetails {
 
   aboutToAppear(): void {
     addGalleryPreviewDetailsFitListener(this.onDetailsHeightChanged);
+    this.detailsScrollAtTop = true;
     this.syncPanelPosition(false);
+  }
+
+  onDetailsVisibleChanged(): void {
+    if (this.visible) {
+      this.detailsScrollAtTop = true;
+    }
+  }
+
+  private canDragCloseFromContent(event: BaseGestureEvent): boolean {
+    if (!this.detailsScrollAtTop) {
+      return false;
+    }
+    const pan = event as PanGestureEvent;
+    return pan.offsetY > 0;
   }
 
   aboutToDisappear(): void {
@@ -1525,10 +1541,37 @@ struct GalleryPreviewInlineDetails {
           personsInPhoto: this.personsInPhoto,
           folderOpening: this.folderOpening,
           personOpening: this.personOpening,
+          panelVisible: this.visible,
+          detailsIdentity: `${this.detailsData?.filePath ?? ''}|${this.detailsData?.fileName ?? ''}`,
           onPersonClick: this.onPersonClick,
-          onFolderClick: this.onFolderClick
+          onFolderClick: this.onFolderClick,
+          onScrollAtTopChange: (atTop: boolean): void => {
+            this.detailsScrollAtTop = atTop;
+          }
         })
           .layoutWeight(1)
+          .priorityGesture(
+            PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 8 })
+              .onActionStart((): void => {
+                this.beginHeaderDrag();
+              })
+              .onActionUpdate((event: GestureEvent): void => {
+                this.updateHeaderDrag(event.offsetY);
+              })
+              .onActionEnd((event: GestureEvent): void => {
+                this.finishHeaderDrag(event.velocityY);
+              })
+              .onActionCancel((): void => {
+                this.finishHeaderDrag(0);
+              })
+          )
+          .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+            if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+              return GestureJudgeResult.CONTINUE;
+            }
+            return this.canDragCloseFromContent(event) ?
+              GestureJudgeResult.CONTINUE : GestureJudgeResult.REJECT;
+          })
       }
       .width('100%')
       .height(this.expandedHeight)
