@@ -858,6 +858,7 @@ export struct GalleryAlbumMainModeView {
                 onPanEnd: this.onTimelinePanEnd,
                 onPanCancel: this.onTimelinePanCancel
               })
+                .hitTestBehavior(HitTestMode.Transparent)
             }
           }
           .width('100%')

@@ -83,6 +83,21 @@ export struct GalleryAlbumTimelineSidebar {
     return this.ringX() - GALLERY_TIMELINE_PILL_WIDTH_VP - GALLERY_TIMELINE_PILL_GAP_VP;
   }
 
+  /** 轨道可见或正在拖时，滑块才接事件；隐藏时整条点穿到图片。 */
+  private thumbInteractive(): boolean {
+    return this.timelineSidebarDragging || this.timelinePressing ||
+      this.timelineLongPressExpanded || this.timelineBarVisible;
+  }
+
+  /**
+   * 官方：Stack 上层默认挡住下层；只有上层 Transparent，下层图片才能点到。
+   * 滑块用 BLOCK_HIERARCHY，避免点滑块时连带打开底下的图。
+   * 文档：ts-universal-attributes-hit-test-behavior
+   */
+  private thumbHitTestMode(): HitTestMode {
+    return this.thumbInteractive() ? HitTestMode.BLOCK_HIERARCHY : HitTestMode.None;
+  }
+
   build() {
     Column() {
       if (this.trackInsetTopVp > 0) {
@@ -105,6 +120,7 @@ export struct GalleryAlbumTimelineSidebar {
               .borderRadius(10)
               .shadow({ radius: 10, color: '#22000000', offsetX: 0, offsetY: 4 })
               .position({ x: this.yearBadgeX(), y: marker.y - 12 })
+              .hitTestBehavior(HitTestMode.None)
           }, (m: YearMarker) => `ym_${m.year}`)
         }
 
@@ -122,6 +138,7 @@ export struct GalleryAlbumTimelineSidebar {
           })
           .position({ x: this.ringX(), y: this.ringY() })
           .animation({ duration: 180, curve: Curve.EaseOut })
+          .hitTestBehavior(HitTestMode.None)
 
         // 仅滑块附近参与命中；轨道其余区域让事件落到右侧图片，避免误触快速滚动。
         Column()
@@ -129,6 +146,7 @@ export struct GalleryAlbumTimelineSidebar {
           .height(GALLERY_TIMELINE_THUMB_HIT_HEIGHT_VP)
           .backgroundColor(Color.Transparent)
           .position({ x: this.thumbHitX(), y: this.thumbHitY() })
+          .hitTestBehavior(this.thumbHitTestMode())
           .onTouch(this.onTouchStateChange)
           .parallelGesture(
             GestureGroup(GestureMode.Parallel,
@@ -168,6 +186,7 @@ export struct GalleryAlbumTimelineSidebar {
       .id(GALLERY_TIMELINE_TRACK_DOM_ID)
       .layoutWeight(1)
       .clip(false)
+      .hitTestBehavior(HitTestMode.Transparent)
       .onAreaChange((_: Area, area: Area): void => {
         const h = area.height as number;
         if (h > 1) {
@@ -188,5 +207,6 @@ export struct GalleryAlbumTimelineSidebar {
     .width(GALLERY_TIMELINE_HIT_WIDTH_VP)
     .height('100%')
     .clip(false)
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 }
