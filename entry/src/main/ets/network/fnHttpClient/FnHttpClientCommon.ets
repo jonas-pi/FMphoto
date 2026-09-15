@@ -69,6 +69,8 @@ export const GALLERY_FOLDER_DIRLIST_PATH_CANDIDATES: string[] = [
 ];
 /** 文件夹封面：POST /p/api/v1/folder_view/cover */
 export const GALLERY_FOLDER_COVER_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/folder_view/cover`;
+/** 删除文件夹/文件：POST /p/api/v1/file/delete，body { path, ids, dirList } */
+export const FILE_DELETE_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/file/delete`;
 /** 回收站列表：签名 path 与 gallery 系列一致为 /p/api/v1/... */
 export const RECYCLE_BIN_LIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/recycle-bin/list`;
 /** 重复/相似检查列表 */
@@ -130,6 +132,12 @@ export const MAP_GET_IDS_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/map/getIds`;
 export const MAP_GET_IDS_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/map/getIds`,
   '/api/v1/map/getIds'
+];
+/** 以图搜图：GET /p/api/v1/magic-search/similar?id=&compareSelf=1 */
+export const MAGIC_SEARCH_SIMILAR_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/magic-search/similar`;
+export const MAGIC_SEARCH_SIMILAR_PATH_CANDIDATES: string[] = [
+  `${FN_PHOTO_API_PREFIX}/magic-search/similar`,
+  '/api/v1/magic-search/similar'
 ];
 /** 搜索筛选项：GET /p/api/v1/search/filterlist */
 export const SEARCH_FILTERLIST_SIGN_PATH = `${FN_PHOTO_API_PREFIX}/search/filterlist`;

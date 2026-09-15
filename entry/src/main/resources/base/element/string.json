@@ -261,6 +261,10 @@
       "value": "移入回收站"
     },
     {
+      "name": "gallery_batch_delete_permanent",
+      "value": "永久删除"
+    },
+    {
       "name": "gallery_batch_download",
       "value": "下载"
     },
@@ -382,7 +386,7 @@
     },
     {
       "name": "login_subtitle",
-      "value": "飞牛 NAS 相册客户端"
+      "value": "非官方飞牛NAS相册客户端"
     },
     {
       "name": "config_sync_title",

@@ -26,6 +26,8 @@ export const thumbPixCache = new Map<string, PixelMap>();
 const thumbPixIdentityCache = new Map<string, ThumbIdentityCacheEntry>();
 const previewMidPixCache = new Map<string, PixelMap>();
 const previewMidInflight: Map<string, Promise<PixelMap | undefined>> = new Map();
+const previewFullPixCache = new Map<string, PixelMap>();
+const previewFullInflight: Map<string, Promise<PixelMap | undefined>> = new Map();
 const thumbLoadFailAt = new Map<string, number>();
 /** 方向性预取去重；只约束预取任务，不改变可见缩略图的正常加载优先级。 */
 const thumbPrefetchInflight: Set<string> = new Set();
@@ -41,6 +43,8 @@ const THUMB_DECODE_MAX_EDGE_PX: number = 360;
 /** 预览中档缩略图最大边：接近屏宽，仍走 m 档、不拉原图 */
 const PREVIEW_MID_MAX_EDGE_PX: number = 2880;
 const PREVIEW_MID_CACHE_MAX: number = 20;
+/** 原图像素缓存只留最近几张，避免幻灯片预拉把堆顶满。 */
+const PREVIEW_FULL_CACHE_MAX: number = 3;
 
 export interface GalleryThumbLoadTelemetry {
   active: number;
@@ -756,6 +760,31 @@ export function getPreviewMidPixCached(uri: string): PixelMap | undefined {
   return previewMidPixCache.get(previewMidCacheKey(uri));
 }
 
+function previewFullCacheKey(url: string): string {
+  return `full|${url}`;
+}
+
+function rememberPreviewFullPix(key: string, pix: PixelMap): void {
+  if (previewFullPixCache.size >= PREVIEW_FULL_CACHE_MAX && !previewFullPixCache.has(key)) {
+    let firstKey: string | undefined = undefined;
+    for (const k of previewFullPixCache.keys()) {
+      firstKey = k;
+      break;
+    }
+    if (firstKey !== undefined) {
+      previewFullPixCache.delete(firstKey);
+    }
+  }
+  previewFullPixCache.set(key, pix);
+}
+
+export function getFullPixCached(uri: string): PixelMap | undefined {
+  if (uri.length === 0) {
+    return undefined;
+  }
+  return previewFullPixCache.get(previewFullCacheKey(uri));
+}
+
 /**
  * 预览中档缩略图：优先复用宫格已落盘的 JPEG，按 1600px 边长解码，不拉原图。
  */
@@ -953,6 +982,32 @@ export async function loadFullPix(
   if (fullUrl.length === 0) {
     return undefined;
   }
+  const cached = getFullPixCached(fullUrl);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const pending = previewFullInflight.get(fullUrl);
+  if (pending !== undefined) {
+    return pending;
+  }
+  const task = thisLoadFullPix(fullUrl, expectedBytes, cacheDir);
+  previewFullInflight.set(fullUrl, task);
+  try {
+    const pix = await task;
+    if (pix !== undefined) {
+      rememberPreviewFullPix(previewFullCacheKey(fullUrl), pix);
+    }
+    return pix;
+  } finally {
+    previewFullInflight.delete(fullUrl);
+  }
+}
+
+async function thisLoadFullPix(
+  fullUrl: string,
+  expectedBytes?: number,
+  cacheDir?: string
+): Promise<PixelMap | undefined> {
   if (shouldUseTempFileFullDecode(expectedBytes, cacheDir)) {
     const filePix = await decodeFullPixFromTempFile(fullUrl, expectedBytes, cacheDir as string);
     if (filePix !== undefined) {

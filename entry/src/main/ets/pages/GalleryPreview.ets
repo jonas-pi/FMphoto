@@ -12,7 +12,9 @@ import { curves, display, UIContext, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GalleryPreviewSlide } from '../album/GalleryPreviewSlide';
 import { GalleryPreviewNavStore } from '../album/GalleryPreviewNavStore';
+import { GALLERY_PREVIEW_SOURCE_RECYCLE_ID } from '../album/GallerySharedTransition';
 import { GalleryPreviewSessionPrefs } from '../album/GalleryPreviewSessionPrefs';
+import { prefetchSlideshowNextItem } from '../album/slideshow/GallerySlideshowMediaPrefetch';
 import { GalleryAlbumNavigation } from '../album/GalleryAlbumNavigation';
 import {
   GalleryListBackStep,
@@ -101,6 +103,7 @@ import {
   galleryPreviewToggleFavorite
 } from './galleryPreview/GalleryPreviewActions';
 import { GalleryPreviewChrome } from './galleryPreview/GalleryPreviewChrome';
+import { galleryPreviewSearchSimilar } from './galleryPreview/GalleryPreviewSimilarSearch';
 import { PreviewItemsDataSource } from './galleryPreview/GalleryPreviewDataSource';
 import { GalleryPreviewSession } from './galleryPreview/GalleryPreviewSession';
 import { GalleryPreviewDetailsSheet } from './galleryPreview/GalleryPreviewDetailsSheet';
@@ -173,6 +176,8 @@ struct GalleryPreview {
   @State private personsInPhoto: PersonInPhotoItem[] = [];
   @State private folderOpening: boolean = false;
   @State private personOpening: boolean = false;
+  @State private similarSearching: boolean = false;
+  @State private moreMenuExpanded: boolean = false;
   @State private favoriteToggling: boolean = false;
   @State private currentCollectState: number = -1;
   @State private bottomBarHeight: number = 80;
@@ -223,6 +228,9 @@ struct GalleryPreview {
       }),
       new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
         this.completeLivePhotoSave('cancel');
+      }),
+      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+        this.dismissMoreMenu();
       }),
       new GalleryListBackStep(this.detailsVisible, (): void => {
         this.closeDetailsPanel();
@@ -308,6 +316,7 @@ struct GalleryPreview {
     if (this.session.slideshow.slideshowEnabled) {
       this.logSlideshowPage();
       this.maybePrefetchSlideshowItems();
+      this.prefetchNextSlideshowMedia();
     }
   }
 
@@ -363,6 +372,35 @@ struct GalleryPreview {
     galleryPreviewOnSlideshowVideoEnded(this.asSlideshowHost());
   }
 
+  private slideshowPrefetchCacheDir(): string {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      return ctx.cacheDir;
+    } catch (_e) {
+      return '';
+    }
+  }
+
+  /** 幻灯片预拉下一张中档图；当前原图就绪后再预拉下一张原图，避免和当前张抢带宽。 */
+  private prefetchNextSlideshowMedia(): void {
+    if (!this.session.slideshow.slideshowEnabled) {
+      return;
+    }
+    const nextIdx = this.swiperIndex + 1;
+    if (nextIdx < 0 || nextIdx >= this.previewItems.length) {
+      return;
+    }
+    const next = this.previewItems[nextIdx];
+    const waitingCurrentOriginal =
+      this.originalLocked && this.originalPreviewEnabled && !this.originalShowing;
+    prefetchSlideshowNextItem(
+      next,
+      this.baseUrl,
+      this.originalLocked && !waitingCurrentOriginal,
+      this.slideshowPrefetchCacheDir()
+    );
+  }
+
   aboutToDisappear(): void {
     GalleryAlbumNavigation.setSuspended(false);
     this.clearSlideshowTimer();
@@ -372,7 +410,6 @@ struct GalleryPreview {
     this.detailsVisible = false;
     resetGalleryPreviewDetailsFit();
     setGalleryPreviewDetailsCover(false);
-    setGalleryPreviewDismissProgress(0);
     this.detailsLoading = false;
     this.detailsError = '';
     this.detailsData = undefined;
@@ -380,6 +417,8 @@ struct GalleryPreview {
     this.personsInPhoto = [];
     this.folderOpening = false;
     this.personOpening = false;
+    this.similarSearching = false;
+    this.moreMenuExpanded = false;
     this.downloadProgressPct = 0;
     this.downloadProgressKnown = false;
     trimThumbPixCache(24);
@@ -507,6 +546,11 @@ struct GalleryPreview {
     );
   }
 
+  /** 锁定原图后等当前项原图落地（或失败）再开始幻灯片间隔，避免切页时只闪缩略图。 */
+  private currentSlideshowWaitsForOriginal(): boolean {
+    return this.originalLocked && this.originalPreviewEnabled && !this.originalShowing;
+  }
+
   private currentItemId(): string {
     const item = this.currentItem();
     if (item === null || item.id === undefined || item.id === null) {
@@ -603,7 +647,8 @@ struct GalleryPreview {
   }
 
   private applySessionOriginalIfNeeded(): void {
-    if (this.session.slideshow.slideshowEnabled || !this.originalLocked || !this.currentHasOriginal()) {
+    // 幻灯片只是自动切页，长按锁定的原图仍应对后续项生效。
+    if (!this.originalLocked || !this.currentHasOriginal()) {
       return;
     }
     this.originalPreviewEnabled = true;
@@ -633,11 +678,15 @@ struct GalleryPreview {
         this.originalPreviewEnabled = true;
         this.loadOriginalToken++;
       }
-      return;
+    } else {
+      // 再次长按：解除后续沿用，同时关掉当前原图。
+      this.originalPreviewEnabled = false;
+      this.originalShowing = false;
     }
-    // 再次长按：解除后续沿用，同时关掉当前原图。
-    this.originalPreviewEnabled = false;
-    this.originalShowing = false;
+    if (this.session.slideshow.slideshowEnabled) {
+      this.armSlideshowTimer();
+      this.prefetchNextSlideshowMedia();
+    }
   }
 
   private syncCollectStateFromCurrentItem(): void {
@@ -682,6 +731,32 @@ struct GalleryPreview {
 
   private async onPersonInPhotoClick(p: PersonInPhotoItem): Promise<void> {
     await galleryPreviewOnPersonInPhotoClick(this.asActionsHost(), p);
+  }
+
+  private canSearchSimilar(): boolean {
+    if (this.session.slideshow.slideshowEnabled) {
+      return false;
+    }
+    if (GalleryPreviewNavStore.sourceRootId === GALLERY_PREVIEW_SOURCE_RECYCLE_ID) {
+      return false;
+    }
+    return this.currentItemId().length > 0;
+  }
+
+  private dismissMoreMenu(): void {
+    if (!this.moreMenuExpanded) {
+      return;
+    }
+    this.moreMenuExpanded = false;
+  }
+
+  private toggleMoreMenu(): void {
+    this.moreMenuExpanded = !this.moreMenuExpanded;
+  }
+
+  private searchSimilarPhotos(): void {
+    this.dismissMoreMenu();
+    void galleryPreviewSearchSimilar(this.asActionsHost());
   }
 
   private askChoice(title: string, buttons: string[]): Promise<number> {
@@ -838,6 +913,8 @@ struct GalleryPreview {
       currentItem(): GalleryListItem | null { return self.currentItem(); }
       currentItemIsVideo(): boolean { return self.currentItemIsVideo(); }
       currentSlideshowWaitsForMediaEnd(): boolean { return self.currentSlideshowWaitsForMediaEnd(); }
+      currentSlideshowWaitsForOriginal(): boolean { return self.currentSlideshowWaitsForOriginal(); }
+      prefetchNextSlideshowMedia(): void { self.prefetchNextSlideshowMedia(); }
     }
     this.slideshowHostCache = new GalleryPreviewSlideshowHostBridge();
     return this.slideshowHostCache;
@@ -897,6 +974,9 @@ struct GalleryPreview {
 
       get personOpening(): boolean { return self.personOpening; }
       set personOpening(v: boolean) { self.personOpening = v; }
+
+      get similarSearching(): boolean { return self.similarSearching; }
+      set similarSearching(v: boolean) { self.similarSearching = v; }
 
       get favoriteToggling(): boolean { return self.favoriteToggling; }
       set favoriteToggling(v: boolean) { self.favoriteToggling = v; }
@@ -1037,12 +1117,20 @@ struct GalleryPreview {
                 if (this.originalPreviewEnabled) {
                   this.originalShowing = true;
                 }
+                if (this.session.slideshow.slideshowEnabled) {
+                  this.armSlideshowTimer();
+                  this.prefetchNextSlideshowMedia();
+                }
               },
               onOriginalLoadFailed: (msg: string): void => {
                 if (this.originalPreviewEnabled) {
                   this.originalPreviewEnabled = false;
                   this.originalShowing = false;
                   this.toast(msg);
+                }
+                if (this.session.slideshow.slideshowEnabled) {
+                  this.armSlideshowTimer();
+                  this.prefetchNextSlideshowMedia();
                 }
               },
               onSlideshowVideoEnded: (): void => {
@@ -1133,6 +1221,7 @@ struct GalleryPreview {
             this.logSlideshowPage();
             this.armSlideshowTimer();
             this.scheduleSlideshowPrefetch();
+            this.prefetchNextSlideshowMedia();
           }
         })
         .onAreaChange((_old, area): void => {
@@ -1157,6 +1246,8 @@ struct GalleryPreview {
         bottomSafeInsetVp: this.systemBottomInsetVp,
         fgColor: this.fgColor(),
         showOriginalAction: this.currentHasOriginal() || this.originalLocked,
+        showSearchSimilarAction: this.canSearchSimilar(),
+        moreMenuExpanded: this.moreMenuExpanded,
         originalShowing: this.originalPreviewEnabled,
         originalLocked: this.originalLocked,
         sharing: this.sharing,
@@ -1177,7 +1268,17 @@ struct GalleryPreview {
           this.toggleOriginalLock();
         },
         onOpenDetails: (): void => {
+          this.dismissMoreMenu();
           this.openDetailsPanel();
+        },
+        onToggleMoreMenu: (): void => {
+          this.toggleMoreMenu();
+        },
+        onDismissMoreMenu: (): void => {
+          this.dismissMoreMenu();
+        },
+        onSearchSimilar: (): void => {
+          this.searchSimilarPhotos();
         },
         onShare: (): void => {
           this.shareCurrentImage();
@@ -1220,6 +1321,13 @@ struct GalleryPreview {
       if (this.personOpening) {
         FnFullLoadingMask({
           text: '加载人物媒体中…',
+          topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
+        })
+      }
+
+      if (this.similarSearching) {
+        FnFullLoadingMask({
+          text: '搜索相似照片中…',
           topOffsetVp: this.systemTopInsetVp + FN_FLOATING_TOP_TOTAL_HEIGHT_VP
         })
       }
@@ -1269,7 +1377,7 @@ struct GalleryPreview {
 @Component
 struct GalleryPreviewInlineDetails {
   @Prop expandedHeight: number = 0;
-  @Prop visible: boolean = false;
+  @Prop @Watch('onDetailsVisibleChanged') visible: boolean = false;
   @Prop panelBg: ResourceColor = Color.White;
   @Prop detailsLoading: boolean = false;
   @Prop detailsError: string = '';
@@ -1281,6 +1389,7 @@ struct GalleryPreviewInlineDetails {
   onPersonClick: (p: PersonInPhotoItem) => void = (_p: PersonInPhotoItem): void => {};
   onFolderClick: () => void = () => {};
 
+  @State private detailsScrollAtTop: boolean = true;
   private translateUpdater: GalleryPreviewTranslateYUpdater = new GalleryPreviewTranslateYUpdater();
   private dragStartHeight: number = 0;
   private readonly onDetailsHeightChanged = (): void => {
@@ -1289,7 +1398,22 @@ struct GalleryPreviewInlineDetails {
 
   aboutToAppear(): void {
     addGalleryPreviewDetailsFitListener(this.onDetailsHeightChanged);
+    this.detailsScrollAtTop = true;
     this.syncPanelPosition(false);
+  }
+
+  onDetailsVisibleChanged(): void {
+    if (this.visible) {
+      this.detailsScrollAtTop = true;
+    }
+  }
+
+  private canDragCloseFromContent(event: BaseGestureEvent): boolean {
+    if (!this.detailsScrollAtTop) {
+      return false;
+    }
+    const pan = event as PanGestureEvent;
+    return pan.offsetY > 0;
   }
 
   aboutToDisappear(): void {
@@ -1416,10 +1540,37 @@ struct GalleryPreviewInlineDetails {
           personsInPhoto: this.personsInPhoto,
           folderOpening: this.folderOpening,
           personOpening: this.personOpening,
+          panelVisible: this.visible,
+          detailsIdentity: `${this.detailsData?.filePath ?? ''}|${this.detailsData?.fileName ?? ''}`,
           onPersonClick: this.onPersonClick,
-          onFolderClick: this.onFolderClick
+          onFolderClick: this.onFolderClick,
+          onScrollAtTopChange: (atTop: boolean): void => {
+            this.detailsScrollAtTop = atTop;
+          }
         })
           .layoutWeight(1)
+          .priorityGesture(
+            PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 8 })
+              .onActionStart((): void => {
+                this.beginHeaderDrag();
+              })
+              .onActionUpdate((event: GestureEvent): void => {
+                this.updateHeaderDrag(event.offsetY);
+              })
+              .onActionEnd((event: GestureEvent): void => {
+                this.finishHeaderDrag(event.velocityY);
+              })
+              .onActionCancel((): void => {
+                this.finishHeaderDrag(0);
+              })
+          )
+          .onGestureJudgeBegin((info: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+            if (info.type !== GestureControl.GestureType.PAN_GESTURE) {
+              return GestureJudgeResult.CONTINUE;
+            }
+            return this.canDragCloseFromContent(event) ?
+              GestureJudgeResult.CONTINUE : GestureJudgeResult.REJECT;
+          })
       }
       .width('100%')
       .height(this.expandedHeight)

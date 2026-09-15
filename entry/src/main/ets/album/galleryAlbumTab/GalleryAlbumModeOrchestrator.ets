@@ -39,6 +39,10 @@ import {
   gallerySearchSetApplied
 } from '../search/GallerySearchFilterLogic';
 import { GallerySearchFilterSnapshot } from '../search/GallerySearchFilterTypes';
+import {
+  gallerySearchApplyLocalFilters,
+  gallerySearchNeedsRemoteFilterIds
+} from '../search/GallerySearchLocalFilter';
 import { smartCategoryCurrentAccount, smartCategoryPatchCountByName } from '../SmartCategoryLayoutPreferences';
 import { mediaCategoryItemsWithSavedOrderFromUi } from '../MediaCategoryOrderPreferences';
 import { SmartCategoryCountStore } from '../SmartCategoryCountStore';
@@ -189,22 +193,39 @@ export async function galleryAlbumRunSearch(
     const filtersJson = gallerySearchBuildFiltersJson(snapshot);
     const hasPositive = gallerySearchFilterHasPositive(snapshot);
     if (kw.length > 0 && hasPositive) {
+      // AI 可回几千张。日期/类型/收藏直接在这份全量上筛；
+      // 人物/相册等仍拉筛选 ID，search/results 会按页续拉后再求交。
+      const needRemoteIds = gallerySearchNeedsRemoteFilterIds(snapshot);
       const aiTask = client.doMagicSearch(kw, 20000, antiJson);
-      const filterTask = client.searchResultsByFilters('', filtersJson, antiJson);
-      const aiRes = await aiTask;
-      const filterRes = await filterTask;
-      if (!aiRes.success || aiRes.data === undefined) {
-        host.searchError = aiRes.message !== undefined ? aiRes.message : '搜索失败';
-        host.searchLoading = false;
-        return;
+      if (!needRemoteIds) {
+        const aiRes = await aiTask;
+        if (!aiRes.success || aiRes.data === undefined) {
+          host.searchError = aiRes.message !== undefined ? aiRes.message : '搜索失败';
+          host.searchLoading = false;
+          return;
+        }
+        const aiItems = gallerySearchMapMagicItems(aiRes.data.list !== undefined ? aiRes.data.list : []);
+        host.searchResults = gallerySearchApplyLocalFilters(aiItems, snapshot);
+      } else {
+        const filterTask = client.searchResultsByFilters('', filtersJson, antiJson);
+        const aiRes = await aiTask;
+        const filterRes = await filterTask;
+        if (!aiRes.success || aiRes.data === undefined) {
+          host.searchError = aiRes.message !== undefined ? aiRes.message : '搜索失败';
+          host.searchLoading = false;
+          return;
+        }
+        if (!filterRes.success || filterRes.data === undefined) {
+          host.searchError = filterRes.message !== undefined ? filterRes.message : '筛选失败';
+          host.searchLoading = false;
+          return;
+        }
+        const aiItems = gallerySearchMapMagicItems(aiRes.data.list !== undefined ? aiRes.data.list : []);
+        host.searchResults = gallerySearchApplyLocalFilters(
+          gallerySearchIntersectById(aiItems, filterRes.data),
+          snapshot
+        );
       }
-      if (!filterRes.success || filterRes.data === undefined) {
-        host.searchError = filterRes.message !== undefined ? filterRes.message : '筛选失败';
-        host.searchLoading = false;
-        return;
-      }
-      const aiItems = gallerySearchMapMagicItems(aiRes.data.list !== undefined ? aiRes.data.list : []);
-      host.searchResults = gallerySearchIntersectById(aiItems, filterRes.data);
     } else if (hasPositive || (kw.length === 0 && hasFilter)) {
       const res: FnClientResult<GalleryListItem[]> =
         await client.searchResultsByFilters(kw, filtersJson, antiJson);

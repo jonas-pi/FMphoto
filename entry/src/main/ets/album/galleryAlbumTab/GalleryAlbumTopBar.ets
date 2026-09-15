@@ -185,6 +185,7 @@ export struct GalleryAlbumTopBar {
   @Prop topSafeInsetVp: number = 0;
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @Prop searchFilterActive: boolean = false;
+  @Prop searchFilterActiveCount: number = 0;
   @Prop albumsHomeEditMode: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
@@ -502,9 +503,21 @@ export struct GalleryAlbumTopBar {
     }, true);
   }
 
-  private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
+  private menuItem(content: HdsNavigationIconOptions, badgeCount: number = 0): HdsNavigationMenuItemOptions {
+    if (badgeCount > 0) {
+      const badged: HdsNavigationMenuItemOptions = {
+        content: content,
+        badge: { count: badgeCount }
+      };
+      return badged;
+    }
     const item: HdsNavigationMenuItemOptions = { content: content };
     return item;
+  }
+
+  private searchFilterIcon(): Resource {
+    return this.searchFilterActive ?
+      $r('sys.symbol.slider_horizontal_2_square_fill') : $r('sys.symbol.slider_horizontal_2');
   }
 
   private buildSearchMenuItems(): HdsNavigationMenuItemOptions[] {
@@ -522,7 +535,7 @@ export struct GalleryAlbumTopBar {
     }
     const filterContent: HdsNavigationIconOptions = {
       label: this.searchFilterActive ? '已筛选' : '筛选',
-      icon: $r('sys.symbol.slider_horizontal_2'),
+      icon: this.searchFilterIcon(),
       type: IconStyleMode.NORMAL,
       isEnabled: true,
       action: (): void => {
@@ -538,7 +551,10 @@ export struct GalleryAlbumTopBar {
         this.onMoreMenuAction();
       }
     };
-    return [this.menuItem(filterContent), this.menuItem(moreContent)];
+    return [
+      this.menuItem(filterContent, this.searchFilterActiveCount),
+      this.menuItem(moreContent)
+    ];
   }
 
   private buildDefaultMenuItems(): HdsNavigationMenuItemOptions[] {

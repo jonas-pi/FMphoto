@@ -99,6 +99,28 @@ export async function loadSmartCategoryGalleryItems(
   return { items: mapped, errorMessage: '' };
 }
 
+/** 预览「搜索相似照片」：以图搜图，结果含自己。 */
+export async function loadSimilarGalleryItems(
+  client: FnHttpClient,
+  photoId: string,
+  timeoutMs: number = 20000
+): Promise<SmartCategoryGalleryLoadResult> {
+  const id = photoId.trim();
+  if (id.length === 0) {
+    return { items: [], errorMessage: '当前媒体无有效 ID' };
+  }
+  const res = await client.getMagicSearchSimilar(id, timeoutMs);
+  if (!res.success || res.data === undefined) {
+    return { items: [], errorMessage: res.message ?? '相似搜索失败' };
+  }
+  const rawList = res.data.list ?? [];
+  const mapped: GalleryListItem[] = [];
+  for (let i = 0; i < rawList.length; i++) {
+    mapped.push(normalizeSmartMagicItem(rawList[i]));
+  }
+  return { items: mapped, errorMessage: '' };
+}
+
 /** 封面计数回调：按分类名回写，返回 false 则中止后续刷新。 */
 export type SmartCategoryCountSink = (name: string, count: number) => boolean;
 

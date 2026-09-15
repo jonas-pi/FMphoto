@@ -1065,7 +1065,7 @@ export struct GalleryAuthVideo {
     this.clearChromeAutoHideTimer();
   }
 
-  private beginVerticalAdjust(event: GestureEvent): void {
+  private beginVerticalAdjust(event: GestureEvent, isBrightness: boolean): void {
     if (this.draggingSeek || this.longPressSpeeding) {
       return;
     }
@@ -1077,7 +1077,7 @@ export struct GalleryAuthVideo {
     this.clearChromeAutoHideTimer();
     this.adjustBrightnessBase = this.screenBrightness;
     this.adjustVolumeBase = this.mediaVolume;
-    this.adjustIsBrightness = fl[0].localX < this.viewW * 0.5;
+    this.adjustIsBrightness = isBrightness;
     this.adjustHudVisible = true;
     if (!this.adjustIsBrightness && this.muted) {
       this.muted = false;
@@ -2066,8 +2066,8 @@ export struct GalleryAuthVideo {
             this.armPlaybackFalsePositiveGuardForTranscode();
           }
         },
-        onVerticalAdjustStart: (event: GestureEvent): void => {
-          this.beginVerticalAdjust(event);
+        onVerticalAdjustStart: (event: GestureEvent, isBrightness: boolean): void => {
+          this.beginVerticalAdjust(event, isBrightness);
         },
         onVerticalAdjustUpdate: (event: GestureEvent): void => {
           this.updateVerticalAdjust(event);

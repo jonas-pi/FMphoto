@@ -30,10 +30,63 @@ export struct GalleryPreviewDetailsSheet {
   @Prop personsInPhoto: PersonInPhotoItem[] = [];
   @Prop folderOpening: boolean = false;
   @Prop personOpening: boolean = false;
+  @Prop @Watch('onPanelVisibleChanged') panelVisible: boolean = false;
+  @Prop @Watch('onDetailsIdentityChanged') detailsIdentity: string = '';
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
 
   onPersonClick: (p: PersonInPhotoItem) => void = (_: PersonInPhotoItem) => {};
   onFolderClick: () => void = () => {};
+  /** 内容是否还在顶部；外层据此决定下滑是收回面板还是先滚详情 */
+  onScrollAtTopChange: (atTop: boolean) => void = (_atTop: boolean) => {};
+
+  private scroller: Scroller = new Scroller();
+  private scrollAtTop: boolean = true;
+
+  aboutToAppear(): void {
+    this.emitScrollAtTop(true);
+  }
+
+  onPanelVisibleChanged(): void {
+    if (this.panelVisible) {
+      this.resetScrollToTop();
+    }
+  }
+
+  onDetailsIdentityChanged(): void {
+    this.resetScrollToTop();
+  }
+
+  private readScrollY(): number {
+    try {
+      const y = this.scroller.currentOffset().yOffset;
+      if (typeof y === 'number' && Number.isFinite(y)) {
+        return y;
+      }
+    } catch (_e) {
+    }
+    return 0;
+  }
+
+  private emitScrollAtTop(atTop: boolean): void {
+    if (this.scrollAtTop === atTop) {
+      return;
+    }
+    this.scrollAtTop = atTop;
+    this.onScrollAtTopChange(atTop);
+  }
+
+  private syncScrollAtTop(): void {
+    this.emitScrollAtTop(this.readScrollY() <= 0.5);
+  }
+
+  private resetScrollToTop(): void {
+    try {
+      this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
+    } catch (_e) {
+    }
+    this.scrollAtTop = true;
+    this.onScrollAtTopChange(true);
+  }
 
   private personFaceUri(p: PersonInPhotoItem): string {
     const facePath: string = galleryPreviewPersonInPhotoFacePath(p);
@@ -233,7 +286,7 @@ export struct GalleryPreviewDetailsSheet {
           .layoutWeight(0)
           .padding({ left: 0, right: 0, top: 12, bottom: 16 })
       } else {
-        Scroll() {
+        Scroll(this.scroller) {
           Column() {
             this.sectionTitle('基本信息')
             this.detailRow('文件名', galleryPreviewDetailText(this.detailsData?.fileName))
@@ -295,6 +348,29 @@ export struct GalleryPreviewDetailsSheet {
         .align(Alignment.Top)
         // 信息较多时保持完整滚动能力，但像系统相册一样不显示常驻滚动条。
         .scrollBar(BarState.Off)
+        .onDidScroll((_offset: number, _state: ScrollState): void => {
+          this.syncScrollAtTop();
+        })
+        .onScrollEdge((side: Edge): void => {
+          if (side === Edge.Top) {
+            this.emitScrollAtTop(true);
+          }
+        })
+        .onGestureRecognizerJudgeBegin((
+          event: BaseGestureEvent,
+          current: GestureRecognizer,
+          _others: Array<GestureRecognizer>
+        ): GestureJudgeResult => {
+          if (current.getType() !== GestureControl.GestureType.PAN_GESTURE || !current.isBuiltIn()) {
+            return GestureJudgeResult.CONTINUE;
+          }
+          const pan = event as PanGestureEvent;
+          // 官方半模态：到顶后再下滑交给父级收起。文档：arkts-sheet-page nestedScroll
+          if (this.scrollAtTop && pan.offsetY > 0) {
+            return GestureJudgeResult.REJECT;
+          }
+          return GestureJudgeResult.CONTINUE;
+        })
       }
     }
     .width('100%')

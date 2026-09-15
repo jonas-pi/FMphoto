@@ -1,3 +1,5 @@
+import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
 import {
   BlurStrategy,
   DividerMode,
@@ -64,6 +66,7 @@ import {
 
 const GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP: number = 268;
 const GALLERY_PREVIEW_VIDEO_PLAYING_DOCK_WIDTH_VP: number = 372;
+const GALLERY_PREVIEW_TOP_MENU_SLOT_VP: number = 64;
 
 @Component
 export struct GalleryPreviewChrome {
@@ -81,6 +84,8 @@ export struct GalleryPreviewChrome {
   @Prop buttonBg: string = '#33000000';
   @Prop fgColor: ResourceColor = Color.White;
   @Prop showOriginalAction: boolean = false;
+  @Prop showSearchSimilarAction: boolean = false;
+  @Prop moreMenuExpanded: boolean = false;
   @Prop originalShowing: boolean = false;
   @Prop originalLocked: boolean = false;
   @Prop sharing: boolean = false;
@@ -102,6 +107,9 @@ export struct GalleryPreviewChrome {
   onLoadOriginal: () => void = () => {};
   onLockOriginal: () => void = () => {};
   onOpenDetails: () => void = () => {};
+  onToggleMoreMenu: () => void = () => {};
+  onDismissMoreMenu: () => void = () => {};
+  onSearchSimilar: () => void = () => {};
   onShare: () => void = () => {};
   onDownload: () => void = () => {};
   onFavorite: () => void = () => {};
@@ -224,18 +232,45 @@ export struct GalleryPreviewChrome {
     return item;
   }
 
-  private originalIcon(): Resource {
-    return (this.originalLocked || this.originalShowing) ?
-      $r('sys.symbol.picture_fill') : $r('sys.symbol.picture');
+  private originalActivated(): boolean {
+    return this.originalLocked || this.originalShowing;
+  }
+
+  /** 单项图标走 SymbolGlyphModifier，避免 menuStyle.iconColor 整组盖色，也避免叠第二层。 */
+  private originalMenuGlyph(): SymbolGlyphModifier {
+    if (this.originalActivated()) {
+      return new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
+        .fontSize(24)
+        .fontColor([$r('app.color.brand_primary')]);
+    }
+    return new SymbolGlyphModifier($r('sys.symbol.picture'))
+      .fontSize(24)
+      .fontColor([this.fgColor]);
   }
 
   private originalHitRight(): number {
-    // 盖住顶栏「原图」菜单圆钮：详情在右，原图在它左侧一格。
-    return 64;
+    // 更多在最右，原图在它左侧一格。
+    return GALLERY_PREVIEW_TOP_MENU_SLOT_VP;
   }
 
   private originalHitTop(): number {
     return (FN_HDS_NAV_CHROME_HEIGHT_VP - FN_FLOATING_TOP_CONTROL_SIZE_VP) / 2;
+  }
+
+  @Builder
+  private previewMoreMenuBuilder() {
+    Menu() {
+      if (this.showSearchSimilarAction) {
+        MenuItem({ content: '搜索相似照片' })
+          .onClick((): void => {
+            this.onSearchSimilar();
+          })
+      }
+      MenuItem({ content: '查看详情' })
+        .onClick((): void => {
+          this.onOpenDetails();
+        })
+    }
   }
 
   private onOriginalMenuClick(): void {
@@ -256,7 +291,7 @@ export struct GalleryPreviewChrome {
     if (this.showOriginalAction) {
       const originalContent: HdsNavigationIconOptions = {
         label: '原图',
-        icon: this.originalIcon(),
+        icon: this.originalMenuGlyph(),
         type: IconStyleMode.NORMAL,
         isEnabled: this.toolbarVisible,
         action: (): void => {
@@ -265,16 +300,18 @@ export struct GalleryPreviewChrome {
       };
       items.push(this.topMenuItem(originalContent));
     }
-    const detailsContent: HdsNavigationIconOptions = {
-      label: '详情',
-      icon: $r('sys.symbol.info_circle'),
+    const moreContent: HdsNavigationIconOptions = {
+      label: '更多',
+      icon: new SymbolGlyphModifier($r('sys.symbol.dot_grid_2x2'))
+        .fontSize(24)
+        .fontColor([this.fgColor]),
       type: IconStyleMode.NORMAL,
       isEnabled: this.toolbarVisible,
       action: (): void => {
-        this.onOpenDetails();
+        this.onToggleMoreMenu();
       }
     };
-    items.push(this.topMenuItem(detailsContent));
+    items.push(this.topMenuItem(moreContent));
     return items;
   }
 
@@ -321,7 +358,6 @@ export struct GalleryPreviewChrome {
         // 官方悬浮按钮：menu / back 各自一块圆形背板，不是整条顶栏
         menuStyle: {
           backgroundColor: chipBg,
-          iconColor: this.fgColor,
           textColor: this.fgColor
         },
         backIconStyle: {
@@ -682,6 +718,26 @@ export struct GalleryPreviewChrome {
           .height('100%')
           .hitTestBehavior(HitTestMode.Transparent)
         }
+
+        Stack({ alignContent: Alignment.TopEnd }) {
+            Row()
+              .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+              .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+              .margin({
+                top: this.topSafeInsetVp + this.originalHitTop(),
+                right: $r('app.float.hds_title_bar_padding_horizontal')
+              })
+              .hitTestBehavior(HitTestMode.None)
+              .bindMenu(this.moreMenuExpanded, this.previewMoreMenuBuilder, fnHdsBindMenuOptions(
+                Placement.BottomLeft,
+                (): void => {
+                  this.onDismissMoreMenu();
+                }
+              ))
+          }
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.Transparent)
       }
       .width('100%')
       .height('100%')

@@ -190,6 +190,13 @@ export class FnHttpClientGalleryOps {
     return this.search.doMagicSearch(keyword, timeoutMs, antiFiltersJson, filtersJson);
   }
 
+  async getMagicSearchSimilar(
+    photoId: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<MagicSearchData>> {
+    return this.search.getMagicSearchSimilar(photoId, timeoutMs);
+  }
+
   async getSearchFilterList(
     showShootingInformation: boolean = true,
     timeoutMs: number = 20000
@@ -371,6 +378,15 @@ export class FnHttpClientGalleryOps {
     timeoutMs: number = 20000
   ): Promise<FnClientResult<GalleryListItem[]>> {
     return this.folder.getFolderViewFileList(folderPath, limit, offset, desc, orderBy, timeoutMs);
+  }
+
+  async deleteFolderOrFile(
+    parentPath: string,
+    fileIds: string[],
+    dirNames: string[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<Object>> {
+    return this.folder.deleteFolderOrFile(parentPath, fileIds, dirNames, timeoutMs);
   }
 
   async getRecycleBinList(
