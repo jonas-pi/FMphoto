@@ -1,6 +1,10 @@
 import { common } from '@kit.AbilityKit';
 import { AppSession } from '../auth/AppSession';
-import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
+import {
+  openCollectedInfoListPage,
+  openPrivacyPolicyPage,
+  openThirdPartyShareListPage
+} from '../auth/PrivacyConsentNav';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import {
   LOGIN_ENDPOINT_PREF_AUTO,
@@ -634,13 +638,46 @@ export struct MePanel {
 
   @Builder
   private privacyPolicyEntryRow() {
+    this.privacyNavRow(
+      $r('app.string.privacy_policy_entry_title'),
+      $r('app.string.privacy_policy_entry_subtitle'),
+      (): void => {
+        openPrivacyPolicyPage(this.getUIContext());
+      }
+    )
+  }
+
+  @Builder
+  private collectedInfoEntryRow() {
+    this.privacyNavRow(
+      $r('app.string.privacy_collected_entry_title'),
+      $r('app.string.privacy_collected_entry_subtitle'),
+      (): void => {
+        openCollectedInfoListPage(this.getUIContext());
+      }
+    )
+  }
+
+  @Builder
+  private thirdPartyShareEntryRow() {
+    this.privacyNavRow(
+      $r('app.string.privacy_third_party_entry_title'),
+      $r('app.string.privacy_third_party_entry_subtitle'),
+      (): void => {
+        openThirdPartyShareListPage(this.getUIContext());
+      }
+    )
+  }
+
+  @Builder
+  private privacyNavRow(title: Resource, subtitle: Resource, action: () => void) {
     Row({ space: 10 }) {
       Column({ space: 6 }) {
-        Text($r('app.string.privacy_policy_entry_title'))
+        Text(title)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
-        Text($r('app.string.privacy_policy_entry_subtitle'))
+        Text(subtitle)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(2)
@@ -666,7 +703,7 @@ export struct MePanel {
     .borderColor($r('app.color.immersive_panel_border'))
     .clip(true)
     .onClick((): void => {
-      openPrivacyPolicyPage(this.getUIContext());
+      action();
     })
   }
 
@@ -1055,6 +1092,18 @@ export struct MePanel {
           .height(ME_ACTION_GAP_VP)
 
         this.privacyPolicyEntryRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.collectedInfoEntryRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.thirdPartyShareEntryRow()
 
         Blank()
           .width('100%')

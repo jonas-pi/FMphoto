@@ -2,6 +2,7 @@
   "src": [
     "pages/Index",
     "pages/PrivacyPolicy",
+    "pages/PrivacyInfoList",
     "pages/Login",
     "pages/Home",
     "pages/GalleryPreview",

@@ -34,6 +34,8 @@ const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
 const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
+/** 政策正文变更后递增；与已存值不同则下次启动需重新同意。 */
+export const PRIVACY_POLICY_VERSION = '202609152';
 /** 飞牛 WS 登录 did，用于 2FA 信任设备识别（退出登录不清理） */
 const K_WS_DEVICE_ID = 'ws_device_id';
 const K_REMEMBER_PASSWORD = 'remember_password';
@@ -353,12 +355,12 @@ function migrateLoginChannelFields(fnIdPref: string, lanPref: string, shared: st
 export class SessionPreferences {
   static async isPrivacyPolicyAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
     const p = await openPrefs(ctx);
-    return (await prefsGetString(p, K_PRIVACY_ACCEPTED, '0')) === '1';
+    return (await prefsGetString(p, K_PRIVACY_ACCEPTED, '')) === PRIVACY_POLICY_VERSION;
   }
 
   static async setPrivacyPolicyAccepted(ctx: common.UIAbilityContext, accepted: boolean): Promise<void> {
     const p = await openPrefs(ctx);
-    await prefsPutString(p, K_PRIVACY_ACCEPTED, accepted ? '1' : '0');
+    await prefsPutString(p, K_PRIVACY_ACCEPTED, accepted ? PRIVACY_POLICY_VERSION : '');
     await prefsFlush(p);
   }
 
