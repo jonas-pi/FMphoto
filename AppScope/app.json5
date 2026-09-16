@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.jonas.fmphoto",
     "vendor": "皮朝猛",
-    "versionCode": 1004005,
-    "versionName": "1.4.2.1",
+    "versionCode": 1004006,
+    "versionName": "1.4.2.2",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

@@ -1,12 +1,15 @@
 /**
  * 全局动效参数：统一页面转场与交互动效节奏。
  * 后续如需统一提速/减速，只需调整本文件常量。
+ *
+ * 上架 UX：全页转场在 12 英寸以上设备不得短于 300ms。EaseOut 会让画面过早停稳，
+ * 自动化按像素稳定计时，240/200 会被记成 170–200ms。进/出场都拉长并用 EaseInOut。
  */
 
-export const FN_PAGE_ENTER_DURATION = 240;
-export const FN_PAGE_EXIT_DURATION = 200;
-export const FN_PAGE_ENTER_CURVE = Curve.EaseOut;
-export const FN_PAGE_EXIT_CURVE = Curve.EaseIn;
+export const FN_PAGE_ENTER_DURATION = 450;
+export const FN_PAGE_EXIT_DURATION = 430;
+export const FN_PAGE_ENTER_CURVE = Curve.EaseInOut;
+export const FN_PAGE_EXIT_CURVE = Curve.EaseInOut;
 
 /** 全局 tab 切换动效：统一为普通左右滑动。 */
 export const FN_GLOBAL_TAB_SWITCH_DURATION = 220;

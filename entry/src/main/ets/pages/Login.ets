@@ -7,7 +7,6 @@
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
-import { hdsEffect } from '@kit.UIDesignKit';
 import { CertPolicy } from '../network/CertPolicy';
 import {
   classifyDirectNasAddress,
@@ -694,32 +693,6 @@ struct Login {
       .hitTestBehavior(HitTestMode.None)
   }
 
-  /**
-   * 蓝圆只做光源，不自绘 blur。泛光和边缘扭曲走 HDS 点光源；
-   * 前景材质的 materialFilter 再把圆采样成光晕。
-   */
-  private loginGlowSourceEffect(color: ResourceColor, heightVp: number): VisualEffect {
-    return new hdsEffect.HdsEffectBuilder()
-      .pointLight({
-        options: {
-          color: color,
-          intensity: 0.92,
-          height: heightVp,
-          bloom: 0.88
-        }
-      })
-      .buildEffect();
-  }
-
-  /** 前景玻璃板边缘接住蓝圆点光源，形成扭曲光线 */
-  private loginForegroundIllumination(): VisualEffect {
-    return new hdsEffect.HdsEffectBuilder()
-      .pointLight({
-        illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER
-      })
-      .buildEffect();
-  }
-
   @Builder
   private loginPanelGlow() {
     Stack() {
@@ -728,8 +701,7 @@ struct Login {
         .height(180)
         .borderRadius(90)
         .backgroundColor($r('app.color.login_glow_blue_core'))
-        .opacity(0.9)
-        .visualEffect(this.loginGlowSourceEffect($r('app.color.login_glow_blue_core'), 72))
+        .opacity(0.42)
         .position({ x: '6%', y: '8%' })
 
       Column()
@@ -737,8 +709,7 @@ struct Login {
         .height(150)
         .borderRadius(75)
         .backgroundColor($r('app.color.login_glow_blue_soft'))
-        .opacity(0.85)
-        .visualEffect(this.loginGlowSourceEffect($r('app.color.login_glow_blue_soft'), 60))
+        .opacity(0.36)
         .position({ x: '52%', y: '28%' })
 
       Column()
@@ -746,8 +717,7 @@ struct Login {
         .height(130)
         .borderRadius(65)
         .backgroundColor($r('app.color.brand_primary'))
-        .opacity(0.78)
-        .visualEffect(this.loginGlowSourceEffect($r('app.color.brand_primary'), 52))
+        .opacity(0.28)
         .position({ x: '18%', y: '58%' })
     }
     .width('100%')
@@ -859,8 +829,7 @@ struct Login {
       .borderRadius($r('app.float.radius_medium'))
       .borderWidth(1)
       .borderColor($r('app.color.login_input_border'))
-      .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
+      .backgroundColor($r('app.color.login_input_fill'))
       .enabled(!this.show2faStep)
       .bindMenu(this.userMenuVisible, this.savedUserMenuBuilder, fnHdsBindMenuOptions(
         Placement.BottomRight,
@@ -874,16 +843,6 @@ struct Login {
     }
   }
 
-  private loginPanelBackgroundEffect(): BackgroundEffectOptions {
-    return {
-      radius: 80,
-      saturation: 1.4,
-      brightness: 1.12,
-      color: $r('app.color.login_card_fill'),
-      adaptiveColor: AdaptiveColor.DEFAULT
-    };
-  }
-
   @Builder
   private loginForegroundPanel() {
     Stack() {
@@ -893,11 +852,7 @@ struct Login {
         .width('100%')
         .height('100%')
         .borderRadius(this.loginPanelRadiusVp())
-        .clip(true)
-        .backgroundColor(Color.Transparent)
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .backgroundEffect(this.loginPanelBackgroundEffect())
-        .visualEffect(this.loginForegroundIllumination())
+        .backgroundColor($r('app.color.login_card_fill'))
         .hitTestBehavior(HitTestMode.None)
 
       Column() {
@@ -913,13 +868,12 @@ struct Login {
         .layoutWeight(1)
         .constraintSize({ minHeight: 0 })
         .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.None)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .nestedScroll({
           scrollForward: NestedScrollMode.SELF_ONLY,
           scrollBackward: NestedScrollMode.SELF_ONLY
         })
         .align(Alignment.TopStart)
-        .clip(true)
 
         this.loginFormFooter()
       }
@@ -1155,9 +1109,9 @@ struct Login {
   pageTransition(): void {
     PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
       .opacity(0)
-      .translate({ x: 0, y: 16 });
+      .translate({ x: 0, y: 28 });
     PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
       .opacity(0)
-      .translate({ x: 0, y: -8 });
+      .translate({ x: 0, y: -16 });
   }
 }

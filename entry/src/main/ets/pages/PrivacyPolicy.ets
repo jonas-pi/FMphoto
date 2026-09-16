@@ -332,9 +332,9 @@ struct PrivacyPolicy {
   pageTransition(): void {
     PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
       .opacity(0)
-      .translate({ x: 0, y: 16 });
+      .translate({ x: 0, y: 28 });
     PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
       .opacity(0)
-      .translate({ x: 0, y: -8 });
+      .translate({ x: 0, y: -16 });
   }
 }

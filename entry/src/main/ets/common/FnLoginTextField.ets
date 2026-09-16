@@ -1,5 +1,6 @@
 /**
- * 登录页输入框：透明底 + 组件模糊。
+ * 登录页输入框：实色底。
+ * 键盘弹出时整页会重布局，实时模糊会把点击响应拖到 600ms+；上架要求 ≤250ms。
  * TextInput.text 只在创建时生效，后续要用本地 @State + $$；父级改 seedText 时靠 @Watch 写进本地态。
  */
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
@@ -24,16 +25,6 @@ export struct FnLoginTextField {
     }
   }
 
-  private fieldGlassEffect(): BackgroundEffectOptions {
-    return {
-      radius: 24,
-      saturation: 1.2,
-      brightness: 1.05,
-      color: $r('app.color.login_input_fill'),
-      adaptiveColor: AdaptiveColor.DEFAULT
-    };
-  }
-
   build() {
     TextInput({ text: $$this.inputText, placeholder: this.placeholder })
       .type(this.inputType)
@@ -54,8 +45,6 @@ export struct FnLoginTextField {
       .placeholderColor($r('app.color.gallery_material_search_placeholder'))
       .caretColor($r('app.color.brand_primary'))
       .enabled(this.fieldEnabled)
-      .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-      .backgroundEffect(this.fieldGlassEffect())
+      .backgroundColor($r('app.color.login_input_fill'))
   }
 }
