@@ -23,36 +23,25 @@
 | 按日聚合浏览 | 月视图 | 年视图 | 相册首页 |
 | <img src="./docs/screenshots/05-grid-day.png" alt="按日聚合浏览" width="180" /> | <img src="./docs/screenshots/06-month-view.png" alt="按月聚合浏览" width="180" /> | <img src="./docs/screenshots/07-year-view.png" alt="按年聚合浏览" width="180" /> | <img src="./docs/screenshots/08-album-home.png" alt="相册首页入口总览" width="180" /> |
 
-## 下载
+## 下载与安装
 
-Release 只提供**未签名 HAP**（`entry-default-unsigned.hap`），不能直接点开安装。
+**请从华为应用市场安装最新正式版。** 本仓库为开源快照，功能与版本可能落后于商店。
 
-[![正式版](https://img.shields.io/github/v/release/jonas-pi/FMphoto?label=stable)](https://github.com/jonas-pi/FMphoto/releases/latest)
-[![Beta](https://img.shields.io/github/v/release/jonas-pi/FMphoto?include_prereleases&filter=*beta*&label=beta)](https://github.com/jonas-pi/FMphoto/releases)
+[![华为应用市场](https://img.shields.io/badge/华为应用市场-FMphoto-cf0a2c)](https://appgallery.huawei.com/app/detail?id=com.jonas.fmphoto&channelId=SHARE&source=appshare)
 [![License: Noncommercial](https://img.shields.io/badge/License-PolyForm--Noncommercial-blue.svg)](./LICENSE)
 
 | 渠道 | 说明 | 入口 |
 | --- | --- | --- |
-| **正式版** | 最新稳定版，GitHub 会自动跳转 | [Latest Release](https://github.com/jonas-pi/FMphoto/releases/latest) |
-| **Beta 版** | 预发布，功能更新、可能不稳定 | [Releases](https://github.com/jonas-pi/FMphoto/releases) 里带 **Pre-release** 的最新一条 |
+| **华为应用市场（推荐）** | 已上架，普通用户请走这里 | [打开应用详情](https://appgallery.huawei.com/app/detail?id=com.jonas.fmphoto&channelId=SHARE&source=appshare) |
+| GitHub Release | 历史未签名 HAP，仅供自行签名侧载 | [Releases](https://github.com/jonas-pi/FMphoto/releases) |
 
-## 安装（鸿蒙侧载）
+手机上也可打开「应用市场」，搜索 **FMphoto**。安装后填写 NAS 地址与账号即可使用。部分入口无数据时，请先在 NAS 确认相册服务、AI 能力与账户权限已开启。
 
-纯血鸿蒙不能像安卓那样随便装未知来源包。HAP **必须用华为开发者证书签名** 后，才能装到真机；未签名会报「签名文件不存在」（9568320）。官方说明见 [配置调试签名](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-signing)。
+### 自行侧载（开发者）
 
-推荐普通用户用开源工具 [小白调试助手 Auto-Installer](https://github.com/likuai2010/auto-installer)（会用你的华为账号给 HAP 签调试证书并安装）：
+GitHub Release 只提供**未签名 HAP**（`entry-default-unsigned.hap`），不能直接点开安装。纯血鸿蒙必须用华为开发者证书签名后才能装到真机；未签名会报「签名文件不存在」（9568320）。官方说明见 [配置调试签名](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-signing)。
 
-1. 从上方 Release 下载 `entry-default-unsigned.hap`。
-2. 手机：设置 → 关于本机，连续点击 **软件版本**，开启开发者模式（会重启）。
-3. 设置 → 系统 → 开发者选项，打开 **USB 调试**（或无线调试）。
-4. 电脑安装 Auto-Installer，用 USB 连接手机（首次需在手机上点允许调试）。
-5. 把 HAP 拖进工具，登录华为账号，按提示签名并安装。
-
-开发者也可在 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/) 里对工程自动签名后，用 `hdc install` 安装。
-
-安装后填写 NAS 地址与账号即可使用。部分入口无数据时，请先在 NAS 确认相册服务、AI 能力与账户权限已开启。
-
-**注意**：请只从本仓库 GitHub Release 下载；签名材料（`.p12` / `.p7b` / `.cer`）不要发给他人。侧载应用一般需保持开发者模式开启。
+可用 [小白调试助手 Auto-Installer](https://github.com/likuai2010/auto-installer)，或在 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/) 里自动签名后 `hdc install`。签名材料（`.p12` / `.p7b` / `.cer`）不要发给他人。
 
 ## 许可证
 
