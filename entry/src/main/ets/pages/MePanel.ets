@@ -1087,6 +1087,9 @@ export struct MePanel {
                 rememberPassword: existing.rememberPassword,
                 savedUsers: existing.savedUsers
               });
+              if (!existing.rememberPassword) {
+                await SessionPreferences.clearSessionPassword(ctx);
+              }
               await SessionPreferences.clearSession(ctx);
               invalidateAutoSync();
               await GalleryAutoSyncLedger.clear(ctx);

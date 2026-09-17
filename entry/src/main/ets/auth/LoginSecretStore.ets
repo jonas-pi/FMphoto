@@ -257,3 +257,38 @@ export async function loginSecretOpen(blob: string): Promise<string> {
     return '';
   }
 }
+
+/**
+ * 落盘口令：优先 HUKS 封存，并立刻解封校验。
+ * 封存或回环失败则退回明文，避免切网/冷启动拿不到口令。
+ */
+export async function persistLoginSecretReliable(plain: string): Promise<string> {
+  if (plain.length === 0) {
+    return '';
+  }
+  try {
+    const sealed = await loginSecretSeal(plain);
+    if (sealed.length > 0 && loginSecretLooksWrapped(sealed)) {
+      const opened = await loginSecretOpen(sealed);
+      if (opened === plain) {
+        return sealed;
+      }
+      hilog.warn(DOMAIN, TAG, 'seal roundtrip mismatch, store plaintext');
+    }
+  } catch (e) {
+    hilog.warn(DOMAIN, TAG, 'seal failed, store plaintext %{public}s', formatHuksErr(e));
+  }
+  return plain;
+}
+
+/** 解封口令：密文解开、历史明文、解不开的包装串分别处理。 */
+export async function openLoginSecretReliable(blob: string): Promise<string> {
+  if (blob.length === 0) {
+    return '';
+  }
+  const opened = await loginSecretOpen(blob);
+  if (opened.length > 0) {
+    return opened;
+  }
+  return loginSecretLooksWrapped(blob) ? '' : blob;
+}

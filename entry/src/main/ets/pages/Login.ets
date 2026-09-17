@@ -365,6 +365,7 @@ struct Login {
         savedUsers: upsertSavedUser(this.savedUsers, stored.account, this.rememberPassword ? pass : '',
           this.rememberPassword)
       });
+      await SessionPreferences.saveSessionPassword(ctx, pass);
       await SessionPreferences.save(ctx, stored);
     } catch (e) {
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'SessionPreferences.save: %{public}s', String(e));

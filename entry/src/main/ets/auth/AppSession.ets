@@ -15,7 +15,7 @@ export const FN_MEDIA_BASE_URL: string = 'FN_MEDIA_BASE_URL';
 export class AppSession {
   private static stored: StoredSession | null = null;
   private static client: FnHttpClient | null = null;
-  /** 本次进程内登录口令，不落盘；供切网 / 静默重登使用 */
+  /** 本次进程内口令镜像；磁盘另有会话口令供冷启动切网 */
   private static loginPassword: string = '';
 
   static getClient(): FnHttpClient | null {
@@ -32,6 +32,27 @@ export class AppSession {
 
   static getLoginPassword(): string {
     return AppSession.loginPassword;
+  }
+
+  /** 切网 / 静默重登：内存 → 会话落盘口令 → 记住密码。读到后写回内存。 */
+  static async ensureLoginPassword(ctx: common.UIAbilityContext): Promise<string> {
+    if (AppSession.loginPassword.length > 0) {
+      return AppSession.loginPassword;
+    }
+    try {
+      const stored = await SessionPreferences.loadSessionPassword(ctx);
+      if (stored.length > 0) {
+        AppSession.loginPassword = stored;
+        return stored;
+      }
+      const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
+      if (defaults.rememberPassword && defaults.password.length > 0) {
+        AppSession.loginPassword = defaults.password;
+        return defaults.password;
+      }
+    } catch (_e) {
+    }
+    return '';
   }
 
   static currentWebBaseUrl(): string {
@@ -97,10 +118,7 @@ export class AppSession {
     CertPolicy.loadAll(s.trustedHosts);
     AppSession.apply(s);
     try {
-      const defaults = await SessionPreferences.loadLoginFormDefaults(ctx);
-      if (defaults.rememberPassword && defaults.password.length > 0) {
-        AppSession.setLoginPassword(defaults.password);
-      }
+      await AppSession.ensureLoginPassword(ctx);
     } catch (_e) {
     }
     return s;

@@ -2,7 +2,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { createFnWsDeviceId } from '../network/FnWsDeviceId';
 import { splitFnIdOrHostInput, FnIdOrHostParts } from '../network/FnConnectApi';
-import { loginSecretLooksWrapped, loginSecretOpen, loginSecretSeal } from './LoginSecretStore';
+import { loginSecretLooksWrapped, openLoginSecretReliable, persistLoginSecretReliable } from './LoginSecretStore';
 
 const PREF_NAME = 'fnos_client_prefs';
 
@@ -35,7 +35,7 @@ const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
 /** 政策正文变更后递增；与已存值不同则下次启动需重新同意。 */
-export const PRIVACY_POLICY_VERSION = '202609152';
+export const PRIVACY_POLICY_VERSION = '202609171';
 /** 飞牛 WS 登录 did，用于 2FA 信任设备识别（退出登录不清理） */
 const K_WS_DEVICE_ID = 'ws_device_id';
 const K_REMEMBER_PASSWORD = 'remember_password';
@@ -266,11 +266,7 @@ async function persistSavedUsersSealed(
       if (loginSecretLooksWrapped(users[i].password)) {
         sealed = users[i].password;
       } else {
-        try {
-          sealed = await loginSecretSeal(users[i].password);
-        } catch (_e) {
-          sealed = '';
-        }
+        sealed = await persistLoginSecretReliable(users[i].password);
       }
     }
     if (sealed.length > 0) {
@@ -286,7 +282,7 @@ async function unsealSavedUsers(users: LoginSavedUser[]): Promise<LoginSavedUser
   for (let i = 0; i < users.length; i++) {
     let password = users[i].password;
     if (users[i].rememberPassword && password.length > 0) {
-      password = await loginSecretOpen(password);
+      password = await openLoginSecretReliable(password);
     } else {
       password = '';
     }
@@ -444,8 +440,6 @@ export class SessionPreferences {
     await prefsPutString(p, K_USE_HTTPS, s.useHttps ? '1' : '0');
     await prefsPutString(p, K_ALBUM_PARENT, s.albumParentGuid);
     await prefsPutString(p, K_TRUSTED, JSON.stringify(s.trustedHosts));
-    // 不落盘密码：清掉历史 last_password，切网/静默重登只用进程内口令
-    await prefsDelete(p, K_LAST_PASSWORD);
     await prefsPutString(p, K_FNOS_LONG_TOKEN, s.fnosLongToken);
     await prefsPutString(p, K_LOGIN_VIA_WS, s.loginViaWebSocket ? '1' : '0');
     await prefsPutString(p, K_WS_SIGN_KEY_B64, s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '');
@@ -454,7 +448,33 @@ export class SessionPreferences {
     await prefsFlush(p);
   }
 
-  /** 写登录表单（不含会话 token）。勾选记住密码时口令经 HUKS 封存后再落盘。 */
+  /**
+   * 登录期间切网/静默重登用的口令：优先 HUKS，封存失败则明文。
+   * 会话 save 不得删除此项。退出且未勾选记住密码时再清。
+   */
+  static async saveSessionPassword(ctx: common.UIAbilityContext, password: string): Promise<void> {
+    const p = await openPrefs(ctx);
+    if (password.length === 0) {
+      await prefsDelete(p, K_LAST_PASSWORD);
+      await prefsFlush(p);
+      return;
+    }
+    const blob = await persistLoginSecretReliable(password);
+    await prefsPutString(p, K_LAST_PASSWORD, blob);
+    await prefsFlush(p);
+  }
+
+  static async loadSessionPassword(ctx: common.UIAbilityContext): Promise<string> {
+    const p = await openPrefs(ctx);
+    const blob = await prefsGetString(p, K_LAST_PASSWORD, '');
+    return await openLoginSecretReliable(blob);
+  }
+
+  static async clearSessionPassword(ctx: common.UIAbilityContext): Promise<void> {
+    await SessionPreferences.saveSessionPassword(ctx, '');
+  }
+
+  /** 写登录表单（不含会话 token）。勾选记住密码时口令另存用户列表以便回填。 */
   static async saveLoginFormDefaults(ctx: common.UIAbilityContext, d: LoginFormDefaults): Promise<void> {
     const p = await openPrefs(ctx);
     const fnId = d.fnIdInput.trim();
@@ -471,7 +491,6 @@ export class SessionPreferences {
     await prefsPutString(p, K_REMEMBER_PASSWORD, d.rememberPassword ? '1' : '0');
     const users = upsertSavedUser(d.savedUsers, d.username, d.rememberPassword ? d.password : '', d.rememberPassword);
     await persistSavedUsersSealed(p, users);
-    await prefsDelete(p, K_LAST_PASSWORD);
     await prefsFlush(p);
   }
 
@@ -521,12 +540,13 @@ export class SessionPreferences {
     const rememberFlag = (await prefsGetString(p, K_REMEMBER_PASSWORD, '0')) === '1';
     const username = await prefsGetString(p, K_ACCOUNT, '');
     let users = parseSavedUsersJson(await prefsGetString(p, K_LOGIN_SAVED_USERS, '[]'));
-    let reseal = leftoverPassword.length > 0 || savedUsersNeedReseal(users);
-    if (leftoverPassword.length > 0) {
-      if (rememberFlag && username.length > 0) {
+    let reseal = savedUsersNeedReseal(users);
+    if (leftoverPassword.length > 0 && rememberFlag && username.length > 0) {
+      const current = findSavedUser(users, username);
+      if (current === null || (current.rememberPassword && current.password.length === 0)) {
         users = upsertSavedUser(users, username, leftoverPassword, true);
+        reseal = true;
       }
-      await prefsDelete(p, K_LAST_PASSWORD);
     }
     if (reseal) {
       await persistSavedUsersSealed(p, users);
