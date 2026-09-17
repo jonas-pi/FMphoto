@@ -5,6 +5,7 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { generateRandomDigits, md5HexUtf8, sha256DigestSafe } from './AuthxSigner';
 import { FN_DEFAULT_PORT_HTTP, FN_DEFAULT_PORT_HTTPS, normalizeServerUrl } from './ServerUrl';
 
@@ -658,6 +659,7 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
     };
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'lookup failed: %{public}s', String(e));
+    fnDiagRecord('E', TAG, `lookup failed ${String(e)}`);
     return fallbackFnosNet(id, useHttps, `FN Connect 请求失败：${String(e)}`);
   } finally {
     try {
@@ -670,5 +672,6 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
 /** 云端失败时不臆造中继（FN ID 可能无效）；有有效解析时才拼 {fnId}.5ddd.com */
 function fallbackFnosNet(fnId: string, _useHttps: boolean, reason: string): FnConnectLookupResult {
   hilog.warn(DOMAIN, TAG, 'fallback fail fnId=%{public}s reason=%{public}s', fnId, reason);
+  fnDiagRecord('W', TAG, `FN Connect fallback ${reason}`);
   return emptyLookup(reason);
 }

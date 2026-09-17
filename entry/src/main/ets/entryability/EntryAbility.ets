@@ -25,6 +25,7 @@ import {
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { GalleryShareInbox } from '../album/share/GalleryShareInbox';
 import { ensureStarted, scheduleCheck, stop } from '../network/LoginEndpointAutoSwitch';
+import { fnDiagInit, fnDiagRecord } from '../common/FnDiagLog';
 
 /** 应用日志域（与网络模块 FnHttp 同域便于筛选，取值需在 0x0～0xFFFF） */
 const DOMAIN = 0xFF00;
@@ -43,6 +44,7 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, LOG_TAG, 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onCreate');
+    fnDiagInit(this.context.filesDir, this.context.cacheDir);
     ensureGalleryPerfProfile();
     GalleryThumbDiskCache.init(this.context.cacheDir);
     ensureGalleryThumbCacheEpochStorage();
@@ -109,6 +111,7 @@ export default class EntryAbility extends UIAbility {
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, LOG_TAG, 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+        fnDiagRecord('E', LOG_TAG, `loadContent failed ${JSON.stringify(err)}`);
         return;
       }
       try {
@@ -135,6 +138,7 @@ export default class EntryAbility extends UIAbility {
     refreshGalleryPerfProfile();
     this.applyPerfImageCacheIfReady();
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onForeground');
+    fnDiagRecord('I', LOG_TAG, 'onForeground');
   }
 
   onBackground(): void {
@@ -153,6 +157,7 @@ export default class EntryAbility extends UIAbility {
       trimThumbPixCache(keep);
     }
     hilog.info(DOMAIN, LOG_TAG, 'onMemoryLevel=%{public}d keep=%{public}d', level, keep);
+    fnDiagRecord(level > 0 ? 'W' : 'I', LOG_TAG, `onMemoryLevel=${level} keep=${keep}`);
   }
 
   private applyPerfImageCacheIfReady(): void {

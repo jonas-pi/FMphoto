@@ -3,6 +3,7 @@
  * 仅在打开 pages/CategoryGallery 前写入；各页面实例绑定自己的 sessionToken，原路 back 即可。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { router, UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { CATEGORY_GALLERY_PHOTO_INITIAL_RENDER_CAP } from './GalleryAlbumEntityData';
@@ -186,6 +187,7 @@ export class CategoryGalleryNavStore {
       return true;
     }).catch((e: Error): boolean => {
       hilog.error(DOMAIN, TAG, 'open CategoryGallery: %{public}s', String(e));
+      fnDiagRecord('E', TAG, `open CategoryGallery ${String(e)}`);
       CategoryGalleryNavStore.restoreSession(backup);
       return false;
     });

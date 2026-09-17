@@ -59,3 +59,5 @@ entry/build/**/*-signed.hap
 
 # 真机 hilog 本地抓取（勿提交）
 /logs/
+/.tmp-diag/
+/.tmp-crash/

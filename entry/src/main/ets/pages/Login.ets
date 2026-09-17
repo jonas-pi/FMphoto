@@ -6,6 +6,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { window } from '@kit.ArkUI';
 import { CertPolicy } from '../network/CertPolicy';
 import {
@@ -369,6 +370,7 @@ struct Login {
       await SessionPreferences.save(ctx, stored);
     } catch (e) {
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'SessionPreferences.save: %{public}s', String(e));
+      fnDiagRecord('E', LOGIN_TAG, `SessionPreferences.save ${String(e)}`);
       this.errorText = '保存登录信息失败，请检查存储权限后重试';
       return;
     }
@@ -466,6 +468,7 @@ struct Login {
       wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : 'WebSocket 登录失败';
     if (this.errorText.length > 0) {
       hilog.warn(LOGIN_DOMAIN, LOGIN_TAG, 'WS login: %{public}s', this.errorText);
+      fnDiagRecord('W', LOGIN_TAG, `WS login ${this.errorText}`);
     }
     return !shouldTryNextLoginEndpoint(wsRes);
   }
@@ -627,6 +630,7 @@ struct Login {
     } catch (e) {
       const msg = this.describeLoginError(e);
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'login flow: %{public}s', msg.length > 0 ? msg : 'unknown');
+      fnDiagRecord('E', LOGIN_TAG, `login flow ${msg.length > 0 ? msg : 'unknown'}`);
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {
       this.loading = false;

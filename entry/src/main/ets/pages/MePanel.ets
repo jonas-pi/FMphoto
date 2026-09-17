@@ -40,6 +40,7 @@ import {
   FnTransferQueueStore,
   FnTransferTaskSnapshot
 } from '../common/FnTransferQueueStore';
+import { fnDiagShare } from '../common/FnDiagLog';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
@@ -119,6 +120,7 @@ export struct MePanel {
   @State private pendingTwofaDeviceId: string = '';
   @State private transferQueueVisible: boolean = false;
   @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
+  @State private diagExporting: boolean = false;
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   private lastImmersiveToggleAt: number = 0;
@@ -637,6 +639,69 @@ export struct MePanel {
   }
 
   @Builder
+  private diagLogEntryRow() {
+    Row({ space: 10 }) {
+      Column({ space: 6 }) {
+        Text($r('app.string.diag_log_entry_title'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        Text(this.diagExporting ? '正在导出…' : $r('app.string.diag_log_entry_subtitle'))
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.text_secondary')])
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor($r('app.color.card_background'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(fnLiquidGlassGradient())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .opacity(this.diagExporting ? 0.55 : 1)
+    .onClick((): void => {
+      void this.exportDiagLog();
+    })
+  }
+
+  private async exportDiagLog(): Promise<void> {
+    if (this.diagExporting) {
+      return;
+    }
+    this.diagExporting = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const ok = await fnDiagShare(ctx);
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: ok ? $r('app.string.diag_log_toast_ok') : $r('app.string.diag_log_toast_fail'),
+          duration: 2200
+        });
+      } catch (_toast) {
+      }
+    } catch (_e) {
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: $r('app.string.diag_log_toast_fail'),
+          duration: 1800
+        });
+      } catch (_toast) {
+      }
+    } finally {
+      this.diagExporting = false;
+    }
+  }
+
+  @Builder
   private privacyPolicyLink() {
     Column({ space: 10 }) {
       Text($r('app.string.privacy_policy_title'))
@@ -1046,6 +1111,12 @@ export struct MePanel {
           .height(ME_ACTION_GAP_VP)
 
         this.configSyncEntryRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.diagLogEntryRow()
 
         Blank()
           .width('100%')

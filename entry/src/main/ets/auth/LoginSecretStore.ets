@@ -7,6 +7,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 
 const DOMAIN: number = 0xFF00;
 const TAG: string = 'LoginSecret';
@@ -173,6 +174,7 @@ export async function loginSecretSeal(plain: string): Promise<string> {
     nonce = cryptoFramework.createRandom().generateRandomSync(GCM_NONCE_LEN).data;
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'nonce failed %{public}s', formatHuksErr(e));
+    fnDiagRecord('E', TAG, `nonce failed ${formatHuksErr(e)}`);
     throw new Error('login-secret-nonce-failed');
   }
   const options: huks.HuksOptions = {
@@ -204,6 +206,7 @@ export async function loginSecretSeal(plain: string): Promise<string> {
       await abortQuiet(handle);
     }
     hilog.error(DOMAIN, TAG, 'seal failed %{public}s', formatHuksErr(e));
+    fnDiagRecord('E', TAG, `seal failed ${formatHuksErr(e)}`);
     throw new Error('login-secret-seal-failed');
   }
 }
@@ -250,10 +253,12 @@ export async function loginSecretOpen(blob: string): Promise<string> {
     } catch (e) {
       await abortQuiet(handle);
       hilog.error(DOMAIN, TAG, 'open failed %{public}s', formatHuksErr(e));
+      fnDiagRecord('E', TAG, `open failed ${formatHuksErr(e)}`);
       return '';
     }
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'open failed %{public}s', formatHuksErr(e));
+    fnDiagRecord('E', TAG, `open failed ${formatHuksErr(e)}`);
     return '';
   }
 }

@@ -401,6 +401,22 @@
       "value": "二维码或 WebDAV 同步智能分类"
     },
     {
+      "name": "diag_log_entry_title",
+      "value": "导出诊断日志"
+    },
+    {
+      "name": "diag_log_entry_subtitle",
+      "value": "复现问题后点这里，把文件发给开发者"
+    },
+    {
+      "name": "diag_log_toast_ok",
+      "value": "请把日志文件发给开发者"
+    },
+    {
+      "name": "diag_log_toast_fail",
+      "value": "导出失败，请重试"
+    },
+    {
       "name": "config_sync_qr_section",
       "value": "二维码"
     },

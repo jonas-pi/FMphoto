@@ -18,6 +18,7 @@ import { audio, AVVolumePanel } from '@kit.AudioKit';
 import { window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { AppSession } from '../auth/AppSession';
 import {
   fillGalleryVideoLanPrefetch,
@@ -88,6 +89,14 @@ const GALLERY_VIDEO_DEFER_SEEK_MIN_MS = 800;
 const GALLERY_VIDEO_CACHED_DURATION_WARN_MS = 2000;
 /** 内网原片改走本地 dataSrc 前，等待 moov 可读的最长时间 */
 const GALLERY_VIDEO_LAN_DATASRC_WAIT_MS = 4000;
+/** 每个 GalleryAuthVideo 实例独占 XComponent id，避免 Swiper 多页撞 id。 */
+let gAuthVideoSurfaceSeq: number = 1;
+
+function nextAuthVideoSurfaceSeq(): number {
+  const id = gAuthVideoSurfaceSeq;
+  gAuthVideoSurfaceSeq += 1;
+  return id;
+}
 
 interface QualityOption {
   label: string;
@@ -172,6 +181,10 @@ export struct GalleryAuthVideo {
   @State private mediaVolumeMax: number = GALLERY_VIDEO_VOLUME_MAX_FALLBACK;
 
   private xController: XComponentController = new XComponentController();
+  /** 与 surfaceEpoch 拼成唯一 Surface id；失败重试时递增 epoch 以丢弃已损坏的 Surface。 */
+  private surfaceInstId: number = nextAuthVideoSurfaceSeq();
+  @State private surfaceEpoch: number = 0;
+  private abandonInFlight: Promise<void> | null = null;
   private ctrl: GalleryAuthVideoController = new GalleryAuthVideoController();
   private adjustBrightnessBase: number = 0.5;
   private adjustVolumeBase: number = 5;
@@ -635,6 +648,25 @@ export struct GalleryAuthVideo {
     if (p === null) { return; }
     GalleryAuthVideo.unbindPlayerListeners(p);
     p.release().catch((): void => {});
+  }
+
+  /**
+   * 官方：error 态必须 reset() 或 release() 退出。
+   * 仅 release 时部分 6.1.0 机型 Surface 仍被解码器占着，下一次 set surfaceId 会原生闪退。
+   */
+  private static async resetAndRelease(p: media.AVPlayer | null): Promise<void> {
+    if (p === null) {
+      return;
+    }
+    GalleryAuthVideo.unbindPlayerListeners(p);
+    try {
+      await p.reset();
+    } catch (_e) {
+    }
+    try {
+      await p.release();
+    } catch (_e2) {
+    }
   }
 
   private closeLanPlayFd(): void {
@@ -1197,14 +1229,20 @@ export struct GalleryAuthVideo {
     this.showPlaybackRetry = false;
     this.hint = '播放重连中…';
     this.isPlaying = false;
-    this.scheduleStartPlay();
+    this.videoSurfaceVisible = false;
+    void this.rebuildSurfaceAndReplay();
     return true;
   }
 
   /**
    * 标记可恢复错误：展示文案并显示「重试」按钮。
+   * 同时拆掉 error 态播放器，避免失败实例一直占着 Surface。
    */
   private setPlaybackFailureHint(msg: string): void {
+    fnDiagRecord('E', TAG,
+      `fail hint=${msg} gen=${this.ctrl.playGen} quality=${this.currentQualityLabel()} ` +
+        `pos=${this.currentMs} cachedMs=${this.ctrl.lastCachedDurationMs} ` +
+        `url=${GalleryAuthVideo.sanitizeUrlForLog(this.videoUrl)}`);
     this.hint = msg;
     this.showPlaybackRetry = true;
     this.videoLoading = false;
@@ -1215,19 +1253,88 @@ export struct GalleryAuthVideo {
     this.revealPlaybackChrome();
     // 幻灯片不能卡在失败页上一直等；失败视为本段结束
     this.notifyAutoplayEndedIfNeeded();
+    void this.abandonFailedPlayer();
   }
 
-  /** 用户点击重试：清空失败态，允许再次走自动自愈计数，并重建播放。 */
+  /** 丢掉当前播放器（含 error 态），不碰 XComponent。 */
+  private async abandonFailedPlayer(): Promise<void> {
+    if (this.abandonInFlight !== null) {
+      await this.abandonInFlight;
+      return;
+    }
+    const task = this.runAbandonFailedPlayer();
+    this.abandonInFlight = task;
+    try {
+      await task;
+    } finally {
+      if (this.abandonInFlight === task) {
+        this.abandonInFlight = null;
+      }
+    }
+  }
+
+  private async runAbandonFailedPlayer(): Promise<void> {
+    this.ctrl.playGen++;
+    this.stopPlaybackInfoWatch();
+    this.clearLoadWatchdog();
+    this.stopSeekBufferPoll();
+    this.clearSeekDoneWatch();
+    const p = this.ctrl.avPlayer;
+    this.ctrl.avPlayer = null;
+    this.closeLanPlayFd();
+    await GalleryAuthVideo.resetAndRelease(p);
+  }
+
+  /**
+   * 用户点击重试：官方要求 error 后先 reset/release，再换一块 Surface 重建 AVPlayer。
+   * HarmonyOS 6.1.0 上复用失败后的同一 surfaceId 会原生闪退。
+   */
   private onUserRetryPlayback(): void {
     this.showPlaybackRetry = false;
     this.hint = '';
     this.ctrl.autoRecoverCount = 0;
     this.autoplayEndedNotified = false;
-    if (!this.active || !this.ctrl.surfaceReady || this.videoUrl.length === 0) {
+    this.userStartedOnce = true;
+    this.videoLoading = true;
+    this.videoRebuffering = false;
+    this.videoSurfaceVisible = false;
+    if (!this.active || this.videoUrl.length === 0) {
+      this.videoLoading = false;
       return;
     }
-    this.videoLoading = true;
-    this.scheduleStartPlay();
+    void this.rebuildSurfaceAndReplay();
+  }
+
+  private async rebuildSurfaceAndReplay(): Promise<void> {
+    const epochAtStart = this.surfaceEpoch;
+    this.ctrl.surfaceReady = false;
+    await this.abandonFailedPlayer();
+    if (!this.active || this.videoUrl.length === 0 || epochAtStart !== this.surfaceEpoch) {
+      this.videoLoading = false;
+      return;
+    }
+    hilog.info(DOMAIN, TAG, 'retry rebuild surface epoch %{public}s -> %{public}s',
+      `${epochAtStart}`, `${epochAtStart + 1}`);
+    fnDiagRecord('I', TAG, `retry rebuild surface epoch ${epochAtStart} -> ${epochAtStart + 1}`);
+    this.xController = new XComponentController();
+    this.surfaceEpoch = this.surfaceEpoch + 1;
+  }
+
+  private onVideoSurfaceLoad(epoch: number): void {
+    if (epoch !== this.surfaceEpoch) {
+      return;
+    }
+    this.ctrl.surfaceReady = true;
+    if (this.userStartedOnce) {
+      this.scheduleStartPlay();
+    }
+  }
+
+  private onVideoSurfaceDestroy(epoch: number): void {
+    if (epoch !== this.surfaceEpoch) {
+      return;
+    }
+    this.ctrl.surfaceReady = false;
   }
 
   /**
@@ -1411,6 +1518,8 @@ export struct GalleryAuthVideo {
     if (!this.active || !this.ctrl.surfaceReady || this.videoUrl.length === 0) {
       hilog.warn(DOMAIN, TAG, 'startPlay skip active=%{public}s surface=%{public}s urlLen=%{public}s',
         `${this.active}`, `${this.ctrl.surfaceReady}`, `${this.videoUrl.length}`);
+      fnDiagRecord('W', TAG,
+        `startPlay skip active=${this.active} surface=${this.ctrl.surfaceReady} urlLen=${this.videoUrl.length}`);
       this.finishVideoLoading();
       this.videoRebuffering = false;
       return;
@@ -1439,11 +1548,10 @@ export struct GalleryAuthVideo {
     // 销毁旧播放器
     const old = this.ctrl.avPlayer;
     this.ctrl.avPlayer = null;
-    if (old !== null) {
-      GalleryAuthVideo.unbindPlayerListeners(old);
-      try { await old.release(); } catch (_e) {}
-    }
     this.closeLanPlayFd();
+    if (old !== null) {
+      await GalleryAuthVideo.resetAndRelease(old);
+    }
     if (gen !== this.ctrl.playGen) { return; }
 
     const client = AppSession.getClient();
@@ -1485,6 +1593,7 @@ export struct GalleryAuthVideo {
           ? `${decodeRes.message}，请稍后重试`
           : '清晰度切换失败，请稍后重试';
         hilog.error(DOMAIN, TAG, 'decode/play fail %{public}s', decodeMsg);
+        fnDiagRecord('E', TAG, `decode/play fail ${decodeMsg}`);
         this.setPlaybackFailureHint(decodeMsg);
         this.ctrl.pendingQualitySwitch = false;
         return;
@@ -1553,6 +1662,7 @@ export struct GalleryAuthVideo {
       } catch (e) {
         if (gen !== this.ctrl.playGen) { return; }
         hilog.error(DOMAIN, TAG, 'getHeaders err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
+        fnDiagRecord('E', TAG, `getHeaders err ${GalleryAuthVideo.formatMediaErr(e as Error)}`);
         this.setPlaybackFailureHint('获取鉴权头失败');
         return;
       }
@@ -1566,6 +1676,7 @@ export struct GalleryAuthVideo {
     } catch (e) {
       if (gen !== this.ctrl.playGen) { return; }
       hilog.error(DOMAIN, TAG, 'createAVPlayer err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
+      fnDiagRecord('E', TAG, `createAVPlayer err ${GalleryAuthVideo.formatMediaErr(e as Error)}`);
       this.setPlaybackFailureHint('播放器创建失败');
       return;
     }
@@ -1580,6 +1691,9 @@ export struct GalleryAuthVideo {
     player.on('error', (err: Error): void => {
       hilog.error(DOMAIN, TAG, 'avplayer error: %{public}s pos=%{public}s cachedMs=%{public}s',
         GalleryAuthVideo.formatMediaErr(err), `${this.currentMs}`, `${this.ctrl.lastCachedDurationMs}`);
+      fnDiagRecord('E', TAG,
+        `avplayer error ${GalleryAuthVideo.formatMediaErr(err)} pos=${this.currentMs} ` +
+          `cachedMs=${this.ctrl.lastCachedDurationMs}`);
       if (gen !== this.ctrl.playGen || this.ctrl.avPlayer !== player) {
         return;
       }
@@ -1677,6 +1791,7 @@ export struct GalleryAuthVideo {
               return;
             }
             hilog.error(DOMAIN, TAG, 'prepare err: %{public}s', GalleryAuthVideo.formatMediaErr(e));
+            fnDiagRecord('E', TAG, `prepare err ${GalleryAuthVideo.formatMediaErr(e)}`);
             this.setPlaybackFailureHint('视频准备失败');
           });
         };
@@ -1720,6 +1835,7 @@ export struct GalleryAuthVideo {
               return;
             }
             hilog.error(DOMAIN, TAG, 'play err: %{public}s', GalleryAuthVideo.formatMediaErr(e));
+            fnDiagRecord('E', TAG, `play err ${GalleryAuthVideo.formatMediaErr(e)}`);
             this.setPlaybackFailureHint('视频播放失败');
           });
         }
@@ -1788,6 +1904,7 @@ export struct GalleryAuthVideo {
         this.stopPlaybackInfoWatch();
         hilog.error(DOMAIN, TAG, 'state error pos=%{public}s cachedMs=%{public}s',
           `${this.currentMs}`, `${this.ctrl.lastCachedDurationMs}`);
+        fnDiagRecord('E', TAG, `state error pos=${this.currentMs} cachedMs=${this.ctrl.lastCachedDurationMs}`);
         if (this.tryAutoRecoverFromPlayError(gen)) {
           return;
         }
@@ -1825,6 +1942,7 @@ export struct GalleryAuthVideo {
     } catch (e) {
       if (gen !== this.ctrl.playGen) { return; }
       hilog.error(DOMAIN, TAG, 'setMediaSource err: %{public}s', GalleryAuthVideo.formatMediaErr(e as Error));
+      fnDiagRecord('E', TAG, `setMediaSource err ${GalleryAuthVideo.formatMediaErr(e as Error)}`);
       this.setPlaybackFailureHint('无法加载视频');
     }
   }
@@ -1899,27 +2017,29 @@ export struct GalleryAuthVideo {
     .margin({ left: this.seekPreviewLeftVp(), bottom: this.effectiveBottomPadding() + 52 })
   }
 
+  @Builder
+  private videoSurfaceNode(epoch: number) {
+    XComponent({
+      id: 'g_auth_v_' + `${this.surfaceInstId}` + '_' + `${epoch}`,
+      type: 'surface',
+      controller: this.xController
+    })
+      .width(this.videoSurfaceVisible ? '100%' : 1)
+      .height(this.videoSurfaceVisible ? '100%' : 1)
+      .backgroundColor(this.hostBackgroundColor())
+      .opacity(this.videoSurfaceVisible ? 1 : 0)
+      .hitTestBehavior(HitTestMode.None)
+      .onLoad((): void => {
+        this.onVideoSurfaceLoad(epoch);
+      })
+      .onDestroy((): void => {
+        this.onVideoSurfaceDestroy(epoch);
+      })
+  }
+
   build() {
     Stack({ alignContent: Alignment.Center }) {
-      XComponent({
-        id: 'gallery_auth_video_surface',
-        type: 'surface',
-        controller: this.xController
-      })
-        .width(this.videoSurfaceVisible ? '100%' : 1)
-        .height(this.videoSurfaceVisible ? '100%' : 1)
-        .backgroundColor(this.hostBackgroundColor())
-        .opacity(this.videoSurfaceVisible ? 1 : 0)
-        .hitTestBehavior(HitTestMode.None)
-        .onLoad((): void => {
-          this.ctrl.surfaceReady = true;
-          if (this.userStartedOnce) {
-            this.scheduleStartPlay();
-          }
-        })
-        .onDestroy((): void => {
-          this.ctrl.surfaceReady = false;
-        });
+      this.videoSurfaceNode(this.surfaceEpoch)
 
       if (this.videoLoading) {
         Column({ space: 10 }) {
@@ -2116,7 +2236,9 @@ export struct GalleryAuthVideo {
               radiusValue: 20,
               fontSizeValue: 15,
               fontColorValue: this.controlPrimaryTextColor(),
-              action: this.onUserRetryPlayback
+              action: (): void => {
+                this.onUserRetryPlayback();
+              }
             })
           }
         }

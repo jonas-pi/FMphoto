@@ -3,6 +3,7 @@
  * 退出预览页后应 clear，释放引用。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { UIContext } from '@kit.ArkUI';
 import { GalleryListItem } from '../model/FnApiTypes';
 import {
@@ -131,6 +132,7 @@ export class GalleryPreviewNavStore {
       setGalleryPreviewHeroActive(false);
       setGalleryPreviewOpening(false);
       hilog.error(DOMAIN, TAG, 'pushUrl GalleryPreview: %{public}s', String(e));
+      fnDiagRecord('E', TAG, `pushUrl GalleryPreview ${String(e)}`);
     } finally {
       if (gen === GalleryPreviewNavStore.openGen) {
         GalleryPreviewNavStore.opening = false;
@@ -172,6 +174,7 @@ export class GalleryPreviewNavStore {
       params: { idx: '0', slideshow: '1' }
     }).catch((e: Error) => {
       hilog.error(DOMAIN, TAG, 'pushUrl GalleryPreview slideshow: %{public}s', String(e));
+      fnDiagRecord('E', TAG, `pushUrl GalleryPreview slideshow ${String(e)}`);
     });
   }
 

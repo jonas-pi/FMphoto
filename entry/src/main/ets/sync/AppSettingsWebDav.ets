@@ -5,6 +5,7 @@
 import { http } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { CERT_CODES, uint8ArrayToBase64Local, utf8EncodeLocal } from '../network/fnHttpClient/FnHttpClientCommon';
 import { AppSettingsWebDavConfig } from './AppSettingsWebDavPrefs';
 
@@ -170,6 +171,7 @@ async function requestWithFamily(
     const code = err.code;
     hilog.error(DOMAIN, TAG, 'webdav %{public}s family=%{public}s failed code=%{public}d %{public}s',
       method, family, code, err.message);
+    fnDiagRecord('E', TAG, `webdav ${method} family=${family} code=${code} ${err.message}`);
     return {
       ok: false,
       code: code,

@@ -5,6 +5,7 @@
 import { common } from '@kit.AbilityKit';
 import { connection } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
@@ -114,6 +115,7 @@ async function probeAndSwitch(ctx: common.UIAbilityContext, stored: StoredSessio
   const res = await switchStoredLoginEndpointToUrl(ctx, selected.server, true, true);
   if (!res.ok) {
     hilog.warn(DOMAIN, TAG, 'auto switch failed: %{public}s', res.message);
+    fnDiagRecord('W', TAG, `auto switch failed ${res.message}`);
     return;
   }
   if (res.message.length === 0) {
@@ -153,6 +155,7 @@ async function runAutoSwitch(): Promise<void> {
     }
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'auto switch error: %{public}s', String(e));
+    fnDiagRecord('E', TAG, `auto switch error ${String(e)}`);
   }
 }
 
@@ -220,6 +223,7 @@ export function ensureStarted(ctx: common.UIAbilityContext): void {
     hilog.info(DOMAIN, TAG, 'network listener registered');
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'start listener failed: %{public}s', String(e));
+    fnDiagRecord('E', TAG, `start listener failed ${String(e)}`);
   }
 }
 

@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import { AppSession } from '../../auth/AppSession';
 import { isHttpUnauthorizedMessage, tryRecoverSessionAfterAuthFailure } from '../../auth/SessionReauth';
 import { SessionPreferences } from '../../auth/SessionPreferences';
@@ -482,6 +483,7 @@ export async function galleryAlbumBootstrap(
   if (tl.success !== true || tl.data === undefined) {
     const em = tl.message !== undefined && tl.message.length > 0 ? tl.message : '时间轴加载失败';
     hilog.warn(DOMAIN, TAG, 'timeline fail: %{public}s body: %{public}s', em, '');
+    fnDiagRecord('W', TAG, `timeline fail ${em}`);
     host.bootLoading = false;
     // 软刷新失败时保留旧列表，避免整页变错误态
     if (!softRefresh) {
@@ -702,6 +704,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     if (res.success !== true) {
       const em = res.message !== undefined && res.message.length > 0 ? res.message : '加载失败';
       hilog.warn(DOMAIN, TAG, 'getList fail %{public}s off=%{public}d: %{public}s', key, off, em);
+      fnDiagRecord('W', TAG, `getList fail ${key} off=${off} ${em}`);
       host.footText = em;
       return -2;
     }
@@ -794,6 +797,7 @@ export async function galleryAlbumLoadOneBatch(host: GalleryAlbumLoadOrchestrato
     return list.length;
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'loadOneBatch error: %{public}s', String(e));
+    fnDiagRecord('E', TAG, `loadOneBatch error ${String(e)}`);
     host.footText = String(e) || '请求异常';
     return -2;
   }

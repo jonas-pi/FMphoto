@@ -1,6 +1,7 @@
 import { media } from '@kit.MediaKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { isGalleryVideoLanPrefetchComplete } from './GalleryVideoLanPrefetch';
 import { GalleryVideoSeekPreviewSession } from './GalleryVideoSeekPreview';
 
@@ -138,6 +139,8 @@ export class GalleryAuthVideoController {
       hilog.error(DOMAIN, TAG,
         'load watchdog timeout quality=%{public}s pos=%{public}s cachedMs=%{public}s',
         host.currentQualityLabel(), `${host.currentMs}`, `${this.lastCachedDurationMs}`);
+      fnDiagRecord('E', TAG,
+        `load watchdog timeout quality=${host.currentQualityLabel()} pos=${host.currentMs} cachedMs=${this.lastCachedDurationMs}`);
       host.setPlaybackFailureHint('加载超时，请改用较低清晰度后重试');
     }, GALLERY_VIDEO_LOAD_WATCHDOG_MS);
   }

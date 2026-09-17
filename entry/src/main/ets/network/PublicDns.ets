@@ -3,6 +3,7 @@
  */
 import { connection } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { isIpLiteralHost, parseNormalizedBaseUrl, replaceBaseUrlHost } from './ServerUrl';
 
 const DOMAIN = 0xFF00;
@@ -67,6 +68,7 @@ export async function resolvePublicDomainToIpBaseUrl(domainBaseUrl: string): Pro
     return rebuilt;
   } catch (e) {
     hilog.warn(DOMAIN, TAG, 'dns failed %{public}s: %{public}s', parts.host, String(e));
+    fnDiagRecord('W', TAG, `dns failed ${parts.host}: ${String(e)}`);
     return '';
   }
 }

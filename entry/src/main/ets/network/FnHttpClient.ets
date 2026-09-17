@@ -8,6 +8,7 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { CertPolicy } from './CertPolicy';
 import { genFnAuthx } from './AuthxSigner';
 import { FnGalleryGetSignSpec, genFnGalleryAuthxGet } from './FnGalleryAuthx';
@@ -364,6 +365,7 @@ export class FnHttpClient {
   private static galleryFailBodyHint(rawBody: string, reason: string): void {
     const hint = FnHttpClient.galleryErrorBodyPreview(rawBody);
     hilog.warn(DOMAIN, TAG, 'gallery fail %{public}s body: %{public}s', reason, hint);
+    fnDiagRecord('W', TAG, `gallery fail ${reason} body=${hint}`);
   }
 
   /** 供界面与日志共用，与 galleryFailBodyHint 同长度上限 */
@@ -471,7 +473,7 @@ export class FnHttpClient {
           );
 
           if (isRedirectCode(raw.code)) {
-            FnHttpClient.galleryFailBodyHint(raw.body, `redirect ${raw.code}`);
+            FnHttpClient.galleryFailBodyHint(raw.body, `GET ${activePath} redirect ${raw.code}`);
             return {
               success: false,
               message: '重定向次数过多或未返回 Location',
@@ -483,7 +485,7 @@ export class FnHttpClient {
             if (pi < lastPi && FnHttpClient.galleryResponseShouldTryAlternatePath(raw)) {
               continue pathLoop;
             }
-            FnHttpClient.galleryFailBodyHint(raw.body, `HTTP ${raw.code}`);
+            FnHttpClient.galleryFailBodyHint(raw.body, `GET ${activePath} HTTP ${raw.code}`);
             return {
               success: false,
               message: `HTTP ${raw.code}`,
@@ -502,7 +504,7 @@ export class FnHttpClient {
             if (pi < lastPi && FnHttpClient.galleryResponseShouldTryAlternatePath(raw)) {
               continue pathLoop;
             }
-            FnHttpClient.galleryFailBodyHint(raw.body, 'non-json');
+            FnHttpClient.galleryFailBodyHint(raw.body, `GET ${activePath} non-json`);
             return {
               success: false,
               message: '响应非 JSON',
@@ -515,6 +517,7 @@ export class FnHttpClient {
 
           if (codeNum === 5000 && errLine === 'invalid sign') {
             if (attempt >= tryTimes) {
+              fnDiagRecord('W', TAG, `gallery invalid sign exhausted ${activePath}`);
               return {
                 success: false,
                 message: '签名错误，重试次数已用尽',
@@ -529,7 +532,7 @@ export class FnHttpClient {
           /** 与 docs/fnos-gallery-data-flow §3.1：code 为 0、缺省、字符串 "0" 均成功（对齐 Py payload.get("code")） */
           if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
             const showCode = FnHttpClient.envelopeCodeNum(parsed);
-            FnHttpClient.galleryFailBodyHint(raw.body, `biz ${showCode}`);
+            FnHttpClient.galleryFailBodyHint(raw.body, `GET ${activePath} biz ${showCode}`);
             const em = errLine.length > 0 ? errLine : `业务错误 ${showCode}`;
             let preview = FnHttpClient.galleryErrorBodyPreview(raw.body);
             if (preview.length === 0) {
@@ -555,6 +558,7 @@ export class FnHttpClient {
           const msg = err.message !== undefined && err.message.length > 0 ? err.message : '网络错误';
           const exPrev = FnHttpClient.galleryErrorBodyPreview(String(e));
           if (CERT_CODES.indexOf(code) >= 0 && !CertPolicy.isTrusted(activeBase)) {
+            fnDiagRecord('W', TAG, `gallery cert err ${activePath} code=${code} ${msg}`);
             return {
               success: false,
               message: msg,
@@ -563,6 +567,7 @@ export class FnHttpClient {
             };
           }
           if (attempt >= tryTimes) {
+            fnDiagRecord('W', TAG, `gallery net err ${activePath} code=${code} ${msg}`);
             return {
               success: false,
               message: msg,
@@ -877,10 +882,12 @@ export class FnHttpClient {
         }
 
         if (isRedirectCode(raw.code)) {
+          fnDiagRecord('W', TAG, `openapi redirect ${path}`);
           return { success: false, message: '重定向次数过多或未返回 Location' };
         }
 
         if (raw.code < 200 || raw.code >= 300) {
+          fnDiagRecord('W', TAG, `openapi HTTP ${raw.code} ${path}`);
           return { success: false, message: `HTTP ${raw.code}` };
         }
 
@@ -888,6 +895,7 @@ export class FnHttpClient {
         try {
           parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
         } catch (_e) {
+          fnDiagRecord('W', TAG, `openapi non-json ${path}`);
           return { success: false, message: '响应非 JSON' };
         }
 
@@ -896,6 +904,7 @@ export class FnHttpClient {
 
         if (codeNum === 5000 && errLine === 'invalid sign') {
           if (attempt >= tryTimes) {
+            fnDiagRecord('W', TAG, `openapi invalid sign exhausted ${path}`);
             return { success: false, message: '签名错误，重试次数已用尽' };
           }
           hilog.warn(DOMAIN, TAG, 'invalid sign, retry %{public}d', attempt + 1);
@@ -905,6 +914,7 @@ export class FnHttpClient {
 
         if (codeNum !== 0) {
           const em = errLine.length > 0 ? errLine : `业务错误 ${codeNum}`;
+          fnDiagRecord('W', TAG, `openapi biz ${codeNum} ${path} ${em}`);
           return { success: false, message: em };
         }
 
@@ -922,9 +932,11 @@ export class FnHttpClient {
         const code = err.code !== undefined ? err.code : 0;
         const msg = err.message !== undefined && err.message.length > 0 ? err.message : '网络错误';
         if (CERT_CODES.indexOf(code) >= 0 && !CertPolicy.isTrusted(this.baseUrl)) {
+          fnDiagRecord('W', TAG, `openapi cert err ${path} code=${code} ${msg}`);
           return { success: false, message: msg, certificateError: true };
         }
         if (attempt >= tryTimes) {
+          fnDiagRecord('W', TAG, `openapi net err ${path} code=${code} ${msg}`);
           return { success: false, message: msg };
         }
         await FnHttpClient.sleep(100);

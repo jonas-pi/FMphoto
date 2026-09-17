@@ -4,6 +4,7 @@
  */
 import { media } from '@kit.MediaKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { AppSession } from '../auth/AppSession';
 import { completeVideoWarmup } from './GalleryPreviewEntryGate';
 
@@ -96,6 +97,7 @@ export struct GalleryVideoWarmupSurface {
       player = await media.createAVPlayer();
     } catch (e) {
       hilog.error(DOMAIN, TAG, 'createAVPlayer %{public}s', String(e));
+      fnDiagRecord('E', TAG, `createAVPlayer ${String(e)}`);
       if (gen === this.gen) {
         this.finish(false);
       }
@@ -110,6 +112,7 @@ export struct GalleryVideoWarmupSurface {
       if (gen !== this.gen) {
         return;
       }
+      fnDiagRecord('E', TAG, 'warmup avplayer error');
       this.finish(false);
     });
     player.on('stateChange', (state: media.AVPlayerState): void => {
@@ -146,6 +149,7 @@ export struct GalleryVideoWarmupSurface {
       await player.setMediaSource(source);
     } catch (e) {
       hilog.error(DOMAIN, TAG, 'setMediaSource %{public}s', String(e));
+      fnDiagRecord('E', TAG, `setMediaSource ${String(e)}`);
       if (gen === this.gen) {
         this.finish(false);
       }

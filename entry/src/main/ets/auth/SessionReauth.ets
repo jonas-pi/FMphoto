@@ -10,6 +10,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { AppSession } from './AppSession';
 import { SessionPreferences } from './SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
@@ -57,6 +58,7 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
       const wsRes = await fnWsLogin(stored.baseUrl, user, pass, trusted, deviceId);
       if (wsRes.requires2fa === true || wsRes.requires2faSetup === true) {
         hilog.warn(DOMAIN, TAG, 'silent WS relogin blocked by 2FA; user must login manually');
+        fnDiagRecord('W', TAG, 'silent WS relogin blocked by 2FA');
         return false;
       }
       if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
@@ -94,6 +96,8 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
         'silent WS relogin failed: %{public}s',
         wsRes.message !== undefined ? wsRes.message : 'unknown'
       );
+      fnDiagRecord('W', TAG,
+        `silent WS relogin failed ${wsRes.message !== undefined ? wsRes.message : 'unknown'}`);
     } else {
       hilog.warn(DOMAIN, TAG, 'silent WS relogin skipped: no in-memory password');
     }

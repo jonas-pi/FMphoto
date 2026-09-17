@@ -1,5 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import { fileIo } from '@kit.CoreFileKit';
 import { taskpool } from '@kit.ArkTS';
 import { CertPolicy } from '../CertPolicy';
@@ -956,6 +957,8 @@ export class FnHttpClientUploadOps {
             redactCookieHeaderForLog(lastCookieForLog),
             bodyPrev.length > 0 ? bodyPrev : '(empty)'
           );
+          fnDiagRecord('W', TAG,
+            `upload POST failed http=${lastHttpCode} ${lastDetail.length > 0 ? lastDetail : ''} body=${bodyPrev}`);
           return {
             success: false,
             message: lastDetail.length > 0 ? `上传失败 HTTP ${lastHttpCode}：${lastDetail}` : `上传失败 HTTP ${lastHttpCode}`
@@ -965,6 +968,7 @@ export class FnHttpClientUploadOps {
     } catch (e) {
       const em = String(e);
       hilog.warn(DOMAIN, TAG, '[upload] exception %{public}s', em.length > 0 ? em : 'unknown');
+      fnDiagRecord('W', TAG, `upload exception ${em.length > 0 ? em : 'unknown'}`);
       return { success: false, message: em.length > 0 ? em : '上传请求异常' };
     } finally {
       this.unregisterPendingRequest(req);

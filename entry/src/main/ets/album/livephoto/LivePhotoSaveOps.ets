@@ -8,6 +8,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import { copyGalleryUriContentToAlbumUri } from '../GalleryAlbumSaveToAlbum';
 import { extFromFilePath } from './MotionPhotoSplit';
 import { LivePhotoPairFiles } from './LivePhotoSandbox';
@@ -107,6 +108,7 @@ async function tryCreateMovingPhoto(
   } catch (e) {
     const err = e as BusinessError;
     hilog.error(LOG_DOMAIN, LOG_TAG, `create moving photo failed: ${err.code} ${err.message}`);
+    fnDiagRecord('E', LOG_TAG, `create moving photo failed ${err.code} ${err.message}`);
     return false;
   }
 }
@@ -141,6 +143,7 @@ export async function createMovingPhotoAsset(
   } catch (e) {
     const err = e as BusinessError;
     hilog.error(LOG_DOMAIN, LOG_TAG, `moving photo mp4 retry failed: ${err.code} ${err.message}`);
+    fnDiagRecord('E', LOG_TAG, `moving photo mp4 retry failed ${err.code} ${err.message}`);
     await unlinkQuiet(mp4Path);
     return false;
   }
@@ -178,6 +181,7 @@ export async function saveSandboxAssetWithPrivilege(
   } catch (e) {
     const err = e as BusinessError;
     hilog.error(LOG_DOMAIN, LOG_TAG, `privilege save failed: ${err.code} ${err.message}`);
+    fnDiagRecord('E', LOG_TAG, `privilege save failed ${err.code} ${err.message}`);
     return false;
   }
 }

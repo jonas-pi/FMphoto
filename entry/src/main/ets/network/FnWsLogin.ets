@@ -4,6 +4,7 @@
  * FN Connect 中继：握手带 Origin + Cookie（mode=relay），DNS 未就绪时短重试。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
 import { isFnRelayBaseUrl } from './FnConnectApi';
@@ -557,6 +558,7 @@ async function fnWsLoginOnce(
         try {
           const info = await resolveWsFailure(httpBaseNoSlash, err, isTrustedHost, fallbackMessage);
           hilog.error(DOMAIN, TAG, 'ws error %{public}s', info.message);
+          fnDiagRecord('E', TAG, `ws error ${info.message}`);
           finish({
             success: false,
             message: info.message,
@@ -565,6 +567,7 @@ async function fnWsLoginOnce(
         } catch (e) {
           const em = describeWsError(e);
           hilog.error(DOMAIN, TAG, 'ws error resolve %{public}s', em);
+          fnDiagRecord('E', TAG, `ws error resolve ${em}`);
           finish({
             success: false,
             message: em.length > 0 ? em : fallbackMessage

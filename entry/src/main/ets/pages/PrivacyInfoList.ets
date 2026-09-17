@@ -146,10 +146,10 @@ struct PrivacyInfoList {
       this.bullet('处理方式：二维码在本机处理；WebDAV 发往你填写的服务器。')
 
       this.sectionTitle('临时文件与运行日志')
-      this.bullet('信息种类：缓存文件；连接状态、错误摘要、主机或文件名等诊断信息。')
+      this.bullet('信息种类：缓存文件；崩溃快照、播放失败等诊断摘要、主机或文件名。')
       this.bullet('使用目的：预览、下载、排障。')
       this.bullet('是否必要：功能运行需要；日志不以收集隐私为目的。')
-      this.bullet('处理方式：仅本机。应用不主动记录密码或完整 cookie。')
+      this.bullet('处理方式：仅本机。不主动记录密码或完整 cookie。你可在「我的」导出后自行发送给开发者。')
 
       this.sectionTitle('不收集的信息')
       this.paragraph('不申请设备定位、通讯录、短信、麦克风或通话记录；无广告、统计或崩溃上报 SDK；不读取 IMEI / OAID。')
