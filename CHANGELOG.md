@@ -6,6 +6,29 @@
 
 ---
 
+## [1.4.2.5] - 2026-09-18
+
+在 [1.4.2.4] 上发布。登录失败也可导出诊断日志。
+
+### 新增
+
+- **登录页导出诊断日志**：未登录也能把本机诊断文件发给开发者；登录失败会写入该文件。
+
+### 改进
+
+- **隐私政策**：说明登录页和「我的」均可导出诊断摘要。
+- **版本号**：`versionName` `1.4.2.5`（`versionCode` 1004009）。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> 本版本仅上传未签名包；`.p12` / `.p7b` / `build-profile.json5` 等密钥材料严禁入库或随 Release 分发。已安装 `1.4.2.4` 或更早版本的设备可直接覆盖升级（`versionCode` 1004009）。
+
+---
+
 ## [1.4.2.4] - 2026-09-17
 
 在 [1.4.2.2] 上发布。补本机诊断日志导出，并修播放失败后点重试闪退。
@@ -734,6 +757,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.4.2.5]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.4...v1.4.2.5
 [1.4.2.4]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.2...v1.4.2.4
 [1.4.2.2]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2-beta.1...v1.4.2.2
 [1.4.2-beta.1]: https://github.com/jonas-pi/FMphoto/compare/v1.4.1...v1.4.2-beta.1
