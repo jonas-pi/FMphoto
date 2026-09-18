@@ -20,7 +20,7 @@ import {
 import { smartCategoryCount } from '../main/ets/album/GalleryAlbumEntityData';
 import { smartCategoryPatchCountByName } from '../main/ets/album/SmartCategoryLayoutPreferences';
 import { loginSecretLooksWrapped } from '../main/ets/auth/LoginSecretStore';
-import { parseSavedUsersJson } from '../main/ets/auth/SessionPreferences';
+import { applyLoginPasswordEditFallback, loginPasswordMask } from '../main/ets/common/FnLoginPasswordMask';
 import {
   emptyLoginConfig,
   settingsNasMismatchMessage,
@@ -306,6 +306,13 @@ export default function localUnitTest() {
       expect(a.substring(4, 5)).assertEqual('-');
       expect(wsDeviceDisplayCode('')).assertEqual('');
       expect(wsDeviceDisplayCode('   ')).assertEqual('');
+    });
+
+    it('loginPasswordMask_edit_fallback', 0, () => {
+      expect(loginPasswordMask('ab')).assertEqual('\u2022\u2022');
+      expect(applyLoginPasswordEditFallback('ab', '\u2022\u2022c')).assertEqual('abc');
+      expect(applyLoginPasswordEditFallback('abc', '\u2022\u2022')).assertEqual('ab');
+      expect(applyLoginPasswordEditFallback('ab', '\u2022x')).assertEqual('ax');
     });
   });
 }

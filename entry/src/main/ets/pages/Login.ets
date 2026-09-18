@@ -7,7 +7,7 @@
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagRecord, fnDiagShare } from '../common/FnDiagLog';
-import { window } from '@kit.ArkUI';
+import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { CertPolicy } from '../network/CertPolicy';
 import {
   classifyDirectNasAddress,
@@ -83,6 +83,9 @@ struct Login {
   @State private errorText: string = '';
   /** 表单默认值读完再挂输入框，避免 TextInput 先以空 seed 建好后回填不刷新 */
   @State private formReady: boolean = false;
+  /** 登录页不随键盘上抬，避免点密码框时整页重布局叠在安全键盘切换上 */
+  private loginKeyboardAvoidApplied: boolean = false;
+  private previousKeyboardAvoid: KeyboardAvoidMode = KeyboardAvoidMode.OFFSET;
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
   @State private otpCode: string = '';
@@ -108,8 +111,13 @@ struct Login {
   @StorageProp(FN_SHARE_INBOX_VERSION_KEY) @Watch('onShareInboxVersionChanged') private shareInboxVersion: number = 0;
 
   onPageShow(): void {
+    this.applyLoginKeyboardAvoid(true);
     this.applySystemBarTheme();
     this.tryConsumeShareInbox();
+  }
+
+  onPageHide(): void {
+    this.applyLoginKeyboardAvoid(false);
   }
 
   private onShareInboxVersionChanged(): void {
@@ -142,6 +150,7 @@ struct Login {
   }
 
   aboutToAppear(): void {
+    this.applyLoginKeyboardAvoid(true);
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void SessionPreferences.loadLoginFormDefaults(ctx).then((d) => {
       this.fnIdInput = this.combinedHostFieldFromDefaults(d);
@@ -162,6 +171,29 @@ struct Login {
     setTimeout((): void => {
       this.tryConsumeShareInbox();
     }, 0);
+  }
+
+  aboutToDisappear(): void {
+    this.applyLoginKeyboardAvoid(false);
+  }
+
+  private applyLoginKeyboardAvoid(enable: boolean): void {
+    try {
+      const ui = this.getUIContext();
+      if (enable) {
+        if (!this.loginKeyboardAvoidApplied) {
+          this.previousKeyboardAvoid = ui.getKeyboardAvoidMode();
+          this.loginKeyboardAvoidApplied = true;
+        }
+        ui.setKeyboardAvoidMode(KeyboardAvoidMode.NONE);
+        return;
+      }
+      if (this.loginKeyboardAvoidApplied) {
+        ui.setKeyboardAvoidMode(this.previousKeyboardAvoid);
+        this.loginKeyboardAvoidApplied = false;
+      }
+    } catch (_e) {
+    }
   }
 
   private loginPanelRadiusVp(): number {
@@ -818,7 +850,8 @@ struct Login {
       FnLoginTextField({
         seedText: this.password,
         placeholder: $r('app.string.hint_password'),
-        inputType: InputType.Password,
+        inputType: InputType.Normal,
+        maskAsPassword: true,
         fieldEnabled: !this.show2faStep,
         onChange: (v: string): void => {
           this.password = v;
@@ -853,7 +886,8 @@ struct Login {
       FnLoginTextField({
         seedText: this.password,
         placeholder: $r('app.string.hint_password'),
-        inputType: InputType.Password,
+        inputType: InputType.Normal,
+        maskAsPassword: true,
         fieldEnabled: !this.show2faStep,
         onChange: (v: string): void => {
           this.password = v;
