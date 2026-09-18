@@ -6,6 +6,28 @@
 
 ---
 
+## [1.4.2.8] - 2026-09-18
+
+在 [1.4.2.7] 上发布。强化崩溃与诊断日志采集。
+
+### 改进
+
+- **崩溃前上下文**：进程重启改为归档上次运行记录，导出同时带上次会话和本次会话，闪退后能看到崩溃前日志。
+- **系统故障事件**：除崩溃/卡死外，订阅主线程卡顿、资源超限、应用终止；补齐 uuid、线程、页面切换、内存等字段。
+- **落盘更稳**：故障事件串行写入、原子落盘；成功转存后清理系统外部日志，避免 5MB 配额耗尽。
+- **脱敏**：Cookie、Token、密码和 URL 参数脱敏更完整。
+- **版本号**：`versionName` `1.4.2.8`（`versionCode` 1004012）。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> 本版本仅上传未签名包；`.p12` / `.p7b` / `build-profile.json5` 等密钥材料严禁入库或随 Release 分发。已安装 `1.4.2.7` 或更早版本的设备可直接覆盖升级（`versionCode` 1004012）。
+
+---
+
 ## [1.4.2.7] - 2026-09-18
 
 在 [1.4.2.6] 上发布。降低登录页密码框点击响应时延。
@@ -804,6 +826,8 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.4.2.8]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.7...v1.4.2.8
+[1.4.2.7]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.6...v1.4.2.7
 [1.4.2.6]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.5...v1.4.2.6
 [1.4.2.5]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.4...v1.4.2.5
 [1.4.2.4]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.2...v1.4.2.4

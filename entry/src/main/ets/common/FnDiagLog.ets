@@ -1,7 +1,7 @@
 /**
  * 本机诊断日志：订阅系统崩溃 / 卡死，并记录播放失败等关键路径。
  * 不上传；用户在「我的」或登录页导出后自行发给开发者。
- * 每次进程启动清空运行记录；崩溃文件保留，便于闪退后再次打开再导出。
+ * 保留上次进程记录与系统故障文件，便于闪退后再次打开再导出。
  */
 import { bundleManager, common, errorManager } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -13,12 +13,15 @@ const DOMAIN: number = 0xFF00;
 const TAG: string = 'FnDiag';
 const DIR_NAME: string = 'diag';
 const RUNTIME_NAME: string = 'runtime.log';
+const RUNTIME_ROLL_NAME: string = 'runtime.roll.log';
 const RUNTIME_PREV_NAME: string = 'runtime.prev.log';
+const RUNTIME_PREV_ROLL_NAME: string = 'runtime.prev.roll.log';
 const EXPORT_NAME: string = 'fmphoto-diag.txt';
 const MAX_RUNTIME_BYTES: number = 256 * 1024;
 const MAX_RING: number = 400;
-const MAX_CRASH_FILES: number = 4;
+const MAX_CRASH_FILES: number = 12;
 const MAX_SECTION_CHARS: number = 180000;
+const MAX_DRAIN_EVENTS: number = 32;
 
 let filesRoot: string = '';
 let cacheRoot: string = '';
@@ -26,6 +29,8 @@ let dirReady: boolean = false;
 let watcherInstalled: boolean = false;
 const ring: string[] = [];
 let appendChain: Promise<void> = Promise.resolve();
+let eventPersistChain: Promise<void> = Promise.resolve();
+let eventHolder: hiAppEvent.AppEventPackageHolder | null = null;
 
 export function fnDiagInit(filesDir: string, cacheDir: string = ''): void {
   const files = trimPath(filesDir);
@@ -40,10 +45,12 @@ export function fnDiagInit(filesDir: string, cacheDir: string = ''): void {
   dirReady = false;
   ring.splice(0, ring.length);
   appendChain = Promise.resolve();
-  resetRuntimeLogSync();
+  eventPersistChain = Promise.resolve();
+  archiveRuntimeLogSync();
   fnDiagRecord('I', TAG, 'session start');
   fnDiagInstallCrashWatcher();
   fnDiagInstallErrorObservers();
+  fnDiagConfigureSystemEvents();
 }
 
 export function fnDiagRecord(level: string, tag: string, message: string): void {
@@ -98,13 +105,18 @@ function fnDiagInstallCrashWatcher(): void {
   if (watcherInstalled) {
     return;
   }
-  watcherInstalled = true;
   const watcher: hiAppEvent.Watcher = {
     name: 'fmphotoCrashWatcher',
     appEventFilters: [
       {
         domain: hiAppEvent.domain.OS,
-        names: [hiAppEvent.event.APP_CRASH, hiAppEvent.event.APP_FREEZE]
+        names: [
+          hiAppEvent.event.APP_CRASH,
+          hiAppEvent.event.APP_FREEZE,
+          hiAppEvent.event.MAIN_THREAD_JANK,
+          hiAppEvent.event.RESOURCE_OVERLIMIT,
+          hiAppEvent.event.APP_KILLED
+        ]
       }
     ],
     onReceive: (_domain: string, groups: Array<hiAppEvent.AppEventGroup>): void => {
@@ -112,17 +124,102 @@ function fnDiagInstallCrashWatcher(): void {
         const group = groups[gi];
         for (let ei = 0; ei < group.appEventInfos.length; ei++) {
           const info = group.appEventInfos[ei];
-          void persistSystemEvent(info.name, info.params as Record<string, Object>);
+          enqueueSystemEvent(info.name, info.params as Record<string, Object>);
         }
       }
     }
   };
   try {
-    hiAppEvent.addWatcher(watcher);
+    eventHolder = hiAppEvent.addWatcher(watcher);
+    watcherInstalled = eventHolder !== null;
+    if (!watcherInstalled) {
+      fnDiagRecord('W', TAG, 'crash watcher returned empty holder');
+      return;
+    }
     fnDiagRecord('I', TAG, 'crash watcher ready');
+    scheduleEventDrain(0);
+    scheduleEventDrain(30000);
+    scheduleEventDrain(120000);
   } catch (e) {
+    watcherInstalled = false;
+    eventHolder = null;
     fnDiagRecord('W', TAG, `crash watcher failed ${String(e)}`);
   }
+}
+
+function enqueueSystemEvent(eventName: string, params: Record<string, Object>): void {
+  eventPersistChain = eventPersistChain.then((): Promise<void> => {
+    return persistSystemEvent(eventName, params);
+  }).catch((e: Error): void => {
+    fnDiagRecord('W', TAG, `persist system event failed ${String(e)}`);
+  });
+}
+
+function scheduleEventDrain(delayMs: number): void {
+  setTimeout((): void => {
+    drainPendingSystemEvents();
+  }, delayMs);
+}
+
+function drainPendingSystemEvents(): void {
+  const holder = eventHolder;
+  if (holder === null) {
+    return;
+  }
+  try {
+    holder.setRow(MAX_DRAIN_EVENTS);
+    for (let i = 0; i < MAX_DRAIN_EVENTS; i++) {
+      const pkg = holder.takeNext() as hiAppEvent.AppEventPackage | null;
+      if (pkg === null || pkg.appEventInfos === undefined || pkg.appEventInfos.length === 0) {
+        break;
+      }
+      for (let j = 0; j < pkg.appEventInfos.length; j++) {
+        const info = pkg.appEventInfos[j];
+        enqueueSystemEvent(info.name, info.params as Record<string, Object>);
+      }
+      if (pkg.appEventInfos.length < MAX_DRAIN_EVENTS) {
+        break;
+      }
+    }
+  } catch (e) {
+    fnDiagRecord('W', TAG, `drain system events failed ${String(e)}`);
+  }
+}
+
+function fnDiagConfigureSystemEvents(): void {
+  if (deviceInfo.sdkApiVersion < 22) {
+    return;
+  }
+  if (deviceInfo.sdkApiVersion >= 24) {
+    const policy: hiAppEvent.EventPolicy = {
+      mainThreadJankPolicy: {
+        logType: 1,
+        sampleInterval: 150,
+        sampleCount: 10,
+        reportTimesPerApp: 5,
+        autoStopSampling: true
+      },
+      appCrashPolicy: { pageSwitchLogEnable: true },
+      appFreezePolicy: { pageSwitchLogEnable: true },
+      resourceOverlimitPolicy: {
+        pageSwitchLogEnable: true
+      }
+    };
+    void hiAppEvent.configEventPolicy(policy)
+      .catch((e: Error): void => fnDiagRecord('W', TAG, `config event policy failed ${String(e)}`));
+    return;
+  }
+  const jankPolicy: hiAppEvent.EventPolicy = {
+    mainThreadJankPolicy: {
+      logType: 1,
+      sampleInterval: 150,
+      sampleCount: 10,
+      reportTimesPerApp: 5,
+      autoStopSampling: true
+    }
+  };
+  void hiAppEvent.configEventPolicy(jankPolicy)
+    .catch((e: Error): void => fnDiagRecord('W', TAG, `config jank policy failed ${String(e)}`));
 }
 
 let errorObserversInstalled: boolean = false;
@@ -153,34 +250,105 @@ async function persistSystemEvent(eventName: string, params: Record<string, Obje
   const crashType = paramText(params, 'crash_type');
   const timeText = paramText(params, 'time');
   const exceptionText = paramText(params, 'exception');
+  const eventId = paramText(params, 'uuid');
+  const safeEvent = safeFilePart(eventName);
+  const safeType = safeFilePart(crashType.length > 0 ? crashType : eventName);
+  const safeTime = safeFilePart(timeText.length > 0 ? timeText : `${Date.now()}`);
+  const safeId = safeFilePart(eventId.length > 0 ? eventId.substring(0, 20) : 'noid');
+  const fileName = `fault-${safeTime}-${safeEvent}-${safeType}-${safeId}.log`;
+  if (await fileExists(`${diagDir()}/${fileName}`)) {
+    return;
+  }
   const parts: string[] = [];
+  const paramKeys: string[] = [
+    'time', 'begin_time', 'end_time', 'crash_type', 'foreground',
+    'release_type', 'cpu_abi', 'app_running_unique_id',
+    'bundle_version', 'bundle_name', 'process_name', 'pid', 'uid', 'uuid',
+    'process_life_time', 'exception', 'memory', 'log_over_limit',
+    'event_handler_size_3s', 'event_handler_size_6s', 'external_callback_log',
+    'app_start_jiffies_time', 'heaviest_stack'
+  ];
   parts.push(`event=${eventName}`);
-  parts.push(`crash_type=${crashType}`);
-  parts.push(`time=${timeText}`);
-  parts.push(`foreground=${paramText(params, 'foreground')}`);
-  parts.push(`bundle_version=${paramText(params, 'bundle_version')}`);
-  parts.push(`pid=${paramText(params, 'pid')}`);
-  parts.push(`process_life_time=${paramText(params, 'process_life_time')}`);
-  parts.push(`exception=${exceptionText}`);
-  parts.push(`memory=${paramText(params, 'memory')}`);
-  const hilogText = paramText(params, 'hilog');
-  if (hilogText.length > 0) {
-    parts.push('--- hilog ---');
-    parts.push(hilogText);
+  for (let i = 0; i < paramKeys.length; i++) {
+    const key = paramKeys[i];
+    const value = paramText(params, key);
+    if (value.length > 0) {
+      parts.push(`${key}=${clip(value, MAX_SECTION_CHARS)}`);
+    }
+  }
+  const sectionKeys: string[] = [
+    'page_switch_log', 'hilog', 'threads', 'event_handler', 'peer_binder'
+  ];
+  for (let i = 0; i < sectionKeys.length; i++) {
+    const key = sectionKeys[i];
+    const value = paramText(params, key);
+    if (value.length > 0) {
+      parts.push(`--- ${key} ---`);
+      parts.push(clip(value, MAX_SECTION_CHARS));
+    }
   }
   const extLogs = paramStringList(params, 'external_log');
+  const copiedExternalLogs: string[] = [];
   for (let i = 0; i < extLogs.length; i++) {
     const p = extLogs[i];
     parts.push(`--- external_log ${p} ---`);
-    parts.push(await readFileCapped(p, MAX_SECTION_CHARS));
+    const read = await readExternalLog(p);
+    parts.push(read.text);
+    if (read.success) {
+      copiedExternalLogs.push(p);
+    }
   }
   const body = sanitizeDiagText(parts.join('\n'));
-  const safeType = (crashType.length > 0 ? crashType : eventName).replace(/[^A-Za-z0-9_-]/g, '_');
-  const fileName = `crash-${timeText.length > 0 ? timeText : `${Date.now()}`}-${safeType}.log`;
-  await ensureDir();
-  await writeUtf8File(`${diagDir()}/${fileName}`, body);
+  if (!(await ensureDir())) {
+    throw new Error('diag directory unavailable');
+  }
+  await writeUtf8FileAtomic(`${diagDir()}/${fileName}`, body);
+  await cleanupExternalLogs(copiedExternalLogs);
   await pruneCrashFiles();
   fnDiagRecord('E', TAG, `${eventName} ${safeType} ${clip(exceptionText, 240)}`);
+}
+
+interface ExternalLogRead {
+  success: boolean;
+  text: string;
+}
+
+async function readExternalLog(path: string): Promise<ExternalLogRead> {
+  if (path.length === 0) {
+    return { success: false, text: '(路径为空)' };
+  }
+  if (path.endsWith('.trace') || path.endsWith('.dmp') || path.endsWith('.rawheap')) {
+    return { success: false, text: `(二进制故障文件未内嵌，保留原文件：${path})` };
+  }
+  try {
+    const text = await fileIo.readText(path);
+    return { success: true, text: clip(sanitizeDiagText(text), MAX_SECTION_CHARS) };
+  } catch (e) {
+    return { success: false, text: `(读取失败：${sanitizeDiagText(String(e))})` };
+  }
+}
+
+async function cleanupExternalLogs(paths: string[]): Promise<void> {
+  for (let i = 0; i < paths.length; i++) {
+    try {
+      await fileIo.unlink(paths[i]);
+    } catch (_e) {
+    }
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await fileIo.stat(path);
+    return true;
+  } catch (_e) {
+    return false;
+  }
+}
+
+function safeFilePart(value: string): string {
+  const safe = value.replace(/[^A-Za-z0-9_-]/g, '_');
+  return safe.length > 0 ? safe : 'unknown';
 }
 
 function enqueueAppend(chunk: string): void {
@@ -190,14 +358,43 @@ function enqueueAppend(chunk: string): void {
   });
 }
 
-/** 进程启动时丢掉上一轮运行记录，导出只含本次会话。崩溃文件仍保留。 */
-function resetRuntimeLogSync(): void {
+/** 上一进程的运行记录必须保留到下次导出，HiAppEvent 正是在下次启动回调崩溃事件。 */
+function archiveRuntimeLogSync(): void {
   if (!ensureDirSync()) {
     return;
   }
+  const current = `${diagDir()}/${RUNTIME_NAME}`;
+  const currentRoll = `${diagDir()}/${RUNTIME_ROLL_NAME}`;
+  const previous = `${diagDir()}/${RUNTIME_PREV_NAME}`;
+  const previousRoll = `${diagDir()}/${RUNTIME_PREV_ROLL_NAME}`;
+  if (fileExistsSync(current)) {
+    try {
+      fileIo.unlink(previous);
+    } catch (_e) {
+    }
+    try {
+      fileIo.renameSync(current, previous);
+    } catch (_e) {
+    }
+  }
+  if (fileExistsSync(currentRoll)) {
+    try {
+      fileIo.unlink(previousRoll);
+    } catch (_e) {
+    }
+    try {
+      fileIo.renameSync(currentRoll, previousRoll);
+    } catch (_e) {
+    }
+  }
+}
+
+function fileExistsSync(path: string): boolean {
   try {
-    fileIo.unlink(`${diagDir()}/${RUNTIME_NAME}`);
+    fileIo.statSync(path);
+    return true;
   } catch (_e) {
+    return false;
   }
 }
 
@@ -209,7 +406,7 @@ async function appendRuntime(chunk: string): Promise<void> {
   try {
     const st = await fileIo.stat(path);
     if (Number(st.size) > MAX_RUNTIME_BYTES) {
-      const prev = `${diagDir()}/${RUNTIME_PREV_NAME}`;
+      const prev = `${diagDir()}/${RUNTIME_ROLL_NAME}`;
       try {
         await fileIo.unlink(prev);
       } catch (_e) {
@@ -270,6 +467,8 @@ async function buildExportFile(): Promise<string> {
   if (outDir.length === 0) {
     return '';
   }
+  await eventPersistChain;
+  await appendChain;
   const blocks: string[] = [];
   blocks.push('=== 飞马相册诊断日志 ===');
   blocks.push(await buildHeader());
@@ -278,7 +477,19 @@ async function buildExportFile(): Promise<string> {
   const crashBody = await collectCrashFiles();
   blocks.push(crashBody.length > 0 ? crashBody : '(无。若刚才闪退，请打开应用后再导出一次。)');
   blocks.push('');
-  blocks.push('--- 运行记录 ---');
+  blocks.push('--- 上次会话（含闪退前记录）---');
+  const prevRoll = await readFileCapped(`${diagDir()}/${RUNTIME_PREV_ROLL_NAME}`, MAX_SECTION_CHARS);
+  if (prevRoll.length > 0) {
+    blocks.push(prevRoll);
+  }
+  const prev = await readFileCapped(`${diagDir()}/${RUNTIME_PREV_NAME}`, MAX_SECTION_CHARS);
+  blocks.push(prev.length > 0 ? prev : '(无上次会话记录)');
+  blocks.push('');
+  blocks.push('--- 本次会话 ---');
+  const curRoll = await readFileCapped(`${diagDir()}/${RUNTIME_ROLL_NAME}`, MAX_SECTION_CHARS);
+  if (curRoll.length > 0) {
+    blocks.push(curRoll);
+  }
   const cur = await readFileCapped(`${diagDir()}/${RUNTIME_NAME}`, MAX_SECTION_CHARS);
   if (cur.length > 0) {
     blocks.push(cur);
@@ -288,7 +499,7 @@ async function buildExportFile(): Promise<string> {
     blocks.push('(暂无运行记录，请先复现问题再导出。)');
   }
   const outPath = `${outDir}/${EXPORT_NAME}`;
-  await writeUtf8File(outPath, blocks.join('\n'));
+  await writeUtf8FileAtomic(outPath, blocks.join('\n'));
   return outPath;
 }
 
@@ -366,7 +577,7 @@ async function listCrashNames(): Promise<string[]> {
   const crash: string[] = [];
   for (let i = 0; i < names.length; i++) {
     const n = names[i];
-    if (n.indexOf('crash-') === 0 && n.indexOf('.log') > 0) {
+    if ((n.indexOf('crash-') === 0 || n.indexOf('fault-') === 0) && n.endsWith('.log')) {
       crash.push(n);
     }
   }
@@ -434,6 +645,24 @@ async function writeUtf8File(path: string, text: string): Promise<void> {
     await fileIo.write(f.fd, text);
   } finally {
     await fileIo.close(f.fd);
+  }
+}
+
+async function writeUtf8FileAtomic(path: string, text: string): Promise<void> {
+  const tempPath = `${path}.tmp-${Date.now()}`;
+  await writeUtf8File(tempPath, text);
+  try {
+    try {
+      await fileIo.unlink(path);
+    } catch (_e) {
+    }
+    await fileIo.rename(tempPath, path);
+  } catch (e) {
+    try {
+      await fileIo.unlink(tempPath);
+    } catch (_cleanup) {
+    }
+    throw new Error(String(e));
   }
 }
 
@@ -519,36 +748,22 @@ function formatStamp(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-function sanitizeDiagText(raw: string): string {
+export function sanitizeDiagText(raw: string): string {
   let s = raw;
   s = stripQuery(s);
-  s = s.replace(/(cookie\s*[=:]\s*)[^\s&;]+/gi, '$1***');
-  s = s.replace(/(authorization\s*[=:]\s*)[^\s&;]+/gi, '$1***');
-  s = s.replace(/(authx[_-]?(?:token|sign|secret|key)?\s*[=:]\s*)[^\s&;]+/gi, '$1***');
-  s = s.replace(/((?:access)?token\s*[=:]\s*)[^\s&;]+/gi, '$1***');
-  s = s.replace(/(password\s*[=:]\s*)[^\s&;]+/gi, '$1***');
-  s = s.replace(/(secret\s*[=:]\s*)[^\s&;]+/gi, '$1***');
+  const quotedKey =
+    /(["']?(?:[a-z0-9_-]*token|cookie|authorization|password|passwd|pwd|secret|authx[a-z0-9_-]*|trim[-_]sign|keypassword|storepassword)["']?\s*[:=]\s*)/gi;
+  s = s.replace(new RegExp(`${quotedKey.source}"[^"]*"`, 'gi'), '$1"***"');
+  s = s.replace(new RegExp(`${quotedKey.source}'[^']*'`, 'gi'), "$1'***'");
+  s = s.replace(/(cookie\s*[=:]\s*)[^\r\n]+/gi, '$1***');
+  s = s.replace(/(authorization\s*[=:]\s*)[^\r\n]+/gi, '$1***');
+  s = s.replace(
+    /(["']?(?:[a-z0-9_-]*token|password|passwd|pwd|secret|authx[a-z0-9_-]*|trim[-_]sign|keypassword|storepassword)["']?\s*[=:]\s*)[^\s,;}\]]+/gi,
+    '$1***'
+  );
   return s;
 }
 
 function stripQuery(s: string): string {
-  let out = '';
-  let i = 0;
-  while (i < s.length) {
-    const http = s.indexOf('http', i);
-    if (http < 0) {
-      out += s.substring(i);
-      break;
-    }
-    out += s.substring(i, http);
-    let end = http;
-    while (end < s.length && s.charAt(end) !== ' ' && s.charAt(end) !== '\n' && s.charAt(end) !== '"') {
-      end++;
-    }
-    const url = s.substring(http, end);
-    const q = url.indexOf('?');
-    out += q >= 0 ? url.substring(0, q) : url;
-    i = end;
-  }
-  return out;
+  return s.replace(/((?:https?|wss?):\/\/[^\s"'<>?#]+)[?#][^\s"'<>]*/gi, '$1');
 }

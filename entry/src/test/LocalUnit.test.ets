@@ -21,6 +21,7 @@ import { smartCategoryCount } from '../main/ets/album/GalleryAlbumEntityData';
 import { smartCategoryPatchCountByName } from '../main/ets/album/SmartCategoryLayoutPreferences';
 import { loginSecretLooksWrapped } from '../main/ets/auth/LoginSecretStore';
 import { applyLoginPasswordEditFallback, loginPasswordMask } from '../main/ets/common/FnLoginPasswordMask';
+import { sanitizeDiagText } from '../main/ets/common/FnDiagLog';
 import {
   emptyLoginConfig,
   settingsNasMismatchMessage,
@@ -313,6 +314,22 @@ export default function localUnitTest() {
       expect(applyLoginPasswordEditFallback('ab', '\u2022\u2022c')).assertEqual('abc');
       expect(applyLoginPasswordEditFallback('abc', '\u2022\u2022')).assertEqual('ab');
       expect(applyLoginPasswordEditFallback('ab', '\u2022x')).assertEqual('ax');
+    });
+
+    it('sanitizeDiagText_redacts_json_headers_and_urls', 0, () => {
+      const raw =
+        '{"accessToken":"abc123","password":"p@ss","Cookie":"a=1; b=2"}\n' +
+        'Authorization: Bearer xyz\n' +
+        'https://nas.example/p?a=token#frag wss://nas.example/websocket?type=main&token=secret';
+      const clean = sanitizeDiagText(raw);
+      expect(clean.indexOf('abc123')).assertEqual(-1);
+      expect(clean.indexOf('p@ss')).assertEqual(-1);
+      expect(clean.indexOf('a=1')).assertEqual(-1);
+      expect(clean.indexOf('xyz')).assertEqual(-1);
+      expect(clean.indexOf('?')).assertEqual(-1);
+      expect(clean.indexOf('#frag')).assertEqual(-1);
+      expect(clean.indexOf('https://nas.example/p')).assertNotEqual(-1);
+      expect(clean.indexOf('wss://nas.example/websocket')).assertNotEqual(-1);
     });
   });
 }
