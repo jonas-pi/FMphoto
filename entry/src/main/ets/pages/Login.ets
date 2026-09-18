@@ -21,7 +21,9 @@ import {
   LOGIN_ENDPOINT_PREF_AUTO,
   LOGIN_ENDPOINT_PREF_BANDWIDTH,
   LOGIN_ENDPOINT_PREF_LATENCY,
+  LOGIN_ENDPOINT_PREF_PUBLIC,
   orderedWsLoginServers,
+  resolveLoginRedirectServer,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
 import { isFnRelayBaseUrl, lookupFnConnect, FnIdOrHostParts, splitFnIdOrHostInput } from '../network/FnConnectApi';
@@ -613,16 +615,28 @@ struct Login {
       if (this.endpointPreference === LOGIN_ENDPOINT_PREF_AUTO
         || this.endpointPreference === LOGIN_ENDPOINT_PREF_BANDWIDTH
         || this.endpointPreference === LOGIN_ENDPOINT_PREF_LATENCY
+        || this.endpointPreference === LOGIN_ENDPOINT_PREF_PUBLIC
         || this.endpointPreference.length === 0) {
         extraRelay = this.pendingEndpointRelayUrl;
       }
       const servers = orderedWsLoginServers(selected, extraRelay);
+      const redirectServer = await resolveLoginRedirectServer(selected.server);
+      if (redirectServer.length > 0 && redirectServer !== selected.server) {
+        for (let i = servers.length - 1; i >= 0; i--) {
+          if (servers[i] === redirectServer) {
+            servers.splice(i, 1);
+          }
+        }
+        servers.unshift(redirectServer);
+        fnDiagRecord('I', LOGIN_TAG, `login redirect ${selected.server} -> ${redirectServer}`);
+      }
       const user = this.username.trim();
       const pass = this.password;
       for (let i = 0; i < servers.length; i++) {
         const last = i + 1 >= servers.length;
         hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'WS login try %{public}d/%{public}d %{public}s',
           i + 1, servers.length, servers[i]);
+        fnDiagRecord('I', LOGIN_TAG, `WS login try ${i + 1}/${servers.length} ${servers[i]}`);
         const stop = await this.attemptLoginWebSocketOnly(ctx, servers[i], user, pass, last);
         if (stop) {
           return;

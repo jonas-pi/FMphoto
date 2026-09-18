@@ -6,6 +6,31 @@
 
 ---
 
+## [1.4.2.6] - 2026-09-18
+
+在 [1.4.2.5] 上发布。改善公网域名登录连通性。
+
+### 修复
+
+- **跳转入口登录失败**：部分自建入口（如 Cloudflare Worker）只返回 HTTPS 302 和随机端口，WebSocket 不会跟随跳转；登录前解析最终地址再连接。
+- **域名默认端口连不上**：未写端口的公网域名先走 443/80，失败后回退飞牛本机 5667/5666，避免 DDNS 直连超时。
+- **直连误带中继 Cookie**：Lucky / 自建反代不再带 `mode=relay`，减少握手停在普通 HTTP 的情况。
+
+### 改进
+
+- **诊断日志**：应用重启后清空运行记录，导出只含本次会话；崩溃文件仍保留。
+- **版本号**：`versionName` `1.4.2.6`（`versionCode` 1004010）。
+
+### 构建产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `entry/build/default/outputs/default/entry-default-unsigned.hap` | 未签名包（自行签名安装） |
+
+> 本版本仅上传未签名包；`.p12` / `.p7b` / `build-profile.json5` 等密钥材料严禁入库或随 Release 分发。已安装 `1.4.2.5` 或更早版本的设备可直接覆盖升级（`versionCode` 1004010）。
+
+---
+
 ## [1.4.2.5] - 2026-09-18
 
 在 [1.4.2.4] 上发布。登录失败也可导出诊断日志。
@@ -757,6 +782,7 @@
 
 详见 Git 标签与 Release 页面历史记录。
 
+[1.4.2.6]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.5...v1.4.2.6
 [1.4.2.5]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.4...v1.4.2.5
 [1.4.2.4]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2.2...v1.4.2.4
 [1.4.2.2]: https://github.com/jonas-pi/FMphoto/compare/v1.4.2-beta.1...v1.4.2.2

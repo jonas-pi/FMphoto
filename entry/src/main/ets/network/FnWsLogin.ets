@@ -2,6 +2,7 @@
  * fnOS 主通道 WebSocket 登录（wss://host/websocket?type=main）
  * getRSAPub -> encrypted(user.login) -> user.authToken（HMAC 前缀 + JSON）
  * FN Connect 中继：握手带 Origin + Cookie（mode=relay），DNS 未就绪时短重试。
+ * 自建反代 / Lucky 直连不带 mode=relay，避免被当成中继通道、握手停在 HTTP。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagRecord } from '../common/FnDiagLog';
@@ -369,15 +370,16 @@ function httpOriginOf(base: string): string {
 }
 
 /**
- * WSS 握手头：官方 Web 在中继上会带 Origin 与 Cookie。
- * 实测第三方同样可被 FN Connect 反代转发，缺这些头时部分集群会握手失败。
+ * WSS 握手头：官方中继需要 Origin + Cookie(mode=relay)。
+ * Lucky / 自建反代只带 Origin，勿带 mode=relay（否则握手可能停在普通 HTTP）。
  */
 function buildWsConnectOptions(httpBase: string, isTrustedHost: boolean): webSocket.WebSocketRequestOptions {
+  const origin = httpOriginOf(httpBase);
+  const header: Record<string, string> = isFnRelayBaseUrl(httpBase)
+    ? { 'Origin': origin, 'Cookie': 'mode=relay; language=zh-CN' }
+    : { 'Origin': origin };
   const opt: webSocket.WebSocketRequestOptions = {
-    header: {
-      'Origin': httpOriginOf(httpBase),
-      'Cookie': 'mode=relay; language=zh-CN'
-    }
+    header: header
   };
   if (isTrustedHost) {
     opt.skipServerCertVerification = true;
@@ -516,7 +518,10 @@ async function fnWsLoginOnce(
 ): Promise<FnWsLoginResult> {
   fnWsResetReqIdCounter();
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
-  hilog.info(DOMAIN, TAG, 'WS connect %{public}s trusted=%{public}s', wsUrl, String(isTrustedHost));
+  const relay = isFnRelayBaseUrl(httpBaseNoSlash);
+  hilog.info(DOMAIN, TAG, 'WS connect %{public}s trusted=%{public}s relay=%{public}s',
+    wsUrl, String(isTrustedHost), String(relay));
+  fnDiagRecord('I', TAG, `WS connect ${wsUrl} trusted=${String(isTrustedHost)} relay=${String(relay)}`);
 
   return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
     let done = false;
@@ -535,7 +540,12 @@ async function fnWsLoginOnce(
     };
 
     const timer = setTimeout((): void => {
-      finish({ success: false, message: 'WebSocket 登录超时' });
+      finish({
+        success: false,
+        message: relay
+          ? 'WebSocket 登录超时'
+          : '公网 WebSocket 登录超时，可改自动选路或使用中继'
+      });
     }, WS_TIMEOUT_MS);
 
     let backId = DEFAULT_BACK_ID;

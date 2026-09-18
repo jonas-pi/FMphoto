@@ -1,6 +1,12 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
-import { fnWebViewBaseUrl, normalizeServerUrl, classifyDirectNasAddress } from '../main/ets/network/ServerUrl';
+import {
+  classifyDirectNasAddress,
+  fnosDirectPortFallbackUrl,
+  fnWebViewBaseUrl,
+  normalizeServerUrl
+} from '../main/ets/network/ServerUrl';
 import { isUnusableIpv6Host, splitFnIdOrHostInput } from '../main/ets/network/FnConnectApi';
+import { resolveLoginRedirectLocation } from '../main/ets/network/LoginEndpointSelector';
 import { wsDeviceDisplayCode } from '../main/ets/network/FnWsDeviceId';
 import { GalleryListItem } from '../main/ets/model/FnApiTypes';
 import {
@@ -64,6 +70,30 @@ export default function localUnitTest() {
       expect(normalizeServerUrl('[fe80::1]', true)).assertEqual('https://[fe80::1]:5667');
       expect(normalizeServerUrl('fe80::1:8080', false)).assertEqual('http://[fe80::1]:8080');
       expect(normalizeServerUrl('http://[::1]/', false)).assertEqual('http://[::1]:5666');
+    });
+
+    it('resolveLoginRedirectLocation_worker_random_port', 0, () => {
+      expect(resolveLoginRedirectLocation(
+        'https://n.p.cc.cd:443',
+        'https://n.s.p.cc.cd:31059/'
+      )).assertEqual('https://n.s.p.cc.cd:31059');
+      expect(resolveLoginRedirectLocation(
+        'https://n.p.cc.cd:443',
+        '/gateway/?token=temporary'
+      )).assertEqual('https://n.p.cc.cd:443/gateway');
+      expect(resolveLoginRedirectLocation(
+        'https://n.p.cc.cd:443',
+        'http://unsafe.example:5666/'
+      )).assertEqual('');
+    });
+
+    it('fnosDirectPortFallbackUrl_web_ports_to_fnos', 0, () => {
+      expect(fnosDirectPortFallbackUrl('https://p.cc.cd:443')).assertEqual('https://p.cc.cd:5667');
+      expect(fnosDirectPortFallbackUrl('http://p.cc.cd:80')).assertEqual('http://p.cc.cd:5666');
+      expect(fnosDirectPortFallbackUrl('https://8.8.8.8:443')).assertEqual('https://8.8.8.8:5667');
+      expect(fnosDirectPortFallbackUrl('https://p.cc.cd:5667')).assertEqual('');
+      expect(fnosDirectPortFallbackUrl('https://abc.5ddd.com')).assertEqual('');
+      expect(fnosDirectPortFallbackUrl('https://abc.5ddd.com:443')).assertEqual('');
     });
 
     it('classifyDirectNasAddress_splits_lan_public_and_domain', 0, () => {

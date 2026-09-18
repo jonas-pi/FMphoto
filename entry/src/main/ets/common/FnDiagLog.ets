@@ -1,6 +1,7 @@
 /**
  * 本机诊断日志：订阅系统崩溃 / 卡死，并记录播放失败等关键路径。
- * 不上传；用户在「我的」导出后自行发给开发者。
+ * 不上传；用户在「我的」或登录页导出后自行发给开发者。
+ * 每次进程启动清空运行记录；崩溃文件保留，便于闪退后再次打开再导出。
  */
 import { bundleManager, common, errorManager } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -37,6 +38,9 @@ export function fnDiagInit(filesDir: string, cacheDir: string = ''): void {
     cacheRoot = cache;
   }
   dirReady = false;
+  ring.splice(0, ring.length);
+  appendChain = Promise.resolve();
+  resetRuntimeLogSync();
   fnDiagRecord('I', TAG, 'session start');
   fnDiagInstallCrashWatcher();
   fnDiagInstallErrorObservers();
@@ -186,6 +190,17 @@ function enqueueAppend(chunk: string): void {
   });
 }
 
+/** 进程启动时丢掉上一轮运行记录，导出只含本次会话。崩溃文件仍保留。 */
+function resetRuntimeLogSync(): void {
+  if (!ensureDirSync()) {
+    return;
+  }
+  try {
+    fileIo.unlink(`${diagDir()}/${RUNTIME_NAME}`);
+  } catch (_e) {
+  }
+}
+
 async function appendRuntime(chunk: string): Promise<void> {
   if (!(await ensureDir())) {
     return;
@@ -264,11 +279,9 @@ async function buildExportFile(): Promise<string> {
   blocks.push(crashBody.length > 0 ? crashBody : '(无。若刚才闪退，请打开应用后再导出一次。)');
   blocks.push('');
   blocks.push('--- 运行记录 ---');
-  const prev = await readFileCapped(`${diagDir()}/${RUNTIME_PREV_NAME}`, MAX_SECTION_CHARS);
   const cur = await readFileCapped(`${diagDir()}/${RUNTIME_NAME}`, MAX_SECTION_CHARS);
-  const diskRuntime = joinNonEmpty([prev, cur]);
-  if (diskRuntime.length > 0) {
-    blocks.push(diskRuntime);
+  if (cur.length > 0) {
+    blocks.push(cur);
   } else if (ring.length > 0) {
     blocks.push(ring.join('\n'));
   } else {

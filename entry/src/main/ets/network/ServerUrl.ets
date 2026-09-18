@@ -1,6 +1,7 @@
 /**
  * 将用户输入规范为 API baseUrl（无末尾 /）
- * - 飞牛默认端口：HTTP 5666，HTTPS 5667（未写端口时自动补上）
+ * - 飞牛默认端口：HTTP 5666，HTTPS 5667（IP 未写端口时自动补上）
+ * - 域名未写端口时先按网站 80/443；登录再并行探测并在 WSS 失败后回退 5666/5667（DDNS 直连飞牛）
  * - IPv6：裸地址会加 []；含端口时请使用 [addr]:port 形式，避免歧义
  */
 
@@ -394,6 +395,43 @@ export function parseNormalizedBaseUrl(baseUrl: string): ParsedBaseUrlParts | nu
     port: parsed.port,
     useBracket: parsed.useBracket
   };
+}
+
+/**
+ * 域名/地址被规范成 80/443 时，补飞牛本机端口 5666/5667。
+ * Lucky 反代继续走 443；DDNS 直达飞牛时常只开 5667。官方中继与已是飞牛端口不改。
+ */
+export function fnosDirectPortFallbackUrl(baseUrl: string): string {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null || parts.host.length === 0) {
+    return '';
+  }
+  if (isFnConnectRelayAuthority(parts.host)) {
+    return '';
+  }
+  let port = parts.port;
+  if (port === null) {
+    port = defaultPort(parts.scheme === 'https', isDirectParsedAuthority({
+      useBracket: parts.useBracket,
+      hostRaw: parts.host,
+      port: null
+    }));
+  }
+  let altPort = 0;
+  if (port === WEB_DEFAULT_PORT_HTTPS) {
+    altPort = FN_DEFAULT_PORT_HTTPS;
+  } else if (port === WEB_DEFAULT_PORT_HTTP) {
+    altPort = FN_DEFAULT_PORT_HTTP;
+  } else {
+    return '';
+  }
+  const auth: ParsedAuthority = {
+    useBracket: parts.useBracket,
+    hostRaw: parts.host,
+    port: altPort
+  };
+  const out = trimTrailingSlash(`${parts.scheme}://${buildAuthority(auth, altPort)}`);
+  return out === baseUrl.trim() ? '' : out;
 }
 
 /** 主机是否为 IPv4 / IPv6 字面量 */

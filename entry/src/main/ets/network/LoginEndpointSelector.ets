@@ -5,7 +5,7 @@
 import { http } from '@kit.NetworkKit';
 import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
 import { preferPublicEndpointUrl } from './PublicDns';
-import { normalizeServerUrl } from './ServerUrl';
+import { fnosDirectPortFallbackUrl, normalizeServerUrl } from './ServerUrl';
 
 export const LOGIN_ENDPOINT_PREF_AUTO = 'auto';
 export const LOGIN_ENDPOINT_PREF_PUBLIC = 'public';
@@ -166,6 +166,112 @@ function delayMs(ms: number): Promise<void> {
       resolve();
     }, ms);
   });
+}
+
+function responseHeaderValue(headers: Object, wanted: string): string {
+  const record = headers as Record<string, string | Array<string> | undefined>;
+  const keys = Object.keys(record);
+  const lowWanted = wanted.toLowerCase();
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key.toLowerCase() !== lowWanted) {
+      continue;
+    }
+    const value = record[key];
+    if (Array.isArray(value)) {
+      return value.length > 0 ? String(value[0]).trim() : '';
+    }
+    return value !== undefined ? String(value).trim() : '';
+  }
+  return '';
+}
+
+/** 把 30x Location 解析成可用于 HTTP/WSS 的 base URL；仅允许 HTTPS 跳转。 */
+export function resolveLoginRedirectLocation(currentBase: string, location: string): string {
+  const loc = location.trim();
+  if (loc.length === 0) {
+    return '';
+  }
+  let absolute = loc;
+  if (loc.startsWith('//')) {
+    absolute = `https:${loc}`;
+  } else if (loc.startsWith('/')) {
+    const schemeEnd = currentBase.indexOf('://');
+    if (schemeEnd < 0) {
+      return '';
+    }
+    const authorityStart = schemeEnd + 3;
+    const slash = currentBase.indexOf('/', authorityStart);
+    const origin = slash >= 0 ? currentBase.substring(0, slash) : currentBase;
+    absolute = `${origin}${loc}`;
+  }
+  if (!absolute.startsWith('https://')) {
+    return '';
+  }
+  const query = absolute.indexOf('?');
+  if (query >= 0) {
+    absolute = absolute.substring(0, query);
+  }
+  const hash = absolute.indexOf('#');
+  if (hash >= 0) {
+    absolute = absolute.substring(0, hash);
+  }
+  return normalizeServerUrl(absolute, true);
+}
+
+class LoginRedirectInterceptor implements http.HttpInterceptor {
+  interceptorType: http.InterceptorType = http.InterceptorType.REDIRECTION;
+  lastRedirectUrl: string = '';
+
+  async interceptorHandle(
+    reqContext: http.HttpRequestContext,
+    rspContext: http.HttpResponse
+  ): Promise<http.ChainContinue> {
+    const location = responseHeaderValue(rspContext.header, 'location');
+    const next = resolveLoginRedirectLocation(reqContext.url, location);
+    if (next.length > 0) {
+      this.lastRedirectUrl = next;
+    }
+    return true;
+  }
+}
+
+/**
+ * Cloudflare Worker 等入口常以 302 返回随机端口。HTTP 探测能成功不代表原入口支持 WSS，
+ * 因此登录前通过重定向拦截器记录最终地址，并对该地址建立 WebSocket。
+ */
+export async function resolveLoginRedirectServer(baseUrl: string, maxHops: number = 3): Promise<string> {
+  const current = baseUrl.trim();
+  const req = http.createHttp();
+  const redirectInterceptor = new LoginRedirectInterceptor();
+  try {
+    const chain = new http.HttpInterceptorChain();
+    if (chain.addChain([redirectInterceptor])) {
+      chain.apply(req);
+    }
+    const requestUrl = current.endsWith('/') ? current : `${current}/`;
+    await req.request(requestUrl, {
+      method: http.RequestMethod.GET,
+      expectDataType: http.HttpDataType.STRING,
+      connectTimeout: 5000,
+      readTimeout: 5000,
+      maxRedirects: Math.max(1, maxHops),
+      remoteValidation: 'skip',
+      usingCache: false
+    });
+    return redirectInterceptor.lastRedirectUrl.length > 0
+      ? redirectInterceptor.lastRedirectUrl
+      : current;
+  } catch (_e) {
+    return redirectInterceptor.lastRedirectUrl.length > 0
+      ? redirectInterceptor.lastRedirectUrl
+      : current;
+  } finally {
+    try {
+      req.destroy();
+    } catch (_e2) {
+    }
+  }
 }
 
 async function probeEndpoint(
@@ -459,8 +565,11 @@ function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidat
   push(LOGIN_ENDPOINT_PREF_LAN, pool.lanIpv4Url);
   push(LOGIN_ENDPOINT_PREF_LAN_IPV6, pool.lanIpv6Url);
   push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, pool.publicDomainUrl);
+  push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, fnosDirectPortFallbackUrl(pool.publicDomainUrl));
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, pool.publicIpv4Url);
+  push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, fnosDirectPortFallbackUrl(pool.publicIpv4Url));
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, pool.publicIpv6Url);
+  push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, fnosDirectPortFallbackUrl(pool.publicIpv6Url));
   push(LOGIN_ENDPOINT_PREF_RELAY, pool.relayUrl);
   return out;
 }
@@ -629,7 +738,7 @@ function normalizeLoginServerKey(baseUrl: string): string {
 
 /**
  * HTTP 探通不等于 WSS 能握手。登录时先走选中路径，连接失败再按
- * 内网 → 公网 IP → 域名 → 中继 换路，避免卡在一条 HTTP 可达、WebSocket 不可达的地址。
+ * 内网 → 公网 IP → 域名 → 飞牛 5667 → 中继 换路，避免卡在一条 HTTP 可达、WebSocket 不可达的地址。
  */
 export function orderedWsLoginServers(
   selected: LoginEndpointSelectionResult,
@@ -649,6 +758,7 @@ export function orderedWsLoginServers(
     out.push(key);
   };
   add(selected.server);
+  add(fnosDirectPortFallbackUrl(selected.server));
   const rest: LoginEndpointProbeLine[] = [];
   for (let i = 0; i < selected.probeLines.length; i++) {
     const line = selected.probeLines[i];
@@ -667,6 +777,7 @@ export function orderedWsLoginServers(
   }
   for (let j = 0; j < rest.length; j++) {
     add(rest[j].baseUrl);
+    add(fnosDirectPortFallbackUrl(rest[j].baseUrl));
   }
   add(extraRelayUrl);
   return out;
