@@ -1,1 +1,0 @@
-import{a as e}from"./BF_ClC7vpuvySXJr.js";import{q as t}from"./CVuA2Q5gGn97Woje.js";var n=t(function(){return e?sessionStorage:void 0});export{n as t};

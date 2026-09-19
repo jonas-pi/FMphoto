@@ -53,11 +53,23 @@ entry/build/**/*-signed.hap
 /docs/logo_split/fmphoto_*.png
 /docs/screenshots/review-1080x1920/
 
+# 飞牛网页端抓包产物（第三方代码，不入库；本地可留着对照接口）
+/tmp_fnos_js/
+/tmp_fnos_*/
+*.har
+*.pcap
+*.pcapng
+
+# Python 缓存
+**/__pycache__/
+*.py[cod]
+
 # 本地中继探测会话（含 token，勿提交）
 /scripts/.fnos_relay_session.json
 **/.fnos_relay_session.json
 
-# 真机 hilog 本地抓取（勿提交）
+# 真机 hilog / UI 测试本地抓取（勿提交）
 /logs/
 /.tmp-diag/
 /.tmp-crash/
+/.tmp-uitest/
