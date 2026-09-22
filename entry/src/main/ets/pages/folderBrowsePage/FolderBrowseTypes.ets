@@ -3,6 +3,11 @@ import { GalleryListItem } from '../../model/FnApiTypes';
 export const FOLDER_BROWSE_PAGE_SIZE: number = 100;
 export const FOLDER_BROWSE_COVER_BATCH: number = 50;
 export const FOLDER_BROWSE_BASE_COLUMNS: number = 4;
+/** 标题槽固定两行高，短标题也占同样高度，格子尺寸才对齐 */
+export const FOLDER_BROWSE_TITLE_MAX_FP: number = 12;
+export const FOLDER_BROWSE_TITLE_MIN_FP: number = 9;
+export const FOLDER_BROWSE_TITLE_LINE_VP: number = 16;
+export const FOLDER_BROWSE_TITLE_HEIGHT_VP: number = 32;
 export const FOLDER_BROWSE_KIND_FOLDER: string = 'folder';
 export const FOLDER_BROWSE_KIND_MEDIA: string = 'media';
 export const FOLDER_BROWSE_LIST_DOM_ID: string = 'folder_browse_main_list';

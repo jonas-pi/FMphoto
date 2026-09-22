@@ -74,6 +74,10 @@ import {
 import {
   FOLDER_BROWSE_BASE_COLUMNS,
   FOLDER_BROWSE_KIND_MEDIA,
+  FOLDER_BROWSE_TITLE_HEIGHT_VP,
+  FOLDER_BROWSE_TITLE_LINE_VP,
+  FOLDER_BROWSE_TITLE_MAX_FP,
+  FOLDER_BROWSE_TITLE_MIN_FP,
   FOLDER_BROWSE_LIST_DOM_ID,
   FolderBrowseFolderItem,
   FolderBrowseGridItem,
@@ -334,7 +338,7 @@ struct FolderBrowsePage {
         const item = this.gridItems[flatIdx];
         const filled: FolderBrowseRowBlockCell = { flatIdx: flatIdx, item: item };
         cells.push(filled);
-        cellSig += `_${item.key}_${item.coverUri}`;
+        cellSig += `_${item.key}`;
       }
       const block: FolderBrowseRowBlock = {
         key: `fbrow_${rowIdx}${cellSig}`,
@@ -358,7 +362,9 @@ struct FolderBrowsePage {
     if (!this.fbSlideGestureActive && !this.fbScrollEnabled) {
       this.fbScrollEnabled = true;
     }
-    if (!this.fbSlideGestureActive) {
+    // 长按定时器还没进多选时，列表的轻微滚动会先到这里。清掉命中框后，
+    // 定时器只能靠 setTimeout 里的 DOM 查询，文件夹名那一截经常对不上。
+    if (!this.fbSlideGestureActive && !this.session.overlay.slideTouch.touchPendingLongPress) {
       this.session.selection.fbThumbHitBounds.clear();
     }
     if (scrollState !== ScrollState.Idle) {
@@ -1000,25 +1006,19 @@ struct FolderBrowsePage {
       .aspectRatio(1)
       .borderRadius(12)
       .clip(true)
-      .id(folderBrowseDomId(flatIdx))
-      .onAreaChange((): void => {
-        folderBrowseRecordThumbRect(this.asSelectionHost(), flatIdx);
-      })
-      .onClick((): void => {
-        folderBrowseOnCellClick(this.asSelectionHost(), item, flatIdx);
-      })
 
-      Text(item.title)
-        .fontSize(12)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .width('100%')
+      this.cellTitle(item.title)
     }
     .width('100%')
     .layoutWeight(1)
     .padding({ left: 2, right: 2, bottom: 8 })
+    .id(folderBrowseDomId(flatIdx))
+    .onAreaChange((): void => {
+      folderBrowseRecordThumbRect(this.asSelectionHost(), flatIdx);
+    })
+    .onClick((): void => {
+      folderBrowseOnCellClick(this.asSelectionHost(), item, flatIdx);
+    })
   }
 
   @Builder
@@ -1048,25 +1048,56 @@ struct FolderBrowsePage {
       .aspectRatio(1)
       .borderRadius(12)
       .clip(true)
-      .id(folderBrowseDomId(flatIdx))
-      .onAreaChange((): void => {
-        folderBrowseRecordThumbRect(this.asSelectionHost(), flatIdx);
-      })
-      .onClick((): void => {
-        folderBrowseOnCellClick(this.asSelectionHost(), item, flatIdx);
-      })
 
-      Text(item.title)
-        .fontSize(12)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .width('100%')
+      this.cellTitle(item.title)
     }
     .width('100%')
     .layoutWeight(1)
     .padding({ left: 2, right: 2, bottom: 8 })
+    .id(folderBrowseDomId(flatIdx))
+    .onAreaChange((): void => {
+      folderBrowseRecordThumbRect(this.asSelectionHost(), flatIdx);
+    })
+    .onClick((): void => {
+      folderBrowseOnCellClick(this.asSelectionHost(), item, flatIdx);
+    })
+  }
+
+  @Builder
+  private cellTitle(title: string) {
+    Column() {
+      Text(title)
+        .width('100%')
+        .fontColor($r('app.color.text_primary'))
+        .maxFontSize(FOLDER_BROWSE_TITLE_MAX_FP)
+        .minFontSize(FOLDER_BROWSE_TITLE_MIN_FP)
+        .maxLines(2)
+        .lineHeight(FOLDER_BROWSE_TITLE_LINE_VP)
+        .textAlign(TextAlign.Center)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .heightAdaptivePolicy(TextHeightAdaptivePolicy.LAYOUT_CONSTRAINT_FIRST)
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width('100%')
+    .height(FOLDER_BROWSE_TITLE_HEIGHT_VP)
+    .justifyContent(FlexAlign.Start)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private emptyCell() {
+    Column({ space: 6 }) {
+      Blank()
+        .width('100%')
+        .aspectRatio(1)
+      Blank()
+        .width('100%')
+        .height(FOLDER_BROWSE_TITLE_HEIGHT_VP)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .padding({ left: 2, right: 2, bottom: 8 })
+    .hitTestBehavior(HitTestMode.None)
   }
 
   private rowCellHasItem(block: FolderBrowseRowBlock, col: number): boolean {
@@ -1090,13 +1121,13 @@ struct FolderBrowsePage {
       return `fbcell_${block.rowIdx}_${col}_empty`;
     }
     const item = this.rowCellItem(block, col);
-    return `fbcell_${block.rowIdx}_${col}_${item.key}_${item.coverUri}`;
+    return `fbcell_${block.rowIdx}_${col}_${item.key}`;
   }
 
   @Builder
   private cellSlot(block: FolderBrowseRowBlock, col: number) {
     if (!this.rowCellHasItem(block, col)) {
-      Blank().layoutWeight(1).aspectRatio(1)
+      this.emptyCell()
     } else if (this.rowCellItem(block, col).kind === FOLDER_BROWSE_KIND_MEDIA) {
       this.mediaTile(this.rowCellItem(block, col), this.rowCellFlatIdx(block, col))
     } else {

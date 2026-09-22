@@ -274,26 +274,26 @@ export function folderBrowsePickThumbFlatForRow(
   yPx: number
 ): number {
   const n = host.gridItems.length;
-  const columnsPerRow = fnClampGridColumns(host.columnsPerRow);
-  const fromCache = folderBrowsePickThumbFlatUnderPoint(host, xPx, yPx);
-  if (fromCache >= rowStart && fromCache < rowStart + columnsPerRow && fromCache < n) {
-    return fromCache;
-  }
-  for (let k = columnsPerRow - 1; k >= 0; k--) {
+  const columns = fnClampGridColumns(host.columnsPerRow);
+  for (let k = columns - 1; k >= 0; k--) {
     const fi = rowStart + k;
     if (fi >= n) {
       continue;
     }
     const cached = host.fbThumbHitBounds.get(`${fi}`);
-    if (cached !== undefined) {
-      if (xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
-        return fi;
-      }
-      continue;
-    }
-    if (folderBrowseHitThumbDomPx(host, fi, xPx, yPx)) {
+    if (cached !== undefined &&
+      xPx >= cached.left && xPx <= cached.right && yPx >= cached.top && yPx <= cached.bottom) {
       return fi;
     }
+    // 缓存是滚动前的旧框时不能直接跳过。主时间线同一格会再问一次 DOM。
+    if (folderBrowseHitThumbDomPx(host, fi, xPx, yPx)) {
+      folderBrowseRecordThumbRect(host, fi);
+      return fi;
+    }
+  }
+  const fromCache = folderBrowsePickThumbFlatUnderPoint(host, xPx, yPx);
+  if (fromCache >= rowStart && fromCache < rowStart + columns && fromCache < n) {
+    return fromCache;
   }
   return -1;
 }
