@@ -157,6 +157,7 @@ struct FolderBrowsePage {
   @State private hasFolderSelected: boolean = false;
   @State private moreMenuExpanded: boolean = false;
   @State private canGoUpFolder: boolean = false;
+  @State private canReturnToSource: boolean = false;
   @State private slideshowSettingsVisible: boolean = false;
   @State private slideshowPreparing: boolean = false;
   @State private batchDeleting: boolean = false;
@@ -200,7 +201,11 @@ struct FolderBrowsePage {
     if (galleryListTryConsumeOverlays(overlaySteps)) {
       return;
     }
-    // 返回只离开本页；目录上一级交给顶栏按钮，避免从详情路径进来后被一层层退回。
+    // 比这次打开的那一层更深：上一级。已经回到该层，或沿「上一级」走到文件夹根：离开页面。
+    if (this.currentStackIndex() > this.session.nav.backStopIndex && this.canGoUpFolder) {
+      this.goUpFolder(false);
+      return;
+    }
     this.navigateOut();
   }
 
@@ -249,6 +254,9 @@ struct FolderBrowsePage {
     }
     const landing = folderBrowseLandingStack(incoming);
     this.session.nav.pathStack = landing;
+    const landingIndex = landing.length - 1;
+    this.session.nav.entryStopIndex = landingIndex;
+    this.session.nav.backStopIndex = landingIndex;
     // 具体路径入口先锁住；loadCurrent 会用相册已配置根目录解析真正安全边界。
     this.session.nav.lockToEntry = landing.length > 0;
     this.session.nav.entryFloorPath = '';
@@ -270,25 +278,67 @@ struct FolderBrowsePage {
     return this.session.nav.pathStack[this.session.nav.pathStack.length - 1];
   }
 
-  private syncFolderHierarchyState(): void {
-    if (this.session.nav.pathStack.length === 0) {
-      this.canGoUpFolder = false;
-      return;
-    }
-    this.canGoUpFolder = !this.session.nav.lockToEntry ||
-      (this.session.nav.entryFloorResolved && this.session.nav.pathStack.length > 1);
+  private currentStackIndex(): number {
+    return this.session.nav.pathStack.length - 1;
   }
 
-  private goUpFolder(): void {
+  /** 锁定入口时停在虚拟根 ''；从文件夹根进来则停在空栈。都不能再退到系统根。 */
+  private folderRootStopIndex(): number {
+    return this.session.nav.lockToEntry ? 0 : -1;
+  }
+
+  private folderStackStepAllowed(nextStack: string[]): boolean {
+    if (this.session.nav.lockToEntry && nextStack.length === 0) {
+      return false;
+    }
+    const nextPath = nextStack.length === 0 ? '' : nextStack[nextStack.length - 1];
+    if (folderBrowseIsOsRootPath(nextPath)) {
+      return false;
+    }
+    if (nextPath.length === 0) {
+      return true;
+    }
+    if (this.session.nav.lockToEntry && this.session.nav.entryFloorResolved) {
+      return folderBrowsePathAllowed(nextPath, this.session.nav.entryFloorPath);
+    }
+    return true;
+  }
+
+  private canGoUpFromStack(): boolean {
+    if (this.session.nav.pathStack.length === 0) {
+      return false;
+    }
+    if (this.session.nav.lockToEntry && !this.session.nav.entryFloorResolved) {
+      return false;
+    }
+    const nextStack = this.session.nav.pathStack.slice(0, this.session.nav.pathStack.length - 1);
+    return this.folderStackStepAllowed(nextStack);
+  }
+
+  private syncFolderHierarchyState(): void {
+    this.canGoUpFolder = this.canGoUpFromStack();
+    this.canReturnToSource = this.currentStackIndex() > this.session.nav.backStopIndex;
+  }
+
+  private noteResolvedEntryStack(): void {
+    const landingIndex = this.session.nav.pathStack.length - 1;
+    this.session.nav.entryStopIndex = landingIndex;
+    this.session.nav.backStopIndex = landingIndex;
+  }
+
+  private goUpFolder(fromUpButton: boolean = true): void {
     if (this.session.load.folderChanging || !this.canGoUpFolder || this.session.nav.pathStack.length === 0) {
       return;
     }
     const nextStack = this.session.nav.pathStack.slice(0, this.session.nav.pathStack.length - 1);
-    if (this.session.nav.lockToEntry && nextStack.length === 0) {
+    if (!this.folderStackStepAllowed(nextStack)) {
       return;
     }
     this.session.load.folderChanging = true;
     this.session.nav.pathStack = nextStack;
+    if (fromUpButton && nextStack.length - 1 < this.session.nav.entryStopIndex) {
+      this.session.nav.backStopIndex = this.folderRootStopIndex();
+    }
     this.syncFolderHierarchyState();
     void this.loadCurrent(true).finally((): void => {
       this.session.load.folderChanging = false;
@@ -782,6 +832,7 @@ struct FolderBrowsePage {
       publishGrid(): void { self.publishGrid(); }
       navigateOut(): void { self.navigateOut(); }
       syncFolderHierarchyState(): void { self.syncFolderHierarchyState(); }
+      noteResolvedEntryStack(): void { self.noteResolvedEntryStack(); }
       loadCovers(gen: number, currentPath: string): void { void self.loadCovers(gen, currentPath); }
     }
     this.dataLoaderHostCache = new FolderBrowseDataLoaderHostBridge();
@@ -1249,6 +1300,7 @@ struct FolderBrowsePage {
           moreMenuExpanded: this.moreMenuExpanded,
           showGoUp: true,
           canGoUp: this.canGoUpFolder,
+          showReturnToSource: this.canReturnToSource,
           scrollerList: [this.session.overlay.listScroller],
           onCancelSelection: (): void => {
             this.exitSelection();
@@ -1273,6 +1325,10 @@ struct FolderBrowsePage {
           },
           onOpenSlideshowFromMore: (): void => {
             this.openSlideshowSettings();
+          },
+          onReturnToSource: (): void => {
+            this.dismissMoreMenu();
+            this.navigateOut();
           }
         })
           .width('100%')

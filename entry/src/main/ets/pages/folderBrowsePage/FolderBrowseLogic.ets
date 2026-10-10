@@ -278,7 +278,7 @@ export function folderBrowseIsOsRootPath(path: string): boolean {
 
 /**
  * 进入文件夹浏览页时的路径栈：只放目标目录自己。
- * 祖先层交给 loadCurrent 按授权根补齐，供「上一级」使用，不占用返回键。
+ * 祖先层交给 loadCurrent 按授权根补齐，供「上一级」往上走；系统返回先停在这一层。
  */
 export function folderBrowseLandingStack(path: string): string[] {
   const normalized = folderBrowseNormalizePath(path);

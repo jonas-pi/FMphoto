@@ -1,6 +1,6 @@
 /**
  * 图库「更多」菜单：各页同一顺序。
- * 多选 → 上传 → 幻灯片 → 跳转到文件夹视图（缺项跳过，不重排）。
+ * 多选 → 上传 → 幻灯片 → 跳转到文件夹视图 → 返回来源（缺项跳过，不重排）。
  */
 import { fnHdsBindMenuOptions } from './FnHdsOverlay';
 
@@ -12,11 +12,13 @@ export struct FnHdsMoreMenuAnchor {
   @Prop showUpload: boolean = false;
   @Prop showSlideshow: boolean = false;
   @Prop showJumpToFolder: boolean = false;
+  @Prop showReturnToSource: boolean = false;
   onDismiss: () => void = () => {};
   onMultiselect: () => void = () => {};
   onUpload: () => void = () => {};
   onSlideshow: () => void = () => {};
   onJumpToFolder: () => void = () => {};
+  onReturnToSource: () => void = () => {};
 
   @Builder
   private moreMenuBuilder() {
@@ -43,6 +45,12 @@ export struct FnHdsMoreMenuAnchor {
         MenuItem({ content: '跳转到文件夹视图' })
           .onClick((): void => {
             this.onJumpToFolder();
+          })
+      }
+      if (this.showReturnToSource) {
+        MenuItem({ content: '返回来源' })
+          .onClick((): void => {
+            this.onReturnToSource();
           })
       }
     }

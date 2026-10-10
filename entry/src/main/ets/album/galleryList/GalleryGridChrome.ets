@@ -35,6 +35,7 @@ export struct GalleryGridChrome {
   @Prop showSlideshow: boolean = true;
   @Prop showGoUp: boolean = false;
   @Prop canGoUp: boolean = false;
+  @Prop showReturnToSource: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
   scrollerList: Scroller[] = [];
@@ -48,6 +49,7 @@ export struct GalleryGridChrome {
   onEnterMultiselectFromMore: () => void = () => {};
   onOpenSlideshowFromMore: () => void = () => {};
   onJumpToFolder: () => void = () => {};
+  onReturnToSource: () => void = () => {};
 
   private canUseHds(): boolean {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
@@ -205,6 +207,7 @@ export struct GalleryGridChrome {
           showMultiselect: true,
           showSlideshow: this.showSlideshow,
           showJumpToFolder: this.showJumpToFolder,
+          showReturnToSource: this.showReturnToSource,
           onDismiss: (): void => {
             this.onDismissMoreMenu();
           },
@@ -216,6 +219,9 @@ export struct GalleryGridChrome {
           },
           onJumpToFolder: (): void => {
             this.onJumpToFolder();
+          },
+          onReturnToSource: (): void => {
+            this.onReturnToSource();
           }
         })
       }

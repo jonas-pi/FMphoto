@@ -27,6 +27,16 @@ export class FolderBrowseNavRuntime {
   lockToEntry: boolean = false;
   entryFloorResolved: boolean = true;
   allowedRootPaths: string[] = [];
+  /**
+   * 这次打开时落点在 pathStack 里的下标。空栈（文件夹根）为 -1。
+   * 用「上一级」越过它之后不再改这个值。
+   */
+  entryStopIndex: number = -1;
+  /**
+   * 系统返回停在这一层就离开页面。起初等于 entryStopIndex。
+   * 用「上一级」越过入口后降到文件夹根（锁定入口时是虚拟根 ''，否则是空栈）。
+   */
+  backStopIndex: number = -1;
   folders: FolderBrowseFolderItem[] = [];
   mediaItems: GalleryListItem[] = [];
 }

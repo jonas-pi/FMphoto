@@ -41,6 +41,8 @@ export interface FolderBrowseDataLoaderHost {
   publishGrid(): void;
   navigateOut(): void;
   syncFolderHierarchyState(): void;
+  /** 授权栈替换落点之后，把返回地板指到这次打开的那一层。 */
+  noteResolvedEntryStack(): void;
   loadCovers(gen: number, currentPath: string): void;
 }
 
@@ -119,7 +121,9 @@ export async function folderBrowseLoadCurrent(host: FolderBrowseDataLoaderHost, 
     host.entryFloorPath = authorizedRoot;
     host.entryFloorResolved = true;
     // '' 是安全的虚拟根层，展示 photo/folder/list 返回的 Document、照片等已配置目录。
+    // 不再往上，避免退到系统根路径。
     host.pathStack = [''].concat(safeStack);
+    host.noteResolvedEntryStack();
     host.syncFolderHierarchyState();
   }
   if (folderBrowseIsOsRootPath(path) ||
