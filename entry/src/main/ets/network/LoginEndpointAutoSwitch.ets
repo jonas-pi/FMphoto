@@ -28,6 +28,8 @@ const TAG = 'LoginEndpointAutoSwitch';
 const DEBOUNCE_MS = 280;
 /** 自动切网用更短探测，各候选并行 */
 const AUTO_PROBE_TIMEOUT_MS = 800;
+/** 冷启动时路由常常还没就绪，首轮探测全失败后隔一段时间再探，避免停在旧地址。 */
+const UNREACHABLE_RETRY_DELAYS_MS: number[] = [1500, 3000, 6000, 8000];
 
 export const FN_ENDPOINT_SWITCH_VERSION: string = 'FN_ENDPOINT_SWITCH_VERSION';
 export const FN_ENDPOINT_SWITCH_MESSAGE: string = 'FN_ENDPOINT_SWITCH_MESSAGE';
@@ -35,12 +37,51 @@ export const FN_ENDPOINT_SWITCH_MESSAGE: string = 'FN_ENDPOINT_SWITCH_MESSAGE';
 let netConnection: connection.NetConnection | null = null;
 let abilityContext: common.UIAbilityContext | null = null;
 let debounceTimer: number = -1;
+let unreachableRetryTimer: number = -1;
+let unreachableMissStreak: number = 0;
 let running: boolean = false;
 let pending: boolean = false;
 
 export function ensureEndpointSwitchStorage(): void {
   AppStorage.setOrCreate<number>(FN_ENDPOINT_SWITCH_VERSION, 0);
   AppStorage.setOrCreate<string>(FN_ENDPOINT_SWITCH_MESSAGE, '');
+}
+
+function clearUnreachableRetry(): void {
+  unreachableMissStreak = 0;
+  if (unreachableRetryTimer < 0) {
+    return;
+  }
+  clearTimeout(unreachableRetryTimer);
+  unreachableRetryTimer = -1;
+}
+
+function scheduleUnreachableRetry(): void {
+  if (unreachableRetryTimer >= 0) {
+    return;
+  }
+  if (unreachableMissStreak >= UNREACHABLE_RETRY_DELAYS_MS.length) {
+    hilog.warn(DOMAIN, TAG, 'endpoint probe still unreachable, stop retry');
+    fnDiagRecord('W', TAG, 'endpoint probe still unreachable');
+    return;
+  }
+  const delay = UNREACHABLE_RETRY_DELAYS_MS[unreachableMissStreak];
+  unreachableMissStreak++;
+  hilog.info(DOMAIN, TAG, 'endpoint unreachable, retry in %{public}d ms', delay);
+  unreachableRetryTimer = setTimeout((): void => {
+    unreachableRetryTimer = -1;
+    scheduleCheck();
+  }, delay);
+}
+
+function shouldRetryFailedAutoSwitch(message: string): boolean {
+  if (message.indexOf('双重验证') >= 0 || message.indexOf('验证码') >= 0) {
+    return false;
+  }
+  if (message.indexOf('凭据') >= 0 || message.indexOf('证书') >= 0 || message.indexOf('未登录') >= 0) {
+    return false;
+  }
+  return true;
 }
 
 function notifyEndpointSwitched(message: string): void {
@@ -110,14 +151,19 @@ async function probeAndSwitch(ctx: common.UIAbilityContext, stored: StoredSessio
   }
   const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_AUTO, AUTO_PROBE_TIMEOUT_MS);
   if (selected.server.length === 0) {
+    scheduleUnreachableRetry();
     return;
   }
   const res = await switchStoredLoginEndpointToUrl(ctx, selected.server, true, true);
   if (!res.ok) {
     hilog.warn(DOMAIN, TAG, 'auto switch failed: %{public}s', res.message);
     fnDiagRecord('W', TAG, `auto switch failed ${res.message}`);
+    if (shouldRetryFailedAutoSwitch(res.message)) {
+      scheduleUnreachableRetry();
+    }
     return;
   }
+  clearUnreachableRetry();
   if (res.message.length === 0) {
     return;
   }
@@ -188,6 +234,11 @@ export function scheduleCheck(): void {
 
 function onNetEvent(): void {
   hilog.info(DOMAIN, TAG, 'network changed, schedule endpoint reselect');
+  unreachableMissStreak = 0;
+  if (unreachableRetryTimer >= 0) {
+    clearTimeout(unreachableRetryTimer);
+    unreachableRetryTimer = -1;
+  }
   scheduleCheck();
 }
 
@@ -232,6 +283,7 @@ export function stop(): void {
     clearTimeout(debounceTimer);
     debounceTimer = -1;
   }
+  clearUnreachableRetry();
   const netCon = netConnection;
   netConnection = null;
   abilityContext = null;

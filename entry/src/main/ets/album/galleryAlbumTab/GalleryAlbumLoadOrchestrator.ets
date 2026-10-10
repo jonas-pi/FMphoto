@@ -399,9 +399,57 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
   }
 }
 
+/** 冷启动打到不可达地址时，在放弃并展示错误前按新会话再试几次。 */
+const TIMELINE_NET_RETRY_MAX: number = 4;
+
+function isStickyTimelineFailure(message: string): boolean {
+  if (message.indexOf('未登录') >= 0) {
+    return true;
+  }
+  if (message.indexOf('签名') >= 0) {
+    return true;
+  }
+  if (message.indexOf('证书') >= 0 || message.indexOf('certificate') >= 0) {
+    return true;
+  }
+  if (message.indexOf('业务错误') >= 0) {
+    return true;
+  }
+  return false;
+}
+
+function timelineRetryDelayMs(attempt: number): number {
+  if (attempt <= 0) {
+    return 700;
+  }
+  if (attempt === 1) {
+    return 1500;
+  }
+  if (attempt === 2) {
+    return 3000;
+  }
+  return 5000;
+}
+
+function scheduleTimelineBootstrapRetry(
+  host: GalleryAlbumLoadOrchestratorHost,
+  gen: number,
+  netRetry: number
+): void {
+  const wait = timelineRetryDelayMs(netRetry);
+  fnDiagRecord('W', TAG, `timeline retry in ${wait}ms attempt ${netRetry + 1}`);
+  setTimeout((): void => {
+    if (gen !== host.loadGen) {
+      return;
+    }
+    void galleryAlbumBootstrap(host, true, netRetry + 1);
+  }, wait);
+}
+
 export async function galleryAlbumBootstrap(
   host: GalleryAlbumLoadOrchestratorHost,
-  showFullBleedSkeleton: boolean = true
+  showFullBleedSkeleton: boolean = true,
+  netRetry: number = 0
 ): Promise<void> {
   GalleryHomeTimelineCache.invalidate();
   const gen = ++host.loadGen;
@@ -484,8 +532,13 @@ export async function galleryAlbumBootstrap(
     const em = tl.message !== undefined && tl.message.length > 0 ? tl.message : '时间轴加载失败';
     hilog.warn(DOMAIN, TAG, 'timeline fail: %{public}s body: %{public}s', em, '');
     fnDiagRecord('W', TAG, `timeline fail ${em}`);
+    // 软刷新失败时保留旧列表，避免整页变错误态。
+    // 冷启动失败先保持骨架并重试：此时自动选路可能刚从内网换成公网。
+    if (!softRefresh && netRetry < TIMELINE_NET_RETRY_MAX && !isStickyTimelineFailure(em)) {
+      scheduleTimelineBootstrapRetry(host, gen, netRetry);
+      return;
+    }
     host.bootLoading = false;
-    // 软刷新失败时保留旧列表，避免整页变错误态
     if (!softRefresh) {
       host.loadError = em;
     }

@@ -26,6 +26,8 @@ export interface GalleryAlbumLifecycleHost {
   galleryTimelineRefreshing: boolean;
   gallerySelectionMode: boolean;
   loadGen: number;
+  /** 主时间轴已有内容。切网后只改媒体根地址，不必整表重拉。 */
+  mainTimelineHasContent(): boolean;
   currentThumbHeavyItemCount(): number;
   onSearchModeVisibilityChange(hiddenBottomNav: boolean): void;
   notifyHomeBottomDockVisibility(): void;
@@ -46,6 +48,21 @@ export function galleryAlbumOnEpochChange(host: GalleryAlbumLifecycleHost): void
   setTimeout((): void => {
     galleryAlbumRequestBootstrap(host, false);
   }, 0);
+}
+
+/**
+ * 冷启动会先按上次保存的内网/公网地址拉时间轴，自动选路往往更晚才完成。
+ * 主时间轴还没出来时，地址一变就丢掉这次失败请求并按新地址重拉。
+ * 已经有列表时不重拉，缩略图地址在绘制时用当前 baseUrl 拼接。
+ */
+export function galleryAlbumOnBaseUrlChanged(host: GalleryAlbumLifecycleHost): void {
+  if (host.baseUrl.trim().length === 0) {
+    return;
+  }
+  if (host.mainTimelineHasContent()) {
+    return;
+  }
+  galleryAlbumRequestBootstrap(host, false);
 }
 
 export function galleryAlbumOnPageShowSignal(host: GalleryAlbumLifecycleHost): void {

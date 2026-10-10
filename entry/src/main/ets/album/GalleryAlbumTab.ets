@@ -367,6 +367,7 @@ import {
   galleryAlbumAboutToDisappear,
   galleryAlbumClearBootstrapDebounceTimer,
   galleryAlbumEnterGallerySelectionModeFromToolbar,
+  galleryAlbumOnBaseUrlChanged,
   galleryAlbumOnEpochChange,
   galleryAlbumOnPageShow,
   galleryAlbumOnPageShowSignal,
@@ -455,7 +456,7 @@ const GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY: number = 0.7;
 
 @Component
 export struct GalleryAlbumTab {
-  @Prop baseUrl: string = '';
+  @Prop @Watch('onGalleryBaseUrlChanged') baseUrl: string = '';
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
   @Prop topSafeInsetVp: number = 0;
   @Prop bottomSafeInsetVp: number = 0;
@@ -1769,6 +1770,9 @@ export struct GalleryAlbumTab {
       set gallerySelectionMode(value: boolean) { self.gallerySelectionMode = value; }
       get loadGen(): number { return self.session.load.loadGen; }
       set loadGen(value: number) { self.session.load.loadGen = value; }
+      mainTimelineHasContent(): boolean {
+        return self.sections.length > 0 && self.loadError.length === 0;
+      }
       currentThumbHeavyItemCount(): number { return self.currentThumbHeavyItemCount(); }
       onSearchModeVisibilityChange(hiddenBottomNav: boolean): void {
         self.onSearchModeVisibilityChange(hiddenBottomNav);
@@ -2757,6 +2761,10 @@ export struct GalleryAlbumTab {
 
   private onEpochChange(): void {
     galleryAlbumOnEpochChange(this.asLifecycleHost());
+  }
+
+  private onGalleryBaseUrlChanged(): void {
+    galleryAlbumOnBaseUrlChanged(this.asLifecycleHost());
   }
 
   private onPageShowSignal(): void {
