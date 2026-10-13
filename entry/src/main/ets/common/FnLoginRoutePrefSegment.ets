@@ -101,15 +101,6 @@ export struct FnLoginRoutePrefSegment {
     return Math.max(0, Math.min(LOGIN_ROUTE_ITEM_COUNT - 1, raw));
   }
 
-  private indexFromLocalX(localX: number): number {
-    const w = this.itemWidth();
-    if (w <= 0) {
-      return this.selectedIndex;
-    }
-    const raw = Math.floor((localX - LOGIN_ROUTE_SEGMENT_INNER_PAD_VP) / w);
-    return Math.max(0, Math.min(LOGIN_ROUTE_ITEM_COUNT - 1, raw));
-  }
-
   private isOnThumb(localX: number): boolean {
     const w = this.itemWidth();
     if (w <= 0) {
@@ -120,11 +111,13 @@ export struct FnLoginRoutePrefSegment {
     return localX >= left && localX <= right;
   }
 
+  /** 拖动才需要手指坐标。自动化点击没有 fingerList，读 length 会崩，拖动直接不开始。 */
   private eventLocalX(event: GestureEvent): number {
-    if (event.fingerList.length > 0) {
-      return event.fingerList[0].localX;
+    const fingers = event.fingerList;
+    if (fingers !== undefined && fingers.length > 0 && Number.isFinite(fingers[0].localX)) {
+      return fingers[0].localX;
     }
-    return this.thumbXVp + this.itemWidth() / 2;
+    return Number.NaN;
   }
 
   private commitIndex(index: number): void {
@@ -136,13 +129,20 @@ export struct FnLoginRoutePrefSegment {
     this.onValueChange(LOGIN_ROUTE_PREF_VALUES[index]);
   }
 
+  private onLabelClick(index: number): void {
+    if (this.disabled || this.dragging || this.panActive) {
+      return;
+    }
+    this.commitIndex(index);
+  }
+
   private onPanStart(event: GestureEvent): void {
     if (this.disabled || this.itemWidth() <= 0) {
       this.panActive = false;
       return;
     }
     const localX = this.eventLocalX(event);
-    if (!this.isOnThumb(localX)) {
+    if (!Number.isFinite(localX) || !this.isOnThumb(localX)) {
       this.panActive = false;
       return;
     }
@@ -155,7 +155,11 @@ export struct FnLoginRoutePrefSegment {
     if (!this.panActive || this.disabled) {
       return;
     }
-    this.thumbXVp = this.clampThumbX(this.eventLocalX(event) - this.grabOffsetX);
+    const localX = this.eventLocalX(event);
+    if (!Number.isFinite(localX)) {
+      return;
+    }
+    this.thumbXVp = this.clampThumbX(localX - this.grabOffsetX);
   }
 
   private onPanEnd(): void {
@@ -166,13 +170,6 @@ export struct FnLoginRoutePrefSegment {
     this.panActive = false;
     this.dragging = false;
     this.commitIndex(this.indexFromThumbX(this.thumbXVp));
-  }
-
-  private onTapLocalX(localX: number): void {
-    if (this.disabled) {
-      return;
-    }
-    this.commitIndex(this.indexFromLocalX(localX));
   }
 
   private useHdsJellyTrack(): boolean {
@@ -206,18 +203,23 @@ export struct FnLoginRoutePrefSegment {
   private segmentLabels() {
     Row() {
       ForEach(LOGIN_ROUTE_PREF_LABELS, (label: string, idx: number) => {
-        Text(label)
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .fontSize(13)
-          .fontWeight(this.indexFromThumbX(this.thumbXVp) === idx ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor(this.indexFromThumbX(this.thumbXVp) === idx ?
-            $r('app.color.button_primary_fg') : $r('app.color.text_secondary'))
+        Column() {
+          Text(label)
+            .fontSize(13)
+            .fontWeight(this.indexFromThumbX(this.thumbXVp) === idx ? FontWeight.Medium : FontWeight.Regular)
+            .fontColor(this.indexFromThumbX(this.thumbXVp) === idx ?
+              $r('app.color.button_primary_fg') : $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
+        .justifyContent(FlexAlign.Center)
+        .onClick((): void => {
+          this.onLabelClick(idx);
+        })
       }, (label: string, idx: number) => `login_route_seg_label_${idx}_${label}`)
     }
     .width('100%')
     .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
-    .hitTestBehavior(HitTestMode.None)
   }
 
   build() {
@@ -291,14 +293,6 @@ export struct FnLoginRoutePrefSegment {
             })
             .onActionCancel((): void => {
               this.onPanEnd();
-            })
-        )
-        .gesture(
-          TapGesture()
-            .onAction((event: GestureEvent): void => {
-              if (event.fingerList.length > 0) {
-                this.onTapLocalX(event.fingerList[0].localX);
-              }
             })
         )
       }
