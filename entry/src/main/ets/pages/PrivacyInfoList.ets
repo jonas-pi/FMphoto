@@ -158,7 +158,7 @@ struct PrivacyInfoList {
       this.bullet('信息种类：缓存文件；崩溃快照、播放失败等诊断摘要、主机或文件名。')
       this.bullet('使用目的：预览、下载、排障。')
       this.bullet('是否必要：功能运行需要；日志不以收集隐私为目的。')
-      this.bullet('处理方式：仅本机。不主动记录密码或完整 cookie。你可在登录页或「我的」导出后自行发送给开发者。')
+      this.bullet('处理方式：仅本机保存。不主动记录密码或完整 cookie。反馈页可打开飞书表单，由你自行填写并选择是否上传本机日志，应用不会把日志发到开发者的服务器。')
 
       this.sectionTitle('不收集的信息')
       this.paragraph('不申请设备定位、通讯录、短信、麦克风或通话记录；无广告、统计或崩溃上报 SDK；不读取 IMEI / OAID。')
@@ -169,7 +169,7 @@ struct PrivacyInfoList {
   @Builder
   private thirdPartyBody() {
     Column({ space: 10 }) {
-      this.paragraph('除下列情形外，飞马相册不向广告、统计、推送、地图商等 SDK 共享个人信息。开发者皮朝猛不接收这些数据。')
+      this.paragraph('除下列情形外，飞马相册不向广告、统计、推送、地图商等 SDK 共享个人信息。')
 
       this.sectionTitle('飞牛 FN Connect')
       this.bullet('第三方名称：广州铁刃智造技术有限公司（飞牛）。')
@@ -188,6 +188,13 @@ struct PrivacyInfoList {
       this.bullet('使用场景：登录、浏览、上传下载、可选的 WebDAV 配置同步。')
       this.bullet('共享方式：你确认的 HTTP / HTTPS 请求。')
       this.bullet('隐私政策：请查阅该服务器运营方自行公布的规则。')
+
+      this.sectionTitle('意见反馈（可选）')
+      this.bullet('第三方名称：北京飞书科技有限公司（飞书多维表格表单）。')
+      this.bullet('共享信息：你在表单里填写的内容、自行选择的截图，以及你选择上传的本机诊断日志。')
+      this.bullet('使用目的：把问题或建议交给开发者。')
+      this.bullet('使用场景：你主动打开「反馈」并提交表单时。不打开则不会发送。')
+      this.bullet('共享方式：表单页面由飞书提供，提交发往飞书。诊断日志先写在本机，不经应用服务器转发。')
 
       this.sectionTitle('HarmonyOS 系统能力')
       this.paragraph('系统图片选择器、保存到相册、HUKS 密钥、网络和扫码属于操作系统能力，按系统接口在本机处理，不视为向开发者合作的第三方 SDK 共享。')

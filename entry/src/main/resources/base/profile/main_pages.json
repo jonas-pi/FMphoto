@@ -14,6 +14,7 @@
     "pages/RecycleBinPage",
     "pages/RepeatPhotoPage",
     "pages/FolderBrowsePage",
-    "pages/Settings"
+    "pages/Settings",
+    "pages/FeedbackPage"
   ]
 }

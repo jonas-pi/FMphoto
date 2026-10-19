@@ -402,11 +402,11 @@
     },
     {
       "name": "diag_log_entry_title",
-      "value": "导出诊断日志"
+      "value": "反馈"
     },
     {
       "name": "diag_log_entry_subtitle",
-      "value": "复现问题后点这里，把文件发给开发者"
+      "value": "填写问题或建议。日志保存在手机里，由表单自行上传"
     },
     {
       "name": "diag_log_toast_ok",

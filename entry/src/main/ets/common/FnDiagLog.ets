@@ -1,6 +1,6 @@
 /**
  * 本机诊断日志：订阅系统崩溃 / 卡死，并记录播放失败等关键路径。
- * 不上传；用户在「我的」或登录页导出后自行发给开发者。
+ * 不自动上传。反馈页把脱敏后的日志写在本机，由用户在飞书表单里自行选择上传。
  * 保留上次进程记录与系统故障文件，便于闪退后再次打开再导出。
  */
 import { bundleManager, common, errorManager } from '@kit.AbilityKit';
@@ -64,6 +64,23 @@ export function fnDiagRecordSync(level: string, tag: string, message: string): v
   const line = `${formatStamp(Date.now())} ${level} [${tag}] ${sanitizeDiagText(message)}`;
   pushRing(line);
   appendRuntimeSync(line + '\n');
+}
+
+/** 写成手机上的 fmphoto-diag.txt，返回本机路径。调用方不要把文件内容发出去。 */
+export async function fnDiagPreparePhoneFile(ctx: common.UIAbilityContext): Promise<string> {
+  try {
+    bindShareRoots(ctx);
+    const path = await buildExportFile();
+    if (path.length === 0) {
+      return '';
+    }
+    const raw = await fileIo.readText(path);
+    await writeUtf8FileAtomic(path, sanitizeDiagText(raw));
+    return path;
+  } catch (e) {
+    hilog.error(DOMAIN, TAG, 'diag phone file failed: %{public}s', String(e));
+    return '';
+  }
 }
 
 export async function fnDiagShare(ctx: common.UIAbilityContext): Promise<boolean> {

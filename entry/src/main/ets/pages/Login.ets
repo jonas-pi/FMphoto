@@ -6,7 +6,8 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord, fnDiagShare } from '../common/FnDiagLog';
+import { fnDiagRecord } from '../common/FnDiagLog';
+import { openFeedbackPage } from './FeedbackPage';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { CertPolicy } from '../network/CertPolicy';
 import {
@@ -88,7 +89,6 @@ struct Login {
   @State private rememberToggleGen: number = 0;
   @State private credentialGen: number = 0;
   @State private loading: boolean = false;
-  @State private diagExporting: boolean = false;
   @State private errorText: string = '';
   /** 表单默认值读完再挂输入框，避免 TextInput 先以空 seed 建好后回填不刷新 */
   @State private formReady: boolean = false;
@@ -745,34 +745,6 @@ struct Login {
     this.errorText = '';
   }
 
-  private async exportDiagLog(): Promise<void> {
-    if (this.diagExporting || this.loading) {
-      return;
-    }
-    this.diagExporting = true;
-    try {
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const ok = await fnDiagShare(ctx);
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: ok ? $r('app.string.diag_log_toast_ok') : $r('app.string.diag_log_toast_fail'),
-          duration: 2200
-        });
-      } catch (_toast) {
-      }
-    } catch (_e) {
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: $r('app.string.diag_log_toast_fail'),
-          duration: 1800
-        });
-      } catch (_toast) {
-      }
-    } finally {
-      this.diagExporting = false;
-    }
-  }
-
   @Builder
   private loginBackdrop() {
     Column()
@@ -1104,13 +1076,16 @@ struct Login {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
 
-      Text(this.diagExporting ? '正在导出…' : $r('app.string.diag_log_entry_title'))
+      Text($r('app.string.diag_log_entry_title'))
         .fontSize(13)
         .fontColor(this.accent)
         .width('100%')
-        .opacity(this.loading || this.diagExporting ? 0.45 : 1)
+        .opacity(this.loading ? 0.45 : 1)
         .onClick((): void => {
-          void this.exportDiagLog();
+          if (this.loading) {
+            return;
+          }
+          openFeedbackPage(this.getUIContext());
         })
 
       if (this.show2faStep) {

@@ -43,7 +43,7 @@ import {
   FnTransferQueueStore,
   FnTransferTaskSnapshot
 } from '../common/FnTransferQueueStore';
-import { fnDiagShare } from '../common/FnDiagLog';
+import { openFeedbackPage } from './FeedbackPage';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
   APP_GALLERY_RATE_ALREADY,
@@ -287,7 +287,6 @@ export struct MePanel {
   @State private transferQueueVisible: boolean = false;
   @State private configSyncVisible: boolean = false;
   @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
-  @State private diagExporting: boolean = false;
   @State private rateEntryVisible: boolean = false;
   @State private rateOpening: boolean = false;
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
@@ -956,7 +955,7 @@ export struct MePanel {
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
-        Text(this.diagExporting ? '正在导出…' : $r('app.string.diag_log_entry_subtitle'))
+        Text($r('app.string.diag_log_entry_subtitle'))
           .fontSize(12)
           .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
@@ -978,38 +977,9 @@ export struct MePanel {
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))
     .clip(true)
-    .opacity(this.diagExporting ? 0.55 : 1)
     .onClick((): void => {
-      void this.exportDiagLog();
+      openFeedbackPage(this.getUIContext());
     })
-  }
-
-  private async exportDiagLog(): Promise<void> {
-    if (this.diagExporting) {
-      return;
-    }
-    this.diagExporting = true;
-    try {
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const ok = await fnDiagShare(ctx);
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: ok ? $r('app.string.diag_log_toast_ok') : $r('app.string.diag_log_toast_fail'),
-          duration: 2200
-        });
-      } catch (_toast) {
-      }
-    } catch (_e) {
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: $r('app.string.diag_log_toast_fail'),
-          duration: 1800
-        });
-      } catch (_toast) {
-      }
-    } finally {
-      this.diagExporting = false;
-    }
   }
 
   @Builder
