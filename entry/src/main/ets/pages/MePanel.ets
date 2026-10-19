@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import {
   openCollectedInfoListPage,
@@ -28,8 +29,10 @@ import {
 import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
 import {
   fnHdsFitContentSheetOptions,
+  fnHdsLargeSheetOptions,
   fnHdsMediumDetentSheetOptions
 } from '../common/FnHdsOverlay';
+import { ConfigSyncSheet } from './ConfigSyncPage';
 import {
   buildEndpointProbeDisplay,
   FnEndpointProbeLineItem,
@@ -41,23 +44,31 @@ import {
   FnTransferTaskSnapshot
 } from '../common/FnTransferQueueStore';
 import { fnDiagShare } from '../common/FnDiagLog';
+import {
+  APP_GALLERY_RATE_ALREADY,
+  APP_GALLERY_RATE_FAILED,
+  APP_GALLERY_RATE_NEED_ID,
+  fnAppGalleryCommentAvailable,
+  fnIsAppGalleryCommentDone,
+  fnShowAppGalleryComment
+} from '../common/AppGalleryRate';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
+  HdsNavigation,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode
+} from '@kit.UIDesignKit';
+import {
+  FN_HDS_NAV_CHROME_HEIGHT_VP,
+  fnHdsMiniTitleBarOptions,
   fnImmersiveBackgroundEffect,
   fnLiquidGlassGradient,
+  fnSoftCardGlassGradient,
   FnHdsPillButton,
   FnPrimaryButton
 } from '../common/FnUiCommon';
-import {
-  fnCanUseHdsImmersive,
-  fnCurrentSdkApiVersion,
-  fnDeviceSupportsHdsImmersive,
-  fnLoadImmersiveLightPreference,
-  fnSaveImmersiveLightPreference,
-  FN_HDS_MIN_SDK_API_VERSION,
-  FN_IMMERSIVE_LIGHT_STORAGE_KEY
-} from '../common/FnImmersiveSettings';
+import { fnCanUseHdsImmersive } from '../common/FnImmersiveSettings';
 import {
   isGalleryLanBurstAutoEnabled,
   isGalleryLanBurstEnabled,
@@ -69,33 +80,176 @@ import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import {
-  GALLERY_TOP_BAR_PAD_BOTTOM_VP,
-  GALLERY_TOP_BAR_PAD_LEFT_VP,
-  GALLERY_TOP_BAR_PAD_RIGHT_VP,
-  GALLERY_TOP_BAR_PAD_TOP_VP,
-  GALLERY_TOP_BAR_ROW_HEIGHT_VP,
-  GALLERY_TOP_BAR_TITLE_FONT_VP
-} from '../common/GalleryTopBarLayout';
+  fnApplyThemeWindowBackground,
+  fnNormalizeThemeHex,
+  fnRefreshSystemColorPreview,
+  fnSaveCustomColor,
+  fnSaveThemeScheme,
+  fnThemeOnColor,
+  FnThemeScheme,
+  FN_ACCENT_PRESETS,
+  FN_CUSTOM_ACCENT_KEY,
+  FN_CUSTOM_BG_KEY,
+  FN_PAGE_BACKGROUND_PRESETS,
+  fnResolvedCardFill,
+  FN_RESOLVED_ACCENT_KEY,
+  FN_RESOLVED_CARD_BG_KEY,
+  FN_RESOLVED_PAGE_BG_KEY,
+  FN_THEME_SCHEMES
+} from '../common/FnThemeColors';
 
-const ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP: number = 72;
 const ME_LAN_BURST_SWITCH_ROW_HEIGHT_VP: number = 80;
 const ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP: number = 22;
 const ME_ACTION_GAP_VP: number = 18;
 const ME_CONNECTION_ROW_RADIUS_VP: number = 22;
-/** 系统 Toast 默认约 1500ms；切网提示未消失前不弹满载，避免盖住「当前内网连接」 */
-const ENDPOINT_TOAST_DURATION_MS: number = 1600;
-/** 满载 Toast 抬高，即使时间窗临界也不会和切网 Toast 叠在同一高度 */
-const LAN_BURST_TOAST_BOTTOM_VP: string = '168vp';
+
+/** 色块只靠 @Prop 改颜色和选中圈，不销毁重建。 */
+@Component
+struct ThemeColorSwatch {
+  @Prop color: string = '#FF4A8BFF';
+  @Prop selected: boolean = false;
+  @Prop swatchSize: number = 36;
+  @Prop passClick: boolean = false;
+  onPick: () => void = () => {};
+
+  build() {
+    Column()
+      .width(this.swatchSize)
+      .height(this.swatchSize)
+      .borderRadius(this.swatchSize / 2)
+      .backgroundColor(this.color)
+      .borderWidth(this.selected ? 3 : 1)
+      .borderColor(this.selected ? fnThemeOnColor(this.color) : $r('app.color.card_border'))
+      .hitTestBehavior(this.passClick ? HitTestMode.None : HitTestMode.Default)
+      .onClick((): void => {
+        this.onPick();
+      })
+  }
+}
+
+/** 底色/强调色那一行自己订阅当前颜色，避免 @Builder 参数只在创建时传一次。 */
+@Component
+struct ThemeColorSummaryRow {
+  @Prop label: string = '';
+  @Prop isPageBackground: boolean = true;
+  @StorageProp(FN_CUSTOM_BG_KEY) private customPageBg: string = '';
+  @StorageProp(FN_CUSTOM_ACCENT_KEY) private customAccent: string = '';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp('colorMode') private colorMode: number = 0;
+  onOpen: () => void = () => {};
+
+  private shownHex(): string {
+    if (this.isPageBackground) {
+      if (this.customPageBg.length > 0) {
+        return this.customPageBg;
+      }
+      return this.colorMode === 1 ? '#FF000000' : '#FFF4F7FB';
+    }
+    if (this.customAccent.length > 0) {
+      return this.customAccent;
+    }
+    return this.colorMode === 1 ? '#FF7DB0FF' : '#FF4A8BFF';
+  }
+
+  build() {
+    Row({ space: 10 }) {
+      Column()
+        .width(28)
+        .height(28)
+        .borderRadius(14)
+        .backgroundColor(this.shownHex())
+        .borderWidth(1)
+        .borderColor($r('app.color.card_border'))
+        .hitTestBehavior(HitTestMode.None)
+
+      Column({ space: 2 }) {
+        Text(this.label)
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+        Text(this.shownHex().toUpperCase())
+          .fontSize(11)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Text('修改')
+        .fontSize(13)
+        .fontColor(this.accent)
+    }
+    .width('100%')
+    .height(44)
+    .alignItems(VerticalAlign.Center)
+    .onClick((): void => {
+      this.onOpen();
+    })
+  }
+}
+
+@Component
+struct ThemeSchemeChip {
+  @Prop name: string = '';
+  @Prop pageBackground: string = '';
+  @Prop accentColor: string = '';
+  @Prop selected: boolean = false;
+  @Prop fallbackBackground: string = '#FFF4F7FB';
+  @Prop fallbackAccent: string = '#FF4A8BFF';
+  onPick: () => void = () => {};
+
+  private shownBackground(): string {
+    return this.pageBackground.length > 0 ? this.pageBackground : this.fallbackBackground;
+  }
+
+  private shownAccent(): string {
+    return this.accentColor.length > 0 ? this.accentColor : this.fallbackAccent;
+  }
+
+  build() {
+    Column({ space: 6 }) {
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        Column()
+          .width(52)
+          .height(36)
+          .borderRadius(10)
+          .backgroundColor(this.shownBackground())
+          .borderWidth(this.selected ? 2 : 1)
+          .borderColor(this.selected ? this.shownAccent() : $r('app.color.card_border'))
+        Column()
+          .width(14)
+          .height(14)
+          .borderRadius(7)
+          .backgroundColor(this.shownAccent())
+          .borderWidth(1)
+          .borderColor($r('app.color.card_border'))
+          .margin({ right: 4, bottom: 4 })
+      }
+      Text(this.name)
+        .fontSize(11)
+        .fontColor(this.selected ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+    }
+    .onClick((): void => {
+      this.onPick();
+    })
+  }
+}
 
 @Component
 export struct MePanel {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
+  @StorageProp(FN_CUSTOM_BG_KEY) private customPageBg: string = '';
+  @StorageProp(FN_CUSTOM_ACCENT_KEY) private customAccent: string = '';
+  @StorageProp('colorMode') private colorMode: number = 0;
+  @State private colorEditorVisible: boolean = false;
+  @State private colorEditorIsBackground: boolean = true;
+  @State private colorEditorDraft: string = '#FFF4F7FB';
+  @State private colorEditorError: string = '';
   @Prop topSafeInsetVp: number = 0;
   /** 给悬浮底栏留空，滚动到底时退出登录仍露在 dock 上方。 */
   @Prop floatingDockInsetBottomVp: number = 0;
   @Prop @Watch('onPageShowSignalChanged') pageShowSignal: number = 0;
   onEndpointSwitched: () => void = () => {};
-  @StorageLink(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
-  @State private sdkApiVersion: number = 0;
   /** 用户手动满载；内网自动满载由独立状态展示，不会改写用户开关 */
   @State private lanBurstForceEnabled: boolean = false;
   @State private lanBurstAutoEnabled: boolean = false;
@@ -119,14 +273,15 @@ export struct MePanel {
   @State private pendingTwofaTargetUrl: string = '';
   @State private pendingTwofaDeviceId: string = '';
   @State private transferQueueVisible: boolean = false;
+  @State private configSyncVisible: boolean = false;
   @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
   @State private diagExporting: boolean = false;
+  @State private rateEntryVisible: boolean = false;
+  @State private rateOpening: boolean = false;
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
-  private lastImmersiveToggleAt: number = 0;
   private lastLanBurstToggleAt: number = 0;
-  private lastEndpointToastAt: number = 0;
-  private burstToastTimer: number = -1;
+  private meScroller: Scroller = new Scroller();
   private probeSeq: number = 0;
   private twofaSwitchCompleted: boolean = false;
 
@@ -161,6 +316,8 @@ export struct MePanel {
   private onPageShowSignalChanged(): void {
     this.refreshEndpointInfo();
     this.refreshTransferQueueTasks();
+    this.refreshRateEntry();
+    this.refreshSystemColorPreview();
   }
 
   private meScrollBottomPaddingVp(): number {
@@ -184,48 +341,7 @@ export struct MePanel {
     if (message.length === 0) {
       return;
     }
-    this.lastEndpointToastAt = Date.now();
     this.getUIContext().getPromptAction().showToast({ message, duration: 1500 });
-  }
-
-  /** 取消尚未弹出的满载提示，避免离开「我的」后仍弹出 */
-  private cancelLanBurstToast(): void {
-    if (this.burstToastTimer >= 0) {
-      clearTimeout(this.burstToastTimer);
-      this.burstToastTimer = -1;
-    }
-  }
-
-  /**
-   * 手动打开满载时提示；内网自动满载不重复弹提示。
-   * 若切网 Toast 还在，等它结束后再显示，并抬高位置避免重叠。
-   */
-  private showLanBurstToast(): void {
-    this.cancelLanBurstToast();
-    const elapsed = Date.now() - this.lastEndpointToastAt;
-    const waitMs = (this.lastEndpointToastAt > 0 && elapsed < ENDPOINT_TOAST_DURATION_MS) ?
-      (ENDPOINT_TOAST_DURATION_MS - elapsed) : 0;
-    const fire = (): void => {
-      this.burstToastTimer = -1;
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: $r('app.string.lan_burst_toast_on'),
-          duration: 2000,
-          bottom: LAN_BURST_TOAST_BOTTOM_VP,
-          backgroundColor: $r('app.color.lan_burst_accent'),
-          textColor: $r('app.color.lan_burst_toast_text'),
-          backgroundBlurStyle: BlurStyle.NONE
-        });
-      } catch (_e) {
-      }
-    };
-    if (waitMs > 0) {
-      this.burstToastTimer = setTimeout((): void => {
-        fire();
-      }, waitMs);
-      return;
-    }
-    fire();
   }
 
   private clearProbeDisplay(): void {
@@ -434,33 +550,50 @@ export struct MePanel {
     this.onEndpointSwitched();
   }
 
-  private immersiveSupportText(): string {
-    if (this.sdkApiVersion <= 0) {
-      return `HDS 需要 API${FN_HDS_MIN_SDK_API_VERSION}+`;
-    }
-    if (fnDeviceSupportsHdsImmersive()) {
-      return `当前 API${this.sdkApiVersion}，可实时切换 HDS`;
-    }
-    return `当前 API${this.sdkApiVersion}，HDS 需要 API${FN_HDS_MIN_SDK_API_VERSION}+`;
-  }
-
-  private toggleImmersiveLight(enabled: boolean): void {
-    this.immersiveLightEnabled = enabled;
-    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    void fnSaveImmersiveLightPreference(ctx, enabled);
-  }
-
   private shouldUseHds(): boolean {
-    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+    return fnCanUseHdsImmersive();
   }
 
-  private triggerImmersiveLightToggle(): void {
-    const now = Date.now();
-    if (now - this.lastImmersiveToggleAt < 120) {
+  private refreshRateEntry(): void {
+    if (!fnAppGalleryCommentAvailable()) {
+      this.rateEntryVisible = false;
       return;
     }
-    this.lastImmersiveToggleAt = now;
-    this.toggleImmersiveLight(!this.immersiveLightEnabled);
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void fnIsAppGalleryCommentDone(ctx).then((done: boolean): void => {
+      this.rateEntryVisible = !done;
+    });
+  }
+
+  private async openAppGalleryRate(): Promise<void> {
+    if (this.rateOpening || !this.rateEntryVisible) {
+      return;
+    }
+    this.rateOpening = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const result = await fnShowAppGalleryComment(ctx);
+      if (result === APP_GALLERY_RATE_ALREADY) {
+        this.rateEntryVisible = false;
+        return;
+      }
+      if (result === APP_GALLERY_RATE_NEED_ID) {
+        this.showRateToast($r('app.string.rate_app_need_huawei_id'));
+        return;
+      }
+      if (result === APP_GALLERY_RATE_FAILED) {
+        this.showRateToast($r('app.string.rate_app_unavailable'));
+      }
+    } finally {
+      this.rateOpening = false;
+    }
+  }
+
+  private showRateToast(message: Resource): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
+    } catch (_e) {
+    }
   }
 
   private lanBurstSupportText(): string {
@@ -476,11 +609,6 @@ export struct MePanel {
   private toggleLanBurstForce(enabled: boolean): void {
     setGalleryLanBurstForceEnabled(enabled);
     this.refreshLanBurstSwitch();
-    if (enabled) {
-      this.showLanBurstToast();
-    } else {
-      this.cancelLanBurstToast();
-    }
   }
 
   private triggerLanBurstForceToggle(): void {
@@ -493,19 +621,87 @@ export struct MePanel {
   }
 
   aboutToAppear(): void {
-    this.sdkApiVersion = fnCurrentSdkApiVersion();
     this.refreshEndpointInfo();
     FnTransferQueueStore.ensureStorage();
     this.refreshTransferQueueTasks();
     this.refreshLanBurstSwitch();
+    this.refreshRateEntry();
+    this.refreshSystemColorPreview();
+  }
+
+  private refreshSystemColorPreview(): void {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    void fnLoadImmersiveLightPreference(ctx).then((enabled: boolean): void => {
-      this.immersiveLightEnabled = enabled;
+    fnRefreshSystemColorPreview(ctx);
+  }
+
+  private cardGlass(strong: boolean = false): LinearGradientOptions {
+    if (this.cardBg.length > 0) {
+      return fnSoftCardGlassGradient();
+    }
+    return fnLiquidGlassGradient(strong);
+  }
+
+  private shownCustomBackground(): string {
+    if (this.customPageBg.length > 0) {
+      return this.customPageBg;
+    }
+    return this.colorMode === 1 ? '#FF000000' : '#FFF4F7FB';
+  }
+
+  private shownCustomAccent(): string {
+    if (this.customAccent.length > 0) {
+      return this.customAccent;
+    }
+    return this.colorMode === 1 ? '#FF7DB0FF' : '#FF4A8BFF';
+  }
+
+  private openColorEditor(pageBackground: boolean): void {
+    this.colorEditorIsBackground = pageBackground;
+    this.colorEditorDraft = pageBackground ? this.shownCustomBackground() : this.shownCustomAccent();
+    this.colorEditorError = '';
+    this.colorEditorVisible = true;
+  }
+
+  private isSchemeActive(scheme: FnThemeScheme): boolean {
+    if (scheme.background.length === 0 && scheme.accent.length === 0) {
+      return this.customPageBg.length === 0 && this.customAccent.length === 0;
+    }
+    return fnNormalizeThemeHex(this.customPageBg) === scheme.background &&
+      fnNormalizeThemeHex(this.customAccent) === scheme.accent;
+  }
+
+  private applyThemeScheme(scheme: FnThemeScheme): void {
+    if (this.isSchemeActive(scheme)) {
+      return;
+    }
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void fnSaveThemeScheme(ctx, scheme.background, scheme.accent).then((): void => {
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        fnApplyThemeWindowBackground(win, ctx);
+      }).catch((): void => {
+      });
     });
   }
 
-  aboutToDisappear(): void {
-    this.cancelLanBurstToast();
+  private confirmCustomColor(): void {
+    const normalized = fnNormalizeThemeHex(this.colorEditorDraft);
+    if (normalized.length === 0) {
+      this.colorEditorError = '请输入 #RGB、#RRGGBB 或 #AARRGGBB';
+      return;
+    }
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const pageBackground = this.colorEditorIsBackground;
+    void fnSaveCustomColor(ctx, pageBackground, normalized).then((ok: boolean): void => {
+      if (!ok) {
+        this.colorEditorError = '请输入 #RGB、#RRGGBB 或 #AARRGGBB';
+        return;
+      }
+      this.colorEditorVisible = false;
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        fnApplyThemeWindowBackground(win, ctx);
+      }).catch((): void => {
+      });
+    });
   }
 
   @Builder
@@ -555,7 +751,7 @@ export struct MePanel {
         })
         .width('100%')
         .height(44)
-        .backgroundColor($r('app.color.card_background'))
+        .backgroundColor(fnResolvedCardFill(this.cardBg))
         .borderRadius($r('app.float.radius_medium'))
         .padding({ left: 12, right: 12 })
         .enabled(!this.twofaLoading)
@@ -566,7 +762,7 @@ export struct MePanel {
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.twofaTrustDevice })
-          .selectedColor($r('app.color.brand_primary'))
+          .selectedColor(this.accent)
           .enabled(!this.twofaLoading)
           .onChange((on: boolean) => {
             this.twofaTrustDevice = on;
@@ -614,6 +810,7 @@ export struct MePanel {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
       SymbolGlyph($r('sys.symbol.qrcode'))
@@ -626,16 +823,21 @@ export struct MePanel {
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-    .backgroundColor($r('app.color.card_background'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
     .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))
     .clip(true)
     .onClick((): void => {
-      this.getUIContext().getRouter().pushUrl({ url: 'pages/ConfigSyncPage' }).catch((): void => {});
+      this.configSyncVisible = true;
     })
+  }
+
+  @Builder
+  private configSyncSheetBuilder() {
+    ConfigSyncSheet()
   }
 
   @Builder
@@ -652,6 +854,7 @@ export struct MePanel {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
@@ -660,9 +863,9 @@ export struct MePanel {
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-    .backgroundColor($r('app.color.card_background'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
     .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))
@@ -706,7 +909,7 @@ export struct MePanel {
     Column({ space: 10 }) {
       Text($r('app.string.privacy_policy_title'))
         .fontSize(13)
-        .fontColor($r('app.color.brand_primary'))
+        .fontColor(this.accent)
         .textAlign(TextAlign.Center)
         .width('100%')
         .onClick((): void => {
@@ -714,7 +917,7 @@ export struct MePanel {
         })
       Text($r('app.string.privacy_collected_entry_title'))
         .fontSize(13)
-        .fontColor($r('app.color.brand_primary'))
+        .fontColor(this.accent)
         .textAlign(TextAlign.Center)
         .width('100%')
         .onClick((): void => {
@@ -722,7 +925,7 @@ export struct MePanel {
         })
       Text($r('app.string.privacy_third_party_entry_title'))
         .fontSize(13)
-        .fontColor($r('app.color.brand_primary'))
+        .fontColor(this.accent)
         .textAlign(TextAlign.Center)
         .width('100%')
         .onClick((): void => {
@@ -750,6 +953,7 @@ export struct MePanel {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
       if (FnTransferQueueStore.activeCount() > 0) {
@@ -758,7 +962,7 @@ export struct MePanel {
           .fontWeight(FontWeight.Medium)
           .fontColor(Color.White)
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor($r('app.color.brand_primary'))
+          .backgroundColor(this.accent)
           .borderRadius(10)
       }
 
@@ -768,9 +972,9 @@ export struct MePanel {
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-    .backgroundColor($r('app.color.card_background'))
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(fnLiquidGlassGradient())
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
     .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))
@@ -787,7 +991,7 @@ export struct MePanel {
       Text(label)
         .fontSize(15)
         .fontWeight(this.endpointInfo.kind === kind ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.endpointInfo.kind === kind ? $r('app.color.brand_primary') :
+        .fontColor(this.endpointInfo.kind === kind ? this.accent :
           (available ? $r('app.color.text_primary') : $r('app.color.text_secondary')))
         .opacity(available ? 1 : 0.35)
 
@@ -795,7 +999,7 @@ export struct MePanel {
         .width(22)
         .height(2)
         .borderRadius(1)
-        .backgroundColor(this.endpointInfo.kind === kind ? $r('app.color.brand_primary') : Color.Transparent)
+        .backgroundColor(this.endpointInfo.kind === kind ? this.accent : Color.Transparent)
     }
     .layoutWeight(1)
     .height(44)
@@ -877,9 +1081,9 @@ export struct MePanel {
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16, bottom: 16 })
-        .backgroundColor($r('app.color.card_background'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .linearGradient(fnLiquidGlassGradient())
+        .backgroundColor(fnResolvedCardFill(this.cardBg))
+        .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+        .linearGradient(this.cardGlass())
         .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
@@ -905,56 +1109,158 @@ export struct MePanel {
   }
 
   @Builder
-  private immersiveSwitchContent() {
-    Row({ space: 12 }) {
+  private rateEntryRow() {
+    Row({ space: 10 }) {
       Column({ space: 6 }) {
-        Text('\u6c89\u6d78\u5149\u611f')
+        Text($r('app.string.rate_app_entry_title'))
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(this.immersiveSupportText())
+        Text($r('app.string.rate_app_entry_subtitle'))
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
-          .maxLines(1)
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
-      Toggle({ type: ToggleType.Switch, isOn: this.immersiveLightEnabled })
-        .selectedColor($r('app.color.brand_primary'))
-        .hitTestBehavior(HitTestMode.None)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.text_secondary')])
     }
     .width('100%')
-    .height('100%')
-    .padding({ left: 18, right: 16, top: 0, bottom: 0 })
-    .alignItems(VerticalAlign.Center)
-    .hitTestBehavior(HitTestMode.None)
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass(this.shouldUseHds()))
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .opacity(this.rateOpening ? 0.55 : 1)
+    .onClick((): void => {
+      void this.openAppGalleryRate();
+    })
   }
 
   @Builder
-  private immersiveSwitchRow() {
-    Stack() {
-      Row()
+  private themeColorCard() {
+    Column({ space: 12 }) {
+      Text('界面配色')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.card_background'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .linearGradient(fnLiquidGlassGradient(this.shouldUseHds()))
-        .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
-        .borderWidth(1)
-        .borderColor($r('app.color.immersive_panel_border'))
-        .clip(true)
 
-      this.immersiveSwitchContent()
+      Scroll() {
+        Row({ space: 12 }) {
+          ForEach(FN_THEME_SCHEMES, (scheme: FnThemeScheme) => {
+            ThemeSchemeChip({
+              name: scheme.name,
+              pageBackground: scheme.background,
+              accentColor: scheme.accent,
+              selected: this.isSchemeActive(scheme),
+              fallbackBackground: this.colorMode === 1 ? '#FF000000' : '#FFF4F7FB',
+              fallbackAccent: this.colorMode === 1 ? '#FF7DB0FF' : '#FF4A8BFF',
+              onPick: (): void => {
+                this.applyThemeScheme(scheme);
+              }
+            })
+          }, (scheme: FnThemeScheme): string => scheme.name)
+        }
+        .padding({ right: 4, bottom: 2 })
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+
+      ThemeColorSummaryRow({
+        label: '底色',
+        isPageBackground: true,
+        onOpen: (): void => {
+          this.openColorEditor(true);
+        }
+      })
+      ThemeColorSummaryRow({
+        label: '强调色',
+        isPageBackground: false,
+        onOpen: (): void => {
+          this.openColorEditor(false);
+        }
+      })
     }
     .width('100%')
-    .height(ME_IMMERSIVE_SWITCH_ROW_HEIGHT_VP)
-    .onClick((): void => {
-      this.triggerImmersiveLightToggle();
-    })
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .bindSheet(this.colorEditorVisible, this.colorEditorSheet, fnHdsFitContentSheetOptions(
+      this.colorEditorIsBackground ? '底色' : '强调色',
+      (): void => {
+        this.colorEditorVisible = false;
+      }
+    ))
+  }
+
+  @Builder
+  private colorEditorSheet() {
+    Column({ space: 14 }) {
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.colorEditorIsBackground ? FN_PAGE_BACKGROUND_PRESETS : FN_ACCENT_PRESETS,
+          (hex: string) => {
+            ThemeColorSwatch({
+              color: hex,
+              selected: fnNormalizeThemeHex(this.colorEditorDraft) === hex,
+              onPick: (): void => {
+                this.colorEditorDraft = hex;
+                this.colorEditorError = '';
+              }
+            })
+              .margin({ right: 10, bottom: 10 })
+          }, (hex: string): string => hex)
+      }
+      .width('100%')
+
+      TextInput({ text: this.colorEditorDraft, placeholder: '#RRGGBB' })
+        .width('100%')
+        .height(40)
+        .fontSize(15)
+        .onChange((value: string): void => {
+          this.colorEditorDraft = value;
+          this.colorEditorError = '';
+        })
+
+      if (this.colorEditorError.length > 0) {
+        Text(this.colorEditorError)
+          .fontSize(12)
+          .fontColor('#FFE11D48')
+          .width('100%')
+      }
+
+      Text('使用这个颜色')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(fnThemeOnColor(fnNormalizeThemeHex(this.colorEditorDraft).length > 0 ?
+          this.colorEditorDraft : this.accent))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .height(40)
+        .borderRadius(12)
+        .backgroundColor(fnNormalizeThemeHex(this.colorEditorDraft).length > 0 ?
+          fnNormalizeThemeHex(this.colorEditorDraft) : this.accent)
+        .onClick((): void => {
+          this.confirmCustomColor();
+        })
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 8, bottom: 16 })
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -974,10 +1280,11 @@ export struct MePanel {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
       Toggle({ type: ToggleType.Switch, isOn: this.lanBurstForceEnabled })
-        .selectedColor($r('app.color.lan_burst_accent'))
+        .selectedColor(this.accent)
         .hitTestBehavior(HitTestMode.None)
     }
     .width('100%')
@@ -993,9 +1300,9 @@ export struct MePanel {
       Row()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.card_background'))
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .linearGradient(fnLiquidGlassGradient(this.shouldUseHds()))
+        .backgroundColor(fnResolvedCardFill(this.cardBg))
+        .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+        .linearGradient(this.cardGlass(this.shouldUseHds()))
         .borderRadius(ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP)
         .borderWidth(1)
         .borderColor($r('app.color.immersive_panel_border'))
@@ -1010,36 +1317,21 @@ export struct MePanel {
     })
   }
 
-  build() {
-    Column() {
-      Row() {
-        Row()
-          .layoutWeight(1)
-          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
-
-        Text('\u6211\u7684')
-          .fontSize(GALLERY_TOP_BAR_TITLE_FONT_VP)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(2)
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Row()
-          .layoutWeight(1)
-          .height(GALLERY_TOP_BAR_ROW_HEIGHT_VP)
+  private meTitleBarOptions(): HdsNavigationTitleBarOptions {
+    return fnHdsMiniTitleBarOptions(this.shouldUseHds(), {
+      title: { mainTitle: '我的' },
+      backIcon: {
+        label: '返回',
+        isEnabled: false,
+        action: (): void => {
+        }
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({
-        left: GALLERY_TOP_BAR_PAD_LEFT_VP,
-        right: GALLERY_TOP_BAR_PAD_RIGHT_VP,
-        top: GALLERY_TOP_BAR_PAD_TOP_VP + this.topSafeInsetVp,
-        bottom: GALLERY_TOP_BAR_PAD_BOTTOM_VP
-      })
+    }, true);
+  }
 
-      Scroll() {
+  build() {
+    HdsNavigation() {
+      Scroll(this.meScroller) {
         Column({ space: 0 }) {
         Column({ space: 10 }) {
           Text('FNOS \u4e2a\u4eba\u4e2d\u5fc3')
@@ -1104,13 +1396,28 @@ export struct MePanel {
           .width('100%')
           .height(ME_ACTION_GAP_VP)
 
+        this.themeColorCard()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
         this.transferQueueEntryRow()
 
         Blank()
           .width('100%')
           .height(ME_ACTION_GAP_VP)
 
-        this.configSyncEntryRow()
+        Column() {
+          this.configSyncEntryRow()
+        }
+        .width('100%')
+        .bindSheet(this.configSyncVisible, this.configSyncSheetBuilder, fnHdsLargeSheetOptions(
+          $r('app.string.config_sync_title'),
+          (): void => {
+            this.configSyncVisible = false;
+          }
+        ))
 
         Blank()
           .width('100%')
@@ -1118,11 +1425,13 @@ export struct MePanel {
 
         this.diagLogEntryRow()
 
-        Blank()
-          .width('100%')
-          .height(ME_ACTION_GAP_VP)
+        if (this.rateEntryVisible) {
+          Blank()
+            .width('100%')
+            .height(ME_ACTION_GAP_VP)
 
-        this.immersiveSwitchRow()
+          this.rateEntryRow()
+        }
 
         Blank()
           .width('100%')
@@ -1181,11 +1490,15 @@ export struct MePanel {
         }
         .width('100%')
         .justifyContent(FlexAlign.Start)
-        .padding({ left: 24, right: 24, top: 8, bottom: this.meScrollBottomPaddingVp() })
+        .padding({
+          left: 24,
+          right: 24,
+          top: this.topSafeInsetVp + FN_HDS_NAV_CHROME_HEIGHT_VP,
+          bottom: this.meScrollBottomPaddingVp()
+        })
       }
       .width('100%')
-      .layoutWeight(1)
-      .constraintSize({ minHeight: 0 })
+      .height('100%')
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
       .align(Alignment.TopStart)
@@ -1193,6 +1506,13 @@ export struct MePanel {
     }
     .width('100%')
     .height('100%')
+    .mode(NavigationMode.Stack)
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .bindToScrollable([this.meScroller])
+    .titleBar(this.meTitleBarOptions())
+    .backgroundColor(this.pageBg)
     .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsMediumDetentSheetOptions(
       '传输队列',
       (): void => {

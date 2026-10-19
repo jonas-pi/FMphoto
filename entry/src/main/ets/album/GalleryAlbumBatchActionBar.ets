@@ -21,6 +21,7 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
+import { FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
 
 const GALLERY_BATCH_ACTION_DOCK_WIDTH_VP: number = 228;
 
@@ -33,6 +34,7 @@ export struct GalleryAlbumBatchActionBar {
   /** 选了文件夹时走官方 file/delete，文案改为永久删除 */
   @Prop deletePermanent: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
 
   onDownload: () => void = () => {};
   onDelete: () => void = () => {};
@@ -41,7 +43,7 @@ export struct GalleryAlbumBatchActionBar {
     if (busy || (destructive && !this.deleteEnabled)) {
       return $r('app.color.text_secondary');
     }
-    return destructive ? '#E11D48' : $r('app.color.brand_primary');
+    return destructive ? '#E11D48' : this.accent;
   }
 
   private onBatchHdsAction(index: number): void {

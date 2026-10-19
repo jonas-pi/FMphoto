@@ -5,6 +5,7 @@
 import { GalleryListItem } from '../../model/FnApiTypes';
 import { gallerySelectionContainsLive } from './LivePhotoDetect';
 import { PrivilegeDownloadButton } from './PrivilegeDownloadButton';
+import { FN_RESOLVED_PAGE_BG_KEY } from '../../common/FnThemeColors';
 
 export type LivePhotoSaveChoice = 'privilege' | 'pair' | 'cancel';
 
@@ -54,6 +55,7 @@ export async function askLivePhotoSaveChoice(
  */
 @Component
 export struct LivePhotoSaveActionSheet {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   onSelect: (choice: LivePhotoSaveChoice) => void = (_: LivePhotoSaveChoice): void => {};
 
   build() {
@@ -67,6 +69,6 @@ export struct LivePhotoSaveActionSheet {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 16 })
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
   }
 }

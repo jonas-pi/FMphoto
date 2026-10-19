@@ -12,10 +12,12 @@ import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
+import { FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct Index {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private hint: string = '正在初始化…';
   @State @Watch('onPrivacyConsentRequiredChanged') private privacyConsentRequired: boolean = false;
@@ -246,7 +248,7 @@ struct Index {
         .width('100%')
         .height(42)
         .fontSize(15)
-        .fontColor($r('app.color.brand_primary'))
+        .fontColor(this.accent)
         .backgroundColor('#1A2563EB')
         .borderRadius(14)
         .onClick((): void => {
@@ -271,7 +273,7 @@ struct Index {
           .height(42)
           .fontSize(14)
           .fontColor(Color.White)
-          .backgroundColor($r('app.color.brand_primary'))
+          .backgroundColor(this.accent)
           .borderRadius(14)
           .enabled(!this.privacyConsentSubmitting)
           .onClick((): void => {

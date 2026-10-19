@@ -54,6 +54,7 @@ import {
   FN_HDS_CAPSULE_JELLY_VP
 } from '../common/FnUiCommon';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
+import { fnApplyThemeWindowBackground, FN_FOLLOW_SYSTEM_COLORS_KEY, FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
 import {
   FN_SYSTEM_BOTTOM_INSET_VP_KEY,
   FN_SYSTEM_TOP_INSET_VP_KEY,
@@ -106,6 +107,9 @@ struct Home {
   @State private galleryShellOpacity: number = 1;
   @State private mePanelOpacity: number = 0;
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
+  @StorageProp(FN_FOLLOW_SYSTEM_COLORS_KEY) @Watch('onFollowSystemColorsChanged')
+  private followSystemColors: boolean = true;
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @State private isDarkTheme: boolean = false;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
@@ -176,6 +180,10 @@ struct Home {
     this.applySystemBarTheme(false);
   }
 
+  private onFollowSystemColorsChanged(): void {
+    this.applySystemBarTheme(false);
+  }
+
   private applySystemBarTheme(relayout: boolean): void {
     try {
       const dark = this.colorMode === 1;
@@ -184,6 +192,7 @@ struct Home {
         if (relayout) {
           win.setWindowLayoutFullScreen(true).catch((_e: Error): void => {});
         }
+        fnApplyThemeWindowBackground(win, ctx);
         fnApplyImmersiveSystemBarColors(win, dark);
         fnPublishSystemAvoidArea(win, this.getUIContext());
       }).catch((_e: Error): void => {});
@@ -309,7 +318,7 @@ struct Home {
         .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
         .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
         .fontColor([
-          $r('sys.color.ohos_id_color_activated'),
+          this.accent,
           $r('sys.color.ohos_id_color_primary_contrary')
         ])
     };
@@ -319,11 +328,11 @@ struct Home {
     return new BottomTabBarStyle(this.hdsBottomTabSymbol(icon, selectedIcon), label)
       .labelStyle({
         font: { size: FN_BOTTOM_DOCK_LABEL_SIZE_VP, weight: FontWeight.Medium },
-        selectedColor: $r('sys.color.ohos_id_color_bottom_tab_text_on'),
+        selectedColor: this.accent,
         unselectedColor: $r('sys.color.ohos_id_color_bottom_tab_text_off')
       })
       .iconStyle({
-        selectedColor: $r('sys.color.ohos_id_color_activated'),
+        selectedColor: this.accent,
         unselectedColor: $r('sys.color.ohos_id_color_bottom_tab_icon_off')
       })
       .padding({ left: 0, right: 0, top: 3, bottom: 2 })
@@ -575,12 +584,12 @@ struct Home {
     Column({ space: 2 }) {
       SymbolGlyph(this.isDockNavItemSelected(index) ? selectedIcon : icon)
         .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
-        .fontColor([this.isDockNavItemSelected(index) ? $r('app.color.brand_primary') : $r('app.color.text_primary')])
+        .fontColor([this.isDockNavItemSelected(index) ? this.accent : $r('app.color.text_primary')])
 
       Text(label)
         .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.isDockNavItemSelected(index) ? $r('app.color.brand_primary') : $r('app.color.text_primary'))
+        .fontColor(this.isDockNavItemSelected(index) ? this.accent : $r('app.color.text_primary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
@@ -701,7 +710,7 @@ struct Home {
   @Builder
   private floatingDockSelectionFallbackTabs() {
     Row({ space: FN_BOTTOM_DOCK_INNER_SPACE_VP }) {
-      this.floatingDockSelectionFallbackAction(0, $r('sys.symbol.download'), '\u4e0b\u8f7d', $r('app.color.brand_primary'))
+      this.floatingDockSelectionFallbackAction(0, $r('sys.symbol.download'), '\u4e0b\u8f7d', this.accent)
       this.floatingDockSelectionFallbackAction(1, $r('sys.symbol.trash'), '\u79fb\u5165\u56de\u6536\u7ad9', '#E11D48')
     }
     .width(FN_SELECTION_DOCK_WIDTH_VP)

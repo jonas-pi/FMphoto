@@ -15,12 +15,15 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { fnResolvedCardFill, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 const KIND_THIRD_PARTY = 'thirdParty';
 
 @Entry
 @Component
 struct PrivacyInfoList {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
@@ -199,7 +202,7 @@ struct PrivacyInfoList {
         }
         .width(40)
         .height(40)
-        .backgroundColor($r('app.color.card_background'))
+        .backgroundColor(fnResolvedCardFill(this.cardBg))
         .onClick((): void => {
           this.goBack();
         })
@@ -217,7 +220,7 @@ struct PrivacyInfoList {
       .width('100%')
       .height(56 + this.systemTopInsetVp)
       .padding({ left: 14, right: 14, top: this.systemTopInsetVp })
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(this.pageBg)
 
       Scroll() {
         Column() {
@@ -239,7 +242,7 @@ struct PrivacyInfoList {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

@@ -134,10 +134,12 @@ import {
   folderBrowseToggleToolbarMode,
   FolderBrowseSelectionHost
 } from './folderBrowsePage/FolderBrowseSelectionController';
+import { FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct FolderBrowsePage {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
@@ -1445,7 +1447,7 @@ struct FolderBrowsePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
     .id(GALLERY_PREVIEW_SOURCE_FOLDER_ID)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.choiceSheetVisible, this.choiceSheetBuilder, fnHdsFitContentSheetOptions(

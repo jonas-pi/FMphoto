@@ -20,6 +20,7 @@ import {
   galleryVideoSideAdjustWidth
 } from './GalleryPreviewVerticalGesture';
 import { playGalleryLongPressMenuHaptic } from './GallerySelectionHaptic';
+import { FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
 
 const OVERLAY_PILL_HEIGHT_VP: number = 40;
 const OVERLAY_SPEED_WIDTH_VP: number = 64;
@@ -40,6 +41,7 @@ const SEEK_KNOB_SIZE_VP: number = 10;
 
 @Component
 export struct GalleryVideoOverlayChrome {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop visible: boolean = true;
   @Prop showCenterPlay: boolean = true;
   @Prop landscape: boolean = false;
@@ -355,7 +357,7 @@ export struct GalleryVideoOverlayChrome {
                 text: this.speedText,
                 fontSizeValue: OVERLAY_PILL_FONT_VP,
                 fontColorValue: this.speedLocked ?
-                  $r('sys.color.ohos_id_color_activated') : $r('app.color.icon_primary'),
+                  this.accent : $r('app.color.icon_primary'),
                 enableLongPress: true,
                 onBarClick: (): void => {
                   this.openSpeedMenu();
@@ -388,7 +390,7 @@ export struct GalleryVideoOverlayChrome {
                 text: this.qualityText,
                 fontSizeValue: OVERLAY_PILL_FONT_VP,
                 fontColorValue: this.qualityLocked ?
-                  $r('sys.color.ohos_id_color_activated') : $r('app.color.icon_primary'),
+                  this.accent : $r('app.color.icon_primary'),
                 enableLongPress: true,
                 onBarClick: (): void => {
                   this.openQualityMenu();
@@ -454,7 +456,7 @@ export struct GalleryVideoOverlayChrome {
                 Row()
                   .width(`${this.fillPercent()}%`)
                   .height(3)
-                  .backgroundColor($r('app.color.brand_primary'))
+                  .backgroundColor(this.accent)
                   .borderRadius(2)
                   .margin({ top: 9 })
                 if (this.seekPreviewVisible) {
@@ -462,7 +464,7 @@ export struct GalleryVideoOverlayChrome {
                     .width(SEEK_KNOB_SIZE_VP)
                     .height(SEEK_KNOB_SIZE_VP)
                     .borderRadius(SEEK_KNOB_SIZE_VP / 2)
-                    .backgroundColor($r('app.color.brand_primary'))
+                    .backgroundColor(this.accent)
                     .position({
                       x: this.progress * this.barW - SEEK_KNOB_SIZE_VP / 2,
                       y: (22 - SEEK_KNOB_SIZE_VP) / 2

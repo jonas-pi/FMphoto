@@ -1,4 +1,5 @@
 import { FN_MEDIA_BASE_URL } from '../../auth/AppSession';
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 import { GalleryNetworkThumb, nasUrl } from '../../album/GalleryAlbumCommon';
 import {
   FnInlineLoading,
@@ -24,6 +25,7 @@ import {
  */
 @Component
 export struct GalleryPreviewDetailsSheet {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop detailsLoading: boolean = false;
   @Prop detailsError: string = '';
   @Prop detailsData: GalleryPhotoDetailData | undefined = undefined;
@@ -196,7 +198,7 @@ export struct GalleryPreviewDetailsSheet {
                 if (galleryPreviewPersonInPhotoCanOpen(p)) {
                   Text(galleryPreviewPersonInPhotoName(p))
                     .fontSize(13)
-                    .fontColor($r('app.color.brand_primary'))
+                    .fontColor(this.accent)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .width('100%')
@@ -260,7 +262,7 @@ export struct GalleryPreviewDetailsSheet {
           // 详情区已支持滚动，路径不再截断层级或限制行数，直接完整展示原始路径。
           Text(fullPath)
             .fontSize(13)
-            .fontColor($r('app.color.brand_primary'))
+            .fontColor(this.accent)
           Text(this.folderOpening ? '正在打开同目录媒体...' : '点击打开同目录媒体')
             .fontSize(11)
             .fontColor($r('app.color.text_secondary'))

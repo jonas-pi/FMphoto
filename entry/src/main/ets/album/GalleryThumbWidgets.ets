@@ -3,6 +3,7 @@ import { GalleryLivePhotoMark } from './livephoto/GalleryLivePhotoMark';
 import { gallerySharedTransitionOptions } from './GallerySharedTransition';
 import { GALLERY_THUMB_CACHE_EPOCH_KEY } from './GalleryThumbDiskCache';
 import { GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP } from './GalleryItemUrls';
+import { FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 import {
   enqueueThumbPaintCommit,
   getThumbIdentityCacheRank,
@@ -23,11 +24,12 @@ const GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP = 28;
 
 @Component
 export struct GalleryThumbSkeleton {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   build() {
     Column()
       .width('100%')
       .aspectRatio(1)
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(this.pageBg)
       .borderRadius(0)
   }
 }
@@ -38,6 +40,7 @@ export struct GalleryThumbSkeleton {
  */
 @Component
 export struct GalleryStaticThumbPlaceholder {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   /** 为 true 时启用轻量呼吸动画（用于滚动中提示“占位加载中”） */
   @Prop @Watch('onAnimatePulseChange') animatePulse: boolean = false;
   @State private pulseOpacity: number = 0.88;
@@ -80,7 +83,7 @@ export struct GalleryStaticThumbPlaceholder {
     Column()
       .width('100%')
       .aspectRatio(1)
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(this.pageBg)
       .opacity(this.pulseOpacity)
       .animation({ duration: 360, curve: Curve.EaseInOut })
       .borderRadius(0)
@@ -493,6 +496,7 @@ export struct GalleryNetworkBackdropImage {
 
 @Component
 export struct GalleryFloatingHeroBackdrop {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @Prop imageUri: string = '';
   @Prop topSafeInsetVp: number = 0;
   @Prop heightVp: number = GALLERY_FLOATING_HERO_BACKDROP_HEIGHT_VP;
@@ -526,19 +530,19 @@ export struct GalleryFloatingHeroBackdrop {
           Column()
             .width('100%')
             .height(GALLERY_FLOATING_HERO_BACKDROP_FADE_SOFT_VP)
-            .backgroundColor($r('app.color.page_background'))
+            .backgroundColor(this.pageBg)
             .opacity(0.36)
 
           Column()
             .width('100%')
             .height(GALLERY_FLOATING_HERO_BACKDROP_FADE_STRONG_VP)
-            .backgroundColor($r('app.color.page_background'))
+            .backgroundColor(this.pageBg)
             .opacity(0.62)
 
           Column()
             .width('100%')
             .height(GALLERY_FLOATING_HERO_BACKDROP_FADE_SOLID_VP)
-            .backgroundColor($r('app.color.page_background'))
+            .backgroundColor(this.pageBg)
             .opacity(0.92)
         }
         .width('100%')

@@ -54,6 +54,7 @@ import {
 } from '../common/FnMotion';
 import { FN_SHARE_INBOX_VERSION_KEY } from '../album/share/GalleryShareInbox';
 import { galleryShareTryConsume } from '../album/share/GalleryShareConsume';
+import { FN_RESOLVED_PAGE_BG_KEY, FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
 
 const LOGIN_DOMAIN = 0xFF00;
 const LOGIN_TAG = 'Login';
@@ -66,6 +67,8 @@ const LOGIN_PANEL_EDGE_GAP_VP: number = 12;
 @Entry
 @Component
 struct Login {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @State private fnIdInput: string = '';
   @State private domainInput: string = '';
   @State private endpointPreference: string = LOGIN_ENDPOINT_PREF_AUTO;
@@ -769,7 +772,7 @@ struct Login {
     Column()
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(this.pageBg)
       .hitTestBehavior(HitTestMode.None)
   }
 
@@ -997,7 +1000,7 @@ struct Login {
           .fontColor($r('app.color.text_primary'))
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.useHttps })
-          .selectedColor($r('app.color.brand_primary'))
+          .selectedColor(this.accent)
           .onChange((on: boolean) => {
             this.useHttps = on;
           })
@@ -1033,13 +1036,13 @@ struct Login {
           Blank()
           if ((this.rememberToggleGen & 1) === 0) {
             Toggle({ type: ToggleType.Switch, isOn: this.rememberPassword })
-              .selectedColor($r('app.color.brand_primary'))
+              .selectedColor(this.accent)
               .onChange((on: boolean) => {
                 this.rememberPassword = on;
               })
           } else {
             Toggle({ type: ToggleType.Switch, isOn: this.rememberPassword })
-              .selectedColor($r('app.color.brand_primary'))
+              .selectedColor(this.accent)
               .onChange((on: boolean) => {
                 this.rememberPassword = on;
               })
@@ -1066,7 +1069,7 @@ struct Login {
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.trustDevice })
-            .selectedColor($r('app.color.brand_primary'))
+            .selectedColor(this.accent)
             .onChange((on: boolean) => {
               this.trustDevice = on;
             })
@@ -1097,7 +1100,7 @@ struct Login {
 
       Text(this.diagExporting ? '正在导出…' : $r('app.string.diag_log_entry_title'))
         .fontSize(13)
-        .fontColor($r('app.color.brand_primary'))
+        .fontColor(this.accent)
         .width('100%')
         .opacity(this.loading || this.diagExporting ? 0.45 : 1)
         .onClick((): void => {
@@ -1157,7 +1160,7 @@ struct Login {
 
       Text($r('app.string.privacy_policy_title'))
         .fontSize(13)
-        .fontColor($r('app.color.brand_primary'))
+        .fontColor(this.accent)
         .textAlign(TextAlign.Center)
         .width('100%')
         .onClick((): void => {
@@ -1193,7 +1196,7 @@ struct Login {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

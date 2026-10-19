@@ -34,6 +34,7 @@ import {
   SEARCH_FILTER_FIELD_MAKE,
   SEARCH_FILTER_FIELD_PERSON
 } from './GallerySearchFilterTypes';
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 
 class GallerySearchAvatarSpec {
   avatarUrl: string = '';
@@ -51,6 +52,7 @@ const SEARCH_FILTER_SHEET_BOTTOM_FALLBACK_VP: number = 20;
 
 @Component
 export struct GallerySearchFilterSheet {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   applied: GallerySearchFilterSnapshot = new GallerySearchFilterSnapshot();
   onSearch: (snapshot: GallerySearchFilterSnapshot) => void = (_: GallerySearchFilterSnapshot): void => {};
 
@@ -662,7 +664,7 @@ export struct GallerySearchFilterSheet {
         .textAlign(TextAlign.Center)
       Text('清除')
         .fontSize(14)
-        .fontColor($r('sys.color.ohos_id_color_activated'))
+        .fontColor(this.accent)
         .padding({ left: 8, right: 4, top: 10, bottom: 10 })
         .onClick((): void => {
           this.clearCurrentPicker();
@@ -689,7 +691,7 @@ export struct GallerySearchFilterSheet {
             .borderRadius(999)
             .clip(true)
             .borderWidth(this.isPickerOptionSelected(opt) ? 2 : 0)
-            .borderColor($r('sys.color.ohos_id_color_activated'))
+            .borderColor(this.accent)
             .backgroundColor($r('app.color.immersive_panel_border'))
             Text(opt.label)
               .fontSize(12)
@@ -724,14 +726,14 @@ export struct GallerySearchFilterSheet {
           Row() {
             Text(`选择「${this.pickerTitle}」`)
               .fontSize(16)
-              .fontColor($r('sys.color.ohos_id_color_activated'))
+              .fontColor(this.accent)
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             if (this.pickerSelectedKey() === this.pickerWalk.join('/') && this.pickerWalk.length > 0) {
               SymbolGlyph($r('sys.symbol.checkmark'))
                 .fontSize(18)
-                .fontColor([$r('sys.color.ohos_id_color_activated')])
+                .fontColor([this.accent])
             }
           }
           .width('100%')
@@ -754,7 +756,7 @@ export struct GallerySearchFilterSheet {
               if (this.isPickerOptionSelected(opt)) {
                 SymbolGlyph($r('sys.symbol.checkmark'))
                   .fontSize(18)
-                  .fontColor([$r('sys.color.ohos_id_color_activated')])
+                  .fontColor([this.accent])
               }
             }
             .layoutWeight(1)
@@ -841,7 +843,7 @@ export struct GallerySearchFilterSheet {
             Row({ space: 6 }) {
               Checkbox({ name: '已收藏' })
                 .select($$this.isCollect)
-                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .selectedColor(this.accent)
                 .shape(CheckBoxShape.ROUNDED_SQUARE)
                 .width(20)
                 .height(20)
@@ -863,7 +865,7 @@ export struct GallerySearchFilterSheet {
             Row({ space: 6 }) {
               Checkbox({ name: '不在相册内' })
                 .select($$this.notAlbum)
-                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .selectedColor(this.accent)
                 .shape(CheckBoxShape.ROUNDED_SQUARE)
                 .width(20)
                 .height(20)
@@ -885,7 +887,7 @@ export struct GallerySearchFilterSheet {
             Row({ space: 6 }) {
               Checkbox({ name: '无标签' })
                 .select($$this.notTag)
-                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .selectedColor(this.accent)
                 .shape(CheckBoxShape.ROUNDED_SQUARE)
                 .width(20)
                 .height(20)
@@ -907,7 +909,7 @@ export struct GallerySearchFilterSheet {
             Row({ space: 6 }) {
               Checkbox({ name: '无位置信息' })
                 .select($$this.notGeo)
-                .selectedColor($r('sys.color.ohos_id_color_activated'))
+                .selectedColor(this.accent)
                 .shape(CheckBoxShape.ROUNDED_SQUARE)
                 .width(20)
                 .height(20)
@@ -966,7 +968,7 @@ export struct GallerySearchFilterSheet {
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: $$this.showShootingInfo })
-          .selectedColor($r('sys.color.ohos_id_color_activated'))
+          .selectedColor(this.accent)
       }
       .width('100%')
       .height(40)

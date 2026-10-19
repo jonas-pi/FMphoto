@@ -12,10 +12,10 @@ import {
 } from '../album/GalleryPerfProfile';
 import { trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import {
-  fnApplySplashWindowBackground,
   fnApplySplashWindowChrome,
   fnRestoreAppSystemBars
 } from '../common/FnSplashTheme';
+import { fnApplyThemeWindowBackground, fnLoadThemeColorPreference, fnRefreshSystemColorPreview } from '../common/FnThemeColors';
 import { fnBindSystemAvoidArea, fnPublishSystemAvoidArea, fnUnbindSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { fnBindWindowBreakpoint, fnEnsureWindowBreakpointStorage, fnUnbindWindowBreakpoint } from '../common/FnWindowBreakpoint';
 import {
@@ -67,7 +67,8 @@ export default class EntryAbility extends UIAbility {
       AppStorage.set<number>('colorMode', dark ? 1 : 0);
       if (this.mainWindow !== null) {
         // 只换窗体底色并保证系统栏仍可见；切勿再套启动闪屏的隐藏状态栏逻辑
-        fnApplySplashWindowBackground(this.mainWindow, dark);
+        fnRefreshSystemColorPreview(this.context);
+        fnApplyThemeWindowBackground(this.mainWindow, this.context);
         fnRestoreAppSystemBars(this.mainWindow);
         fnPublishSystemAvoidArea(this.mainWindow);
       }
@@ -91,6 +92,11 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate<number>('colorMode', dark ? 1 : 0);
       fnSetImmersiveLightEnabled(true);
       void fnLoadImmersiveLightPreference(this.context);
+      void fnLoadThemeColorPreference(this.context).then((): void => {
+        if (this.mainWindow !== null) {
+          fnApplyThemeWindowBackground(this.mainWindow, this.context);
+        }
+      });
       hilog.info(DOMAIN, LOG_TAG, 'initial colorMode=%{public}d', dark ? 1 : 0);
     } catch (_e) {}
 
@@ -99,6 +105,7 @@ export default class EntryAbility extends UIAbility {
       this.mainWindow = mainWindow;
       // 首帧前即全屏无系统栏，与 StartWindow 居中基准一致
       fnApplySplashWindowChrome(mainWindow, dark, true);
+      fnApplyThemeWindowBackground(mainWindow, this.context);
       fnBindSystemAvoidArea(mainWindow);
       try {
         const ui = mainWindow.getUIContext();

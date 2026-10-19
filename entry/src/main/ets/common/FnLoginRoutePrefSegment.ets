@@ -16,6 +16,7 @@ import {
   fnHdsImmersiveTabsFloatingStyle
 } from './FnUiCommon';
 import { fnDeviceSupportsHdsImmersive } from './FnImmersiveSettings';
+import { FN_RESOLVED_ACCENT_KEY } from './FnThemeColors';
 
 const LOGIN_ROUTE_PREF_VALUES: string[] = [
   LOGIN_ENDPOINT_PREF_AUTO,
@@ -39,6 +40,7 @@ function fnLoginRoutePrefIndex(value: string): number {
 
 @Component
 export struct FnLoginRoutePrefSegment {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onSelectedValueChanged') selectedValue: string = LOGIN_ENDPOINT_PREF_AUTO;
   @Prop disabled: boolean = false;
   onValueChange: (value: string) => void = (_: string) => {};
@@ -189,7 +191,7 @@ export struct FnLoginRoutePrefSegment {
       .width(this.itemWidth() > 0 ? this.itemWidth() : 0)
       .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP - LOGIN_ROUTE_SEGMENT_INNER_PAD_VP * 2)
       .borderRadius(LOGIN_ROUTE_SEGMENT_INNER_RADIUS_VP)
-      .backgroundColor($r('app.color.brand_primary'))
+      .backgroundColor(this.accent)
       .offset({ x: this.thumbXVp, y: LOGIN_ROUTE_SEGMENT_INNER_PAD_VP })
       .scale({
         x: this.dragging ? 1.08 : 1,

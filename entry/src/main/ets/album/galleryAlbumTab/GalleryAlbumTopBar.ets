@@ -20,6 +20,7 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 
 /** 官方 MINI 标题栏内容区高度 */
 export const GALLERY_TOP_BAR_MINI_HEIGHT_VP: number = 56;
@@ -55,6 +56,7 @@ function galleryAlbumTopBarEmptyPageContent() {
  */
 @Component
 struct GalleryAlbumSearchField {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onSeedQueryChanged') seedQuery: string = '';
   inputCtrl: TextInputController = new TextInputController();
   onTextChange: (value: string) => void = (_: string) => {};
@@ -97,7 +99,7 @@ struct GalleryAlbumSearchField {
           .backgroundColor(Color.Transparent)
           .fontSize(13)
           .fontColor($r('app.color.text_primary'))
-          .caretColor($r('app.color.brand_primary'))
+          .caretColor(this.accent)
           .placeholderColor($r('app.color.gallery_material_search_placeholder'))
           .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
           .enterKeyType(EnterKeyType.Search)

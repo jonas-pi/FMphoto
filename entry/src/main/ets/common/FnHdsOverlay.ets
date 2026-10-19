@@ -11,6 +11,7 @@ import {
   fnCurrentSdkApiVersion,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
+import { FN_RESOLVED_ACCENT_KEY, fnResolvedPageBackground } from './FnThemeColors';
 
 /** ArkUI 组件级 systemMaterial（bindSheet / bindMenu）起始 API */
 const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
@@ -206,6 +207,11 @@ export function fnHdsMediumDetentSheetOptions(title: ResourceStr, onDisappear: (
   return options;
 }
 
+/** 几乎全高的底部半模态。不新开页面，状态栏仍留在原来的页面上。 */
+export function fnHdsLargeSheetOptions(title: ResourceStr, onDisappear: () => void): SheetOptions {
+  return fnHdsSheetOptions(title, onDisappear, SheetSize.LARGE);
+}
+
 /**
  * SaveButton 专用半模态：实底、无模糊/材质，避免安全控件授权失败。
  */
@@ -219,7 +225,7 @@ export function fnHdsSaveButtonSheetOptions(title: string, onDisappear: () => vo
     showClose: true,
     dragBar: true,
     preferType: SheetType.BOTTOM,
-    backgroundColor: $r('app.color.page_background'),
+    backgroundColor: fnResolvedPageBackground(),
     onDisappear: onDisappear
   };
 }
@@ -283,6 +289,7 @@ export function fnHdsBindContextMenuOptions(
  */
 @Component
 struct FnHdsChoiceSheetItem {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop label: string = '';
   @Prop selected: boolean = false;
   onSelect: () => void = (): void => {};
@@ -321,7 +328,7 @@ struct FnHdsChoiceSheetItem {
           Blank()
           SymbolGlyph($r('sys.symbol.checkmark'))
             .fontSize(18)
-            .fontColor([$r('sys.color.ohos_id_color_activated')])
+            .fontColor([this.accent])
         }
         .width('100%')
         .height('100%')

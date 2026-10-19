@@ -115,12 +115,16 @@ import {
   RECYCLE_BIN_LIST_DOM_ID,
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 const RECYCLE_BIN_BASE_COLUMNS: number = 4;
 
 @Entry
 @Component
 struct RecycleBinPage {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @State private loading: boolean = false;
@@ -685,7 +689,7 @@ struct RecycleBinPage {
         .width('100%')
         .aspectRatio(1)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor($r('app.color.card_background'))
+        .backgroundColor(fnResolvedCardFill(this.cardBg))
       }
       GalleryAlbumSelectionOverlay({
         itemId: nid >= 0 ? `${nid}` : '',
@@ -752,7 +756,7 @@ struct RecycleBinPage {
             widthValue: 104,
             heightValue: 40,
             fontSizeValue: 16,
-            fontColorValue: $r('app.color.brand_primary'),
+            fontColorValue: this.accent,
             action: (): void => {
               void this.loadAll();
             }
@@ -942,7 +946,7 @@ struct RecycleBinPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(this.pageBg)
 
       Column()
         .width(1)

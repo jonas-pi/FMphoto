@@ -14,10 +14,13 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct PrivacyPolicy {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
@@ -199,7 +202,7 @@ struct PrivacyPolicy {
           if (this.decisionRequired) {
             Text($r('app.string.privacy_consent_locked_hint'))
               .fontSize(14)
-              .fontColor($r('app.color.brand_primary'))
+              .fontColor(this.accent)
               .lineHeight(22)
               .width('100%')
           }
@@ -266,17 +269,17 @@ struct PrivacyPolicy {
           this.paragraph('开发者：皮朝猛。如对隐私政策或数据处理有疑问、投诉或行使查阅 / 复制 / 更正 / 删除 / 撤回同意等权利，请通过客服邮箱或 GitHub 联系，我们将在验证后十五个工作日内答复：')
           Text('pichaomeng@gmail.com')
             .fontSize(14)
-            .fontColor($r('app.color.brand_primary'))
+            .fontColor(this.accent)
             .lineHeight(22)
             .width('100%')
           Text('https://github.com/jonas-pi/FMphoto')
             .fontSize(14)
-            .fontColor($r('app.color.brand_primary'))
+            .fontColor(this.accent)
             .lineHeight(22)
             .width('100%')
           Text('https://jonas-pi.github.io/FMphoto/privacy.html')
             .fontSize(14)
-            .fontColor($r('app.color.brand_primary'))
+            .fontColor(this.accent)
             .lineHeight(22)
             .width('100%')
 
@@ -309,7 +312,7 @@ struct PrivacyPolicy {
           .height(42)
           .fontSize(14)
           .fontColor(Color.White)
-          .backgroundColor($r('app.color.brand_primary'))
+          .backgroundColor(this.accent)
           .borderRadius(14)
           .enabled(!this.submitting)
           .onClick((): void => {
@@ -326,7 +329,7 @@ struct PrivacyPolicy {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 

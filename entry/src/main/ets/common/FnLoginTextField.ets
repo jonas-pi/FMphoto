@@ -5,11 +5,13 @@
  * InputType.Password 会拉起 TEE 安全键盘，从普通键盘切过去会再卡 600ms+，密码框用普通键盘 + 圆点遮罩。
  */
 import { applyLoginPasswordEdit, loginPasswordMask } from './FnLoginPasswordMask';
+import { FN_RESOLVED_ACCENT_KEY } from './FnThemeColors';
 
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 
 @Component
 export struct FnLoginTextField {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onSeedTextChanged') seedText: string = '';
   @Prop placeholder: Resource = $r('app.string.hint_fnid');
   @Prop inputType: InputType = InputType.Normal;
@@ -86,7 +88,7 @@ export struct FnLoginTextField {
           .padding({ left: 14, right: 4 })
           .fontColor($r('app.color.text_primary'))
           .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-          .caretColor($r('app.color.brand_primary'))
+          .caretColor(this.accent)
           .enabled(this.fieldEnabled)
           .backgroundColor(Color.Transparent)
 
@@ -129,7 +131,7 @@ export struct FnLoginTextField {
         .borderColor($r('app.color.login_input_border'))
         .fontColor($r('app.color.text_primary'))
         .placeholderColor($r('app.color.gallery_material_search_placeholder'))
-        .caretColor($r('app.color.brand_primary'))
+        .caretColor(this.accent)
         .enabled(this.fieldEnabled)
         .backgroundColor($r('app.color.login_input_fill'))
     }

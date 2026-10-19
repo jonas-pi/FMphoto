@@ -447,6 +447,7 @@ import {
   YearMarker,
   ymKey,
 } from './galleryAlbumTab/GalleryAlbumTabTypes';
+import { FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 const GALLERY_GRANULARITY_HOST_SWITCH_DURATION_MS: number = 300;
 const GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP: number = 18;
@@ -456,6 +457,7 @@ const GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY: number = 0.7;
 
 @Component
 export struct GalleryAlbumTab {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @Prop @Watch('onGalleryBaseUrlChanged') baseUrl: string = '';
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
   @Prop topSafeInsetVp: number = 0;
@@ -3421,7 +3423,7 @@ export struct GalleryAlbumTab {
         }
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.page_background'))
+        .backgroundColor(this.pageBg)
         .onAreaChange((_old, area): void => {
           const width = area.width as number;
           if (width > 0 && Math.abs(width - this.rootModeContentWidthVp) > 0.5) {

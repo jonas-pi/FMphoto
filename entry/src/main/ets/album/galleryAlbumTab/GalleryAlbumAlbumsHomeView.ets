@@ -1,4 +1,5 @@
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem, UserAlbumItem } from '../../model/FnApiTypes';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY } from '../../common/FnThemeColors';
 import {
   FnInlineLoading,
   FnStateText
@@ -64,6 +65,8 @@ class AlbumsHomeRestoreCard {
 
 @Component
 export struct GalleryAlbumAlbumsHomeView {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop @Watch('onBaseUrlChanged') baseUrl: string = '';
   @Prop @Watch('onPageVisibleChanged') pageVisible: boolean = false;
   @Prop @Watch('onPageShowSignalChanged') pageShowSignal: number = 0;
@@ -744,7 +747,7 @@ export struct GalleryAlbumAlbumsHomeView {
   private tileCornerButton(tileKey: string, add: boolean) {
     SymbolGlyph(add ? $r('sys.symbol.plus_circle_fill') : $r('sys.symbol.minus_circle_fill'))
       .fontSize(24)
-      .fontColor([add ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_warning')])
+      .fontColor([add ? this.accent : $r('sys.color.ohos_id_color_warning')])
       .margin({ top: 4, right: 4 })
       .align(Alignment.TopEnd)
       .draggable(false)
@@ -1619,7 +1622,7 @@ export struct GalleryAlbumAlbumsHomeView {
     }
     .width('100%')
     .borderRadius(ALBUMS_HOME_SHORTCUT_GROUP_RADIUS_VP)
-    .backgroundColor($r('app.color.album_shortcut_group_bg'))
+    .backgroundColor(this.cardBg.length > 0 ? this.cardBg : $r('app.color.album_shortcut_group_bg'))
     .clip(true)
   }
 
@@ -1632,7 +1635,7 @@ export struct GalleryAlbumAlbumsHomeView {
     }
     .width('100%')
     .borderRadius(ALBUMS_HOME_SHORTCUT_GROUP_RADIUS_VP)
-    .backgroundColor($r('app.color.album_shortcut_group_bg'))
+    .backgroundColor(this.cardBg.length > 0 ? this.cardBg : $r('app.color.album_shortcut_group_bg'))
     .clip(true)
   }
 

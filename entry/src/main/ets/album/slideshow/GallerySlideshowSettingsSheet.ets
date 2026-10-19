@@ -7,6 +7,7 @@ import {
   GallerySlideshowConfig,
   GallerySlideshowPlayMode
 } from './GallerySlideshowTypes';
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 
 /**
  * 幻灯片设置：作为 bindSheet FIT_CONTENT 内容，高度跟选项/开关走，
@@ -15,6 +16,7 @@ import {
  */
 @Component
 export struct GallerySlideshowSettingsSheet {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop preparing: boolean = false;
 
   onStart: (config: GallerySlideshowConfig) => void = (_: GallerySlideshowConfig): void => {};
@@ -76,7 +78,7 @@ export struct GallerySlideshowSettingsSheet {
         .fontSize(15)
         .fontColor($r('app.color.text_primary'))
       Toggle({ type: ToggleType.Switch, isOn: isOn })
-        .selectedColor($r('app.color.brand_primary'))
+        .selectedColor(this.accent)
         .onChange((value: boolean): void => {
           onChange(value);
         })
@@ -125,9 +127,9 @@ export struct GallerySlideshowSettingsSheet {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .selectedColor($r('app.color.brand_primary'))
+            .selectedColor(this.accent)
             .trackThickness(4)
-            .blockColor($r('app.color.brand_primary'))
+            .blockColor(this.accent)
             .onChange((value: number, _mode: SliderChangeMode): void => {
               this.intervalSec = Math.round(value);
             })

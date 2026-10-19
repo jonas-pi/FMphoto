@@ -417,6 +417,22 @@
       "value": "导出失败，请重试"
     },
     {
+      "name": "rate_app_entry_title",
+      "value": "给个评分"
+    },
+    {
+      "name": "rate_app_entry_subtitle",
+      "value": "在应用市场为飞马相册打分"
+    },
+    {
+      "name": "rate_app_need_huawei_id",
+      "value": "系统未登录华为账号，暂时无法评分"
+    },
+    {
+      "name": "rate_app_unavailable",
+      "value": "暂时无法打开评分"
+    },
+    {
       "name": "config_sync_qr_section",
       "value": "二维码"
     },

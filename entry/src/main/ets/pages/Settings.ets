@@ -29,10 +29,13 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
+import { fnResolvedCardFill, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct Settings {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @State private albumParentGuid: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
@@ -140,7 +143,7 @@ struct Settings {
             this.albumParentGuid = v;
           })
           .width('100%')
-          .backgroundColor($r('app.color.card_background'))
+          .backgroundColor(fnResolvedCardFill(this.cardBg))
           .borderRadius($r('app.float.radius_small'))
           .padding({ left: 12, right: 12 })
 
@@ -161,7 +164,7 @@ struct Settings {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
   }
 
   pageTransition(): void {

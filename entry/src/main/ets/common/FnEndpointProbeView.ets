@@ -6,6 +6,7 @@
  * 滚动条用 BarState.Off（官方默认 Auto，半模态/系统相册同类面板关掉常驻条）。
  */
 import { LoginEndpointProbeLine, LoginEndpointSelectionResult } from '../network/LoginEndpointSelector';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY } from './FnThemeColors';
 
 @Observed
 export class FnEndpointProbeLineItem {
@@ -97,6 +98,8 @@ export function buildEndpointProbeDisplay(
 
 @Component
 export struct FnEndpointProbeView {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop probing: boolean = false;
   @Prop hintText: string = '';
   @Prop selectedTitle: Resource = $r('app.string.login_probe_selected');
@@ -132,7 +135,7 @@ export struct FnEndpointProbeView {
   }
 
   private latencyColor(ok: boolean): ResourceColor {
-    return ok ? $r('app.color.brand_primary') : $r('app.color.text_secondary');
+    return ok ? this.accent : $r('app.color.text_secondary');
   }
 
   private sheetContentPadding(): Padding {
@@ -164,7 +167,7 @@ export struct FnEndpointProbeView {
       LoadingProgress()
         .width(18)
         .height(18)
-        .color($r('app.color.brand_primary'))
+        .color(this.accent)
       Text($r('app.string.login_probe_status'))
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
@@ -229,7 +232,7 @@ export struct FnEndpointProbeView {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-    .backgroundColor($r('app.color.card_background'))
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
     .borderRadius(16)
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))
@@ -320,7 +323,7 @@ export struct FnEndpointProbeView {
       .layoutWeight(this.fillSheet ? 1 : 0)
       .padding(this.sheetContentPadding())
       .borderRadius(this.useCardStyle ? $r('app.float.radius_medium') : 0)
-      .backgroundColor(this.useCardStyle ? $r('app.color.card_background') : Color.Transparent)
+      .backgroundColor(this.useCardStyle ? fnResolvedCardFill(this.cardBg) : Color.Transparent)
       .alignItems(HorizontalAlign.Start)
     }
   }

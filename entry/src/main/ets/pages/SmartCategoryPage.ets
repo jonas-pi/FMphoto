@@ -41,6 +41,7 @@ import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnInlineLoading, FnPrimaryButton, FnStateText } from '../common/FnUiCommon';
 import { fnHdsFitContentSheetOptions } from '../common/FnHdsOverlay';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 const SMART_CAT_LOG_DOMAIN: number = 0xFF00;
 const SMART_CAT_LOG_TAG: string = 'SmartCategory';
@@ -48,6 +49,9 @@ const SMART_CAT_LOG_TAG: string = 'SmartCategory';
 @Entry
 @Component
 struct SmartCategoryPage {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) private windowWidthBp: number = WidthBreakpoint.WIDTH_SM;
@@ -543,7 +547,7 @@ struct SmartCategoryPage {
       if (showAdd) {
         Text('添加关键词')
           .fontSize(13)
-          .fontColor($r('app.color.brand_primary'))
+          .fontColor(this.accent)
           .onClick((): void => {
             this.openAddSheet();
           })
@@ -596,7 +600,7 @@ struct SmartCategoryPage {
         })
         .width('100%')
         .height(44)
-        .backgroundColor($r('app.color.card_background'))
+        .backgroundColor(fnResolvedCardFill(this.cardBg))
         .borderRadius($r('app.float.radius_medium'))
         .padding({ left: 12, right: 12 })
 
@@ -800,7 +804,7 @@ struct SmartCategoryPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.pageBg)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.addSheetVisible, this.addKeywordSheetBuilder, fnHdsFitContentSheetOptions(
       '添加关键词',

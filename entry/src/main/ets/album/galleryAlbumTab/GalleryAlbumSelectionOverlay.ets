@@ -6,6 +6,8 @@
  * visualScope 隔离主图库 / 分类子页 / 回收站，避免路由栈叠页时串选。
  */
 
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
+
 export const GALLERY_SELECTION_SCOPE_ALBUM: string = 'album';
 export const GALLERY_SELECTION_SCOPE_CATEGORY: string = 'category';
 export const GALLERY_SELECTION_SCOPE_RECYCLE: string = 'recycle';
@@ -119,6 +121,7 @@ export function galleryAlbumIsSelectionVisualIdSelected(
 
 @Component
 export struct GalleryAlbumSelectionOverlay {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop itemId: string = '';
   @Prop visualScope: string = GALLERY_SELECTION_SCOPE_ALBUM;
   @Prop selectionMode: boolean = false;
@@ -159,7 +162,7 @@ export struct GalleryAlbumSelectionOverlay {
 
           SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
             .fontSize(24)
-            .fontColor([$r('app.color.brand_primary')])
+            .fontColor([this.accent])
             .renderingStrategy(SymbolRenderingStrategy.SINGLE)
             .opacity(this.selected ? 1 : 0)
         }

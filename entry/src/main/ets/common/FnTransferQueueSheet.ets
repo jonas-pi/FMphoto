@@ -1,4 +1,5 @@
 import { FnTransferDirection } from './FnTransferProgress';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY } from './FnThemeColors';
 import {
   FnTransferQueueStore,
   FnTransferTaskSnapshot,
@@ -11,6 +12,8 @@ import {
  */
 @Component
 export struct FnTransferQueueSheet {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
+  @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop tasks: FnTransferTaskSnapshot[] = [];
 
   private directionColor(direction: FnTransferDirection): ResourceColor {
@@ -30,7 +33,7 @@ export struct FnTransferQueueSheet {
     if (task.status === FnTransferTaskStatus.COMPLETED) {
       return '#059669';
     }
-    return $r('app.color.brand_primary');
+    return this.accent;
   }
 
   private progressText(task: FnTransferTaskSnapshot): string {
@@ -138,7 +141,7 @@ export struct FnTransferQueueSheet {
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 14, bottom: 14 })
-    .backgroundColor($r('app.color.card_background'))
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
     .borderRadius(14)
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))

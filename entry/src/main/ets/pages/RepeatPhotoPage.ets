@@ -37,6 +37,7 @@ import {
   repeatPhotoStartCheck,
   repeatPhotoThumbId
 } from './repeatPhotoPage/RepeatPhotoActions';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 const REPEAT_CARD_RADIUS_VP: number = 22;
 const REPEAT_THUMB_SIZE_VP: number = 96;
@@ -45,6 +46,8 @@ const REPEAT_POLL_MS: number = 2000;
 @Entry
 @Component
 struct RepeatPhotoPage {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
@@ -307,7 +310,7 @@ struct RepeatPhotoPage {
         widthValue: 120,
         heightValue: 40,
         fontSizeValue: 15,
-        fontColorValue: $r('app.color.brand_primary'),
+        fontColorValue: this.accent,
         outlined: true,
         action: (): void => {
           void repeatPhotoStartCheck(this.asActionsHost(), similar);
@@ -354,7 +357,7 @@ struct RepeatPhotoPage {
         .fontColor($r('app.color.text_primary'))
       Progress({ value: this.progress.percent, total: 100, type: ProgressType.Linear })
         .width('72%')
-        .color($r('app.color.brand_primary'))
+        .color(this.accent)
       if (this.progress.total > 0) {
         Text(`${this.progress.percent}%`)
           .fontSize(13)
@@ -385,7 +388,7 @@ struct RepeatPhotoPage {
           .fontColor(Color.White)
           .fontWeight(FontWeight.Medium)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .backgroundColor($r('app.color.brand_primary'))
+          .backgroundColor(this.accent)
           .borderRadius({ topLeft: 8, bottomRight: 8 })
       }
     }
@@ -495,7 +498,7 @@ struct RepeatPhotoPage {
         widthValue: 120,
         heightValue: 40,
         fontSizeValue: 15,
-        fontColorValue: $r('app.color.brand_primary'),
+        fontColorValue: this.accent,
         outlined: true,
         action: (): void => {
           this.step = 'start';
@@ -545,7 +548,7 @@ struct RepeatPhotoPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(this.pageBg)
 
       if (this.merging) {
         FnFullLoadingMask({ text: '合并中…', topOffsetVp: this.systemTopInsetVp })

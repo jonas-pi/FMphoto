@@ -39,18 +39,9 @@ export function fnDeviceSupportsHdsImmersive(): boolean {
   return fnCurrentSdkApiVersion() >= FN_HDS_MIN_SDK_API_VERSION;
 }
 
-export function fnIsImmersiveLightPreferenceEnabled(): boolean {
-  try {
-    const stored = AppStorage.get<boolean>(FN_IMMERSIVE_LIGHT_STORAGE_KEY);
-    return stored === undefined ? true : stored;
-  } catch (_e) {
-    return true;
-  }
-}
-
-export function fnCanUseHdsImmersive(userEnabled?: boolean): boolean {
-  const enabled = userEnabled === undefined ? fnIsImmersiveLightPreferenceEnabled() : userEnabled;
-  return enabled && fnDeviceSupportsHdsImmersive();
+/** 沉浸观感不再提供开关。系统版本够就一直开；旧的关闭记录不再生效。 */
+export function fnCanUseHdsImmersive(_userEnabled?: boolean): boolean {
+  return fnDeviceSupportsHdsImmersive();
 }
 
 export function fnSetImmersiveLightEnabled(enabled: boolean): void {
@@ -58,33 +49,14 @@ export function fnSetImmersiveLightEnabled(enabled: boolean): void {
 }
 
 export async function fnLoadImmersiveLightPreference(ctx: common.UIAbilityContext): Promise<boolean> {
-  let enabled = true;
+  syncImmersiveLightStorage(true);
   try {
     const p = await tryOpenPrefs(ctx);
-    if (p === null) {
-      syncImmersiveLightStorage(enabled);
-      return enabled;
+    if (p !== null) {
+      await p.put(K_IMMERSIVE_LIGHT_ENABLED, '1');
+      await p.flush();
     }
-    enabled = (await p.get(K_IMMERSIVE_LIGHT_ENABLED, '1') as string) !== '0';
-  } catch (_e) {
-    enabled = true;
-  }
-  syncImmersiveLightStorage(enabled);
-  return enabled;
-}
-
-export async function fnSaveImmersiveLightPreference(
-  ctx: common.UIAbilityContext,
-  enabled: boolean
-): Promise<void> {
-  syncImmersiveLightStorage(enabled);
-  try {
-    const p = await tryOpenPrefs(ctx);
-    if (p === null) {
-      return;
-    }
-    await p.put(K_IMMERSIVE_LIGHT_ENABLED, enabled ? '1' : '0');
-    await p.flush();
   } catch (_e) {
   }
+  return true;
 }

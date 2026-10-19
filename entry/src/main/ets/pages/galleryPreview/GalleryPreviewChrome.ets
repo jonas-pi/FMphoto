@@ -43,6 +43,7 @@ import {
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
 import { GALLERY_PREVIEW_DETAILS_COVER_KEY, GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
 import { playGalleryLongPressMenuHaptic } from '../../album/GallerySelectionHaptic';
@@ -70,6 +71,7 @@ const GALLERY_PREVIEW_TOP_MENU_SLOT_VP: number = 64;
 
 @Component
 export struct GalleryPreviewChrome {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   /** 自己订阅显隐，父页切换工具栏时不会整页重绘 Swiper */
   @StorageProp(GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY) @Watch('onChromeFadeInputsChanged')
   private toolbarVisible: boolean = true;
@@ -241,7 +243,7 @@ export struct GalleryPreviewChrome {
     if (this.originalActivated()) {
       return new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
         .fontSize(24)
-        .fontColor([$r('app.color.brand_primary')]);
+        .fontColor([this.accent]);
     }
     return new SymbolGlyphModifier($r('sys.symbol.picture'))
       .fontSize(24)

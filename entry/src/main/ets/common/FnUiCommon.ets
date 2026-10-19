@@ -39,6 +39,7 @@ import {
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from './FnSystemAvoidArea';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from './FnThemeColors';
 
 export const FN_FLOATING_TOP_MARGIN_VP: number = 8;
 export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
@@ -229,17 +230,6 @@ export function fnFloatingButtonActiveLightColor(
   return active ? FN_FLOATING_BUTTON_ACTIVE_LIGHT_COLOR : base;
 }
 
-export function fnFloatingButtonActiveFontColor(
-  active: boolean,
-  prominent: boolean,
-  base: ResourceColor
-): ResourceColor {
-  if (active || prominent) {
-    return $r('sys.color.ohos_id_color_activated');
-  }
-  return base;
-}
-
 export function fnBottomDockBottomGap(bottomSafeInsetVp: number): number {
   const liftedGap = FN_BOTTOM_DOCK_BASE_GAP_VP + (FN_BOTTOM_DOCK_CENTER_HEIGHT_VP / 4);
   return Math.max(liftedGap, bottomSafeInsetVp + liftedGap);
@@ -423,6 +413,8 @@ export function fnHdsBottomDockActionTabStyle(
 
 @Component
 export struct FnHdsPillButton {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop text: ResourceStr = '';
   @Prop widthValue: Length = FN_FLOATING_TOP_PILL_MIN_WIDTH_VP;
   @Prop heightValue: number = FN_FLOATING_TOP_CONTROL_SIZE_VP;
@@ -459,7 +451,10 @@ export struct FnHdsPillButton {
   }
 
   private resolvedFontColor(): ResourceColor {
-    return fnFloatingButtonActiveFontColor(this.active, this.prominent, this.fontColorValue);
+    if (this.active || this.prominent) {
+      return this.accent;
+    }
+    return this.fontColorValue;
   }
 
   private resolvedLightColor(): ResourceColor {
@@ -488,7 +483,7 @@ export struct FnHdsPillButton {
       Row()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.page_background'))
+        .backgroundColor(this.pageBg)
         .borderRadius(this.shapeRadius())
         .borderWidth(1)
         .borderColor($r('app.color.card_border'))
@@ -562,6 +557,7 @@ export struct FnHdsPillButton {
 
 @Component
 export struct FnHdsSymbolButton {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop symbol: Resource = $r('sys.symbol.more');
   @Prop widthValue: Length = FN_FLOATING_TOP_CONTROL_SIZE_VP;
   @Prop heightValue: number = FN_FLOATING_TOP_CONTROL_SIZE_VP;
@@ -598,7 +594,10 @@ export struct FnHdsSymbolButton {
   }
 
   private resolvedFontColor(): ResourceColor {
-    return fnFloatingButtonActiveFontColor(this.active, false, this.fontColorValue);
+    if (this.active) {
+      return this.accent;
+    }
+    return this.fontColorValue;
   }
 
   private resolvedLightColor(): ResourceColor {
@@ -760,6 +759,18 @@ export struct FnHdsTextPill {
   }
 }
 
+/** 自定义卡片上的高光。白玻璃太厚会把卡片色盖回白色。 */
+export function fnSoftCardGlassGradient(): LinearGradientOptions {
+  return {
+    angle: 132,
+    colors: [
+      ['#33FFFFFF', 0.00],
+      ['#14FFFFFF', 0.46],
+      ['#00FFFFFF', 1.00]
+    ]
+  };
+}
+
 export function fnLiquidGlassGradient(
   strong: boolean = false,
   pressed: boolean = false,
@@ -908,6 +919,7 @@ export struct FnTopBar {
 
 @Component
 export struct FnPrimaryButton {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop text: ResourceStr = '';
   action: () => void = () => {};
 
@@ -917,7 +929,7 @@ export struct FnPrimaryButton {
       widthValue: '100%',
       heightValue: 40,
       fontSizeValue: 16,
-      fontColorValue: $r('app.color.brand_primary'),
+      fontColorValue: this.accent,
       action: this.action
     })
   }
@@ -942,12 +954,13 @@ export struct FnSecondaryButton {
 
 @Component
 export struct FnImmersiveBackdrop {
+  @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   build() {
     Stack() {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.page_background'))
+        .backgroundColor(this.pageBg)
 
       Column() {
         Row() {

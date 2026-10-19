@@ -21,6 +21,7 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
+import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 
 const RECYCLE_BIN_BATCH_DOCK_WIDTH_VP: number = 204;
 
@@ -29,12 +30,13 @@ export struct RecycleBinBatchBar {
   @Prop downloading: boolean = false;
   @Prop restoring: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
 
   onDownload: () => void = () => {};
   onRestore: () => void = () => {};
 
   private actionColor(busy: boolean): ResourceColor {
-    return busy ? $r('app.color.text_secondary') : $r('app.color.brand_primary');
+    return busy ? $r('app.color.text_secondary') : this.accent;
   }
 
   private onBatchHdsAction(index: number): void {
