@@ -81,3 +81,6 @@ entry/build/**/*-signed.hap
 /dsh-tmp-*
 /.tmp-dsh-*
 /dsh-*.log
+
+# 本地备忘录（仅留本机，不入库）
+/notes/
