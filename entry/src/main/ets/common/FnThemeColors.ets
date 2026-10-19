@@ -162,8 +162,9 @@ export function fnPublishResolvedThemeColors(): void {
   }
   putStorage<string>(FN_RESOLVED_PAGE_BG_KEY, background);
   putStorage<string>(FN_RESOLVED_ACCENT_KEY, accent);
-  const usingCustom = customBackground.length > 0 || customAccent.length > 0;
-  putStorage<string>(FN_RESOLVED_CARD_BG_KEY, usingCustom ? fnCardSurfaceForPage(background, accent) : '');
+  // 卡片只跟自定义底色走。只改强调色时继续用资源里的卡片色。
+  putStorage<string>(FN_RESOLVED_CARD_BG_KEY,
+    customBackground.length > 0 ? fnCardSurfaceForPage(background) : '');
   if (customBackground.length > 0) {
     const onLight = fnReadableOnColor(background) === TEXT_ON_LIGHT;
     putStorage<string>(FN_RESOLVED_TEXT_PRIMARY_KEY, onLight ? TEXT_ON_LIGHT : TEXT_ON_DARK);
@@ -218,15 +219,14 @@ function fnMixColors(base: string, toward: string, towardAmount: number): string
 }
 
 /**
- * 卡片和页面同一色相，但明暗要差得出来。
- * 浅底把卡片朝白提亮；底色已经近白时，改用强调色把卡片染深一点。
- * 深底把卡片朝白抬亮，避免和页面糊成一块。
+ * 卡片和页面同一色相，但明暗要差得出来，不掺强调色。
+ * 浅底把卡片朝白提亮；底色已经近白时朝黑压一点，避免和页面糊在一起。
+ * 深底把卡片朝白抬亮。
  */
-export function fnCardSurfaceForPage(page: string, accent: string): string {
+export function fnCardSurfaceForPage(page: string): string {
   const luma = fnLuma(page);
   if (luma >= 232) {
-    const tint = fnNormalizeThemeHex(accent).length === 9 ? accent : '#FF4A8BFF';
-    return fnMixColors(page, tint, 0.28);
+    return fnMixColors(page, '#FF000000', 0.08);
   }
   if (luma >= 176) {
     return fnMixTowardWhite(page, 0.4);

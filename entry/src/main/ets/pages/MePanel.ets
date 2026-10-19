@@ -252,7 +252,8 @@ export struct MePanel {
   @StorageProp(FN_CUSTOM_BG_KEY) private customPageBg: string = '';
   @StorageProp(FN_CUSTOM_ACCENT_KEY) private customAccent: string = '';
   @StorageProp('colorMode') private colorMode: number = 0;
-  @State private colorEditorVisible: boolean = false;
+  @State private backgroundEditorVisible: boolean = false;
+  @State private accentEditorVisible: boolean = false;
   @State private colorEditorIsBackground: boolean = true;
   @State private colorEditorDraft: string = '#FFF4F7FB';
   @State private colorEditorError: string = '';
@@ -292,6 +293,14 @@ export struct MePanel {
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   private lastLanBurstToggleAt: number = 0;
+  private backgroundSheetToken: number = 0;
+  private accentSheetToken: number = 0;
+  private backgroundShownToken: number = 0;
+  private accentShownToken: number = 0;
+  private backgroundOpenTimer: number = -1;
+  private accentOpenTimer: number = -1;
+  private backgroundSheetOptions: SheetOptions = fnHdsFitContentSheetOptions('底色', (): void => {});
+  private accentSheetOptions: SheetOptions = fnHdsFitContentSheetOptions('强调色', (): void => {});
   private meScroller: Scroller = new Scroller();
   private probeSeq: number = 0;
   private twofaSwitchCompleted: boolean = false;
@@ -631,6 +640,17 @@ export struct MePanel {
     this.toggleLanBurstForce(!this.lanBurstForceEnabled);
   }
 
+  aboutToDisappear(): void {
+    if (this.backgroundOpenTimer >= 0) {
+      clearTimeout(this.backgroundOpenTimer);
+      this.backgroundOpenTimer = -1;
+    }
+    if (this.accentOpenTimer >= 0) {
+      clearTimeout(this.accentOpenTimer);
+      this.accentOpenTimer = -1;
+    }
+  }
+
   aboutToAppear(): void {
     this.refreshEndpointInfo();
     FnTransferQueueStore.ensureStorage();
@@ -670,7 +690,82 @@ export struct MePanel {
     this.colorEditorIsBackground = pageBackground;
     this.colorEditorDraft = pageBackground ? this.shownCustomBackground() : this.shownCustomAccent();
     this.colorEditorError = '';
-    this.colorEditorVisible = true;
+    if (pageBackground) {
+      this.presentColorEditor(true);
+      return;
+    }
+    this.presentColorEditor(false);
+  }
+
+  /**
+   * 开关如果停在 true，半模态却已经关掉，再设 true 不会重新弹出。
+   * 已经开着时先关掉，下一帧再打开，保证每次点击都有一次从关到开。
+   */
+  private presentColorEditor(pageBackground: boolean): void {
+    const token = pageBackground ? ++this.backgroundSheetToken : ++this.accentSheetToken;
+    const visible = pageBackground ? this.backgroundEditorVisible : this.accentEditorVisible;
+    const show = (): void => {
+      if (pageBackground) {
+        this.backgroundOpenTimer = -1;
+        if (this.backgroundSheetToken !== token) {
+          return;
+        }
+        this.backgroundSheetOptions = this.makeColorEditorOptions(true, token);
+        this.backgroundShownToken = token;
+        this.backgroundEditorVisible = true;
+        return;
+      }
+      this.accentOpenTimer = -1;
+      if (this.accentSheetToken !== token) {
+        return;
+      }
+      this.accentSheetOptions = this.makeColorEditorOptions(false, token);
+      this.accentShownToken = token;
+      this.accentEditorVisible = true;
+    };
+    if (!visible) {
+      show();
+      return;
+    }
+    if (pageBackground) {
+      this.backgroundEditorVisible = false;
+      if (this.backgroundOpenTimer >= 0) {
+        clearTimeout(this.backgroundOpenTimer);
+      }
+      this.backgroundOpenTimer = setTimeout(show, 0);
+      return;
+    }
+    this.accentEditorVisible = false;
+    if (this.accentOpenTimer >= 0) {
+      clearTimeout(this.accentOpenTimer);
+    }
+    this.accentOpenTimer = setTimeout(show, 0);
+  }
+
+  private closeColorEditor(): void {
+    if (this.colorEditorIsBackground) {
+      this.backgroundEditorVisible = false;
+      return;
+    }
+    this.accentEditorVisible = false;
+  }
+
+  private makeColorEditorOptions(pageBackground: boolean, token: number): SheetOptions {
+    return fnHdsFitContentSheetOptions(pageBackground ? '底色' : '强调色', (): void => {
+      if (pageBackground) {
+        if (this.backgroundShownToken !== token) {
+          return;
+        }
+        this.backgroundShownToken = 0;
+        this.backgroundEditorVisible = false;
+        return;
+      }
+      if (this.accentShownToken !== token) {
+        return;
+      }
+      this.accentShownToken = 0;
+      this.accentEditorVisible = false;
+    });
   }
 
   private isSchemeActive(scheme: FnThemeScheme): boolean {
@@ -708,7 +803,7 @@ export struct MePanel {
         this.colorEditorError = '请输入 #RGB、#RRGGBB 或 #AARRGGBB';
         return;
       }
-      this.colorEditorVisible = false;
+      this.closeColorEditor();
       window.getLastWindow(ctx).then((win: window.Window): void => {
         fnApplyThemeWindowBackground(win, ctx);
         fnApplyImmersiveSystemBarColors(win, this.colorMode === 1);
@@ -1188,20 +1283,29 @@ export struct MePanel {
       .scrollBar(BarState.Off)
       .width('100%')
 
-      ThemeColorSummaryRow({
-        label: '底色',
-        isPageBackground: true,
-        onOpen: (): void => {
-          this.openColorEditor(true);
-        }
-      })
-      ThemeColorSummaryRow({
-        label: '强调色',
-        isPageBackground: false,
-        onOpen: (): void => {
-          this.openColorEditor(false);
-        }
-      })
+      Column() {
+        ThemeColorSummaryRow({
+          label: '底色',
+          isPageBackground: true,
+          onOpen: (): void => {
+            this.openColorEditor(true);
+          }
+        })
+      }
+      .width('100%')
+      .bindSheet(this.backgroundEditorVisible, this.colorEditorSheet, this.backgroundSheetOptions)
+
+      Column() {
+        ThemeColorSummaryRow({
+          label: '强调色',
+          isPageBackground: false,
+          onOpen: (): void => {
+            this.openColorEditor(false);
+          }
+        })
+      }
+      .width('100%')
+      .bindSheet(this.accentEditorVisible, this.colorEditorSheet, this.accentSheetOptions)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -1213,12 +1317,6 @@ export struct MePanel {
     .borderWidth(1)
     .borderColor($r('app.color.immersive_panel_border'))
     .clip(true)
-    .bindSheet(this.colorEditorVisible, this.colorEditorSheet, fnHdsFitContentSheetOptions(
-      this.colorEditorIsBackground ? '底色' : '强调色',
-      (): void => {
-        this.colorEditorVisible = false;
-      }
-    ))
   }
 
   @Builder
