@@ -30,6 +30,70 @@ export interface RepeatPhotoActionsHost {
   stopTaskPolling(): void;
 }
 
+/**
+ * 本次进程内已成功合并的组 id。
+ * NAS 的 `repeat-photo/list` 结果集在合并后可能短暂滞后，重拉时要把这些组滤掉，
+ * 否则刚合并完的「未合并项」会重新出现在列表里。
+ */
+const repeatPhotoMergedIds: Set<string> = new Set<string>();
+
+function repeatPhotoForgetMergedIds(): void {
+  repeatPhotoMergedIds.clear();
+}
+
+function repeatPhotoMergedIdSet(list: RepeatPhotoGroup[]): Set<string> {
+  const ids: Set<string> = new Set<string>();
+  for (let i = 0; i < list.length; i++) {
+    const id = list[i].id;
+    if (id.length > 0) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * 只保留还有合并余地的组：
+ * 合并后服务端可能继续返回「只剩一项」的组，这类组没有可合并内容，展示出来就是残留的未合并项。
+ */
+function repeatPhotoTrimGroups(list: RepeatPhotoGroup[]): RepeatPhotoGroup[] {
+  const out: RepeatPhotoGroup[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const group = list[i];
+    if (group.photos.length <= 1) {
+      continue;
+    }
+    if (group.id.length > 0 && repeatPhotoMergedIds.has(group.id)) {
+      continue;
+    }
+    out.push(group);
+  }
+  return out;
+}
+
+/** 合并成功后立刻从本地列表剔除，不必等服务端刷新，也不会被滞后的一次重拉又拉回来。 */
+function repeatPhotoDropMergedGroups(host: RepeatPhotoActionsHost, groupId: string): void {
+  const dropped: Set<string> = groupId.length > 0 ?
+    new Set<string>([groupId]) : repeatPhotoMergedIdSet(host.groups);
+  dropped.forEach((id: string): void => {
+    repeatPhotoMergedIds.add(id);
+  });
+  if (dropped.size === 0) {
+    return;
+  }
+  const next: RepeatPhotoGroup[] = [];
+  for (let i = 0; i < host.groups.length; i++) {
+    const group = host.groups[i];
+    if (group.id.length > 0 && dropped.has(group.id)) {
+      continue;
+    }
+    next.push(group);
+  }
+  host.groups = next;
+  host.totalCount = next.length;
+  host.step = next.length > 0 ? 'list' : 'empty';
+}
+
 export async function repeatPhotoBootstrap(host: RepeatPhotoActionsHost): Promise<void> {
   host.loading = true;
   host.error = '';
@@ -71,7 +135,14 @@ export async function repeatPhotoBootstrap(host: RepeatPhotoActionsHost): Promis
   }
 }
 
-export async function repeatPhotoLoadGroups(host: RepeatPhotoActionsHost): Promise<void> {
+/**
+ * 拉取结果列表。
+ * preserveViewOnFailure：合并后的对齐刷新用它，网络失败时保留本地刚剔除过的列表，不把界面切到错误页。
+ */
+export async function repeatPhotoLoadGroups(
+  host: RepeatPhotoActionsHost,
+  preserveViewOnFailure: boolean = false
+): Promise<void> {
   const client = AppSession.getClient();
   if (client === null) {
     host.loading = false;
@@ -81,27 +152,30 @@ export async function repeatPhotoLoadGroups(host: RepeatPhotoActionsHost): Promi
   }
   host.loading = true;
   host.error = '';
-  const merged: RepeatPhotoGroup[] = [];
+  const collected: RepeatPhotoGroup[] = [];
   let offset = 0;
   let strategy = '';
-  let total = 0;
+  let firstPageLoaded = false;
   try {
     for (;;) {
       const res: FnClientResult<RepeatPhotoListData> = await client.getRepeatPhotoList(offset, REPEAT_PHOTO_PAGE_SIZE);
       if (!res.success || res.data === undefined) {
-        if (merged.length === 0) {
-          host.step = 'error';
-          host.error = res.message ?? '加载页面失败';
+        if (!firstPageLoaded) {
+          if (!preserveViewOnFailure) {
+            host.step = 'error';
+            host.error = res.message ?? '加载页面失败';
+          }
+          return;
         }
         break;
       }
+      firstPageLoaded = true;
       if (strategy.length === 0 && res.data.strategy.length > 0) {
         strategy = res.data.strategy;
       }
-      total = Math.max(total, res.data.count);
       const batch = res.data.list;
       for (let i = 0; i < batch.length; i++) {
-        merged.push(batch[i]);
+        collected.push(batch[i]);
       }
       if (batch.length < REPEAT_PHOTO_PAGE_SIZE) {
         break;
@@ -111,12 +185,13 @@ export async function repeatPhotoLoadGroups(host: RepeatPhotoActionsHost): Promi
         break;
       }
     }
-    host.groups = merged.slice();
-    host.totalCount = Math.max(total, merged.length);
+    const shown = repeatPhotoTrimGroups(collected);
+    host.groups = shown;
+    host.totalCount = shown.length;
     host.strategy = strategy;
-    host.step = merged.length > 0 ? 'list' : 'empty';
+    host.step = shown.length > 0 ? 'list' : 'empty';
   } catch (e) {
-    if (merged.length === 0) {
+    if (!firstPageLoaded && !preserveViewOnFailure) {
       host.step = 'error';
       host.error = String(e) || '加载页面失败';
     }
@@ -134,6 +209,8 @@ export async function repeatPhotoStartCheck(host: RepeatPhotoActionsHost, checkS
     host.toast('未登录');
     return;
   }
+  // 新的一次检查会重建结果集，之前记录的「已合并组」不再适用于新结果。
+  repeatPhotoForgetMergedIds();
   host.starting = true;
   const res: FnClientResult<Object> = await client.startRepeatPhotoCheck(checkSimilarity);
   host.starting = false;
@@ -227,15 +304,21 @@ export async function repeatPhotoMerge(host: RepeatPhotoActionsHost, groupId: st
     return;
   }
   host.merging = true;
-  const res: FnClientResult<RepeatPhotoMergeData> = await client.mergeRepeatPhotos(groupId);
-  host.merging = false;
-  if (!res.success) {
-    host.toast(res.message ?? '合并失败');
-    return;
+  try {
+    const res: FnClientResult<RepeatPhotoMergeData> = await client.mergeRepeatPhotos(groupId);
+    if (!res.success) {
+      host.toast(res.message ?? '合并失败');
+      return;
+    }
+    const recycled = res.data !== undefined ? res.data.recycledCount : 0;
+    // 先本地剔除已合并的组：服务端结果集有延迟时，也不会再显示这些「未合并项」。
+    repeatPhotoDropMergedGroups(host, groupId);
+    host.toast(recycled > 0 ? `已成功将 ${recycled} 项内容移到回收站` : '合并成功');
+    // 再与服务端对齐一次；失败时保留刚刷新的本地列表，不要把界面切到错误页。
+    await repeatPhotoLoadGroups(host, true);
+  } finally {
+    host.merging = false;
   }
-  const recycled = res.data !== undefined ? res.data.recycledCount : 0;
-  host.toast(recycled > 0 ? `已成功将 ${recycled} 项内容移到回收站` : '合并成功');
-  await repeatPhotoLoadGroups(host);
 }
 
 export function repeatPhotoHasPendingResults(host: RepeatPhotoActionsHost): boolean {
