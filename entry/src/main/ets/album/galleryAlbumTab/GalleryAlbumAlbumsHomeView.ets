@@ -37,6 +37,7 @@ import {
 } from '../AlbumsHomeTileOrderPreferences';
 import { userAlbumCount, userAlbumCover, userAlbumIsBaby, userAlbumName } from '../GalleryAlbumEntityData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { ImageModifier } from '@kit.ArkUI';
 import { playGalleryDragSortHaptic } from '../GallerySelectionHaptic';
 import { fnHdsMediumDetentSheetOptions } from '../../common/FnHdsOverlay';
 
@@ -146,6 +147,16 @@ export struct GalleryAlbumAlbumsHomeView {
   private shortcutPreviewGen: number = 0;
   private shortcutRetryTimer: number = -1;
   private shortcutRetryCount: number = 0;
+  /** 长按拖影只取封面，并按封面圆角裁切，避免标题和透明边被系统描成不规则轮廓。 */
+  private homeTileDragModifier: ImageModifier = (new ImageModifier()
+    .opacity(1)
+    .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
+    .shadow({
+      radius: 0,
+      color: Color.Transparent,
+      offsetX: 0,
+      offsetY: 0
+    })) as ImageModifier;
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
@@ -822,7 +833,7 @@ export struct GalleryAlbumAlbumsHomeView {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.TopEnd }) {
         Stack({ alignContent: Alignment.Bottom }) {
-          this.mediaThumb(item.coverUri, item.title.slice(0, 1))
+          this.mediaThumb(item.coverUri, item.title.slice(0, 1), `restore_cover_${item.key.replace(/:/g, '_')}`)
           if (item.baby) {
             this.babyCoverStreamMask()
           }
@@ -885,6 +896,10 @@ export struct GalleryAlbumAlbumsHomeView {
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 16, right: 16, top: 8, bottom: 24 })
     .backgroundColor(Color.Transparent)
+  }
+
+  private homeCoverDragId(tileKey: string): string {
+    return `albums_home_cover_${tileKey.replace(/:/g, '_')}`;
   }
 
   @Builder
@@ -1177,7 +1192,7 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   @Builder
-  private mediaThumb(uri: string, placeholder: string) {
+  private mediaThumb(uri: string, placeholder: string, nodeId: string) {
     Stack({ alignContent: Alignment.Center }) {
       if (uri.length > 0) {
         GalleryNetworkThumb({
@@ -1207,6 +1222,7 @@ export struct GalleryAlbumAlbumsHomeView {
         .backgroundColor($r('app.color.gallery_material_surface_bg'))
       }
     }
+    .id(nodeId)
     .width('100%')
     .aspectRatio(1)
     .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
@@ -1224,7 +1240,8 @@ export struct GalleryAlbumAlbumsHomeView {
         Stack({ alignContent: Alignment.TopEnd }) {
           this.mediaThumb(
             nasUrl(this.baseUrl, this.getMediaCategoryCover(item)),
-            this.getMediaCategoryTitle(item).slice(0, 1)
+            this.getMediaCategoryTitle(item).slice(0, 1),
+            this.homeCoverDragId(albumsHomeMediaTileKey(item))
           )
           if (this.mediaReorderActive) {
             this.tileCornerButton(albumsHomeMediaTileKey(item), false)
@@ -1423,11 +1440,16 @@ export struct GalleryAlbumAlbumsHomeView {
     Column({ space: 8 }) {
       Stack({ alignContent: Alignment.TopEnd }) {
         Stack({ alignContent: Alignment.Bottom }) {
-          this.mediaThumb(this.userAlbumCoverUri(item), userAlbumName(item).slice(0, 1))
+          this.mediaThumb(
+            this.userAlbumCoverUri(item),
+            userAlbumName(item).slice(0, 1),
+            `albums_home_album_thumb_${albumsHomeAlbumTileKey(item).replace(/:/g, '_')}`
+          )
           if (userAlbumIsBaby(item)) {
             this.babyCoverStreamMask()
           }
         }
+        .id(this.homeCoverDragId(albumsHomeAlbumTileKey(item)))
         .width('100%')
         .borderRadius(ALBUMS_HOME_MEDIA_CARD_RADIUS_VP)
         .clip(true)
@@ -1683,6 +1705,15 @@ export struct GalleryAlbumAlbumsHomeView {
                   this.homeTileCell(tile)
                 }
                 .width('100%')
+                .dragPreview(this.homeCoverDragId(albumsHomeTileKey(tile)))
+                .dragPreviewOptions({
+                  mode: [
+                    DragPreviewMode.DISABLE_SCALE,
+                    DragPreviewMode.ENABLE_TOUCH_POINT_CALCULATION_BASED_ON_FINAL_PREVIEW
+                  ],
+                  numberBadge: false,
+                  modifier: this.homeTileDragModifier
+                })
               }, (tile: AlbumsHomeTile) => albumsHomeTileKey(tile))
                 .onMove((from: number, to: number): void => {
                   this.onHomeTileMove(from, to);

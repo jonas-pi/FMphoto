@@ -73,3 +73,11 @@ entry/build/**/*-signed.hap
 /.tmp-diag/
 /.tmp-crash/
 /.tmp-uitest/
+
+# AI 会话（DSH）在工作区产生的临时文件，一律不入库：
+# 权限修复报告/备份、临时脚本、抓取产物、日志等
+/dsh-acl-recovery/
+/.dsh-tmp/
+/dsh-tmp-*
+/.tmp-dsh-*
+/dsh-*.log
