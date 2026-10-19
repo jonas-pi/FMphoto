@@ -134,11 +134,17 @@ import {
   folderBrowseToggleToolbarMode,
   FolderBrowseSelectionHost
 } from './folderBrowsePage/FolderBrowseSelectionController';
-import { FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct FolderBrowsePage {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   private albumNavigationMode: boolean = false;
   @StorageProp(FN_MEDIA_BASE_URL) private baseUrl: string = '';
@@ -1018,7 +1024,7 @@ struct FolderBrowsePage {
           Column() {
             SymbolGlyph($r('sys.symbol.folder_fill'))
               .fontSize(36)
-              .fontColor([$r('app.color.text_secondary')])
+              .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
           }
           .width('100%')
           .aspectRatio(1)
@@ -1121,7 +1127,7 @@ struct FolderBrowsePage {
     Column() {
       Text(title)
         .width('100%')
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxFontSize(FOLDER_BROWSE_TITLE_MAX_FP)
         .minFontSize(FOLDER_BROWSE_TITLE_MIN_FP)
         .maxLines(2)

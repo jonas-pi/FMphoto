@@ -13,7 +13,7 @@ import {
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
 import { AppSession } from '../auth/AppSession';
-import { fnRestoreAppSystemBars } from '../common/FnSplashTheme';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -29,11 +29,17 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
-import { fnResolvedCardFill, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct Settings {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @State private albumParentGuid: string = '';
@@ -57,16 +63,10 @@ struct Settings {
   private applySystemBarTheme(): void {
     try {
       const dark = this.colorMode === 1;
-      const bg = dark ? '#FF1C1C1E' : '#FFF5F5F5';
-      const content = dark ? '#FFFFFFFF' : '#FF000000';
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(ctx).then((win: window.Window): void => {
-        fnRestoreAppSystemBars(win);
         fnPublishSystemAvoidArea(win, this.getUIContext());
-        win.setWindowSystemBarProperties({
-          statusBarColor: bg, navigationBarColor: bg,
-          statusBarContentColor: content, navigationBarContentColor: content
-        }).catch((_e: Error): void => {});
+        fnApplyImmersiveSystemBarColors(win, dark);
       }).catch((_e: Error): void => {});
     } catch (_e) {}
   }
@@ -127,7 +127,8 @@ struct Settings {
         .mode(NavigationMode.Stack)
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(false)
-        .titleBar(fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false))
+        .titleBar(fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false,
+          fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary)))
       }
       .width('100%')
       .padding({ top: this.systemTopInsetVp })
@@ -149,12 +150,12 @@ struct Settings {
 
         Text($r('app.string.album_parent_hint'))
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
 
         Text($r('app.string.fnid_deferred'))
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .margin({ top: 24 })
       }

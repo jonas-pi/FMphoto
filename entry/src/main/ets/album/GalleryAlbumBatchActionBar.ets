@@ -21,12 +21,15 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../common/FnImmersiveSettings';
-import { FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const GALLERY_BATCH_ACTION_DOCK_WIDTH_VP: number = 228;
 
 @Component
 export struct GalleryAlbumBatchActionBar {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop downloading: boolean = false;
   @Prop deleting: boolean = false;
   /** 所选含文件夹时置灰删除，仍回调 onDelete 由页面提示 */
@@ -41,7 +44,7 @@ export struct GalleryAlbumBatchActionBar {
 
   private actionColor(busy: boolean, destructive: boolean = false): ResourceColor {
     if (busy || (destructive && !this.deleteEnabled)) {
-      return $r('app.color.text_secondary');
+      return fnResolvedTextSecondary(this.themeTextSecondary);
     }
     return destructive ? '#E11D48' : this.accent;
   }

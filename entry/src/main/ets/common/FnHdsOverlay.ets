@@ -11,7 +11,9 @@ import {
   fnCurrentSdkApiVersion,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
-import { FN_RESOLVED_ACCENT_KEY, fnResolvedPageBackground } from './FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY, fnResolvedPageBackground,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY} from './FnThemeColors';
 
 /** ArkUI 组件级 systemMaterial（bindSheet / bindMenu）起始 API */
 const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
@@ -289,6 +291,7 @@ export function fnHdsBindContextMenuOptions(
  */
 @Component
 struct FnHdsChoiceSheetItem {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop label: string = '';
   @Prop selected: boolean = false;
@@ -318,7 +321,7 @@ struct FnHdsChoiceSheetItem {
       Text(this.label)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .textAlign(TextAlign.Center)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })

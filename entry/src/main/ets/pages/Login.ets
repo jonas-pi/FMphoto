@@ -54,7 +54,11 @@ import {
 } from '../common/FnMotion';
 import { FN_SHARE_INBOX_VERSION_KEY } from '../album/share/GalleryShareInbox';
 import { galleryShareTryConsume } from '../album/share/GalleryShareConsume';
-import { FN_RESOLVED_PAGE_BG_KEY, FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_PAGE_BG_KEY, FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const LOGIN_DOMAIN = 0xFF00;
 const LOGIN_TAG = 'Login';
@@ -67,6 +71,8 @@ const LOGIN_PANEL_EDGE_GAP_VP: number = 12;
 @Entry
 @Component
 struct Login {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @State private fnIdInput: string = '';
@@ -907,7 +913,7 @@ struct Login {
       Button({ type: ButtonType.Normal, stateEffect: true }) {
         SymbolGlyph($r('sys.symbol.chevron_down'))
           .fontSize(18)
-          .fontColor([$r('app.color.text_secondary')])
+          .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
       }
       .width(LOGIN_FIELD_HEIGHT_VP)
       .height(LOGIN_FIELD_HEIGHT_VP)
@@ -991,13 +997,13 @@ struct Login {
 
       Text($r('app.string.fnid_hint'))
         .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
 
       Row() {
         Text($r('app.string.use_https'))
           .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.useHttps })
           .selectedColor(this.accent)
@@ -1032,7 +1038,7 @@ struct Login {
         Row() {
           Text($r('app.string.save_password'))
             .fontSize(16)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           Blank()
           if ((this.rememberToggleGen & 1) === 0) {
             Toggle({ type: ToggleType.Switch, isOn: this.rememberPassword })
@@ -1056,7 +1062,7 @@ struct Login {
       if (this.show2faStep) {
         Text($r('app.string.twofa_step_hint'))
           .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
 
         this.loginField(this.otpCode, $r('app.string.hint_otp'), InputType.Number, true, (v: string) => {
@@ -1066,7 +1072,7 @@ struct Login {
         Row() {
           Text($r('app.string.trust_device'))
             .fontSize(15)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.trustDevice })
             .selectedColor(this.accent)
@@ -1148,13 +1154,13 @@ struct Login {
       Text($r('app.string.login_title'))
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .textAlign(TextAlign.Center)
         .width('100%')
 
       Text($r('app.string.login_subtitle'))
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .textAlign(TextAlign.Center)
         .width('100%')
 

@@ -7,7 +7,11 @@ import {
   GallerySlideshowConfig,
   GallerySlideshowPlayMode
 } from './GallerySlideshowTypes';
-import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../../common/FnThemeColors';
 
 /**
  * 幻灯片设置：作为 bindSheet FIT_CONTENT 内容，高度跟选项/开关走，
@@ -16,6 +20,8 @@ import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
  */
 @Component
 export struct GallerySlideshowSettingsSheet {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop preparing: boolean = false;
 
@@ -61,7 +67,7 @@ export struct GallerySlideshowSettingsSheet {
       widthValue: 88,
       heightValue: 36,
       fontSizeValue: 13,
-      fontColorValue: $r('app.color.text_primary'),
+      fontColorValue: fnResolvedTextPrimary(this.themeTextPrimary),
       active: this.playMode === mode,
       action: (): void => {
         this.playMode = mode;
@@ -76,7 +82,7 @@ export struct GallerySlideshowSettingsSheet {
       Text(label)
         .layoutWeight(1)
         .fontSize(15)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       Toggle({ type: ToggleType.Switch, isOn: isOn })
         .selectedColor(this.accent)
         .onChange((value: boolean): void => {
@@ -95,7 +101,7 @@ export struct GallerySlideshowSettingsSheet {
           Text('播放顺序')
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             .width('100%')
           Row() {
             this.playModeChip('随机', GallerySlideshowPlayMode.RANDOM)
@@ -109,12 +115,12 @@ export struct GallerySlideshowSettingsSheet {
             Text('切换间隔')
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             Blank()
             Text(`${this.intervalSec} 秒`)
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
+              .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -150,7 +156,7 @@ export struct GallerySlideshowSettingsSheet {
         widthValue: '100%',
         heightValue: 44,
         fontSizeValue: 15,
-        fontColorValue: $r('app.color.text_primary'),
+        fontColorValue: fnResolvedTextPrimary(this.themeTextPrimary),
         prominent: true,
         action: (): void => {
           if (!this.preparing && this.prefsLoaded) {

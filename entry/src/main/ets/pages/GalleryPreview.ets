@@ -144,6 +144,13 @@ import {
   galleryPreviewScrimDisplayOpacity,
   galleryPreviewShouldPlayHeroScrim
 } from './galleryPreview/GalleryPreviewHeroRuntime';
+import {
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
+} from '../common/FnThemeColors';
+
 
 @Entry
 @Component
@@ -1376,6 +1383,8 @@ struct GalleryPreview {
  */
 @Component
 struct GalleryPreviewInlineDetails {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop expandedHeight: number = 0;
   @Prop @Watch('onDetailsVisibleChanged') visible: boolean = false;
   @Prop panelBg: ResourceColor = Color.White;
@@ -1503,7 +1512,7 @@ struct GalleryPreviewInlineDetails {
           .width(36)
           .height(4)
           .borderRadius(2)
-          .backgroundColor($r('app.color.text_secondary'))
+          .backgroundColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .opacity(0.45)
           .margin({ top: 8, bottom: 6 })
 
@@ -1511,7 +1520,7 @@ struct GalleryPreviewInlineDetails {
           Text('照片详情')
             .fontSize(18)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .layoutWeight(1)
         }
         .width('100%')

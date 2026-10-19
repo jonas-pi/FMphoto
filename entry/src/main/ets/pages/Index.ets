@@ -12,11 +12,17 @@ import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
-import { FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct Index {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
   @State private hint: string = '正在初始化…';
@@ -227,20 +233,20 @@ struct Index {
       Text($r('app.string.EntryAbility_label'))
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .width('100%')
         .textAlign(TextAlign.Center)
 
       Text($r('app.string.privacy_consent_title'))
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .width('100%')
         .textAlign(TextAlign.Center)
 
       Text($r('app.string.privacy_consent_message'))
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
         .lineHeight(21)
 

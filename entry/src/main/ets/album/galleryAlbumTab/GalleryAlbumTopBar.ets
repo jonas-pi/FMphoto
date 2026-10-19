@@ -20,7 +20,11 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
-import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../../common/FnThemeColors';
 
 /** 官方 MINI 标题栏内容区高度 */
 export const GALLERY_TOP_BAR_MINI_HEIGHT_VP: number = 56;
@@ -56,6 +60,7 @@ function galleryAlbumTopBarEmptyPageContent() {
  */
 @Component
 struct GalleryAlbumSearchField {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onSeedQueryChanged') seedQuery: string = '';
   inputCtrl: TextInputController = new TextInputController();
@@ -98,7 +103,7 @@ struct GalleryAlbumSearchField {
           .enableKeyboardOnFocus(true)
           .backgroundColor(Color.Transparent)
           .fontSize(13)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .caretColor(this.accent)
           .placeholderColor($r('app.color.gallery_material_search_placeholder'))
           .padding({ left: GALLERY_TOP_BAR_SEARCH_TEXT_OFFSET_VP, right: 0 })
@@ -173,6 +178,8 @@ export struct GalleryAlbumMoreMenuLayer {
 
 @Component
 export struct GalleryAlbumTopBar {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop homeSurface: string = 'photos';
   @Prop rootSurfaceTitle: string = '图库';
   @Prop @Watch('onSearchModeChanged') inSearchMode: boolean = false;
@@ -481,7 +488,7 @@ export struct GalleryAlbumTopBar {
           this.leaveSearchOrBack();
         }
       }
-    }, true);
+    }, true, fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
   }
 
   /** 搜索态：bottomBuilder 放输入框，menu 放更多/完成 */
@@ -502,7 +509,7 @@ export struct GalleryAlbumTopBar {
         },
         height: GALLERY_TOP_BAR_SEARCH_FIELD_HEIGHT_VP
       }
-    }, true);
+    }, true, fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
   }
 
   private menuItem(content: HdsNavigationIconOptions, badgeCount: number = 0): HdsNavigationMenuItemOptions {

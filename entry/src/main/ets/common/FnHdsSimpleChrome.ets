@@ -17,9 +17,18 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
+import {
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
+} from './FnThemeColors';
+
 
 @Component
 export struct FnHdsSimpleChrome {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop title: string = '';
   @Prop subtitle: string = '';
   @Prop rightText: string = '';
@@ -87,7 +96,8 @@ export struct FnHdsSimpleChrome {
   }
 
   private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false);
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false,
+      fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
   }
 
   @Builder

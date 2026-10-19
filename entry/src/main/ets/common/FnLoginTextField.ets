@@ -5,12 +5,18 @@
  * InputType.Password 会拉起 TEE 安全键盘，从普通键盘切过去会再卡 600ms+，密码框用普通键盘 + 圆点遮罩。
  */
 import { applyLoginPasswordEdit, loginPasswordMask } from './FnLoginPasswordMask';
-import { FN_RESOLVED_ACCENT_KEY } from './FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from './FnThemeColors';
 
 const LOGIN_FIELD_HEIGHT_VP: number = 44;
 
 @Component
 export struct FnLoginTextField {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onSeedTextChanged') seedText: string = '';
   @Prop placeholder: Resource = $r('app.string.hint_fnid');
@@ -86,7 +92,7 @@ export struct FnLoginTextField {
           .layoutWeight(1)
           .height(LOGIN_FIELD_HEIGHT_VP)
           .padding({ left: 14, right: 4 })
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .placeholderColor($r('app.color.gallery_material_search_placeholder'))
           .caretColor(this.accent)
           .enabled(this.fieldEnabled)
@@ -95,7 +101,7 @@ export struct FnLoginTextField {
         Button({ type: ButtonType.Normal, stateEffect: true }) {
           SymbolGlyph(this.revealPassword ? $r('sys.symbol.eye') : $r('sys.symbol.eye_slash'))
             .fontSize(18)
-            .fontColor([$r('app.color.text_secondary')])
+            .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
         }
         .width(36)
         .height(36)
@@ -129,7 +135,7 @@ export struct FnLoginTextField {
         .borderRadius($r('app.float.radius_medium'))
         .borderWidth(1)
         .borderColor($r('app.color.login_input_border'))
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .placeholderColor($r('app.color.gallery_material_search_placeholder'))
         .caretColor(this.accent)
         .enabled(this.fieldEnabled)

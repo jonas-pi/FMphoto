@@ -1,5 +1,9 @@
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem, UserAlbumItem } from '../../model/FnApiTypes';
-import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY } from '../../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../../common/FnThemeColors';
 import {
   FnInlineLoading,
   FnStateText
@@ -65,6 +69,8 @@ class AlbumsHomeRestoreCard {
 
 @Component
 export struct GalleryAlbumAlbumsHomeView {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop @Watch('onBaseUrlChanged') baseUrl: string = '';
@@ -767,7 +773,7 @@ export struct GalleryAlbumAlbumsHomeView {
       Stack({ alignContent: Alignment.Center }) {
         SymbolGlyph($r('sys.symbol.plus'))
           .fontSize(36)
-          .fontColor([$r('app.color.text_secondary')])
+          .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
       }
       .width('100%')
       .aspectRatio(1)
@@ -778,14 +784,14 @@ export struct GalleryAlbumAlbumsHomeView {
       Text('添加')
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text(this.hiddenTileKeys.length > 0 ? `${this.hiddenTileKeys.length}` : ' ')
         .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
     }
     .width('100%')
@@ -831,14 +837,14 @@ export struct GalleryAlbumAlbumsHomeView {
       Text(item.title)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text(item.countText.length > 0 ? item.countText : ' ')
         .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
     }
     .width('100%')
@@ -1192,7 +1198,7 @@ export struct GalleryAlbumAlbumsHomeView {
           Text(placeholder)
             .fontSize(22)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         }
         .width('100%')
         .aspectRatio(1)
@@ -1229,14 +1235,14 @@ export struct GalleryAlbumAlbumsHomeView {
         Text(this.getMediaCategoryTitle(item))
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
         Text(`${this.getMediaCategoryCount(item)}`)
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
       }
       .width('100%')
@@ -1395,14 +1401,14 @@ export struct GalleryAlbumAlbumsHomeView {
       Text('人物')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text(this.personModuleSubtitle())
         .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -1434,14 +1440,14 @@ export struct GalleryAlbumAlbumsHomeView {
       Text(userAlbumName(item))
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text(`${userAlbumCount(item)}`)
         .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
     }
     .width('100%')
@@ -1466,14 +1472,14 @@ export struct GalleryAlbumAlbumsHomeView {
       Text('地图')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text('照片足迹')
         .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -1495,14 +1501,14 @@ export struct GalleryAlbumAlbumsHomeView {
       Text('分类')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text(this.smartModuleSubtitle())
         .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -1517,7 +1523,7 @@ export struct GalleryAlbumAlbumsHomeView {
     Text(title)
       .fontSize(ALBUMS_HOME_SECTION_TITLE_FONT_VP)
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.text_primary'))
+      .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       .width('100%')
       .padding({ left: ALBUMS_HOME_SECTION_SIDE_PAD_VP, right: ALBUMS_HOME_SECTION_SIDE_PAD_VP, bottom: 10 })
   }
@@ -1553,16 +1559,16 @@ export struct GalleryAlbumAlbumsHomeView {
       } else if (recycle) {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(24)
-          .fontColor([$r('app.color.text_secondary')])
+          .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
       } else if (kind === 'repeat') {
         SymbolGlyph($r('sys.symbol.square_on_square_fill'))
           .fontSize(24)
-          .fontColor([$r('app.color.text_secondary')])
+          .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
       } else {
         Text(monogram)
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       }
     }
     .width(ALBUMS_HOME_SHORTCUT_ICON_SIZE_VP)
@@ -1590,13 +1596,13 @@ export struct GalleryAlbumAlbumsHomeView {
         .layoutWeight(1)
         .fontSize(17)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(18)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
     }
     .width('100%')
     .height(ALBUMS_HOME_SHORTCUT_ROW_HEIGHT_VP)

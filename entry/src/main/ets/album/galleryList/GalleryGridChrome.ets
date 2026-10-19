@@ -18,9 +18,18 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
+import {
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
+} from '../../common/FnThemeColors';
+
 
 @Component
 export struct GalleryGridChrome {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop selectionMode: boolean = false;
   @Prop selectedCount: number = 0;
   @Prop title: string = '';
@@ -170,7 +179,8 @@ export struct GalleryGridChrome {
   }
 
   private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false);
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false,
+      fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
   }
 
   @Builder

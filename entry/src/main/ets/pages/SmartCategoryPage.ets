@@ -41,7 +41,11 @@ import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from '../common/FnSystemAvoidArea';
 import { FnFullLoadingMask, FnInlineLoading, FnPrimaryButton, FnStateText } from '../common/FnUiCommon';
 import { fnHdsFitContentSheetOptions } from '../common/FnHdsOverlay';
-import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const SMART_CAT_LOG_DOMAIN: number = 0xFF00;
 const SMART_CAT_LOG_TAG: string = 'SmartCategory';
@@ -49,6 +53,8 @@ const SMART_CAT_LOG_TAG: string = 'SmartCategory';
 @Entry
 @Component
 struct SmartCategoryPage {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
@@ -467,7 +473,7 @@ struct SmartCategoryPage {
         Text(smartCategoryMonogram(item))
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       }
     }
     .width('100%')
@@ -482,7 +488,7 @@ struct SmartCategoryPage {
     Text('我的分类')
       .fontSize(14)
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.text_primary'))
+      .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       .width('100%')
       .padding({ left: 2, right: 2, top: 8, bottom: 8 })
   }
@@ -492,7 +498,7 @@ struct SmartCategoryPage {
     Text('场景事物')
       .fontSize(14)
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.text_primary'))
+      .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       .width('100%')
       .padding({ left: 2, right: 2, top: 8, bottom: 8 })
   }
@@ -502,7 +508,7 @@ struct SmartCategoryPage {
     Text('资料记录')
       .fontSize(14)
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.text_primary'))
+      .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       .width('100%')
       .padding({ left: 2, right: 2, top: 8, bottom: 8 })
   }
@@ -515,14 +521,14 @@ struct SmartCategoryPage {
       Text(this.nameOf(item))
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
       Text(this.countLabelOf(item))
         .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
     }
     .width('100%')
@@ -542,7 +548,7 @@ struct SmartCategoryPage {
       Text(title)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .layoutWeight(1)
       if (showAdd) {
         Text('添加关键词')
@@ -562,11 +568,11 @@ struct SmartCategoryPage {
     Row() {
       SymbolGlyph($r('sys.symbol.line_3_horizontal'))
         .fontSize(18)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
         .margin({ right: 12 })
       Text(this.nameOf(item))
         .fontSize(16)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -589,7 +595,7 @@ struct SmartCategoryPage {
     Column({ space: 12 }) {
       Text('输入后将作为 AI 语义搜索关键词')
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
 
       TextInput({ text: this.addKeywordDraft, placeholder: '例如：海边、宠物' })
@@ -693,7 +699,7 @@ struct SmartCategoryPage {
             ListItem() {
               Text('还没有自定义关键词，点上方「添加关键词」')
                 .fontSize(13)
-                .fontColor($r('app.color.text_secondary'))
+                .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 8, bottom: 16 })
             }

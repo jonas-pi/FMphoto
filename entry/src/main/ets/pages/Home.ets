@@ -54,7 +54,11 @@ import {
   FN_HDS_CAPSULE_JELLY_VP
 } from '../common/FnUiCommon';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
-import { fnApplyThemeWindowBackground, FN_FOLLOW_SYSTEM_COLORS_KEY, FN_RESOLVED_ACCENT_KEY } from '../common/FnThemeColors';
+import { fnApplyThemeWindowBackground, FN_FOLLOW_SYSTEM_COLORS_KEY, FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 import {
   FN_SYSTEM_BOTTOM_INSET_VP_KEY,
   FN_SYSTEM_TOP_INSET_VP_KEY,
@@ -91,6 +95,8 @@ const FN_SELECTION_DOCK_WIDTH_VP: number = 228;
 @Entry
 @Component
 struct Home {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_MEDIA_BASE_URL) private galleryBaseUrl: string = '';
   @State private sessionOk: boolean = false;
   /** 非一级页（搜索/相册子页/全屏加载）时隐藏底栏；我的页始终显示。 */
@@ -584,12 +590,12 @@ struct Home {
     Column({ space: 2 }) {
       SymbolGlyph(this.isDockNavItemSelected(index) ? selectedIcon : icon)
         .fontSize(FN_BOTTOM_DOCK_ICON_SIZE_VP + 5)
-        .fontColor([this.isDockNavItemSelected(index) ? this.accent : $r('app.color.text_primary')])
+        .fontColor([this.isDockNavItemSelected(index) ? this.accent : fnResolvedTextPrimary(this.themeTextPrimary)])
 
       Text(label)
         .fontSize(FN_BOTTOM_DOCK_LABEL_SIZE_VP)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.isDockNavItemSelected(index) ? this.accent : $r('app.color.text_primary'))
+        .fontColor(this.isDockNavItemSelected(index) ? this.accent : fnResolvedTextPrimary(this.themeTextPrimary))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
@@ -739,7 +745,7 @@ struct Home {
           useSymbol: true,
           symbol: $r('sys.symbol.folder'),
           fontSizeValue: 22,
-          fontColorValue: $r('app.color.text_primary'),
+          fontColorValue: fnResolvedTextPrimary(this.themeTextPrimary),
           onBarClick: (): void => {
             this.openFolderBrowse();
           }
@@ -759,7 +765,7 @@ struct Home {
           barHeight: FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP,
           text: this.currentGalleryGranularityLabel(),
           fontSizeValue: 16,
-          fontColorValue: $r('app.color.text_primary'),
+          fontColorValue: fnResolvedTextPrimary(this.themeTextPrimary),
           onBarClick: (): void => {
             this.toggleGalleryViewGranularity();
           }
@@ -787,7 +793,7 @@ struct Home {
     Stack({ alignContent: Alignment.Center }) {
       SymbolGlyph($r('sys.symbol.folder'))
         .fontSize(22)
-        .fontColor([$r('app.color.text_primary')])
+        .fontColor([fnResolvedTextPrimary(this.themeTextPrimary)])
     }
     .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
     .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
@@ -810,7 +816,7 @@ struct Home {
       Text(this.currentGalleryGranularityLabel())
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .textAlign(TextAlign.Center)
     }
     .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
@@ -907,13 +913,13 @@ struct Home {
             Text($r('app.string.home_session_missing'))
               .fontSize(22)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.text_primary'))
+              .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
               .width('100%')
 
             Text($r('app.string.home_session_hint'))
               .fontSize(14)
               .lineHeight(22)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .width('100%')
 
             FnPrimaryButton({

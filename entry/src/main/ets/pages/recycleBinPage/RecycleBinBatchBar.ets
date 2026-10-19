@@ -21,12 +21,15 @@ import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
-import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../../common/FnThemeColors';
 
 const RECYCLE_BIN_BATCH_DOCK_WIDTH_VP: number = 204;
 
 @Component
 export struct RecycleBinBatchBar {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop downloading: boolean = false;
   @Prop restoring: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
@@ -36,7 +39,7 @@ export struct RecycleBinBatchBar {
   onRestore: () => void = () => {};
 
   private actionColor(busy: boolean): ResourceColor {
-    return busy ? $r('app.color.text_secondary') : this.accent;
+    return busy ? fnResolvedTextSecondary(this.themeTextSecondary) : this.accent;
   }
 
   private onBatchHdsAction(index: number): void {

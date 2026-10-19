@@ -6,7 +6,11 @@
  * 滚动条用 BarState.Off（官方默认 Auto，半模态/系统相册同类面板关掉常驻条）。
  */
 import { LoginEndpointProbeLine, LoginEndpointSelectionResult } from '../network/LoginEndpointSelector';
-import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY } from './FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from './FnThemeColors';
 
 @Observed
 export class FnEndpointProbeLineItem {
@@ -98,6 +102,8 @@ export function buildEndpointProbeDisplay(
 
 @Component
 export struct FnEndpointProbeView {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop probing: boolean = false;
@@ -135,7 +141,7 @@ export struct FnEndpointProbeView {
   }
 
   private latencyColor(ok: boolean): ResourceColor {
-    return ok ? this.accent : $r('app.color.text_secondary');
+    return ok ? this.accent : fnResolvedTextSecondary(this.themeTextSecondary);
   }
 
   private sheetContentPadding(): Padding {
@@ -153,7 +159,7 @@ export struct FnEndpointProbeView {
     Text(this.burstBadgeText())
       .fontSize(11)
       .fontWeight(FontWeight.Medium)
-      .fontColor(this.burstEnabled ? $r('app.color.lan_burst_accent') : $r('app.color.text_secondary'))
+      .fontColor(this.burstEnabled ? $r('app.color.lan_burst_accent') : fnResolvedTextSecondary(this.themeTextSecondary))
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
       .backgroundColor(this.burstEnabled ? $r('app.color.lan_burst_badge_bg') : $r('app.color.immersive_panel_border'))
       .borderRadius(8)
@@ -170,7 +176,7 @@ export struct FnEndpointProbeView {
         .color(this.accent)
       Text($r('app.string.login_probe_status'))
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .layoutWeight(1)
     }
     .width('100%')
@@ -184,7 +190,7 @@ export struct FnEndpointProbeView {
       Row() {
         Text(this.selectedTitle)
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .layoutWeight(1)
         if (this.showBurstStatus) {
           this.burstBadge()
@@ -197,7 +203,7 @@ export struct FnEndpointProbeView {
         Text(this.selectedLabel)
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -216,7 +222,7 @@ export struct FnEndpointProbeView {
         Text(this.selectedAddress)
           .fontSize(13)
           .lineHeight(18)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -226,7 +232,7 @@ export struct FnEndpointProbeView {
         Text(this.hintText)
           .fontSize(12)
           .lineHeight(18)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
       }
     }
@@ -246,7 +252,7 @@ export struct FnEndpointProbeView {
         Text(item.label)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -262,7 +268,7 @@ export struct FnEndpointProbeView {
       if (item.address.length > 0) {
         Text(item.address)
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -291,7 +297,7 @@ export struct FnEndpointProbeView {
         if (this.otherItems.length > 0) {
           Text($r('app.string.login_probe_others'))
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             .width('100%')
             .padding({ top: 4, left: 2 })
 

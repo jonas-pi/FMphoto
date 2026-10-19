@@ -15,13 +15,19 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { fnResolvedCardFill, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const KIND_THIRD_PARTY = 'thirdParty';
 
 @Entry
 @Component
 struct PrivacyInfoList {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
@@ -76,7 +82,7 @@ struct PrivacyInfoList {
     Text(text)
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
-      .fontColor($r('app.color.text_primary'))
+      .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       .width('100%')
       .margin({ top: 18, bottom: 2 })
   }
@@ -85,7 +91,7 @@ struct PrivacyInfoList {
   private paragraph(text: string) {
     Text(text)
       .fontSize(14)
-      .fontColor($r('app.color.text_secondary'))
+      .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       .lineHeight(22)
       .width('100%')
   }
@@ -95,12 +101,12 @@ struct PrivacyInfoList {
     Row({ space: 8 }) {
       Text('•')
         .fontSize(15)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .lineHeight(22)
 
       Text(text)
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .lineHeight(22)
         .layoutWeight(1)
     }
@@ -198,7 +204,7 @@ struct PrivacyInfoList {
         Button({ type: ButtonType.Circle }) {
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(22)
-            .fontColor([$r('app.color.text_primary')])
+            .fontColor([fnResolvedTextPrimary(this.themeTextPrimary)])
         }
         .width(40)
         .height(40)
@@ -210,7 +216,7 @@ struct PrivacyInfoList {
         Text(this.pageTitle())
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .layoutWeight(1)
 
         Blank()

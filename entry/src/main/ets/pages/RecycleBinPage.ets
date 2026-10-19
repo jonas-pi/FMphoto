@@ -115,13 +115,16 @@ import {
   RECYCLE_BIN_LIST_DOM_ID,
   RecycleBinSelectionHost
 } from './recycleBinPage/RecycleBinSelectionController';
-import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const RECYCLE_BIN_BASE_COLUMNS: number = 4;
 
 @Entry
 @Component
 struct RecycleBinPage {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
@@ -684,7 +687,7 @@ struct RecycleBinPage {
         Column() {
           Text('—')
             .fontSize(22)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         }
         .width('100%')
         .aspectRatio(1)
@@ -904,7 +907,7 @@ struct RecycleBinPage {
                   .height(18)
                 Text('继续加载中')
                   .fontSize(12)
-                  .fontColor($r('app.color.text_secondary'))
+                  .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               }
               .width('100%')
               .justifyContent(FlexAlign.Center)

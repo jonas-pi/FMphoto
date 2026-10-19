@@ -1,5 +1,9 @@
 import { FnTransferDirection } from './FnTransferProgress';
-import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY } from './FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from './FnThemeColors';
 import {
   FnTransferQueueStore,
   FnTransferTaskSnapshot,
@@ -12,6 +16,8 @@ import {
  */
 @Component
 export struct FnTransferQueueSheet {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop tasks: FnTransferTaskSnapshot[] = [];
@@ -59,7 +65,7 @@ export struct FnTransferQueueSheet {
           Text(task.title)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -67,14 +73,14 @@ export struct FnTransferQueueSheet {
           if (task.detail.length > 0) {
             Text(task.detail)
               .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
           } else if (task.message.length > 0 && task.status !== FnTransferTaskStatus.RUNNING) {
             Text(task.message)
               .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -108,7 +114,7 @@ export struct FnTransferQueueSheet {
 
             Text(this.progressText(task))
               .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .constraintSize({ minWidth: 72 })
               .textAlign(TextAlign.End)
           }
@@ -122,7 +128,7 @@ export struct FnTransferQueueSheet {
               .color(this.directionColor(task.direction))
             Text(task.message.length > 0 ? task.message : '处理中…')
               .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -133,7 +139,7 @@ export struct FnTransferQueueSheet {
       } else if (task.message.length > 0) {
         Text(task.message)
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -153,10 +159,10 @@ export struct FnTransferQueueSheet {
         Column({ space: 8 }) {
           Text('暂无传输任务')
             .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           Text('上传、下载或同步会在后台进行，可在此查看进度')
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             .lineHeight(18)
         }
         .width('100%')

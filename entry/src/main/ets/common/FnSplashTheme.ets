@@ -1,4 +1,5 @@
 import { window } from '@kit.ArkUI';
+import { fnThemeStatusContentColor } from './FnThemeColors';
 
 /** 与 entry 模块 color.json 里 start_window_background 保持一致 */
 export const FN_START_WINDOW_BG_LIGHT: string = '#FFF4F7FB';
@@ -57,7 +58,7 @@ export function fnRestoreAppSystemBars(mainWindow: window.Window): void {
  */
 export function fnApplyImmersiveSystemBarColors(mainWindow: window.Window, isDark: boolean): void {
   fnRestoreAppSystemBars(mainWindow);
-  const content = isDark ? '#FFFFFFFF' : '#FF000000';
+  const content = fnThemeStatusContentColor(isDark);
   try {
     mainWindow.setWindowSystemBarProperties({
       statusBarColor: '#00000000',

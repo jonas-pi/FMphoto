@@ -16,7 +16,9 @@ import {
   fnHdsImmersiveTabsFloatingStyle
 } from './FnUiCommon';
 import { fnDeviceSupportsHdsImmersive } from './FnImmersiveSettings';
-import { FN_RESOLVED_ACCENT_KEY } from './FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from './FnThemeColors';
 
 const LOGIN_ROUTE_PREF_VALUES: string[] = [
   LOGIN_ENDPOINT_PREF_AUTO,
@@ -40,6 +42,7 @@ function fnLoginRoutePrefIndex(value: string): number {
 
 @Component
 export struct FnLoginRoutePrefSegment {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onSelectedValueChanged') selectedValue: string = LOGIN_ENDPOINT_PREF_AUTO;
   @Prop disabled: boolean = false;
@@ -210,7 +213,7 @@ export struct FnLoginRoutePrefSegment {
             .fontSize(13)
             .fontWeight(this.indexFromThumbX(this.thumbXVp) === idx ? FontWeight.Medium : FontWeight.Regular)
             .fontColor(this.indexFromThumbX(this.thumbXVp) === idx ?
-              $r('app.color.button_primary_fg') : $r('app.color.text_secondary'))
+              $r('app.color.button_primary_fg') : fnResolvedTextSecondary(this.themeTextSecondary))
         }
         .layoutWeight(1)
         .height(LOGIN_ROUTE_SEGMENT_HEIGHT_VP)
@@ -228,7 +231,7 @@ export struct FnLoginRoutePrefSegment {
     Column({ space: 10 }) {
       Text($r('app.string.login_route_pref_title'))
         .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
         .textAlign(TextAlign.Center)
 

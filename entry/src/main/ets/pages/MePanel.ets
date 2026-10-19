@@ -44,6 +44,7 @@ import {
   FnTransferTaskSnapshot
 } from '../common/FnTransferQueueStore';
 import { fnDiagShare } from '../common/FnDiagLog';
+import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
   APP_GALLERY_RATE_ALREADY,
   APP_GALLERY_RATE_FAILED,
@@ -95,7 +96,11 @@ import {
   FN_RESOLVED_ACCENT_KEY,
   FN_RESOLVED_CARD_BG_KEY,
   FN_RESOLVED_PAGE_BG_KEY,
-  FN_THEME_SCHEMES
+  FN_THEME_SCHEMES,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
 } from '../common/FnThemeColors';
 
 const ME_LAN_BURST_SWITCH_ROW_HEIGHT_VP: number = 80;
@@ -130,6 +135,8 @@ struct ThemeColorSwatch {
 /** 底色/强调色那一行自己订阅当前颜色，避免 @Builder 参数只在创建时传一次。 */
 @Component
 struct ThemeColorSummaryRow {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop label: string = '';
   @Prop isPageBackground: boolean = true;
   @StorageProp(FN_CUSTOM_BG_KEY) private customPageBg: string = '';
@@ -165,10 +172,10 @@ struct ThemeColorSummaryRow {
       Column({ space: 2 }) {
         Text(this.label)
           .fontSize(14)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Text(this.shownHex().toUpperCase())
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
@@ -188,6 +195,8 @@ struct ThemeColorSummaryRow {
 
 @Component
 struct ThemeSchemeChip {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop name: string = '';
   @Prop pageBackground: string = '';
   @Prop accentColor: string = '';
@@ -225,7 +234,7 @@ struct ThemeSchemeChip {
       }
       Text(this.name)
         .fontSize(11)
-        .fontColor(this.selected ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+        .fontColor(this.selected ? fnResolvedTextPrimary(this.themeTextPrimary) : fnResolvedTextSecondary(this.themeTextSecondary))
     }
     .onClick((): void => {
       this.onPick();
@@ -235,6 +244,8 @@ struct ThemeSchemeChip {
 
 @Component
 export struct MePanel {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
@@ -334,7 +345,7 @@ export struct MePanel {
     if (kind === LOGIN_ENDPOINT_PREF_RELAY) {
       return '#FFD97706';
     }
-    return $r('app.color.text_secondary');
+    return fnResolvedTextSecondary(this.themeTextSecondary);
   }
 
   private showEndpointToast(message: string): void {
@@ -678,6 +689,7 @@ export struct MePanel {
     void fnSaveThemeScheme(ctx, scheme.background, scheme.accent).then((): void => {
       window.getLastWindow(ctx).then((win: window.Window): void => {
         fnApplyThemeWindowBackground(win, ctx);
+        fnApplyImmersiveSystemBarColors(win, this.colorMode === 1);
       }).catch((): void => {
       });
     });
@@ -699,6 +711,7 @@ export struct MePanel {
       this.colorEditorVisible = false;
       window.getLastWindow(ctx).then((win: window.Window): void => {
         fnApplyThemeWindowBackground(win, ctx);
+        fnApplyImmersiveSystemBarColors(win, this.colorMode === 1);
       }).catch((): void => {
       });
     });
@@ -738,7 +751,7 @@ export struct MePanel {
     Column({ space: 12 }) {
       Text($r('app.string.twofa_step_hint'))
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
 
       TextInput({ placeholder: $r('app.string.hint_otp'), text: this.twofaCode })
@@ -759,7 +772,7 @@ export struct MePanel {
       Row() {
         Text($r('app.string.trust_device'))
           .fontSize(15)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.twofaTrustDevice })
           .selectedColor(this.accent)
@@ -803,10 +816,10 @@ export struct MePanel {
         Text($r('app.string.config_sync_entry_title'))
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Text($r('app.string.config_sync_entry_subtitle'))
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -815,11 +828,11 @@ export struct MePanel {
 
       SymbolGlyph($r('sys.symbol.qrcode'))
         .fontSize(18)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
@@ -847,10 +860,10 @@ export struct MePanel {
         Text($r('app.string.diag_log_entry_title'))
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Text(this.diagExporting ? '正在导出…' : $r('app.string.diag_log_entry_subtitle'))
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -859,7 +872,7 @@ export struct MePanel {
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
@@ -942,14 +955,14 @@ export struct MePanel {
         Text('\u4f20\u8f93\u961f\u5217')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Text(
           FnTransferQueueStore.activeCount() > 0
             ? `${FnTransferQueueStore.activeCount()} \u4e2a\u4efb\u52a1\u8fdb\u884c\u4e2d`
             : '\u67e5\u770b\u4e0a\u4f20\u3001\u4e0b\u8f7d\u4e0e\u540c\u6b65\u8fdb\u5ea6'
         )
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -968,7 +981,7 @@ export struct MePanel {
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
@@ -992,7 +1005,7 @@ export struct MePanel {
         .fontSize(15)
         .fontWeight(this.endpointInfo.kind === kind ? FontWeight.Medium : FontWeight.Regular)
         .fontColor(this.endpointInfo.kind === kind ? this.accent :
-          (available ? $r('app.color.text_primary') : $r('app.color.text_secondary')))
+          (available ? fnResolvedTextPrimary(this.themeTextPrimary) : fnResolvedTextSecondary(this.themeTextSecondary)))
         .opacity(available ? 1 : 0.35)
 
       Row()
@@ -1025,12 +1038,12 @@ export struct MePanel {
             Text('NAS 连接')
               .fontSize(13)
               .fontWeight(FontWeight.Regular)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .layoutWeight(1)
 
             SymbolGlyph($r('sys.symbol.chevron_right'))
               .fontSize(16)
-              .fontColor([$r('app.color.text_secondary')])
+              .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -1041,7 +1054,7 @@ export struct MePanel {
           Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
             .fontSize(18)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -1115,10 +1128,10 @@ export struct MePanel {
         Text($r('app.string.rate_app_entry_title'))
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Text($r('app.string.rate_app_entry_subtitle'))
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -1127,7 +1140,7 @@ export struct MePanel {
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
     }
     .width('100%')
     .padding({ left: 18, right: 18, top: 16, bottom: 16 })
@@ -1150,7 +1163,7 @@ export struct MePanel {
       Text('界面配色')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .width('100%')
 
       Scroll() {
@@ -1270,13 +1283,13 @@ export struct MePanel {
         Text('满载模式')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(this.lanBurstSupportText())
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -1326,7 +1339,7 @@ export struct MePanel {
         action: (): void => {
         }
       }
-    }, true);
+    }, true, fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
   }
 
   build() {
@@ -1337,12 +1350,12 @@ export struct MePanel {
           Text('FNOS \u4e2a\u4eba\u4e2d\u5fc3')
             .fontSize(20)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
 
           Text('\u9996\u9875\u5df2\u7ecf\u5207\u6362\u4e3a\u7eaf\u539f\u751f\u56fe\u5e93\u58f3\u4f53\uff0c\u8fd9\u91cc\u4fdd\u7559\u8d26\u53f7\u4e0e\u7cfb\u7edf\u5165\u53e3\u3002')
             .fontSize(13)
             .lineHeight(20)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         }
         .width('100%')
         .padding(18)
@@ -1361,16 +1374,16 @@ export struct MePanel {
           Text('\u5f53\u524d\u72b6\u6001')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           Text('1. \u9996\u9875 Web \u5df2\u5b8c\u5168\u79fb\u9664\u3002')
             .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           Text('2. \u5e95\u90e8\u4e3b\u5bfc\u822a\u7edf\u4e00\u4e3a\u7167\u7247\u3001\u76f8\u518c\u3001\u6211\u7684\u3002')
             .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           Text('3. \u56fe\u5e93\u4e3b\u9875\u4f7f\u7528\u60ac\u6d6e\u6807\u9898\u680f\u4e0e\u60ac\u6d6e\u5e95\u90e8\u5bfc\u822a\u3002')
             .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         }
         .width('100%')
         .padding(18)

@@ -15,6 +15,8 @@ export const FN_CUSTOM_ACCENT_KEY: string = 'fnCustomAccent';
 export const FN_RESOLVED_PAGE_BG_KEY: string = 'fnResolvedPageBg';
 export const FN_RESOLVED_ACCENT_KEY: string = 'fnResolvedAccent';
 export const FN_RESOLVED_CARD_BG_KEY: string = 'fnResolvedCardBg';
+export const FN_RESOLVED_TEXT_PRIMARY_KEY: string = 'fnResolvedTextPrimary';
+export const FN_RESOLVED_TEXT_SECONDARY_KEY: string = 'fnResolvedTextSecondary';
 
 const APP_WINDOW_BG_LIGHT: string = '#FFF4F7FB';
 const APP_WINDOW_BG_DARK: string = '#FF000000';
@@ -162,6 +164,14 @@ export function fnPublishResolvedThemeColors(): void {
   putStorage<string>(FN_RESOLVED_ACCENT_KEY, accent);
   const usingCustom = customBackground.length > 0 || customAccent.length > 0;
   putStorage<string>(FN_RESOLVED_CARD_BG_KEY, usingCustom ? fnCardSurfaceForPage(background, accent) : '');
+  if (customBackground.length > 0) {
+    const onLight = fnReadableOnColor(background) === TEXT_ON_LIGHT;
+    putStorage<string>(FN_RESOLVED_TEXT_PRIMARY_KEY, onLight ? TEXT_ON_LIGHT : TEXT_ON_DARK);
+    putStorage<string>(FN_RESOLVED_TEXT_SECONDARY_KEY, onLight ? TEXT_SECONDARY_ON_LIGHT : TEXT_SECONDARY_ON_DARK);
+  } else {
+    putStorage<string>(FN_RESOLVED_TEXT_PRIMARY_KEY, '');
+    putStorage<string>(FN_RESOLVED_TEXT_SECONDARY_KEY, '');
+  }
 }
 
 function fnChannel(hex: string, start: number): number {
@@ -230,6 +240,72 @@ export function fnResolvedCardFill(cardBg: string): ResourceColor {
     return cardBg;
   }
   return $r('app.color.card_background');
+}
+
+const TEXT_ON_LIGHT: string = '#FF000000';
+const TEXT_ON_DARK: string = '#FFFFFFFF';
+const TEXT_SECONDARY_ON_LIGHT: string = '#FF6D6D72';
+const TEXT_SECONDARY_ON_DARK: string = '#FFAEAEB2';
+
+function fnChannelLinear(value: number): number {
+  const s = value / 255;
+  if (s <= 0.03928) {
+    return s / 12.92;
+  }
+  return Math.pow((s + 0.055) / 1.055, 2.4);
+}
+
+/** WCAG 相对亮度。非法颜色按白底处理，避免误切成白字。 */
+function fnRelativeLuminance(hex: string): number {
+  const normalized = fnNormalizeThemeHex(hex);
+  if (normalized.length !== 9) {
+    return 1;
+  }
+  const r = fnChannelLinear(fnChannel(normalized, 3));
+  const g = fnChannelLinear(fnChannel(normalized, 5));
+  const b = fnChannelLinear(fnChannel(normalized, 7));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function fnContrastRatio(a: number, b: number): number {
+  const lighter = Math.max(a, b);
+  const darker = Math.min(a, b);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** 在这块底色上，黑字和白字哪个对比度更高就用哪个。 */
+export function fnReadableOnColor(background: string): string {
+  const bg = fnRelativeLuminance(background);
+  const onWhite = fnContrastRatio(bg, 1);
+  const onBlack = fnContrastRatio(bg, 0);
+  return onWhite >= onBlack ? TEXT_ON_DARK : TEXT_ON_LIGHT;
+}
+
+/**
+ * 自定义底色时用算出来的黑/白，空串表示继续用资源色。
+ * 没设自定义底色时资源会跟着系统浅色/深色，不要在这里写死。
+ */
+export function fnResolvedTextPrimary(override: string): ResourceColor {
+  if (override.length > 0) {
+    return override;
+  }
+  return $r('app.color.text_primary');
+}
+
+export function fnResolvedTextSecondary(override: string): ResourceColor {
+  if (override.length > 0) {
+    return override;
+  }
+  return $r('app.color.text_secondary');
+}
+
+/** 状态栏图标色。自定义底色优先，否则跟系统深浅色。 */
+export function fnThemeStatusContentColor(systemDark: boolean): string {
+  const stored = AppStorage.get<string>(FN_RESOLVED_TEXT_PRIMARY_KEY) ?? '';
+  if (stored === TEXT_ON_DARK || stored === TEXT_ON_LIGHT) {
+    return stored;
+  }
+  return systemDark ? TEXT_ON_DARK : TEXT_ON_LIGHT;
 }
 
 /** 读当前系统页面底色和强调色，供设置页展示。 */

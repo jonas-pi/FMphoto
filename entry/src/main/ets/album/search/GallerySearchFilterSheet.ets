@@ -34,7 +34,11 @@ import {
   SEARCH_FILTER_FIELD_MAKE,
   SEARCH_FILTER_FIELD_PERSON
 } from './GallerySearchFilterTypes';
-import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../../common/FnThemeColors';
 
 class GallerySearchAvatarSpec {
   avatarUrl: string = '';
@@ -52,6 +56,8 @@ const SEARCH_FILTER_SHEET_BOTTOM_FALLBACK_VP: number = 20;
 
 @Component
 export struct GallerySearchFilterSheet {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   applied: GallerySearchFilterSnapshot = new GallerySearchFilterSnapshot();
   onSearch: (snapshot: GallerySearchFilterSnapshot) => void = (_: GallerySearchFilterSnapshot): void => {};
@@ -597,7 +603,7 @@ export struct GallerySearchFilterSheet {
     } else {
       SymbolGlyph($r('sys.symbol.person_crop_circle_fill'))
         .fontSize(22)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
     }
   }
 
@@ -606,7 +612,7 @@ export struct GallerySearchFilterSheet {
     Column({ space: 4 }) {
       Text(spec.title)
         .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
       Row({ space: 8 }) {
         if (this.dropdownAvatar(spec.field).length > 0) {
@@ -624,13 +630,13 @@ export struct GallerySearchFilterSheet {
         Text(this.displayOrPlaceholder(this.dropdownValue(spec.field), spec.placeholder))
           .fontSize(14)
           .fontColor(this.dropdownValue(spec.field).length > 0 ?
-            $r('app.color.text_primary') : $r('app.color.text_secondary'))
+            fnResolvedTextPrimary(this.themeTextPrimary) : fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
         SymbolGlyph($r('sys.symbol.chevron_down'))
           .fontSize(14)
-          .fontColor([$r('app.color.text_secondary')])
+          .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
       }
       .width('100%')
       .height(40)
@@ -651,7 +657,7 @@ export struct GallerySearchFilterSheet {
     Row() {
       SymbolGlyph($r('sys.symbol.chevron_left'))
         .fontSize(20)
-        .fontColor([$r('app.color.text_primary')])
+        .fontColor([fnResolvedTextPrimary(this.themeTextPrimary)])
         .padding({ left: 4, right: 8, top: 10, bottom: 10 })
         .onClick((): void => {
           this.onPickerBack();
@@ -659,7 +665,7 @@ export struct GallerySearchFilterSheet {
       Text(this.pickerTitle)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
       Text('清除')
@@ -695,7 +701,7 @@ export struct GallerySearchFilterSheet {
             .backgroundColor($r('app.color.immersive_panel_border'))
             Text(opt.label)
               .fontSize(12)
-              .fontColor($r('app.color.text_primary'))
+              .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .textAlign(TextAlign.Center)
@@ -749,7 +755,7 @@ export struct GallerySearchFilterSheet {
             Row({ space: 8 }) {
               Text(opt.label)
                 .fontSize(16)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                 .layoutWeight(1)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -776,7 +782,7 @@ export struct GallerySearchFilterSheet {
             if (opt.hasChildren) {
               SymbolGlyph($r('sys.symbol.chevron_right'))
                 .fontSize(18)
-                .fontColor([$r('app.color.text_secondary')])
+                .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
                 .padding({ left: 12, right: 4, top: 12, bottom: 12 })
                 .onClick((): void => {
                   this.enterPickerLevel(opt);
@@ -829,14 +835,14 @@ export struct GallerySearchFilterSheet {
         } else if (this.loadError.length > 0) {
           Text(this.loadError)
             .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             .width('100%')
         }
 
         Text('整理')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .width('100%')
         Grid() {
           GridItem() {
@@ -849,7 +855,7 @@ export struct GallerySearchFilterSheet {
                 .height(20)
               Text('已收藏')
                 .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                 .layoutWeight(1)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -871,7 +877,7 @@ export struct GallerySearchFilterSheet {
                 .height(20)
               Text('不在相册内')
                 .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                 .layoutWeight(1)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -893,7 +899,7 @@ export struct GallerySearchFilterSheet {
                 .height(20)
               Text('无标签')
                 .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                 .layoutWeight(1)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -915,7 +921,7 @@ export struct GallerySearchFilterSheet {
                 .height(20)
               Text('无位置信息')
                 .fontSize(14)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                 .layoutWeight(1)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -962,10 +968,10 @@ export struct GallerySearchFilterSheet {
       Row({ space: 8 }) {
         SymbolGlyph($r('sys.symbol.camera'))
           .fontSize(18)
-          .fontColor([$r('app.color.text_primary')])
+          .fontColor([fnResolvedTextPrimary(this.themeTextPrimary)])
         Text('拍摄信息')
           .fontSize(14)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: $$this.showShootingInfo })
           .selectedColor(this.accent)

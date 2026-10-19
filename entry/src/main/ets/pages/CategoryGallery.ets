@@ -148,13 +148,16 @@ import {
   categoryGallerySyncFromNavStore
 } from './categoryGallery/CategoryGalleryDataSync';
 import { CategoryGallerySession } from './categoryGallery/CategoryGallerySession';
-import { FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const CATEGORY_GALLERY_CONTENT_INSET_TOP_VP: number = 68;
 
 @Entry
 @Component
 struct CategoryGallery {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   /** aboutToAppear 时根据 Home 的 NavPathStack 是否挂载自动判断，避免 @Entry 使用 @Prop。 */
   private albumNavigationMode: boolean = false;
@@ -1143,7 +1146,7 @@ struct CategoryGallery {
       Text(label)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width('100%')
         .padding({ left: 16, top: 14, bottom: 6 })
     }
@@ -1363,7 +1366,7 @@ struct CategoryGallery {
                           .height(18)
                         Text('继续加载中')
                           .fontSize(12)
-                          .fontColor($r('app.color.text_secondary'))
+                          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                       }
                       .width('100%')
                       .justifyContent(FlexAlign.Center)
@@ -1403,7 +1406,7 @@ struct CategoryGallery {
                       .height(18)
                     Text('继续加载中')
                       .fontSize(12)
-                      .fontColor($r('app.color.text_secondary'))
+                      .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                   }
                   .width('100%')
                   .justifyContent(FlexAlign.Center)

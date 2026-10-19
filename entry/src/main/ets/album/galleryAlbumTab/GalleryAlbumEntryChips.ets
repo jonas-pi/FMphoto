@@ -9,6 +9,11 @@ import {
   FnHdsPillButton,
   fnLiquidGlassGradient
 } from '../../common/FnUiCommon';
+import {
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY
+} from '../../common/FnThemeColors';
+
 
 const GALLERY_HOME_ENTRY_CHIP_HEIGHT_VP: number = 30;
 const GALLERY_HOME_ENTRY_CHIP_FONT_VP: number = 12;
@@ -22,6 +27,7 @@ export const GALLERY_HOME_ENTRY_STRIP_TOTAL_HEIGHT_VP: number =
 
 @Component
 export struct GalleryAlbumEntryChips {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
   @Prop hidden: boolean = false;
 
   onOpenMediaCategory: () => void = () => {};
@@ -39,7 +45,7 @@ export struct GalleryAlbumEntryChips {
       heightValue: GALLERY_HOME_ENTRY_CHIP_HEIGHT_VP,
       radiusValue: GALLERY_HOME_NAV_CHIP_RADIUS_VP,
       fontSizeValue: GALLERY_HOME_ENTRY_CHIP_FONT_VP,
-      fontColorValue: $r('app.color.text_primary'),
+      fontColorValue: fnResolvedTextPrimary(this.themeTextPrimary),
       action: action
     })
   }

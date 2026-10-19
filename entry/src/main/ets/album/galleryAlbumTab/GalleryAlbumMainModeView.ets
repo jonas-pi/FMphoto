@@ -29,6 +29,13 @@ import { GalleryAlbumTimelineSidebar } from './GalleryAlbumTimelineSidebar';
 import { GalleryViewGranularity, galleryViewGranularityAfterPinch } from './GalleryAlbumGranularity';
 import { GalleryPinchScaleUpdater } from './GalleryAlbumPinchScale';
 import { GalleryTimelineFlowRow, GalleryTimelineFlowRowHost } from './GalleryTimelineFlowRow';
+import {
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
+} from '../../common/FnThemeColors';
+
 
 const GALLERY_THUMB_THROUGHPUT_DROP_COOLDOWN_MS: number = 900;
 const GALLERY_THUMB_NETWORK_PRESSURE_LOAD_MS_YEAR: number = 300;
@@ -42,6 +49,8 @@ export const GALLERY_ALBUM_MAIN_LIST_DOM_ID: string = 'gallery_album_main_list';
 
 @Component
 export struct GalleryAlbumMainModeView {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop baseUrl: string = '';
   @Prop @Watch('onViewGranularityChanged') viewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   @Prop gridColumns: number = 3;
@@ -639,7 +648,7 @@ export struct GalleryAlbumMainModeView {
           : `${node.year}年${node.month}月`)
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .width('100%')
           .padding({ left: 16, right: 16, top: 20, bottom: 4 })
       }
@@ -647,7 +656,7 @@ export struct GalleryAlbumMainModeView {
       ListItem() {
         Text(`${node.month}月${node.day}日`)
           .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .padding({ left: 16, right: 16, top: 2, bottom: 4 })
       }
@@ -739,7 +748,7 @@ export struct GalleryAlbumMainModeView {
                     if (this.footText.length > 0) {
                       Text(this.footText)
                         .fontSize(12)
-                        .fontColor($r('app.color.text_secondary'))
+                        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                         .width('100%')
                         .textAlign(TextAlign.Center)
                         .padding(12)

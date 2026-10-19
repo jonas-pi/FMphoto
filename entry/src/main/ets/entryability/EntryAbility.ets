@@ -12,6 +12,7 @@ import {
 } from '../album/GalleryPerfProfile';
 import { trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import {
+  fnApplyImmersiveSystemBarColors,
   fnApplySplashWindowChrome,
   fnRestoreAppSystemBars
 } from '../common/FnSplashTheme';
@@ -70,6 +71,7 @@ export default class EntryAbility extends UIAbility {
         fnRefreshSystemColorPreview(this.context);
         fnApplyThemeWindowBackground(this.mainWindow, this.context);
         fnRestoreAppSystemBars(this.mainWindow);
+        fnApplyImmersiveSystemBarColors(this.mainWindow, dark);
         fnPublishSystemAvoidArea(this.mainWindow);
       }
       hilog.info(DOMAIN, LOG_TAG, 'onConfigurationUpdate colorMode=%{public}d', dark ? 1 : 0);

@@ -4,9 +4,18 @@ import { FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnM
 import { GalleryNetworkThumb, nasUrl } from '../GalleryAlbumCommon';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns, fnRepeatFrTemplate } from '../../common/FnWindowBreakpoint';
 import { FnListDataSource } from '../../common/FnListDataSource';
+import {
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
+} from '../../common/FnThemeColors';
+
 
 @Component
 export struct GalleryAlbumPersonModeView {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop baseUrl: string = '';
   @Prop contentInsetTopVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
@@ -38,7 +47,7 @@ export struct GalleryAlbumPersonModeView {
       if (this.loading) {
         Row() {
           LoadingProgress().width(28).height(28)
-          Text('人物加载中…').fontSize(14).fontColor($r('app.color.text_secondary')).margin({ left: 10 })
+          Text('人物加载中…').fontSize(14).fontColor(fnResolvedTextSecondary(this.themeTextSecondary)).margin({ left: 10 })
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -46,7 +55,7 @@ export struct GalleryAlbumPersonModeView {
       } else if (this.error.length > 0) {
         Text(this.error)
           .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
@@ -68,13 +77,13 @@ export struct GalleryAlbumPersonModeView {
                   .clip(true)
                 Text(this.getPersonName(item))
                   .fontSize(13)
-                  .fontColor($r('app.color.text_primary'))
+                  .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
                 Text(this.getPersonStatText(item))
                   .fontSize(11)
-                  .fontColor($r('app.color.text_secondary'))
+                  .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                   .width('100%')
               }
               .width('100%')

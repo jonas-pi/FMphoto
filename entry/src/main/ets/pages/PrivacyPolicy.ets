@@ -14,11 +14,17 @@ import {
   FN_PAGE_EXIT_CURVE,
   FN_PAGE_EXIT_DURATION
 } from '../common/FnMotion';
-import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 @Entry
 @Component
 struct PrivacyPolicy {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp('colorMode') @Watch('onColorModeChanged') private colorMode: number = 0;
@@ -142,7 +148,7 @@ struct PrivacyPolicy {
     Text(text)
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
-      .fontColor($r('app.color.text_primary'))
+      .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       .width('100%')
       .margin({ top: 18, bottom: 2 })
   }
@@ -151,7 +157,7 @@ struct PrivacyPolicy {
   private paragraph(text: ResourceStr) {
     Text(text)
       .fontSize(14)
-      .fontColor($r('app.color.text_secondary'))
+      .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       .lineHeight(22)
       .width('100%')
   }
@@ -161,12 +167,12 @@ struct PrivacyPolicy {
     Row({ space: 8 }) {
       Text('•')
         .fontSize(15)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .lineHeight(22)
 
       Text(text)
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .lineHeight(22)
         .layoutWeight(1)
     }
@@ -190,12 +196,12 @@ struct PrivacyPolicy {
           Text($r('app.string.privacy_policy_heading'))
             .fontSize(26)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .width('100%')
 
           Text($r('app.string.privacy_policy_updated'))
             .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             .width('100%')
             .margin({ bottom: 10 })
 

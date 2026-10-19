@@ -46,7 +46,11 @@ import {
   loadWebDavConfig,
   saveWebDavConfig
 } from '../sync/AppSettingsWebDavPrefs';
-import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 /** TextInput.text 只在创建时生效；父级异步回填要用本地 @State + $$。 */
 @Component
@@ -88,6 +92,8 @@ struct ConfigDavTextField {
 /** 配置同步内容。由「我的」里几乎全高的半模态承载，不再单独占一页，避免改状态栏颜色。 */
 @Component
 export struct ConfigSyncSheet {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
@@ -461,7 +467,7 @@ export struct ConfigSyncSheet {
           Text($r('app.string.config_sync_qr_section'))
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .width('100%')
 
           Column({ space: 12 }) {
@@ -478,11 +484,11 @@ export struct ConfigSyncSheet {
               Column({ space: 4 }) {
                 Text($r('app.string.config_sync_device_code_label'))
                   .fontSize(12)
-                  .fontColor($r('app.color.text_secondary'))
+                  .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                 Text(this.deviceCode)
                   .fontSize(22)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_primary'))
+                  .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                   .letterSpacing(2)
               }
               .alignItems(HorizontalAlign.Center)
@@ -490,7 +496,7 @@ export struct ConfigSyncSheet {
 
             Text(this.qrHint)
               .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .width('100%')
 
             FnPrimaryButton({
@@ -511,7 +517,7 @@ export struct ConfigSyncSheet {
           Text($r('app.string.config_sync_webdav_section'))
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
             .width('100%')
 
           Column({ space: 12 }) {
@@ -551,7 +557,7 @@ export struct ConfigSyncSheet {
             Row() {
               Text($r('app.string.config_sync_skip_cert'))
                 .fontSize(16)
-                .fontColor($r('app.color.text_primary'))
+                .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
               Blank()
               Toggle({ type: ToggleType.Switch, isOn: $$this.davSkipCert })
                 .selectedColor(this.accent)

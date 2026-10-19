@@ -39,7 +39,14 @@ import {
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from './FnImmersiveSettings';
 import { FN_SYSTEM_TOP_INSET_VP_KEY } from './FnSystemAvoidArea';
-import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from './FnThemeColors';
+import {
+  FN_RESOLVED_ACCENT_KEY,
+  FN_RESOLVED_PAGE_BG_KEY,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  FN_RESOLVED_TEXT_SECONDARY_KEY,
+  fnResolvedTextPrimary,
+  fnResolvedTextSecondary
+} from './FnThemeColors';
 
 export const FN_FLOATING_TOP_MARGIN_VP: number = 8;
 export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
@@ -132,23 +139,23 @@ export function fnHdsRoundCancelIcon(action: () => void): HdsNavigationIconOptio
   return content;
 }
 
-/** 迷你顶栏 originalStyle：沉浸开则透明按钮背板，关则浅灰玻璃。 */
-export function fnHdsMiniTitleBarOriginalStyle(canUseHds: boolean): HdsNavigationTitleBarStyle {
+/** 迷你顶栏 originalStyle：沉浸开则透明按钮背板，关则浅灰玻璃。标题和图标跟页面底色的对比度走。 */
+export function fnHdsMiniTitleBarOriginalStyle(
+  canUseHds: boolean,
+  titleColor: ResourceColor,
+  subtitleColor: ResourceColor
+): HdsNavigationTitleBarStyle {
   const buttonBg: ResourceColor = canUseHds
     ? fnHdsChromeButtonBackgroundColor()
     : fnHdsChromeButtonFallbackBackgroundColor();
-  const buttonFg: ResourceColor = canUseHds
-    ? fnHdsChromeButtonForegroundColor()
-    : $r('app.color.icon_primary');
-  const textFg: ResourceColor = canUseHds
-    ? $r('app.color.text_primary')
-    : $r('app.color.button_secondary_fg');
+  const buttonFg: ResourceColor = titleColor;
+  const textFg: ResourceColor = canUseHds ? titleColor : $r('app.color.button_secondary_fg');
   return {
     backgroundStyle: fnHdsNavChromeBackgroundStyle(),
     contentStyle: {
       titleStyle: {
-        mainTitleColor: $r('app.color.text_primary'),
-        subTitleColor: $r('app.color.text_secondary')
+        mainTitleColor: titleColor,
+        subTitleColor: subtitleColor
       },
       menuStyle: {
         backgroundColor: buttonBg,
@@ -170,9 +177,15 @@ export function fnHdsMiniTitleBarOriginalStyle(canUseHds: boolean): HdsNavigatio
 export function fnHdsMiniTitleBarOptions(
   canUseHds: boolean,
   content: TitleBarContentOptions,
-  avoidLayoutSafeArea: boolean
+  avoidLayoutSafeArea: boolean,
+  titleColor?: ResourceColor,
+  subtitleColor?: ResourceColor
 ): HdsNavigationTitleBarOptions {
-  const originalStyle = fnHdsMiniTitleBarOriginalStyle(canUseHds);
+  const resolvedTitle: ResourceColor = titleColor !== undefined ? titleColor :
+    fnResolvedTextPrimary(AppStorage.get<string>(FN_RESOLVED_TEXT_PRIMARY_KEY) ?? '');
+  const resolvedSubtitle: ResourceColor = subtitleColor !== undefined ? subtitleColor :
+    fnResolvedTextSecondary(AppStorage.get<string>(FN_RESOLVED_TEXT_SECONDARY_KEY) ?? '');
+  const originalStyle = fnHdsMiniTitleBarOriginalStyle(canUseHds, resolvedTitle, resolvedSubtitle);
   const material = canUseHds ? fnHdsImmersiveSystemMaterialEffect() : undefined;
   if (material !== undefined) {
     return {
@@ -834,6 +847,8 @@ export struct FnFloatingTopCircleButton {
 
 @Component
 export struct FnTopBar {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop title: string = '';
   @Prop subtitle: string = '';
   @Prop backText: string = '返回';
@@ -877,14 +892,14 @@ export struct FnTopBar {
           .textAlign(TextAlign.Center)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
 
         Text(this.subtitle.length > 0 ? this.subtitle : ' ')
           .fontSize(FN_FLOATING_TOP_META_FONT_VP)
           .textAlign(TextAlign.Center)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .opacity(this.subtitle.length > 0 ? 1 : 0)
       }
         .layoutWeight(2)
@@ -1041,13 +1056,14 @@ export struct FnFullLoadingMask {
 
 @Component
 export struct FnInlineLoading {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop topOffsetVp: number = 0;
   @Prop text: string = '加载中...';
 
   build() {
     Row({ space: 10 }) {
       LoadingProgress().width(28).height(28)
-      Text(this.text).fontSize(14).fontColor($r('app.color.text_secondary'))
+      Text(this.text).fontSize(14).fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
     }
     .width('100%')
     .justifyContent(FlexAlign.Center)
@@ -1057,6 +1073,7 @@ export struct FnInlineLoading {
 
 @Component
 export struct FnStateText {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop text: string = '';
   @Prop isError: boolean = false;
   @Prop topOffsetVp: number = 0;
@@ -1068,6 +1085,6 @@ export struct FnStateText {
       .padding({ left: 24, right: 24, top: this.topOffsetVp + 40 })
       .textAlign(TextAlign.Center)
       .fontSize(14)
-      .fontColor(this.isError ? '#FFE0483E' : $r('app.color.text_secondary'))
+      .fontColor(this.isError ? '#FFE0483E' : fnResolvedTextSecondary(this.themeTextSecondary))
   }
 }

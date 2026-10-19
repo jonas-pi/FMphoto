@@ -1,5 +1,9 @@
 import { FN_MEDIA_BASE_URL } from '../../auth/AppSession';
-import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../../common/FnThemeColors';
 import { GalleryNetworkThumb, nasUrl } from '../../album/GalleryAlbumCommon';
 import {
   FnInlineLoading,
@@ -25,6 +29,8 @@ import {
  */
 @Component
 export struct GalleryPreviewDetailsSheet {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop detailsLoading: boolean = false;
   @Prop detailsError: string = '';
@@ -131,7 +137,7 @@ export struct GalleryPreviewDetailsSheet {
     Text(title)
       .fontSize(12)
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.text_secondary'))
+      .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       .width('100%')
       .margin({ top: 10, bottom: 4 })
   }
@@ -142,11 +148,11 @@ export struct GalleryPreviewDetailsSheet {
       Row({ space: 10 }) {
         Text(label)
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width(92)
         Text(value)
           .fontSize(13)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .layoutWeight(1)
       }
       .width('100%')
@@ -172,7 +178,7 @@ export struct GalleryPreviewDetailsSheet {
     } else {
       SymbolGlyph($r('sys.symbol.person_crop_circle_fill'))
         .fontSize(28)
-        .fontColor([$r('app.color.text_secondary')])
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
         .width(40)
         .height(40)
     }
@@ -183,13 +189,13 @@ export struct GalleryPreviewDetailsSheet {
     Row({ space: 10 }) {
       Text('人物')
         .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .width(92)
       Column({ space: 8 }) {
         if (this.personsInPhoto.length === 0) {
           Text('未识别到人物')
             .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         } else {
           ForEach(this.personsInPhoto, (p: PersonInPhotoItem) => {
             Row({ space: 10 }) {
@@ -205,7 +211,7 @@ export struct GalleryPreviewDetailsSheet {
                 } else {
                   Text(galleryPreviewPersonInPhotoName(p))
                     .fontSize(13)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .width('100%')
@@ -213,7 +219,7 @@ export struct GalleryPreviewDetailsSheet {
                 if (this.personHasMeta(p)) {
                   Text(galleryPreviewPersonInPhotoMeta(p))
                     .fontSize(11)
-                    .fontColor($r('app.color.text_secondary'))
+                    .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .width('100%')
@@ -232,12 +238,12 @@ export struct GalleryPreviewDetailsSheet {
           if (this.hasOpenablePerson()) {
             Text(this.personOpening ? '正在打开人物相册…' : '点击打开该人物相册')
               .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .margin({ top: 2 })
           } else {
             Text('尚未归入人物，无法打开相册')
               .fontSize(11)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .margin({ top: 2 })
           }
         }
@@ -256,7 +262,7 @@ export struct GalleryPreviewDetailsSheet {
       Row({ space: 10 }) {
         Text(label)
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width(92)
         Column({ space: 4 }) {
           // 详情区已支持滚动，路径不再截断层级或限制行数，直接完整展示原始路径。
@@ -265,7 +271,7 @@ export struct GalleryPreviewDetailsSheet {
             .fontColor(this.accent)
           Text(this.folderOpening ? '正在打开同目录媒体...' : '点击打开同目录媒体')
             .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         }
         .layoutWeight(1)
       }

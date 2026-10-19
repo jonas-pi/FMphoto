@@ -32,6 +32,11 @@ import { GalleryAlbumBatchActionBar } from '../GalleryAlbumBatchActionBar';
 import { GalleryAlbumSelectionOverlay, GALLERY_SELECTION_SCOPE_ALBUM } from './GalleryAlbumSelectionOverlay';
 import { FN_WINDOW_WIDTH_BP_KEY, fnAdaptiveGridColumns } from '../../common/FnWindowBreakpoint';
 import { galleryPerfDayCachedCount } from '../GalleryPerfProfile';
+import {
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY
+} from '../../common/FnThemeColors';
+
 
 const GALLERY_SEARCH_INITIAL_RENDER_COUNT = 120;
 const GALLERY_SEARCH_APPEND_RENDER_COUNT = 90;
@@ -53,6 +58,7 @@ interface GallerySearchRowBlock {
 
 @Component
 export struct GalleryAlbumSearchModeView {
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @Prop baseUrl: string = '';
   @Prop contentInsetTopVp: number = 0;
   @Prop contentInsetBottomVp: number = 0;
@@ -454,7 +460,7 @@ export struct GalleryAlbumSearchModeView {
       if (this.loading) {
         Row() {
           LoadingProgress().width(28).height(28)
-          Text('AI 搜索中…').fontSize(14).fontColor($r('app.color.text_secondary')).margin({ left: 10 })
+          Text('AI 搜索中…').fontSize(14).fontColor(fnResolvedTextSecondary(this.themeTextSecondary)).margin({ left: 10 })
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -462,7 +468,7 @@ export struct GalleryAlbumSearchModeView {
       } else if (this.error.length > 0) {
         Text(this.error)
           .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({ top: this.contentInsetTopVp + 40, left: 24, right: 24 })
@@ -476,7 +482,7 @@ export struct GalleryAlbumSearchModeView {
             if (this.searchResults.length > 0) {
               Text(`共 ${this.searchResults.length} 项`)
                 .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
+                .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 4, bottom: 8 })
             }
@@ -591,7 +597,7 @@ export struct GalleryAlbumSearchModeView {
                     .height(18)
                   Text('继续加载中...')
                     .fontSize(12)
-                    .fontColor($r('app.color.text_secondary'))
+                    .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
                 }
                 .width('100%')
                 .justifyContent(FlexAlign.Center)

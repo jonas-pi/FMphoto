@@ -37,7 +37,11 @@ import {
   repeatPhotoStartCheck,
   repeatPhotoThumbId
 } from './repeatPhotoPage/RepeatPhotoActions';
-import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY,
+  fnResolvedTextPrimary,
+  FN_RESOLVED_TEXT_PRIMARY_KEY,
+  fnResolvedTextSecondary,
+  FN_RESOLVED_TEXT_SECONDARY_KEY} from '../common/FnThemeColors';
 
 const REPEAT_CARD_RADIUS_VP: number = 22;
 const REPEAT_THUMB_SIZE_VP: number = 96;
@@ -46,6 +50,8 @@ const REPEAT_POLL_MS: number = 2000;
 @Entry
 @Component
 struct RepeatPhotoPage {
+  @StorageProp(FN_RESOLVED_TEXT_PRIMARY_KEY) private themeTextPrimary: string = '';
+  @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   private albumNavigationMode: boolean = false;
@@ -297,12 +303,12 @@ struct RepeatPhotoPage {
         .width('100%')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         .textAlign(TextAlign.Start)
       Text(desc)
         .width('100%')
         .fontSize(14)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .lineHeight(20)
         .textAlign(TextAlign.Start)
       FnHdsPillButton({
@@ -354,14 +360,14 @@ struct RepeatPhotoPage {
     Column({ space: 16 }) {
       Text(this.progressText())
         .fontSize(16)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
       Progress({ value: this.progress.percent, total: 100, type: ProgressType.Linear })
         .width('72%')
         .color(this.accent)
       if (this.progress.total > 0) {
         Text(`${this.progress.percent}%`)
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
       }
     }
     .width('100%')
@@ -408,13 +414,13 @@ struct RepeatPhotoPage {
           .layoutWeight(1)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .textAlign(TextAlign.Start)
         Text(`${group.photos.length}项`)
           .fontSize(13)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .flexShrink(0)
       }
       .width('100%')
@@ -490,7 +496,7 @@ struct RepeatPhotoPage {
     Column({ space: 14 }) {
       Text(text)
         .fontSize(15)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
         .textAlign(TextAlign.Center)
         .padding({ left: 32, right: 32 })
       FnHdsPillButton({
