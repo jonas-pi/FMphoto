@@ -225,6 +225,11 @@ export struct GalleryPreviewSlide {
   private verticalLastOffsetY: number = 0;
   private verticalLastTs: number = 0;
   private verticalVelocityY: number = 0;
+  /**
+   * 本次手势已越过下滑退出阈值。之后只跟页面纵向位移，
+   * 手指再上滑也不改判为打开详情。
+   */
+  private dismissDragEngaged: boolean = false;
   private panScale: number = 1;
   private panX: number = 0;
   private panY: number = 0;
@@ -1120,6 +1125,8 @@ export struct GalleryPreviewSlide {
    * 文档：ts-transition-animation-shared-elements
    */
   private beginSwipeDismiss(): void {
+    // 退出已提交：锁住切页，后续上滑不能再改开详情。
+    this.lockParentForVertical(true);
     this.clearHeroFreezeTimer();
     this.cancelTransformAnimator();
     this.hideSwipeDismissChrome();
@@ -1211,6 +1218,7 @@ export struct GalleryPreviewSlide {
     this.verticalLastOffsetY = 0;
     this.verticalLastTs = 0;
     this.verticalVelocityY = 0;
+    this.dismissDragEngaged = false;
     this.panScale = 1;
     this.panX = 0;
     this.panY = 0;
@@ -1317,9 +1325,10 @@ export struct GalleryPreviewSlide {
   }
 
   private beginVerticalPan(): void {
-    if (!this.allowVerticalGesture) {
+    if (!this.allowVerticalGesture || this.dismissHeroActive) {
       return;
     }
+    this.dismissDragEngaged = false;
     this.cancelTransformAnimator();
     this.haltLivePlayback();
     this.verticalPanActive = true;
@@ -1336,7 +1345,7 @@ export struct GalleryPreviewSlide {
   }
 
   private applyVerticalOffset(offsetX: number, offsetY: number): void {
-    if (!this.allowVerticalGesture) {
+    if (!this.allowVerticalGesture || this.dismissHeroActive) {
       return;
     }
     this.verticalOffsetX = offsetX;
@@ -1355,15 +1364,21 @@ export struct GalleryPreviewSlide {
       setGalleryPreviewDismissProgress(0);
       return;
     }
-    if (offsetY >= 0) {
+    // 已越过下滑退出阈值后，上滑只把页面拖回，不再改判成打开详情。
+    const pageOwnsVertical = offsetY >= 0 || this.dismissDragEngaged;
+    if (pageOwnsVertical) {
+      const followY = this.dismissDragEngaged ? Math.max(0, offsetY) : offsetY;
+      if (galleryShouldDismissPage(followY, this.verticalVelocityY, this.viewH)) {
+        this.dismissDragEngaged = true;
+      }
       if (getGalleryPreviewDetailsSheetHeight() > 0) {
         setGalleryPreviewDetailsAvoidAnimating(false);
         setGalleryPreviewDetailsSheetHeight(0);
       }
-      const progress = galleryDismissProgress(offsetY, this.viewH);
+      const progress = galleryDismissProgress(followY, this.viewH);
       // 起手已锁定为纵向退出后，横向分量继续跟手，不再交给 Swiper 切图。
       this.panX = offsetX;
-      this.panY = offsetY;
+      this.panY = followY;
       this.panScale = galleryDismissScale(progress);
       this.applyComposedTransform();
       setGalleryPreviewDismissProgress(progress);
@@ -1441,12 +1456,19 @@ export struct GalleryPreviewSlide {
   }
 
   private finishVerticalPan(cancelled: boolean): void {
+    // 退出动画播放中：不要取消飞回，也不要把这次上滑判成打开详情。
+    if (this.dismissHeroActive) {
+      this.verticalPanActive = false;
+      this.lockParentForVertical(false);
+      return;
+    }
     if (!this.allowVerticalGesture) {
       this.verticalPanActive = false;
       return;
     }
     this.verticalPanActive = false;
     if (cancelled) {
+      this.dismissDragEngaged = false;
       this.lockParentForVertical(false);
       if (this.detailsShowing) {
         setGalleryPreviewDetailsAvoidAnimating(true);
@@ -1471,9 +1493,17 @@ export struct GalleryPreviewSlide {
       setGalleryPreviewDetailsSheetHeight(expandedH);
       return;
     }
-    if (galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH)) {
+    if (this.dismissDragEngaged ||
+      galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH)) {
+      const shouldDismiss = galleryShouldDismissPage(this.verticalOffsetY, this.verticalVelocityY, this.viewH);
+      this.dismissDragEngaged = false;
       this.lockParentForVertical(false);
-      this.beginSwipeDismiss();
+      if (shouldDismiss) {
+        this.beginSwipeDismiss();
+        return;
+      }
+      // 下滑已触发后又拖回阈值内：页面回位，不进入详情。
+      this.springVerticalHome();
       return;
     }
     if (galleryShouldOpenDetails(this.verticalOffsetY, this.verticalVelocityY)) {
@@ -1502,6 +1532,10 @@ export struct GalleryPreviewSlide {
   }
 
   private canAcceptVerticalPagePan(event: BaseGestureEvent): boolean {
+    // 下滑退出已提交：拒绝预览自己的纵向手势，避免上滑改开详情。
+    if (this.dismissHeroActive) {
+      return false;
+    }
     if (!this.allowVerticalGesture || this.isImageZoomed() || this.pinchGestureRecognizing) {
       return false;
     }
@@ -1874,6 +1908,7 @@ export struct GalleryPreviewSlide {
           )
         , this.isLive() ? GestureMask.Normal : GestureMask.IgnoreInternal)
         // 未放大：纵向跟手（上滑详情 / 下滑退出），横向 REJECT 给 Swiper。
+        // 下滑退出一旦触发，纵向手势不再改判为详情，退出动画播放中直接拒绝。
         // 放大后全向拖拽平移。距离用 PanGestureOptions 动态切换。
         .gesture(
           PanGesture(this.imagePanOptions)
