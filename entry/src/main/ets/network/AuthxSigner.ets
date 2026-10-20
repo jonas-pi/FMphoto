@@ -196,6 +196,11 @@ const SHA256_K: Uint32Array = new Uint32Array([
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 ]);
 
+/** 纯 JS SHA-256，可在 TaskPool 里算小文件指纹，不占用界面线程。 */
+export function sha256Bytes(data: Uint8Array): Uint8Array {
+  return sha256Js(data);
+}
+
 /** RFC 6234 风格 SHA-256，输入任意字节长度（图库签名/HMAC 消息远小于 2^32 位，长度编码用 64 位高位补 0） */
 function sha256Js(data: Uint8Array): Uint8Array {
   const len = data.length;

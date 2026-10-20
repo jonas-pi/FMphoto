@@ -1,20 +1,12 @@
 /**
- * 前台增量同步：账本快筛 → NAS 指纹（强匹配可入账本；size+mtime 弱匹配仅本轮跳过）。
+ * 前台同步：本机账本快筛 → 内容指纹问整库 file_hash → 未命中的才上传。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
-import {
-  buildNasDedupeIndex,
-  emptyNasDedupeIndex,
-  localPhotoOfficialFingerprint,
-  mergeNasDedupeIndex,
-  NasDedupeIndex,
-  nasDedupeIndexHasEntry,
-  nasDedupeIndexMatchKindForEntry,
-  nasDedupeMatchIsStrong
-} from './GalleryAutoSyncOfficialFingerprint';
+import { buildNasDedupeIndex, localPhotoOfficialFingerprint } from './GalleryAutoSyncOfficialFingerprint';
+import { compareLocalWithBackup, ContentCompareProgress, SyncUploadPiece } from './GalleryAutoSyncCompare';
 import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { FnTransferDirection } from '../common/FnTransferProgress';
@@ -23,6 +15,18 @@ import { LocalPhotoScanProgress, queryLocalPhotos, LocalPhotoEntry } from './Gal
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
+
+class CompareQueueProgress implements ContentCompareProgress {
+  private readonly taskId: string;
+
+  constructor(taskId: string) {
+    this.taskId = taskId;
+  }
+
+  onProgress(done: number, total: number, detail: string): void {
+    FnTransferQueueStore.update(this.taskId, total > 0 ? done : 0, detail);
+  }
+}
 
 class LocalScanQueueProgress implements LocalPhotoScanProgress {
   private readonly taskId: string;
@@ -52,44 +56,12 @@ export function buildNasMediaFingerprints(nasTimeline: GalleryListItem[]): Set<s
 }
 
 export interface AutoSyncResult {
-  unsynced: LocalPhotoEntry[];
+  unsynced: SyncUploadPiece[];
   detectedAt: number;
   skippedOnNas: number;
   skippedInLedger: number;
-}
-
-export function filterUnsyncedLocalPhotos(
-  localPhotos: LocalPhotoEntry[],
-  nasIndex: NasDedupeIndex,
-  ledger: Set<string>
-): AutoSyncResult {
-  const unsynced: LocalPhotoEntry[] = [];
-  let skippedOnNas = 0;
-  let skippedInLedger = 0;
-  for (let i = 0; i < localPhotos.length; i++) {
-    const local = localPhotos[i];
-    if (local.fileName.length === 0 || local.fileSize <= 0) {
-      continue;
-    }
-    if (nasDedupeIndexHasEntry(nasIndex, local)) {
-      skippedOnNas++;
-      continue;
-    }
-    if (GalleryAutoSyncLedger.hasEntry(ledger, local)) {
-      skippedInLedger++;
-      continue;
-    }
-    unsynced.push(local);
-  }
-  unsynced.sort(
-    (a: LocalPhotoEntry, b: LocalPhotoEntry): number => b.dateModifiedMs - a.dateModifiedMs
-  );
-  return {
-    unsynced,
-    detectedAt: Date.now(),
-    skippedOnNas,
-    skippedInLedger
-  };
+  compareFailed: number;
+  unreadable: number;
 }
 
 export class GalleryAutoSyncStore {
@@ -111,11 +83,21 @@ export class GalleryAutoSyncStore {
     return GalleryAutoSyncStore.lastResult.unsynced.length;
   }
 
-  static getUnsyncedPhotos(): LocalPhotoEntry[] {
+  static getUnsyncedPhotos(): SyncUploadPiece[] {
     if (GalleryAutoSyncStore.lastResult === null) {
       return [];
     }
     return GalleryAutoSyncStore.lastResult.unsynced;
+  }
+
+  static markPieceSynced(sourceUri: string, role: string): void {
+    if (GalleryAutoSyncStore.lastResult === null || sourceUri.length === 0) {
+      return;
+    }
+    GalleryAutoSyncStore.lastResult.unsynced =
+      GalleryAutoSyncStore.lastResult.unsynced.filter(
+        (e: SyncUploadPiece): boolean => !(e.sourceUri === sourceUri && e.role === role)
+      );
   }
 
   static markSynced(uris: string[]): void {
@@ -125,7 +107,7 @@ export class GalleryAutoSyncStore {
     const uriSet = new Set<string>(uris);
     GalleryAutoSyncStore.lastResult.unsynced =
       GalleryAutoSyncStore.lastResult.unsynced.filter(
-        (e: LocalPhotoEntry): boolean => !uriSet.has(e.uri)
+        (e: SyncUploadPiece): boolean => !uriSet.has(e.sourceUri)
       );
     hilog.info(
       DOMAIN,
@@ -182,7 +164,9 @@ export class GalleryAutoSyncStore {
           unsynced: [],
           detectedAt: now,
           skippedOnNas: 0,
-          skippedInLedger: 0
+          skippedInLedger: 0,
+          compareFailed: 0,
+          unreadable: 0
         };
         GalleryAutoSyncStore.lastDetectTime = now;
         scanOk = true;
@@ -190,71 +174,37 @@ export class GalleryAutoSyncStore {
         return GalleryAutoSyncStore.lastResult;
       }
 
-      const ledger = await GalleryAutoSyncLedger.load(ctx);
-      const ledgerFiltered = filterUnsyncedLocalPhotos(localPhotos, emptyNasDedupeIndex(), ledger);
-      if (ledgerFiltered.unsynced.length === 0) {
-        GalleryAutoSyncStore.lastResult = ledgerFiltered;
-        GalleryAutoSyncStore.lastDetectTime = now;
-        scanOk = true;
-        scanMessage = '本机相册都已在 NAS';
-        return GalleryAutoSyncStore.lastResult;
-      }
-
-      FnTransferQueueStore.update(taskId, localPhotos.length, '正在对比 NAS');
-      const nasIndex = mergeNasDedupeIndex(
-        await GalleryAutoSyncNasIndex.getIndex(client, false, ctx),
-        partialTimeline
-      );
-      const nasFiltered = filterUnsyncedLocalPhotos(
-        ledgerFiltered.unsynced,
-        nasIndex,
-        new Set<string>()
-      );
-      const unsyncedUris = new Set<string>(
-        nasFiltered.unsynced.map((entry: LocalPhotoEntry): string => entry.uri)
-      );
-      const matchedOnNas = ledgerFiltered.unsynced.filter(
-        (entry: LocalPhotoEntry): boolean => !unsyncedUris.has(entry.uri)
-      );
-      // 仅强匹配写入账本；size+mtime 弱匹配只本轮跳过，避免误永久跳过
-      const strongMatches = matchedOnNas.filter(
-        (entry: LocalPhotoEntry): boolean =>
-          nasDedupeMatchIsStrong(nasDedupeIndexMatchKindForEntry(nasIndex, entry))
-      );
-      if (strongMatches.length > 0) {
-        try {
-          await GalleryAutoSyncLedger.markSynced(ctx, strongMatches);
-        } catch (e) {
-          hilog.warn(DOMAIN, TAG, 'persist NAS matches failed: %{public}s', String(e));
-        }
-      }
+      const progress = new CompareQueueProgress(taskId);
+      const compared = await compareLocalWithBackup(ctx, client, localPhotos, progress);
       const filtered: AutoSyncResult = {
-        unsynced: nasFiltered.unsynced,
+        unsynced: compared.pieces,
         detectedAt: Date.now(),
-        skippedOnNas: nasFiltered.skippedOnNas,
-        skippedInLedger: ledgerFiltered.skippedInLedger
+        skippedOnNas: compared.skippedOnNas,
+        skippedInLedger: compared.skippedInLedger,
+        compareFailed: compared.compareFailed,
+        unreadable: compared.unreadable
       };
-
       GalleryAutoSyncStore.lastResult = filtered;
       GalleryAutoSyncStore.lastDetectTime = now;
       scanOk = true;
-      scanMessage = filtered.unsynced.length > 0
-        ? `还有 ${filtered.unsynced.length} 项未同步`
-        : '本机相册都已在 NAS';
-
+      if (filtered.unsynced.length > 0) {
+        scanMessage = `还有 ${filtered.unsynced.length} 项未同步`;
+      } else if (filtered.compareFailed + filtered.unreadable > 0) {
+        scanMessage = '有照片没能完成对比';
+      } else {
+        scanMessage = '本机相册都已在 NAS';
+      }
       hilog.info(
         DOMAIN,
         TAG,
-        'detectUnsynced official local=%{public}d nasFp=%{public}d sizeMtime=%{public}d nameSize=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d',
+        'detectUnsynced local=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d failed=%{public}d unreadable=%{public}d',
         localPhotos.length,
-        nasIndex.fingerprints.size,
-        nasIndex.sizeMtimeKeys.size,
-        nasIndex.nameSizeKeys.size,
         filtered.unsynced.length,
         filtered.skippedOnNas,
-        filtered.skippedInLedger
+        filtered.skippedInLedger,
+        filtered.compareFailed,
+        filtered.unreadable
       );
-
       return GalleryAutoSyncStore.lastResult;
     } catch (e) {
       scanMessage = '扫描失败';

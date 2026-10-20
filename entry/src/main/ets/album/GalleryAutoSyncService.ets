@@ -16,6 +16,7 @@ export interface LocalPhotoEntry {
   fileSize: number;
   dateModifiedMs: number;
   mimeType: string;
+  photoSubtype: number;
 }
 
 function photoAssetFileSize(asset: photoAccessHelper.PhotoAsset): number {
@@ -50,13 +51,31 @@ function photoAssetDateModifiedMs(asset: photoAccessHelper.PhotoAsset): number {
   return 0;
 }
 
+function photoAssetSubtype(asset: photoAccessHelper.PhotoAsset): number {
+  try {
+    const raw = asset.get(photoAccessHelper.PhotoKeys.PHOTO_SUBTYPE);
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      return raw;
+    }
+    if (typeof raw === 'string') {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (_e) {
+  }
+  return photoAccessHelper.PhotoSubtype.DEFAULT;
+}
+
 function toLocalPhotoEntry(asset: photoAccessHelper.PhotoAsset): LocalPhotoEntry {
   return {
     uri: asset.uri,
     fileName: asset.displayName ?? '',
     fileSize: photoAssetFileSize(asset),
     dateModifiedMs: photoAssetDateModifiedMs(asset),
-    mimeType: ''
+    mimeType: '',
+    photoSubtype: photoAssetSubtype(asset)
   };
 }
 
@@ -139,6 +158,11 @@ export async function queryLocalPhotos(
       if (page.length < LOCAL_PHOTO_PAGE_SIZE) {
         break;
       }
+      await new Promise<void>((resolve: () => void) => {
+        setTimeout((): void => {
+          resolve();
+        }, 0);
+      });
     }
     hilog.info(DOMAIN, TAG, 'queryLocalPhotos count=%{public}d', entries.length);
     return entries;

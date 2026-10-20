@@ -407,10 +407,12 @@ export function galleryAlbumStartAutoSync(
       host.toast('没有相册读取权限，没法自动扫描');
       return;
     }
-    const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
+    const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, false, timelineItems);
     host.syncBadgeCount = result.unsynced.length;
     if (result.unsynced.length === 0) {
-      lastAutoSyncNotice = '本机相册都已在 NAS';
+      lastAutoSyncNotice = result.compareFailed + result.unreadable > 0
+        ? '有照片没能完成对比，这次没有上传'
+        : '本机相册都已在 NAS';
       host.toast(lastAutoSyncNotice);
       return;
     }
