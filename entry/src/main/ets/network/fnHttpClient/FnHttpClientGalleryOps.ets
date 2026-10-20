@@ -436,6 +436,10 @@ export class FnHttpClientGalleryOps {
     return this.repeat.getTaskPanelItems(timeoutMs);
   }
 
+  async clearTaskPanelDone(timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    return this.repeat.clearTaskPanelDone(timeoutMs);
+  }
+
   async startRepeatPhotoCheck(checkSimilarity: boolean, timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
     return this.repeat.startRepeatPhotoCheck(checkSimilarity, timeoutMs);
   }

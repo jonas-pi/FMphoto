@@ -11,6 +11,7 @@ const POLL_SLOW_MS: number = 15000;
 
 let pollTimer: number = -1;
 let pollScheduled: boolean = false;
+let pollEpoch: number = 0;
 
 function clearPollTimer(): void {
   if (pollTimer >= 0) {
@@ -36,10 +37,13 @@ async function pollOnce(): Promise<void> {
     stopNasTaskPanelSync();
     return;
   }
+  const epoch = pollEpoch;
   let fast = FnTransferQueueStore.activeCount() > 0;
   try {
     const res = await client.getTaskPanelItems(12000);
-    if (res.success && res.data !== undefined) {
+    if (epoch !== pollEpoch) {
+      fast = true;
+    } else if (res.success && res.data !== undefined) {
       FnTransferQueueStore.syncNasTasks(res.data);
       for (let i = 0; i < res.data.length; i++) {
         if (res.data[i].running) {
@@ -54,6 +58,20 @@ async function pollOnce(): Promise<void> {
     return;
   }
   scheduleNext(fast ? POLL_FAST_MS : POLL_SLOW_MS);
+}
+
+/** 清空已完成时作废进行中的 list 轮询，避免旧响应把任务加回来。 */
+export function invalidateNasTaskPanelPoll(): void {
+  pollEpoch = pollEpoch + 1;
+}
+
+export function refreshNasTaskPanelNow(): void {
+  if (!pollScheduled) {
+    startNasTaskPanelSync();
+    return;
+  }
+  clearPollTimer();
+  void pollOnce();
 }
 
 export function startNasTaskPanelSync(): void {

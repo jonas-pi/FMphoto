@@ -21,6 +21,18 @@ export const APP_GALLERY_RATE_ALREADY: string = 'already';
 export const APP_GALLERY_RATE_NEED_ID: string = 'need_id';
 export const APP_GALLERY_RATE_FAILED: string = 'failed';
 
+export class AppGalleryRateOutcome {
+  kind: string = APP_GALLERY_RATE_FAILED;
+  detail: string = '';
+}
+
+function rateOutcome(kind: string, detail: string = ''): AppGalleryRateOutcome {
+  const outcome = new AppGalleryRateOutcome();
+  outcome.kind = kind;
+  outcome.detail = detail;
+  return outcome;
+}
+
 export function fnAppGalleryCommentAvailable(): boolean {
   try {
     return canIUse(COMMENT_SYSCAP);
@@ -65,22 +77,32 @@ function isAlreadyCommented(code: number): boolean {
   return code === ERR_ALREADY_THIS_VERSION || code === ERR_COMMENT_LIMIT || code === ERR_WITHIN_YEAR;
 }
 
-export async function fnShowAppGalleryComment(ctx: common.UIAbilityContext): Promise<string> {
+function errorDetail(err: Object): string {
+  const be = err as BusinessError;
+  const code = be.code;
+  const message = be.message !== undefined ? be.message : '';
+  if (message.length > 0) {
+    return `${code} ${message}`;
+  }
+  return `${code}`;
+}
+
+export async function fnShowAppGalleryComment(ctx: common.UIAbilityContext): Promise<AppGalleryRateOutcome> {
   if (!fnAppGalleryCommentAvailable()) {
-    return APP_GALLERY_RATE_FAILED;
+    return rateOutcome(APP_GALLERY_RATE_FAILED, '当前系统没有评分能力');
   }
   try {
     await commentManager.showCommentDialog(ctx);
-    return APP_GALLERY_RATE_SHOWN;
+    return rateOutcome(APP_GALLERY_RATE_SHOWN);
   } catch (e) {
     const code = (e as BusinessError).code;
     if (isAlreadyCommented(code)) {
       await fnMarkAppGalleryCommentDone(ctx);
-      return APP_GALLERY_RATE_ALREADY;
+      return rateOutcome(APP_GALLERY_RATE_ALREADY);
     }
     if (code === ERR_NO_HUAWEI_ID) {
-      return APP_GALLERY_RATE_NEED_ID;
+      return rateOutcome(APP_GALLERY_RATE_NEED_ID);
     }
-    return APP_GALLERY_RATE_FAILED;
+    return rateOutcome(APP_GALLERY_RATE_FAILED, errorDetail(e as Object));
   }
 }

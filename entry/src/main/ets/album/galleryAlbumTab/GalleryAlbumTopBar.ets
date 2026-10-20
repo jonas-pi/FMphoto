@@ -146,6 +146,7 @@ export struct GalleryAlbumMoreMenuLayer {
   @Prop showMoreMultiselect: boolean = false;
   @Prop showMoreUpload: boolean = false;
   @Prop showMoreSync: boolean = false;
+  @Prop syncBadgeCount: number = 0;
   onDismiss: () => void = () => {};
   onEnterMultiselect: () => void = () => {};
   onOpenSlideshow: () => void = () => {};
@@ -160,6 +161,7 @@ export struct GalleryAlbumMoreMenuLayer {
         showMultiselect: this.showMoreMultiselect,
         showUpload: this.showMoreUpload,
         showSync: this.showMoreSync,
+        syncBadgeCount: this.syncBadgeCount,
         showSlideshow: true,
         onDismiss: (): void => {
           this.onDismiss();
@@ -667,7 +669,7 @@ export struct GalleryAlbumTopBar {
           this.onMoreMenuAction();
         }
       };
-      items.push(this.menuItem(moreContent, this.autoSyncBadgeCount));
+      items.push(this.menuItem(moreContent));
     }
     return items;
   }

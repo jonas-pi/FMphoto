@@ -3446,6 +3446,7 @@ export struct GalleryAlbumTab {
           showMoreMultiselect: true,
           showMoreUpload: this.shouldShowUploadInMoreMenu(),
           showMoreSync: this.shouldShowUploadInMoreMenu(),
+          syncBadgeCount: this.autoSyncBadgeCount,
           onDismiss: (): void => {
             this.dismissMoreMenu();
           },

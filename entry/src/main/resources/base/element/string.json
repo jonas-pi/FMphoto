@@ -553,6 +553,10 @@
       "value": "支付中"
     },
     {
+      "name": "tip_or_rate",
+      "value": "或者，给个好评吧！"
+    },
+    {
       "name": "rate_app_entry_title",
       "value": "给个评分"
     },

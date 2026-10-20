@@ -25,6 +25,9 @@ export interface FnTransferTaskSnapshot {
   updatedAt: number;
 }
 
+/** 已向服务端 clear-done、尚未从 list 消失的 NAS 任务，避免轮询把它们加回来。 */
+let suppressedNasIds: string[] = [];
+
 function bumpQueueVersion(): void {
   const old = AppStorage.get<number>(FN_TRANSFER_QUEUE_VERSION) ?? 0;
   AppStorage.setOrCreate<number>(FN_TRANSFER_QUEUE_VERSION, old + 1);
@@ -164,9 +167,19 @@ export class FnTransferQueueStore {
       }
     }
     const freshKeys = new Set<string>();
+    const seenNasIds = new Set<string>();
     const nasNext: FnTransferTaskSnapshot[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+      const key = FnTransferQueueStore.nasTaskKey(item);
+      seenNasIds.add(key);
+      if (FnTransferQueueStore.isSuppressedNasId(key)) {
+        if (item.running) {
+          FnTransferQueueStore.releaseNasId(key);
+        } else {
+          continue;
+        }
+      }
       if (!taskPanelItemActive(item)) {
         continue;
       }
@@ -174,6 +187,7 @@ export class FnTransferQueueStore {
       freshKeys.add(snap.id);
       nasNext.push(snap);
     }
+    FnTransferQueueStore.dropSuppressedNasIdsMissing(seenNasIds);
     for (let i = 0; i < staleNas.length; i++) {
       const old = staleNas[i];
       if (freshKeys.has(old.id)) {
@@ -219,6 +233,73 @@ export class FnTransferQueueStore {
       }
     }
     return n;
+  }
+
+  static completedNasIds(): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < FnTransferQueueStore.tasks.length; i++) {
+      const task = FnTransferQueueStore.tasks[i];
+      if (task.status === FnTransferTaskStatus.COMPLETED && FnTransferQueueStore.isNasTaskId(task.id)) {
+        ids.push(task.id);
+      }
+    }
+    return ids;
+  }
+
+  static suppressNasIds(ids: string[]): void {
+    for (let i = 0; i < ids.length; i++) {
+      if (!FnTransferQueueStore.isSuppressedNasId(ids[i])) {
+        suppressedNasIds.push(ids[i]);
+      }
+    }
+  }
+
+  static releaseNasIds(ids: string[]): void {
+    if (ids.length === 0 || suppressedNasIds.length === 0) {
+      return;
+    }
+    const next: string[] = [];
+    for (let i = 0; i < suppressedNasIds.length; i++) {
+      let drop = false;
+      for (let j = 0; j < ids.length; j++) {
+        if (suppressedNasIds[i] === ids[j]) {
+          drop = true;
+          break;
+        }
+      }
+      if (!drop) {
+        next.push(suppressedNasIds[i]);
+      }
+    }
+    suppressedNasIds = next;
+  }
+
+  private static isSuppressedNasId(id: string): boolean {
+    for (let i = 0; i < suppressedNasIds.length; i++) {
+      if (suppressedNasIds[i] === id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static releaseNasId(id: string): void {
+    const ids: string[] = [];
+    ids.push(id);
+    FnTransferQueueStore.releaseNasIds(ids);
+  }
+
+  private static dropSuppressedNasIdsMissing(seen: Set<string>): void {
+    if (suppressedNasIds.length === 0) {
+      return;
+    }
+    const next: string[] = [];
+    for (let i = 0; i < suppressedNasIds.length; i++) {
+      if (seen.has(suppressedNasIds[i])) {
+        next.push(suppressedNasIds[i]);
+      }
+    }
+    suppressedNasIds = next;
   }
 
   /** 移除已完成任务；进行中与失败项保留。返回清除条数。 */

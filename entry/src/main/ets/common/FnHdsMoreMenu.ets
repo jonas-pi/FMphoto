@@ -2,6 +2,7 @@
  * 图库「更多」菜单：各页同一顺序。
  * 多选 → 上传 → 同步 → 幻灯片 → 跳转到文件夹视图 → 返回来源（缺项跳过，不重排）。
  */
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { fnHdsBindMenuOptions } from './FnHdsOverlay';
 
 /**
@@ -49,6 +50,7 @@ export struct FnHdsMoreMenuAnchor {
   @Prop showMultiselect: boolean = false;
   @Prop showUpload: boolean = false;
   @Prop showSync: boolean = false;
+  @Prop syncBadgeCount: number = 0;
   @Prop showSlideshow: boolean = false;
   @Prop showJumpToFolder: boolean = false;
   @Prop showReturnToSource: boolean = false;
@@ -76,10 +78,22 @@ export struct FnHdsMoreMenuAnchor {
           })
       }
       if (this.showSync) {
-        MenuItem({ content: '同步' })
-          .onClick((): void => {
-            this.onSync();
+        if (this.syncBadgeCount > 0) {
+          MenuItem({
+            content: '同步',
+            symbolEndIcon: new SymbolGlyphModifier($r('sys.symbol.circle_fill'))
+              .fontSize(10)
+              .fontColor(['#FFE11D48'])
           })
+            .onClick((): void => {
+              this.onSync();
+            })
+        } else {
+          MenuItem({ content: '同步' })
+            .onClick((): void => {
+              this.onSync();
+            })
+        }
       }
       if (this.showSlideshow) {
         MenuItem({ content: '幻灯片' })
@@ -126,6 +140,7 @@ export struct FnHdsMoreMenuHost {
   @Prop showMultiselect: boolean = false;
   @Prop showUpload: boolean = false;
   @Prop showSync: boolean = false;
+  @Prop syncBadgeCount: number = 0;
   @Prop showSlideshow: boolean = false;
   @Prop showJumpToFolder: boolean = false;
   @Prop showReturnToSource: boolean = false;
@@ -159,6 +174,7 @@ export struct FnHdsMoreMenuHost {
       showMultiselect: this.showMultiselect,
       showUpload: this.showUpload,
       showSync: this.showSync,
+      syncBadgeCount: this.syncBadgeCount,
       showSlideshow: this.showSlideshow,
       showJumpToFolder: this.showJumpToFolder,
       showReturnToSource: this.showReturnToSource,

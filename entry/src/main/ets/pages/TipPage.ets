@@ -27,6 +27,13 @@ import {
 } from '../common/FnThemeColors';
 import { fnLiquidGlassGradient, fnSoftCardGlassGradient } from '../common/FnUiCommon';
 import {
+  APP_GALLERY_RATE_ALREADY,
+  APP_GALLERY_RATE_FAILED,
+  APP_GALLERY_RATE_NEED_ID,
+  APP_GALLERY_RATE_SHOWN,
+  fnShowAppGalleryComment
+} from '../common/AppGalleryRate';
+import {
   fallbackTipOffers,
   loadTipOffers,
   purchaseTip,
@@ -65,6 +72,7 @@ struct TipPage {
   @State private offers: TipOffer[] = fallbackTipOffers();
   @State private buyingId: string = '';
   @State private pressedId: string = '';
+  @State private rateOpening: boolean = false;
 
   aboutToAppear(): void {
     void this.reload();
@@ -72,6 +80,44 @@ struct TipPage {
 
   private hostContext(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
+  }
+
+  private async openRate(): Promise<void> {
+    if (this.rateOpening) {
+      return;
+    }
+    this.rateOpening = true;
+    this.toast('正在打开评分');
+    try {
+      const result = await fnShowAppGalleryComment(this.hostContext());
+      if (result.kind === APP_GALLERY_RATE_SHOWN) {
+        return;
+      }
+      if (result.kind === APP_GALLERY_RATE_ALREADY) {
+        this.toast('这个版本已经评过了');
+        return;
+      }
+      if (result.kind === APP_GALLERY_RATE_NEED_ID) {
+        this.toastResource($r('app.string.rate_app_need_huawei_id'));
+        return;
+      }
+      const detail = result.detail.length > 0 ? result.detail : '暂时无法打开评分';
+      this.toast(detail);
+    } catch (_e) {
+      this.toast('评分没有打开');
+    } finally {
+      this.rateOpening = false;
+    }
+  }
+
+  private toastResource(message: Resource): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message: message,
+        duration: 1800
+      });
+    } catch (_e) {
+    }
   }
 
   private toast(message: string): void {
@@ -322,8 +368,26 @@ struct TipPage {
             .textAlign(TextAlign.Center)
             .width('100%')
             .padding({ left: 12, right: 12 })
+
+          Blank()
+            .layoutWeight(1)
+
+          Button({ type: ButtonType.Normal }) {
+            Text(this.rateOpening ? '正在打开评分…' : '或者，给个好评吧！')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.accent)
+          }
+          .width('100%')
+          .height(44)
+          .backgroundColor(Color.Transparent)
+          .opacity(this.rateOpening ? 0.45 : 1)
+          .onClick((): void => {
+            void this.openRate();
+          })
         }
         .width('100%')
+        .constraintSize({ minHeight: '100%' })
         .padding({
           left: 16,
           right: 16,

@@ -91,6 +91,8 @@ export const TASK_PANEL_LIST_PATH_CANDIDATES: string[] = [
   `${FN_PHOTO_API_PREFIX}/task-panel/list`,
   '/api/v1/task-panel/list'
 ];
+/** 清空任务面板已完成项：POST /p/api/v1/task-panel/clear-done，空 body */
+export const TASK_PANEL_CLEAR_DONE_PATH = `${FN_PHOTO_API_PREFIX}/task-panel/clear-done`;
 /** 启动重复/相似扫描 */
 export const REPEAT_PHOTO_CHECK_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/check`;
 export const REPEAT_PHOTO_KEEP_PATH = `${FN_PHOTO_API_PREFIX}/repeat-photo/keep`;

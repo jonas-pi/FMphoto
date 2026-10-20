@@ -48,14 +48,6 @@ import { kickNasTaskPanelSync } from '../network/FnNasTaskPanelSync';
 import { openFeedbackPage } from './FeedbackPage';
 import { openTipPage } from './TipPage';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
-import {
-  APP_GALLERY_RATE_ALREADY,
-  APP_GALLERY_RATE_FAILED,
-  APP_GALLERY_RATE_NEED_ID,
-  fnAppGalleryCommentAvailable,
-  fnIsAppGalleryCommentDone,
-  fnShowAppGalleryComment
-} from '../common/AppGalleryRate';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
@@ -289,8 +281,6 @@ export struct MePanel {
   @State private transferQueueVisible: boolean = false;
   @State private configSyncVisible: boolean = false;
   @State private transferQueueTasks: FnTransferTaskSnapshot[] = [];
-  @State private rateEntryVisible: boolean = false;
-  @State private rateOpening: boolean = false;
   @StorageProp(FN_TRANSFER_QUEUE_VERSION) @Watch('onTransferQueueVersionChanged') private transferQueueVersion: number = 0;
   @StorageProp(FN_ENDPOINT_SWITCH_VERSION) @Watch('onEndpointSwitchVersionChanged') private endpointSwitchVersion: number = 0;
   private lastLanBurstToggleAt: number = 0;
@@ -337,7 +327,6 @@ export struct MePanel {
   private onPageShowSignalChanged(): void {
     this.refreshEndpointInfo();
     this.refreshTransferQueueTasks();
-    this.refreshRateEntry();
     this.refreshSystemColorPreview();
   }
 
@@ -575,48 +564,6 @@ export struct MePanel {
     return fnCanUseHdsImmersive();
   }
 
-  private refreshRateEntry(): void {
-    if (!fnAppGalleryCommentAvailable()) {
-      this.rateEntryVisible = false;
-      return;
-    }
-    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    void fnIsAppGalleryCommentDone(ctx).then((done: boolean): void => {
-      this.rateEntryVisible = !done;
-    });
-  }
-
-  private async openAppGalleryRate(): Promise<void> {
-    if (this.rateOpening || !this.rateEntryVisible) {
-      return;
-    }
-    this.rateOpening = true;
-    try {
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const result = await fnShowAppGalleryComment(ctx);
-      if (result === APP_GALLERY_RATE_ALREADY) {
-        this.rateEntryVisible = false;
-        return;
-      }
-      if (result === APP_GALLERY_RATE_NEED_ID) {
-        this.showRateToast($r('app.string.rate_app_need_huawei_id'));
-        return;
-      }
-      if (result === APP_GALLERY_RATE_FAILED) {
-        this.showRateToast($r('app.string.rate_app_unavailable'));
-      }
-    } finally {
-      this.rateOpening = false;
-    }
-  }
-
-  private showRateToast(message: Resource): void {
-    try {
-      this.getUIContext().getPromptAction().showToast({ message: message, duration: 1800 });
-    } catch (_e) {
-    }
-  }
-
   private lanBurstSupportText(): string {
     if (this.lanBurstForceEnabled) {
       return '本次已拉满网络利用率，重启应用后关闭';
@@ -657,7 +604,6 @@ export struct MePanel {
     FnTransferQueueStore.ensureStorage();
     this.refreshTransferQueueTasks();
     this.refreshLanBurstSwitch();
-    this.refreshRateEntry();
     this.refreshSystemColorPreview();
   }
 
@@ -1271,42 +1217,6 @@ export struct MePanel {
   }
 
   @Builder
-  private rateEntryRow() {
-    Row({ space: 10 }) {
-      Column({ space: 6 }) {
-        Text($r('app.string.rate_app_entry_title'))
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
-        Text($r('app.string.rate_app_entry_subtitle'))
-          .fontSize(12)
-          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(16)
-        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
-    }
-    .width('100%')
-    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
-    .backgroundColor(fnResolvedCardFill(this.cardBg))
-    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
-    .linearGradient(this.cardGlass(this.shouldUseHds()))
-    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
-    .borderWidth(1)
-    .borderColor($r('app.color.immersive_panel_border'))
-    .clip(true)
-    .opacity(this.rateOpening ? 0.55 : 1)
-    .onClick((): void => {
-      void this.openAppGalleryRate();
-    })
-  }
-
-  @Builder
   private themeColorCard() {
     Column({ space: 12 }) {
       Text('界面配色')
@@ -1601,14 +1511,6 @@ export struct MePanel {
           .height(ME_ACTION_GAP_VP)
 
         this.tipEntryRow()
-
-        if (this.rateEntryVisible) {
-          Blank()
-            .width('100%')
-            .height(ME_ACTION_GAP_VP)
-
-          this.rateEntryRow()
-        }
 
         Blank()
           .width('100%')

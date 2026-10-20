@@ -14,6 +14,7 @@ import {
   REPEAT_PHOTO_LIST_PATH_CANDIDATES,
   REPEAT_PHOTO_LIST_SIGN_PATH,
   REPEAT_PHOTO_MERGE_PATH,
+  TASK_PANEL_CLEAR_DONE_PATH,
   TASK_PANEL_LIST_PATH_CANDIDATES,
   TASK_PANEL_LIST_SIGN_PATH,
   escapeJsonString
@@ -115,6 +116,43 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
       return { success: false, message: res.message, errorBodyPreview: res.errorBodyPreview };
     }
     return { success: true, data: parseTaskPanelList(res.data) };
+  }
+
+  /** 与网页一致：POST clear-done，body 为空，authx 对空串签名。 */
+  async clearTaskPanelDone(timeoutMs: number = 15000): Promise<FnClientResult<Object>> {
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const authx = await genFnGalleryAuthxPostRaw(TASK_PANEL_CLEAR_DONE_PATH, '');
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      const raw = await this.rawRequest(
+        `${activeBase}${TASK_PANEL_CLEAR_DONE_PATH}`,
+        http.RequestMethod.POST,
+        headers,
+        '',
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '响应解析失败' };
+      }
+      if (FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
+        return { success: true, data: parsed['data'] as Object };
+      }
+      const errLine = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
+      return { success: false, message: errLine.length > 0 ? errLine : '清除已完成失败' };
+    } catch (e) {
+      return { success: false, message: String(e) || '清除已完成失败' };
+    }
   }
 
   /**

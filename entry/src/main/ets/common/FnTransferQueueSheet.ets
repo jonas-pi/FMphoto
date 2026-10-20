@@ -19,6 +19,8 @@ import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY,
   FN_RESOLVED_TEXT_PRIMARY_KEY,
   fnResolvedTextSecondary,
   FN_RESOLVED_TEXT_SECONDARY_KEY} from './FnThemeColors';
+import { AppSession } from '../auth/AppSession';
+import { invalidateNasTaskPanelPoll, refreshNasTaskPanelNow } from '../network/FnNasTaskPanelSync';
 import {
   FnTransferQueueStore,
   FnTransferTaskSnapshot,
@@ -36,6 +38,7 @@ export struct FnTransferQueueSheet {
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @Prop tasks: FnTransferTaskSnapshot[] = [];
+  @State private clearingDone: boolean = false;
   onClose: () => void = (): void => {};
 
   private completedTaskCount(): number {
@@ -52,11 +55,57 @@ export struct FnTransferQueueSheet {
     return this.completedTaskCount() > 0;
   }
 
-  private onClearCompleted(): void {
-    if (!this.canClearCompleted()) {
+  private toast(message: string): void {
+    if (message.length === 0) {
       return;
     }
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message: message,
+        duration: 2200
+      });
+    } catch (_e) {
+    }
+  }
+
+  private onClearCompleted(): void {
+    if (!this.canClearCompleted() || this.clearingDone) {
+      return;
+    }
+    const nasIds = FnTransferQueueStore.completedNasIds();
+    FnTransferQueueStore.suppressNasIds(nasIds);
+    invalidateNasTaskPanelPoll();
     FnTransferQueueStore.clearCompleted();
+    if (nasIds.length === 0) {
+      return;
+    }
+    this.clearingDone = true;
+    void this.clearNasDone(nasIds);
+  }
+
+  private async clearNasDone(nasIds: string[]): Promise<void> {
+    const client = AppSession.getClient();
+    if (client === null) {
+      FnTransferQueueStore.releaseNasIds(nasIds);
+      this.clearingDone = false;
+      this.toast('未连接，已完成任务会再出现');
+      refreshNasTaskPanelNow();
+      return;
+    }
+    try {
+      const res = await client.clearTaskPanelDone();
+      if (!res.success) {
+        FnTransferQueueStore.releaseNasIds(nasIds);
+        const message = res.message !== undefined && res.message.length > 0 ? res.message : '清除已完成失败';
+        this.toast(message);
+      }
+    } catch (_e) {
+      FnTransferQueueStore.releaseNasIds(nasIds);
+      this.toast('清除已完成失败');
+    } finally {
+      this.clearingDone = false;
+      refreshNasTaskPanelNow();
+    }
   }
 
   private canUseHds(): boolean {
