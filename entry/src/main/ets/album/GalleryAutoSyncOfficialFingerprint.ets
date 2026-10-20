@@ -23,18 +23,20 @@ interface OfficialFingerprintParts {
   mtimeSec: number;
 }
 
-/** NAS 去重索引：精确指纹 + name:size 软键 */
+/** NAS 去重索引：精确指纹 + name:size 软键 + 原始文件名（实况合成后体积会变） */
 export interface NasDedupeIndex {
   fingerprints: Set<string>;
   sizeMtimeKeys: Set<string>;
   nameSizeKeys: Set<string>;
+  originalNames: Set<string>;
 }
 
 export function emptyNasDedupeIndex(): NasDedupeIndex {
   return {
     fingerprints: new Set<string>(),
     sizeMtimeKeys: new Set<string>(),
-    nameSizeKeys: new Set<string>()
+    nameSizeKeys: new Set<string>(),
+    originalNames: new Set<string>()
   };
 }
 
@@ -42,8 +44,35 @@ export function cloneNasDedupeIndex(src: NasDedupeIndex): NasDedupeIndex {
   return {
     fingerprints: new Set<string>(src.fingerprints),
     sizeMtimeKeys: new Set<string>(src.sizeMtimeKeys),
-    nameSizeKeys: new Set<string>(src.nameSizeKeys)
+    nameSizeKeys: new Set<string>(src.nameSizeKeys),
+    originalNames: new Set<string>(src.originalNames)
   };
+}
+
+/** 与 NAS 列表 original_name 对齐，用于实况（不按合成后体积去重）。 */
+export function officialOriginalNameKey(originalName: string): string {
+  return originalName.trim();
+}
+
+export function nasDedupeIndexHasOriginalName(index: NasDedupeIndex, originalName: string): boolean {
+  const key = officialOriginalNameKey(originalName);
+  return key.length > 0 && index.originalNames.has(key);
+}
+
+/**
+ * 实况是否已在 NAS：同名即视为已有（两次合成体积往往不同，服务端 name+size 无法去重）。
+ * 仍尝试本地媒体库 size 的 name:size 命中。
+ */
+export function nasLivePhotoLikelyOnNas(index: NasDedupeIndex, originalName: string, localFileSize: number): boolean {
+  if (nasDedupeIndexHasOriginalName(index, originalName)) {
+    return true;
+  }
+  const size = Number.isFinite(localFileSize) && localFileSize > 0 ? Math.floor(localFileSize) : 0;
+  if (size <= 0) {
+    return false;
+  }
+  const soft = officialNameSizeKey(originalName, size);
+  return soft.length > 0 && index.nameSizeKeys.has(soft);
 }
 
 function readRecordString(rec: Record<string, string | number | Object | undefined>, keys: string[]): string {
@@ -251,6 +280,12 @@ export function buildNasDedupeIndex(items: GalleryListItem[]): NasDedupeIndex {
     if (sizeMtime.length > 0) {
       index.sizeMtimeKeys.add(sizeMtime);
     }
+    if (name.length > 0) {
+      const nameKey = officialOriginalNameKey(name);
+      if (nameKey.length > 0) {
+        index.originalNames.add(nameKey);
+      }
+    }
     if (name.length === 0 || size <= 0) {
       continue;
     }
@@ -413,6 +448,9 @@ export function mergeNasDedupeIndex(base: NasDedupeIndex, extra: GalleryListItem
   });
   add.nameSizeKeys.forEach((key: string): void => {
     merged.nameSizeKeys.add(key);
+  });
+  add.originalNames.forEach((key: string): void => {
+    merged.originalNames.add(key);
   });
   return merged;
 }

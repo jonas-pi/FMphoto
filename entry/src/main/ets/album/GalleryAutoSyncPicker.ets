@@ -8,6 +8,7 @@ import {
   buildNasDedupeIndex,
   NasDedupeIndex,
   nasDedupeIndexHasLocal,
+  nasLivePhotoLikelyOnNas,
   officialUploadFingerprint
 } from './GalleryAutoSyncOfficialFingerprint';
 import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
@@ -133,7 +134,7 @@ export function filterUnsyncedPickerUrisWithIndex(
       continue;
     }
     const mt = mtimeSecFromPickerUri(uri);
-    if (nasDedupeIndexHasLocal(nasIndex, name, size, mt)) {
+    if (nasDedupeIndexHasLocal(nasIndex, name, size, mt) || nasLivePhotoLikelyOnNas(nasIndex, name, size)) {
       continue;
     }
     const entry = localPhotoEntryFromPickerUri(uri);
@@ -154,7 +155,8 @@ export function filterUnsyncedPickerUrisWithFingerprints(
   const index: NasDedupeIndex = {
     fingerprints: nasFingerprints,
     sizeMtimeKeys: new Set<string>(),
-    nameSizeKeys: new Set<string>()
+    nameSizeKeys: new Set<string>(),
+    originalNames: new Set<string>()
   };
   return filterUnsyncedPickerUrisWithIndex(uris, index, ledger);
 }

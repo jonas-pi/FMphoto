@@ -74,9 +74,11 @@ export async function compareLocalWithBackup(
   if (pending.length === 0) {
     return result;
   }
-  if (progress !== null) {
-    progress.onProgress(photos.length, photos.length, '正在核对 NAS 文件名单');
-  }
+  const reportCheck = (done: number, total: number, detail: string): void => {
+    if (progress !== null && total > 0) {
+      progress.onProgress(done, total, detail);
+    }
+  };
   let hasNormalPending: boolean = false;
   for (let i = 0; i < pending.length; i++) {
     if (pending[i].photoSubtype !== photoAccessHelper.PhotoSubtype.MOVING_PHOTO) {
@@ -85,37 +87,65 @@ export async function compareLocalWithBackup(
     }
   }
   let nasByName: boolean = false;
-  if (hasNormalPending) {
-    let nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false, ctx);
-    // 兼容旧版留下的有效期内空索引；强制重建一次。
-    if (nasIndex.nameSizeKeys.size === 0) {
-      nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, true, ctx);
-    }
-    nasByName = nasIndex.nameSizeKeys.size > 0;
+  let nasDayTotal: number = 0;
+  const onNasDayProgress = (doneDays: number, totalDays: number): void => {
+    nasDayTotal = totalDays;
+    const grandTotal: number = totalDays > 0 ? totalDays + pending.length : pending.length;
+    const detail: string =
+      totalDays > 0 ? `正在拉取 NAS 文件名单 ${doneDays}/${totalDays} 天` : '正在拉取 NAS 文件名单';
+    reportCheck(doneDays, grandTotal, detail);
+  };
+  reportCheck(0, pending.length, '正在核对 NAS 文件名单');
+  let nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false, ctx, onNasDayProgress);
+  // 兼容旧版留下的有效期内空索引；强制重建一次。
+  if (!GalleryAutoSyncNasIndex.nasIndexUsable()) {
+    nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, true, ctx, onNasDayProgress);
   }
+  nasByName = GalleryAutoSyncNasIndex.nasIndexUsable();
+  const compareGrandTotal: number = nasDayTotal > 0 ? nasDayTotal + pending.length : pending.length;
+  const compareDayBase: number = nasDayTotal > 0 ? nasDayTotal : 0;
+  const progressStride: number = pending.length > 200 ? 25 : pending.length > 80 ? 10 : 1;
   const puts: LedgerPut[] = [];
   let nameHits: number = 0;
+  let liveNameHits: number = 0;
   for (let i = 0; i < pending.length; i++) {
     const entry = pending[i];
     const moving = entry.photoSubtype === photoAccessHelper.PhotoSubtype.MOVING_PHOTO;
     const piece = makePiece(entry, moving ? 'live' : 'file');
-    if (moving) {
-      piece.sourceSize = 0;
-      piece.sourceMtimeMs = 0;
+    let skipOnNas = false;
+    if (nasByName) {
+      if (piece.role === 'file' &&
+        GalleryAutoSyncNasIndex.hasNameSize(piece.fileName, piece.sourceSize)) {
+        skipOnNas = true;
+        nameHits++;
+      } else if (piece.role === 'live' &&
+        GalleryAutoSyncNasIndex.liveLikelyOnNas(piece.fileName, entry.fileSize)) {
+        skipOnNas = true;
+        liveNameHits++;
+      }
     }
-    if (nasByName && piece.role === 'file' &&
-      GalleryAutoSyncNasIndex.hasNameSize(piece.fileName, piece.sourceSize)) {
+    if (skipOnNas) {
       result.skippedOnNas++;
-      nameHits++;
       const put = new LedgerPut();
       put.uri = piece.sourceUri;
-      put.size = piece.sourceSize;
-      put.mtimeMs = piece.sourceMtimeMs;
+      put.size = moving ? 0 : piece.sourceSize;
+      put.mtimeMs = moving ? 0 : piece.sourceMtimeMs;
       put.role = piece.role;
       puts.push(put);
-      continue;
+    } else {
+      if (moving) {
+        piece.sourceSize = 0;
+        piece.sourceMtimeMs = 0;
+      }
+      result.pieces.push(piece);
     }
-    result.pieces.push(piece);
+    const atEnd: boolean = i === pending.length - 1;
+    if (atEnd || (i + 1) % progressStride === 0) {
+      const detail: string = hasNormalPending
+        ? `正在核对 NAS 文件名单 ${i + 1}/${pending.length}`
+        : `正在核对待同步项 ${i + 1}/${pending.length}`;
+      reportCheck(compareDayBase + i + 1, compareGrandTotal, detail);
+    }
   }
   if (puts.length > 0) {
     await GalleryAutoSyncLedger.rememberMany(ctx, puts);
@@ -128,7 +158,7 @@ export async function compareLocalWithBackup(
   }
   const summary =
     `local=${photos.length} pending=${pending.length} ledger=${result.skippedInLedger} ` +
-    `nameHit=${nameHits} upload=${result.pieces.length} nasIndex=${nasByName} ` +
+    `nameHit=${nameHits} liveNameHit=${liveNameHits} upload=${result.pieces.length} nasIndex=${nasByName} ` +
     `nameSize=${GalleryAutoSyncNasIndex.nameSizeCount()}`;
   hilog.info(DOMAIN, TAG, 'compare %{public}s', summary);
   fnDiagRecord('I', TAG, summary);

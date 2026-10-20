@@ -2,6 +2,7 @@
  * 实况文件的同步读写。由 TaskPool 里的并发函数调用，不在界面线程执行。
  */
 import { fileIo } from '@kit.CoreFileKit';
+import { splitEmbeddedLivePhoto } from './livephoto/MotionPhotoSplit';
 
 const HEAD_BYTES: number = 512 * 1024;
 const TAIL_BYTES: number = 32 * 1024 * 1024;
@@ -202,6 +203,133 @@ function copyRangeOfPath(path: string, outFd: number): boolean {
   }
 }
 
+function readWholeFileSync(path: string): ArrayBuffer | undefined {
+  let fdNum = -1;
+  try {
+    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    fdNum = file.fd;
+    const size = fileSizeOf(fdNum);
+    if (size <= 0) {
+      return undefined;
+    }
+    const buffer = new ArrayBuffer(size);
+    fileIo.lseek(fdNum, 0, fileIo.WhenceType.SEEK_SET);
+    const n = fileIo.readSync(fdNum, buffer);
+    if (n <= 0) {
+      return undefined;
+    }
+    if (n === size) {
+      return buffer;
+    }
+    const trimmed = new ArrayBuffer(n);
+    new Uint8Array(trimmed).set(new Uint8Array(buffer, 0, n));
+    return trimmed;
+  } catch (_e) {
+    return undefined;
+  } finally {
+    if (fdNum >= 0) {
+      try {
+        fileIo.closeSync(fdNum);
+      } catch (_e) {
+      }
+    }
+  }
+}
+
+function writeWholeFileSync(path: string, data: ArrayBuffer): boolean {
+  if (data.byteLength <= 0) {
+    return false;
+  }
+  let fdNum = -1;
+  try {
+    const file = fileIo.openSync(
+      path,
+      fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+    );
+    fdNum = file.fd;
+    fileIo.writeSync(fdNum, data);
+    return true;
+  } catch (_e) {
+    return false;
+  } finally {
+    if (fdNum >= 0) {
+      try {
+        fileIo.closeSync(fdNum);
+      } catch (_e) {
+      }
+    }
+  }
+}
+
+function unlinkQuiet(path: string): void {
+  if (path.length === 0) {
+    return;
+  }
+  try {
+    fileIo.unlinkSync(path);
+  } catch (_e) {
+  }
+}
+
+/** HQ 导出时封面可能是内嵌实况单文件，需拆出纯 JPEG 再与独立 MP4 拼接。 */
+function resolveCoverForConcat(imagePath: string, videoPath: string, outPath: string): string {
+  const videoSize = fileSizeOfPath(videoPath);
+  if (videoSize <= 32 || !fileHasEmbeddedLiveVideo(imagePath)) {
+    return imagePath;
+  }
+  const raw = readWholeFileSync(imagePath);
+  if (raw === undefined) {
+    return imagePath;
+  }
+  const lower = imagePath.toLowerCase();
+  const ext = lower.endsWith('.heic') || lower.endsWith('.heif') ? 'heic' : 'jpg';
+  const split = splitEmbeddedLivePhoto(raw, ext);
+  if (split === undefined || split.imageBytes.byteLength < 64) {
+    return imagePath;
+  }
+  const slash = Math.max(outPath.lastIndexOf('/'), outPath.lastIndexOf('\\'));
+  const dir = slash > 0 ? outPath.substring(0, slash) : outPath;
+  const purePath = `${dir}/.live_pure_cover.jpg`;
+  if (!writeWholeFileSync(purePath, split.imageBytes)) {
+    return imagePath;
+  }
+  return purePath;
+}
+
+export function copyFileSync(src: string, dst: string): boolean {
+  let inFd = -1;
+  let outFd = -1;
+  try {
+    const inf = fileIo.openSync(src, fileIo.OpenMode.READ_ONLY);
+    inFd = inf.fd;
+    const size = fileSizeOf(inFd);
+    if (size <= 0) {
+      return false;
+    }
+    const outf = fileIo.openSync(
+      dst,
+      fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+    );
+    outFd = outf.fd;
+    return copyRange(inFd, 0, size, outFd);
+  } catch (_e) {
+    return false;
+  } finally {
+    if (inFd >= 0) {
+      try {
+        fileIo.closeSync(inFd);
+      } catch (_e) {
+      }
+    }
+    if (outFd >= 0) {
+      try {
+        fileIo.closeSync(outFd);
+      } catch (_e) {
+      }
+    }
+  }
+}
+
 function fileSizeOfPath(path: string): number {
   let fdNum = -1;
   try {
@@ -218,6 +346,35 @@ function fileSizeOfPath(path: string): number {
       }
     }
   }
+}
+
+/** 鸿蒙 HQ 导出：封面已是内嵌实况单文件，再追加独立 MP4，体积≈相册 SIZE。 */
+function concatRawAppend(imagePath: string, videoPath: string, outPath: string): boolean {
+  if (!copyFileSync(imagePath, outPath)) {
+    return false;
+  }
+  let outFd = -1;
+  try {
+    const out = fileIo.openSync(outPath, fileIo.OpenMode.READ_WRITE);
+    outFd = out.fd;
+    const end = fileSizeOf(outFd);
+    fileIo.lseek(outFd, end, fileIo.WhenceType.SEEK_SET);
+    return copyRangeOfPath(videoPath, outFd);
+  } catch (_e) {
+    return false;
+  } finally {
+    if (outFd >= 0) {
+      try {
+        fileIo.closeSync(outFd);
+      } catch (_e) {
+      }
+    }
+  }
+}
+
+function assembledSizeOk(outPath: string, minBytes: number): boolean {
+  const outSize = fileSizeOfPath(outPath);
+  return outSize > 0 && outSize >= minBytes;
 }
 
 function concatFiles(imagePath: string, videoPath: string, outPath: string, videoSize: number): boolean {
@@ -241,6 +398,7 @@ function concatFiles(imagePath: string, videoPath: string, outPath: string, vide
       const soi = new Uint8Array([0xff, 0xd8]);
       fileIo.writeSync(outFd, soi.buffer);
       fileIo.writeSync(outFd, xmpApp1(videoSize));
+      // 原样拼接系统导出的 JPEG 主体（仅替换 SOI 并插入 XMP），不做二次编码。
       if (!copyRange(imageFd, 2, imageSize - 2, outFd)) {
         return false;
       }
@@ -266,14 +424,59 @@ function concatFiles(imagePath: string, videoPath: string, outPath: string, vide
   }
 }
 
-/** 封面接上短视频。短视频太短、拼接失败、或结果里看不到短视频时返回 false。 */
+/**
+ * 封面接上短视频。
+ * 以输出体积是否盖住封面+短视频为准。尾部 ftyp 扫描会漏掉 64 位 box 的 MP4，不能拿来否决。
+ */
 export function assembleLiveFile(imagePath: string, videoPath: string, outPath: string): boolean {
+  const imageSize = fileSizeOfPath(imagePath);
+  const videoSize = fileSizeOfPath(videoPath);
+  if (videoSize <= 32 || imageSize < 64) {
+    return false;
+  }
+  const slack = 2048;
+  const minCombined = imageSize + videoSize - slack;
+
+  if (fileHasEmbeddedLiveVideo(imagePath)) {
+    if (concatRawAppend(imagePath, videoPath, outPath) && assembledSizeOk(outPath, minCombined)) {
+      return true;
+    }
+    unlinkQuiet(outPath);
+  }
+
+  const coverPath = resolveCoverForConcat(imagePath, videoPath, outPath);
+  const tempCover = coverPath !== imagePath;
+  const coverSize = fileSizeOfPath(coverPath);
+  let ok = false;
+  try {
+    ok = concatFiles(coverPath, videoPath, outPath, videoSize);
+  } finally {
+    if (tempCover) {
+      unlinkQuiet(coverPath);
+    }
+  }
+  if (!ok) {
+    return false;
+  }
+  const minXmp = coverSize + videoSize - slack;
+  if (!assembledSizeOk(outPath, minXmp)) {
+    unlinkQuiet(outPath);
+    return false;
+  }
+  return true;
+}
+
+/** 合成后文件大小（与 concat 规则一致，供账本/去重记录）。 */
+export function assembledLiveFileSize(imagePath: string, videoPath: string): number {
   const videoSize = fileSizeOfPath(videoPath);
   if (videoSize <= 32) {
-    return false;
+    return 0;
   }
-  if (!concatFiles(imagePath, videoPath, outPath, videoSize)) {
-    return false;
+  const probeOut = `${imagePath}.size_probe`;
+  if (!assembleLiveFile(imagePath, videoPath, probeOut)) {
+    return 0;
   }
-  return fileHasEmbeddedLiveVideo(outPath);
+  const size = fileSizeOfPath(probeOut);
+  unlinkQuiet(probeOut);
+  return size;
 }

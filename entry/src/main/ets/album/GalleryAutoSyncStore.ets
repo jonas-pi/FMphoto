@@ -24,7 +24,7 @@ class CompareQueueProgress implements ContentCompareProgress {
   }
 
   onProgress(done: number, total: number, detail: string): void {
-    FnTransferQueueStore.update(this.taskId, total > 0 ? done : 0, detail);
+    FnTransferQueueStore.update(this.taskId, done, detail, total);
   }
 }
 

@@ -58,12 +58,15 @@ export class FnTransferQueueStore {
     return id;
   }
 
-  static update(taskId: string, current: number, detail: string = ''): void {
+  static update(taskId: string, current: number, detail: string = '', total?: number): void {
     for (let i = 0; i < FnTransferQueueStore.tasks.length; i++) {
       if (FnTransferQueueStore.tasks[i].id !== taskId) {
         continue;
       }
       FnTransferQueueStore.tasks[i].current = current;
+      if (total !== undefined && total > 0) {
+        FnTransferQueueStore.tasks[i].total = total;
+      }
       if (detail.length > 0) {
         FnTransferQueueStore.tasks[i].detail = detail;
       }

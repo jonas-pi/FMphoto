@@ -7,10 +7,18 @@
 import { common } from '@kit.AbilityKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { taskpool } from '@kit.ArkTS';
-import { assembleLiveFile, fileHasEmbeddedLiveVideo } from './GalleryLiveSyncIo';
+import { fnDiagRecord } from '../common/FnDiagLog';
+import { assembleLiveFile } from './GalleryLiveSyncIo';
 import { FnClientResult } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
-import { exportLocalMovingPhotoPair, localMovingPhotoDisplayName } from './livephoto/LivePhotoUpload';
+import { isLiveExportCachePath } from './livephoto/LivePhotoSandbox';
+import {
+  exportLocalMovingPhotoPair,
+  localMovingPhotoDisplayName,
+  openLiveMovingPhotoForSync
+} from './livephoto/LivePhotoUpload';
+
+const LIVE_SYNC_TAG: string = 'LiveSyncPayload';
 
 let liveFileSeq: number = 1;
 
@@ -45,6 +53,15 @@ async function deleteQuiet(path: string): Promise<void> {
   }
 }
 
+function pathByteSize(path: string): number {
+  try {
+    const size = Number(fileIo.statSync(path).size);
+    return Number.isFinite(size) && size > 0 ? Math.floor(size) : 0;
+  } catch (_e) {
+    return 0;
+  }
+}
+
 function safeFileName(name: string): string {
   const cleaned = name.replace(/[\\/:*?"<>|]/g, '_').trim();
   if (cleaned.length === 0) {
@@ -55,12 +72,6 @@ function safeFileName(name: string): string {
     return cleaned;
   }
   return `${cleaned}.jpg`;
-}
-
-/** 查文件尾是否已有短视频。放到 TaskPool，避免读最多 32MB 时卡住界面。 */
-@Concurrent
-function liveHasEmbeddedConcurrent(pathOrUri: string): boolean {
-  return fileHasEmbeddedLiveVideo(pathOrUri);
 }
 
 /** 把封面和短视频接成一个文件。整段拷贝留在后台线程。 */
@@ -79,19 +90,20 @@ export async function prepareLiveSyncPayload(
   fileName: string,
   keepDisplayName: boolean = false
 ): Promise<LiveSyncPayload | null> {
-  let embedded = false;
-  try {
-    embedded = await taskpool.execute(liveHasEmbeddedConcurrent, sourceUri) as boolean;
-  } catch (_e) {
-    embedded = false;
-  }
-  if (embedded) {
+  const opened = await openLiveMovingPhotoForSync(ctx, sourceUri);
+  if (opened !== undefined && opened.directUploadUri.length > 0) {
     const ready = new LiveSyncPayload();
-    ready.uploadUri = sourceUri;
+    ready.uploadUri = opened.directUploadUri;
+    fnDiagRecord('I', LIVE_SYNC_TAG, 'upload original embedded live');
     return ready;
   }
-  const pair = await exportLocalMovingPhotoPair(ctx, sourceUri);
+  const pair = await exportLocalMovingPhotoPair(
+    ctx,
+    sourceUri,
+    opened !== undefined ? opened.movingPhoto : undefined
+  );
   if (pair === undefined) {
+    fnDiagRecord('W', LIVE_SYNC_TAG, 'prepare null: export pair failed');
     return null;
   }
   let outPath = '';
@@ -108,23 +120,49 @@ export async function prepareLiveSyncPayload(
     liveFileSeq++;
   }
   try {
-    let wrote = false;
-    try {
-      wrote = await taskpool.execute(assembleLiveConcurrent, pair.imagePath, pair.videoPath, outPath) as boolean;
-    } catch (_e) {
-      wrote = false;
+    let wrote = assembleLiveFile(pair.imagePath, pair.videoPath, outPath);
+    if (!wrote) {
+      try {
+        wrote = await taskpool.execute(assembleLiveConcurrent, pair.imagePath, pair.videoPath, outPath) as boolean;
+      } catch (_e) {
+        wrote = false;
+      }
     }
     if (!wrote) {
+      let imageBytes = 0;
+      let videoBytes = 0;
+      try {
+        imageBytes = Number(fileIo.statSync(pair.imagePath).size);
+        videoBytes = Number(fileIo.statSync(pair.videoPath).size);
+      } catch (_e) {
+      }
+      fnDiagRecord('W', LIVE_SYNC_TAG, `prepare null: assemble failed img=${imageBytes} vid=${videoBytes}`);
+      await deleteQuiet(outPath);
+      return null;
+    }
+    const uploadBytes = pathByteSize(outPath);
+    const expect = opened !== undefined ? opened.expectedAssetBytes : 0;
+    if (expect > 0 && uploadBytes < Math.floor(expect * 0.92)) {
+      fnDiagRecord(
+        'W',
+        LIVE_SYNC_TAG,
+        `assemble too small bytes=${uploadBytes} asset=${expect}, reject upload`
+      );
       await deleteQuiet(outPath);
       return null;
     }
     const ready = new LiveSyncPayload();
     ready.uploadUri = fileUri.getUriFromPath(outPath);
     ready.ownedPath = outPath;
+    fnDiagRecord('I', LIVE_SYNC_TAG, `assemble ok bytes=${uploadBytes} asset=${expect}`);
     return ready;
   } finally {
-    await deleteQuiet(pair.imagePath);
-    await deleteQuiet(pair.videoPath);
+    if (!isLiveExportCachePath(pair.imagePath)) {
+      await deleteQuiet(pair.imagePath);
+    }
+    if (!isLiveExportCachePath(pair.videoPath)) {
+      await deleteQuiet(pair.videoPath);
+    }
   }
 }
 
@@ -133,21 +171,25 @@ export async function deleteOwnedLivePayload(path: string): Promise<void> {
 }
 
 /**
- * 手动上传：实况合成一份带短视频的文件再传。合成失败不改传封面。
- * 普通文件直接上传。
+ * 本机媒体上传（手动选图、分享入站、自动同步共用）。
+ * 实况走导出+合成+体积校验；普通图直传 URI。
+ * @param fileNameHint 同步队列里的展示名，合成输出文件名优先用它。
  */
 export async function uploadLocalMediaUri(
   client: FnHttpClient,
   context: common.UIAbilityContext,
   uri: string,
   timeoutMs: number,
-  albumDirHint?: string
+  albumDirHint?: string,
+  fileNameHint?: string
 ): Promise<FnClientResult<Object>> {
   const movingName = await localMovingPhotoDisplayName(context, uri);
   if (movingName === undefined) {
     return client.uploadPhotoByUri(uri, timeoutMs, albumDirHint);
   }
-  const payload = await prepareLiveSyncPayload(context, uri, movingName, true);
+  const outName =
+    fileNameHint !== undefined && fileNameHint.trim().length > 0 ? fileNameHint.trim() : movingName;
+  const payload = await prepareLiveSyncPayload(context, uri, outName, true);
   if (payload === null) {
     return { success: false, message: '实况照片导出失败' };
   }

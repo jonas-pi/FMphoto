@@ -22,6 +22,12 @@ export class LivePhotoPairFiles {
   videoPath: string = '';
   imageUri: string = '';
   videoUri: string = '';
+  /** 来自 live_export_cache，合成后勿删。 */
+  fromExportCache: boolean = false;
+}
+
+export function isLiveExportCachePath(path: string): boolean {
+  return path.includes('/live_export_cache/') || path.includes('\\live_export_cache\\');
 }
 
 function safeItemId(item: GalleryListItem): string {

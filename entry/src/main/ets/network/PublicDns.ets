@@ -101,22 +101,10 @@ function firstGlobalIpv6(addrs: Array<connection.NetAddress>): string {
 
 async function lookupGlobalIpv6(host: string): Promise<string> {
   try {
-    const opt: connection.QueryOptions = {
-      family: connection.FamilyType.FAMILY_TYPE_IPV6
-    };
-    const v6only = await connection.getAddressesByNameWithOptions(host, opt);
-    const picked = firstGlobalIpv6(v6only);
-    if (picked.length > 0) {
-      return picked;
-    }
-  } catch (e) {
-    hilog.info(DOMAIN, TAG, 'aaaa query fallback %{public}s: %{public}s', host, String(e));
-  }
-  try {
     const addrs = await connection.getAddressesByName(host);
     return firstGlobalIpv6(addrs);
-  } catch (e2) {
-    hilog.warn(DOMAIN, TAG, 'dns v6 failed %{public}s: %{public}s', host, String(e2));
+  } catch (e) {
+    hilog.warn(DOMAIN, TAG, 'dns v6 failed %{public}s: %{public}s', host, String(e));
     return '';
   }
 }

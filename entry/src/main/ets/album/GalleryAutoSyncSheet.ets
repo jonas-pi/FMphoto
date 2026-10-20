@@ -10,7 +10,7 @@ import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTrans
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { FnClientResult } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
-import { deleteOwnedLivePayload, prepareLiveSyncPayload } from './GalleryLiveSyncPayload';
+import { uploadLocalMediaUri } from './GalleryLiveSyncPayload';
 import { GalleryAutoSyncLedger, LedgerPut } from './GalleryAutoSyncLedger';
 import { SyncUploadPiece } from './GalleryAutoSyncCompare';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
@@ -35,18 +35,8 @@ async function uploadPiece(
   timeoutMs: number,
   albumDirHint: string | undefined
 ): Promise<FnClientResult<Object>> {
-  if (piece.role === 'live') {
-    const payload = await prepareLiveSyncPayload(ctx, piece.sourceUri, piece.fileName, true);
-    if (payload === null) {
-      return { success: false, message: '实况照片导出失败' };
-    }
-    try {
-      return await client.uploadPhotoByUri(payload.uploadUri, timeoutMs, albumDirHint);
-    } finally {
-      await deleteOwnedLivePayload(payload.ownedPath);
-    }
-  }
-  return client.uploadPhotoByUri(piece.sourceUri, timeoutMs, albumDirHint);
+  const nameHint = piece.fileName.length > 0 ? piece.fileName : undefined;
+  return uploadLocalMediaUri(client, ctx, piece.sourceUri, timeoutMs, albumDirHint, nameHint);
 }
 
 export function runAutoSyncInBackground(

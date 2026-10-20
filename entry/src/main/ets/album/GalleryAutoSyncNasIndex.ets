@@ -14,7 +14,9 @@ import {
   emptyNasDedupeIndex,
   localPhotoNameSizeKey,
   localPhotoOfficialFingerprint,
+  nasLivePhotoLikelyOnNas,
   officialNameSizeKey,
+  officialOriginalNameKey,
   localPhotoSizeMtimeKey,
   NasDedupeIndex
 } from './GalleryAutoSyncOfficialFingerprint';
@@ -39,6 +41,9 @@ const NAS_INDEX_FILE: string = 'auto_sync_nas_index_v1.txt';
 const NAS_INDEX_PAGE_SIZE: number = 100;
 /** 按天拉取 NAS 列表的并发。对比阶段是网络往返，不是 CPU，线程帮不上忙。 */
 const NAS_DAY_FETCH_CONCURRENCY: number = 8;
+
+/** 按天拉取 NAS 媒体列表时的进度（doneDays ≤ totalDays）。 */
+export type NasIndexDayProgress = (doneDays: number, totalDays: number) => void;
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   return galleryListFromData(data);
@@ -86,6 +91,10 @@ export class GalleryAutoSyncNasIndex {
       if (nameSize.length > 0) {
         GalleryAutoSyncNasIndex.index.nameSizeKeys.add(nameSize);
       }
+      const nameKey = officialOriginalNameKey(entry.fileName);
+      if (nameKey.length > 0) {
+        GalleryAutoSyncNasIndex.index.originalNames.add(nameKey);
+      }
     }
   }
 
@@ -110,7 +119,8 @@ export class GalleryAutoSyncNasIndex {
   static async getIndex(
     client: FnHttpClient,
     force: boolean = false,
-    ctx: common.UIAbilityContext | null = null
+    ctx: common.UIAbilityContext | null = null,
+    onDayProgress: NasIndexDayProgress | null = null
   ): Promise<NasDedupeIndex> {
     if (ctx !== null) {
       await GalleryAutoSyncNasIndex.ensureDisk(ctx);
@@ -124,7 +134,7 @@ export class GalleryAutoSyncNasIndex {
         return cloneNasDedupeIndex(shared);
       }
     }
-    const task = GalleryAutoSyncNasIndex.loadIndex(client);
+    const task = GalleryAutoSyncNasIndex.loadIndex(client, onDayProgress);
     GalleryAutoSyncNasIndex.loadingPromise = task;
     try {
       const loaded = await task;
@@ -145,14 +155,17 @@ export class GalleryAutoSyncNasIndex {
     return index.fingerprints;
   }
 
-  private static async loadIndex(client: FnHttpClient): Promise<NasDedupeIndex> {
+  private static async loadIndex(
+    client: FnHttpClient,
+    onDayProgress: NasIndexDayProgress | null = null
+  ): Promise<NasDedupeIndex> {
     try {
       const timeline = await client.getGalleryTimeline();
       if (!timeline.success || timeline.data === undefined) {
         hilog.warn(DOMAIN, TAG, 'timeline failed: %{public}s', timeline.message ?? '');
         return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
       }
-      const items = await GalleryAutoSyncNasIndex.fetchAllTimelineItems(client, timeline.data);
+      const items = await GalleryAutoSyncNasIndex.fetchAllTimelineItems(client, timeline.data, onDayProgress);
       const built = buildNasDedupeIndex(items);
       GalleryAutoSyncNasIndex.index = built;
       GalleryAutoSyncNasIndex.cachedAt = Date.now();
@@ -204,10 +217,16 @@ export class GalleryAutoSyncNasIndex {
 
   private static async fetchAllTimelineItems(
     client: FnHttpClient,
-    timeline: GalleryTimelineData
+    timeline: GalleryTimelineData,
+    onDayProgress: NasIndexDayProgress | null = null
   ): Promise<GalleryListItem[]> {
     const out: GalleryListItem[] = [];
     const days = collectTimelineDays(timeline);
+    const totalDays: number = days.length;
+    if (onDayProgress !== null && totalDays > 0) {
+      onDayProgress(0, totalDays);
+    }
+    let doneDays: number = 0;
     for (let i = 0; i < days.length; i += NAS_DAY_FETCH_CONCURRENCY) {
       const chunkEnd: number = Math.min(i + NAS_DAY_FETCH_CONCURRENCY, days.length);
       const tasks: Promise<GalleryListItem[]>[] = [];
@@ -225,6 +244,10 @@ export class GalleryAutoSyncNasIndex {
         for (let k = 0; k < part.length; k++) {
           out.push(part[k]);
         }
+      }
+      doneDays = chunkEnd;
+      if (onDayProgress !== null && totalDays > 0) {
+        onDayProgress(doneDays, totalDays);
       }
     }
     return out;
@@ -267,7 +290,7 @@ export class GalleryAutoSyncNasIndex {
       if (line.length === 0) {
         continue;
       }
-      if (line === '@fp' || line === '@sm' || line === '@ns') {
+      if (line === '@fp' || line === '@sm' || line === '@ns' || line === '@on') {
         section = line;
         continue;
       }
@@ -277,8 +300,19 @@ export class GalleryAutoSyncNasIndex {
         index.sizeMtimeKeys.add(line);
       } else if (section === '@ns') {
         index.nameSizeKeys.add(line);
+      } else if (section === '@on') {
+        index.originalNames.add(line);
       }
     }
+    index.nameSizeKeys.forEach((key: string): void => {
+      const colon = key.lastIndexOf(':');
+      if (colon > 0) {
+        const namePart = key.substring(0, colon).trim();
+        if (namePart.length > 0) {
+          index.originalNames.add(namePart);
+        }
+      }
+    });
     GalleryAutoSyncNasIndex.index = index;
     GalleryAutoSyncNasIndex.cachedAt = savedAt;
     GalleryAutoSyncNasIndex.diskValidUntil = savedAt + DISK_TTL_MS;
@@ -305,6 +339,10 @@ export class GalleryAutoSyncNasIndex {
     index.nameSizeKeys.forEach((key: string): void => {
       lines.push(key);
     });
+    lines.push('@on');
+    index.originalNames.forEach((key: string): void => {
+      lines.push(key);
+    });
     const path = GalleryAutoSyncNasIndex.indexPath(ctx);
     try {
       const file = await fileIo.open(path, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
@@ -325,6 +363,15 @@ export class GalleryAutoSyncNasIndex {
   static hasNameSize(fileName: string, fileSize: number): boolean {
     const key = officialNameSizeKey(fileName, fileSize);
     return key.length > 0 && GalleryAutoSyncNasIndex.index.nameSizeKeys.has(key);
+  }
+
+  static liveLikelyOnNas(fileName: string, localFileSize: number): boolean {
+    return nasLivePhotoLikelyOnNas(GalleryAutoSyncNasIndex.index, fileName, localFileSize);
+  }
+
+  static nasIndexUsable(): boolean {
+    const index = GalleryAutoSyncNasIndex.index;
+    return index.nameSizeKeys.size > 0 || index.originalNames.size > 0 || index.fingerprints.size > 0;
   }
 
   static discardDisk(ctx: common.UIAbilityContext): Promise<void> {

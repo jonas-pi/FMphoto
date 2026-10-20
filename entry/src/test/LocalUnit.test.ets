@@ -144,7 +144,8 @@ export default function localUnitTest() {
       const index: NasDedupeIndex = {
         fingerprints: new Set<string>(),
         sizeMtimeKeys: new Set<string>(['2048:1000']),
-        nameSizeKeys: new Set<string>()
+        nameSizeKeys: new Set<string>(),
+        originalNames: new Set<string>()
       };
       expect(nasDedupeIndexHasLocal(index, 'renamed.jpg', 2048, 1000)).assertTrue();
       expect(nasDedupeIndexHasLocal(index, 'renamed.jpg', 2048, 1002)).assertTrue();
@@ -157,7 +158,8 @@ export default function localUnitTest() {
       const index: NasDedupeIndex = {
         fingerprints: new Set<string>(['IMG_0001.jpg:2048:1000']),
         sizeMtimeKeys: new Set<string>(),
-        nameSizeKeys: new Set<string>(['shot.png:4096'])
+        nameSizeKeys: new Set<string>(['shot.png:4096']),
+        originalNames: new Set<string>()
       };
       expect(nasDedupeIndexMatchKind(index, 'IMG_0001.jpg', 2048, 1000)).assertEqual('fingerprint');
       expect(nasDedupeMatchIsStrong(nasDedupeIndexMatchKind(index, 'IMG_0001.jpg', 2048, 1000))).assertTrue();
