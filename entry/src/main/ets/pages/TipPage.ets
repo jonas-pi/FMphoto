@@ -74,6 +74,8 @@ struct TipPage {
   @State private pressedId: string = '';
   @State private rateOpening: boolean = false;
   private rateLabelTimer: number = -1;
+  private rateResultToastTimer: number = -1;
+  private openingToastId: number = -1;
 
   aboutToAppear(): void {
     void this.reload();
@@ -84,6 +86,11 @@ struct TipPage {
       clearTimeout(this.rateLabelTimer);
       this.rateLabelTimer = -1;
     }
+    if (this.rateResultToastTimer >= 0) {
+      clearTimeout(this.rateResultToastTimer);
+      this.rateResultToastTimer = -1;
+    }
+    this.dismissOpeningToast();
   }
 
   private holdRateLabel(startedAt: number): void {
@@ -111,13 +118,50 @@ struct TipPage {
     });
   }
 
+  private async showOpeningToast(): Promise<void> {
+    this.dismissOpeningToast();
+    try {
+      this.openingToastId = await this.getUIContext().getPromptAction().openToast({
+        message: '正在打开评分',
+        duration: 2200
+      });
+    } catch (_e) {
+      this.openingToastId = -1;
+      this.toast('正在打开评分');
+    }
+  }
+
+  private dismissOpeningToast(): void {
+    if (this.openingToastId < 0) {
+      return;
+    }
+    const toastId = this.openingToastId;
+    this.openingToastId = -1;
+    try {
+      this.getUIContext().getPromptAction().closeToast(toastId);
+    } catch (_e) {
+    }
+  }
+
+  /** 评分窗收起时会吃掉紧跟着的提示，先关掉上一条，再等窗口让开。 */
+  private queueResultToast(message: string): void {
+    this.dismissOpeningToast();
+    if (this.rateResultToastTimer >= 0) {
+      clearTimeout(this.rateResultToastTimer);
+    }
+    this.rateResultToastTimer = setTimeout((): void => {
+      this.rateResultToastTimer = -1;
+      this.toast(message);
+    }, 360);
+  }
+
   private async openRate(): Promise<void> {
     if (this.rateOpening) {
       this.toast('正在打开评分');
       return;
     }
     this.rateOpening = true;
-    this.toast('正在打开评分');
+    await this.showOpeningToast();
     await this.letToastShow();
     const startedAt = Date.now();
     try {
@@ -125,34 +169,26 @@ struct TipPage {
       const elapsed = Date.now() - startedAt;
       if (result.kind === APP_GALLERY_RATE_SHOWN) {
         if (elapsed < 800) {
-          this.toast('评分窗口没有留住');
+          this.queueResultToast('评分窗口没有留住');
+        } else {
+          this.dismissOpeningToast();
         }
         return;
       }
       if (result.kind === APP_GALLERY_RATE_ALREADY) {
-        this.toast('这个版本已经评过了');
+        this.queueResultToast('这个版本已经评过了');
         return;
       }
       if (result.kind === APP_GALLERY_RATE_NEED_ID) {
-        this.toastResource($r('app.string.rate_app_need_huawei_id'));
+        this.queueResultToast('系统未登录华为账号，暂时无法评分');
         return;
       }
       const detail = result.detail.length > 0 ? result.detail : '暂时无法打开评分';
-      this.toast(detail);
+      this.queueResultToast(detail);
     } catch (_e) {
-      this.toast('评分没有打开');
+      this.queueResultToast('评分没有打开');
     } finally {
       this.holdRateLabel(startedAt);
-    }
-  }
-
-  private toastResource(message: Resource): void {
-    try {
-      this.getUIContext().getPromptAction().showToast({
-        message: message,
-        duration: 1800
-      });
-    } catch (_e) {
     }
   }
 
