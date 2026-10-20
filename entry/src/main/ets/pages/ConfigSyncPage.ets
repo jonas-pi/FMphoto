@@ -1,5 +1,5 @@
 /**
- * 配置同步：二维码导出/导入 + WebDAV 上传/下载。
+ * 配置同步：二维码导出/导入、华为云空间、WebDAV 上传/下载。
  * 含分类、相册布局、备份策略与路径、相册父目录、主题和幻灯片。
  */
 import { common } from '@kit.AbilityKit';
@@ -45,6 +45,7 @@ import {
   settingsNasMismatchMessage,
   settingsNasTokensFromLogin
 } from '../sync/AppSettingsEnvelope';
+import { openHuaweiCloudSpace, pullSettingsFromCloud, pushSettingsToCloud } from '../sync/AppSettingsCloudSync';
 import {
   cloneAlbumBackupSettings,
   loadAlbumBackupSettings,
@@ -125,6 +126,7 @@ export struct ConfigSyncSheet {
   @State private davSkipCert: boolean = true;
   @State private davHydrated: boolean = false;
   @State private davBusy: boolean = false;
+  @State private cloudBusy: boolean = false;
   @State private qrBusy: boolean = false;
 
   aboutToAppear(): void {
@@ -510,41 +512,52 @@ export struct ConfigSyncSheet {
     await this.refreshQr();
   }
 
+  private async captureEnvelopeJson(touchLayoutClock: boolean): Promise<string | null> {
+    const account = smartCategoryCurrentAccount();
+    if (account.length === 0) {
+      this.toast('当前未登录');
+      return null;
+    }
+    const ctx = this.hostContext();
+    const loaded = await this.loadCurrentLayout();
+    const stamped = touchLayoutClock ? Date.now() : layoutLocalUpdatedAt(loaded);
+    const updatedAt = stamped > 0 ? stamped : Date.now();
+    const layout: SmartCategoryLayout = {
+      account: loaded.account,
+      custom: loaded.custom,
+      sceneOrder: loaded.sceneOrder,
+      infoOrder: loaded.infoOrder,
+      customOrder: loaded.customOrder,
+      updatedAt: updatedAt
+    };
+    if (touchLayoutClock) {
+      const saved = await smartCategorySaveLayout(ctx, layout);
+      if (!saved) {
+        this.toast('保存本机时间戳失败');
+        return null;
+      }
+    }
+    const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
+    const login = await this.loadLoginConfig();
+    const albumsHome = await this.loadAlbumsHomeSlice();
+    const albumBackup = await this.loadAlbumBackupSlice();
+    const clientPrefs = await this.loadClientPrefsSlice();
+    const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome, albumBackup, clientPrefs);
+    return serializeEnvelope(envelope);
+  }
+
   private async onUpload(): Promise<void> {
-    if (this.davBusy) {
+    if (this.davBusy || this.cloudBusy) {
       return;
     }
     this.davBusy = true;
     try {
       await this.persistWebDavForm();
-      const account = smartCategoryCurrentAccount();
-      if (account.length === 0) {
-        this.toast('当前未登录');
+      const json = await this.captureEnvelopeJson(true);
+      if (json === null) {
         return;
       }
-      const ctx = this.hostContext();
-      const loaded = await this.loadCurrentLayout();
-      const updatedAt = Date.now();
-      const layout: SmartCategoryLayout = {
-        account: loaded.account,
-        custom: loaded.custom,
-        sceneOrder: loaded.sceneOrder,
-        infoOrder: loaded.infoOrder,
-        customOrder: loaded.customOrder,
-        updatedAt: updatedAt
-      };
-      const saved = await smartCategorySaveLayout(ctx, layout);
-      if (!saved) {
-        this.toast('保存本机时间戳失败');
-        return;
-      }
-      const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
-      const login = await this.loadLoginConfig();
-      const albumsHome = await this.loadAlbumsHomeSlice();
-      const albumBackup = await this.loadAlbumBackupSlice();
-      const clientPrefs = await this.loadClientPrefsSlice();
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome, albumBackup, clientPrefs);
-      const res = await webDavPutJson(this.currentWebDavConfig(), serializeEnvelope(envelope));
+      const res = await webDavPutJson(this.currentWebDavConfig(), json);
       this.toast(res.ok ? '已上传到 WebDAV' : res.message);
       if (res.ok) {
         await this.refreshQr();
@@ -554,8 +567,57 @@ export struct ConfigSyncSheet {
     }
   }
 
+  private async onCloudUpload(): Promise<void> {
+    if (this.cloudBusy || this.davBusy) {
+      return;
+    }
+    this.cloudBusy = true;
+    try {
+      const json = await this.captureEnvelopeJson(true);
+      if (json === null) {
+        return;
+      }
+      const res = await pushSettingsToCloud(this.hostContext(), json);
+      this.toast(res.message);
+      if (res.ok) {
+        await this.refreshQr();
+      }
+    } finally {
+      this.cloudBusy = false;
+    }
+  }
+
+  private async onCloudDownload(): Promise<void> {
+    if (this.cloudBusy || this.davBusy) {
+      return;
+    }
+    this.cloudBusy = true;
+    try {
+      const res = await pullSettingsFromCloud(this.hostContext());
+      if (!res.ok) {
+        this.toast(res.message);
+        return;
+      }
+      const parsed = parseEnvelopeJson(res.payload);
+      if (!parsed.ok || parsed.envelope === undefined) {
+        this.toast(parsed.message);
+        return;
+      }
+      await this.applyImportedEnvelope(parsed.envelope, false);
+    } finally {
+      this.cloudBusy = false;
+    }
+  }
+
+  private async onOpenCloudSpace(): Promise<void> {
+    const message = await openHuaweiCloudSpace(this.hostContext());
+    if (message.length > 0) {
+      this.toast(message);
+    }
+  }
+
   private async onDownload(): Promise<void> {
-    if (this.davBusy) {
+    if (this.davBusy || this.cloudBusy) {
       return;
     }
     this.davBusy = true;
@@ -622,13 +684,57 @@ export struct ConfigSyncSheet {
               }
             })
             .width('100%')
-            .enabled(!this.qrBusy && !this.davBusy)
+            .enabled(!this.qrBusy && !this.davBusy && !this.cloudBusy)
           }
           .width('100%')
           .padding(16)
           .backgroundColor(fnResolvedCardFill(this.cardBg))
           .borderRadius($r('app.float.radius_medium'))
           .alignItems(HorizontalAlign.Center)
+
+          Text($r('app.string.config_sync_cloud_section'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+            .width('100%')
+
+          Column({ space: 12 }) {
+            Text($r('app.string.config_sync_cloud_hint'))
+              .fontSize(13)
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+              .width('100%')
+
+            FnPrimaryButton({
+              text: $r('app.string.config_sync_cloud_upload'),
+              action: (): void => {
+                void this.onCloudUpload();
+              }
+            })
+            .width('100%')
+            .enabled(!this.cloudBusy && !this.davBusy)
+
+            FnSecondaryButton({
+              text: $r('app.string.config_sync_cloud_download'),
+              action: (): void => {
+                void this.onCloudDownload();
+              }
+            })
+            .width('100%')
+            .enabled(!this.cloudBusy && !this.davBusy)
+
+            FnSecondaryButton({
+              text: $r('app.string.config_sync_cloud_open'),
+              action: (): void => {
+                void this.onOpenCloudSpace();
+              }
+            })
+            .width('100%')
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(fnResolvedCardFill(this.cardBg))
+          .borderRadius($r('app.float.radius_medium'))
+          .alignItems(HorizontalAlign.Start)
 
           Text($r('app.string.config_sync_webdav_section'))
             .fontSize(14)
@@ -692,7 +798,7 @@ export struct ConfigSyncSheet {
               }
             })
             .width('100%')
-            .enabled(!this.davBusy)
+            .enabled(!this.davBusy && !this.cloudBusy)
 
             FnSecondaryButton({
               text: $r('app.string.config_sync_download'),
@@ -701,7 +807,7 @@ export struct ConfigSyncSheet {
               }
             })
             .width('100%')
-            .enabled(!this.davBusy)
+            .enabled(!this.davBusy && !this.cloudBusy)
           }
           .width('100%')
           .padding(16)

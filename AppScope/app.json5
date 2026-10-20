@@ -5,6 +5,7 @@
     "versionCode": 1004014,
     "versionName": "1.4.2.10",
     "icon": "$media:layered_image",
-    "label": "$string:app_name"
+    "label": "$string:app_name",
+    "cloudStructuredDataSyncEnabled": true
   }
 }
