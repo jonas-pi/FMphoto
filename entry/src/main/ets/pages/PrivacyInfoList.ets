@@ -154,6 +154,13 @@ struct PrivacyInfoList {
       this.bullet('是否必要：可选。')
       this.bullet('处理方式：二维码在本机处理。WebDAV 发往你填写的服务器。华为云空间在端侧加密后写入你的华为账号，开关在系统「设置 - 云空间」。')
 
+      this.sectionTitle('赞赏（可选）')
+      this.bullet('信息种类：你选择的赞赏档位和华为应用内支付返回的订单结果。不含银行卡号或支付密码。')
+      this.bullet('使用目的：自愿支持开发。')
+      this.bullet('使用场景：你在「我的」里打开赞赏并完成支付时。')
+      this.bullet('是否必要：可选。')
+      this.bullet('处理方式：由华为应用内支付收款。应用只确认订单已消耗，不解锁功能。')
+
       this.sectionTitle('临时文件与运行日志')
       this.bullet('信息种类：缓存文件；崩溃快照、播放失败等诊断摘要、主机或文件名。')
       this.bullet('使用目的：预览、下载、排障。')
@@ -205,6 +212,14 @@ struct PrivacyInfoList {
       this.bullet('使用目的：把问题或建议交给开发者。')
       this.bullet('使用场景：你主动打开「反馈」并提交表单时。不打开则不会发送。')
       this.bullet('共享方式：表单页面由飞书提供，提交发往飞书。诊断日志先写在本机，不经应用服务器转发。')
+
+      this.sectionTitle('华为应用内支付')
+      this.bullet('第三方名称：华为应用内支付。')
+      this.bullet('共享信息：商品 ID、订单结果。不含相册内容和 NAS 密码。')
+      this.bullet('使用目的：完成自愿赞赏。')
+      this.bullet('使用场景：你主动购买「请喝杯咖啡」「请吃顿午饭」或「请吃顿晚饭」时。')
+      this.bullet('共享方式：系统收银台。不打开则不会发生。')
+      this.bullet('第三方政策：https://consumer.huawei.com/cn/privacy/privacy-policy/')
 
       this.sectionTitle('HarmonyOS 系统能力')
       this.paragraph('系统图片选择器、保存到相册、HUKS 密钥、网络和扫码属于操作系统能力，按系统接口在本机处理，不视为向开发者合作的第三方 SDK 共享。')

@@ -46,6 +46,7 @@ import {
 } from '../common/FnTransferQueueStore';
 import { kickNasTaskPanelSync } from '../network/FnNasTaskPanelSync';
 import { openFeedbackPage } from './FeedbackPage';
+import { openTipPage } from './TipPage';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
   APP_GALLERY_RATE_ALREADY,
@@ -1030,6 +1031,41 @@ export struct MePanel {
   }
 
   @Builder
+  private tipEntryRow() {
+    Row({ space: 10 }) {
+      Column({ space: 6 }) {
+        Text($r('app.string.tip_entry_title'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+        Text($r('app.string.tip_entry_subtitle'))
+          .fontSize(12)
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .onClick((): void => {
+      openTipPage(this.getUIContext());
+    })
+  }
+
+  @Builder
   private privacyPolicyLink() {
     Column({ space: 10 }) {
       Text($r('app.string.privacy_policy_title'))
@@ -1559,6 +1595,12 @@ export struct MePanel {
           .height(ME_ACTION_GAP_VP)
 
         this.diagLogEntryRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
+        this.tipEntryRow()
 
         if (this.rateEntryVisible) {
           Blank()

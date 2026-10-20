@@ -35,7 +35,7 @@ const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
 /** 政策正文变更后递增；与已存值不同则下次启动需重新同意。 */
-export const PRIVACY_POLICY_VERSION = '202610201';
+export const PRIVACY_POLICY_VERSION = '202610202';
 /** 飞牛 WS 登录 did，用于 2FA 信任设备识别（退出登录不清理） */
 const K_WS_DEVICE_ID = 'ws_device_id';
 const K_REMEMBER_PASSWORD = 'remember_password';

@@ -16,6 +16,7 @@
     "pages/FolderBrowsePage",
     "pages/Settings",
     "pages/AlbumBackupSyncPage",
-    "pages/FeedbackPage"
+    "pages/FeedbackPage",
+    "pages/TipPage"
   ]
 }

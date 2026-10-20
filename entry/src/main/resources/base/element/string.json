@@ -529,6 +529,18 @@
       "value": "导出失败，请重试"
     },
     {
+      "name": "tip_entry_title",
+      "value": "赞赏开发者"
+    },
+    {
+      "name": "tip_entry_subtitle",
+      "value": "自愿付款，不解锁任何功能"
+    },
+    {
+      "name": "tip_page_hint",
+      "value": "这是自愿赞赏，不会解锁功能。付款由华为应用内支付完成，应用不经手银行卡或支付密码。"
+    },
+    {
       "name": "rate_app_entry_title",
       "value": "给个评分"
     },
