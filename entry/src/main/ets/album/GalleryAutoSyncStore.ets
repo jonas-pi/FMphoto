@@ -1,5 +1,5 @@
 /**
- * 前台同步：本机账本快筛 → 内容指纹问整库 file_hash → 未命中的才上传。
+ * 前台同步：本机账本快筛 → NAS 文件名+大小索引 → 未命中的才上传。
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';

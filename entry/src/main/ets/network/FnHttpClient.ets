@@ -17,7 +17,7 @@ import { fnWebDefaultUserAgent, injectFnWebCookies, mergeGalleryWebCookieIntoNat
 import { fnWebViewBaseUrl } from './ServerUrl';
 import { buildFnApiCookieHeader } from './fnHttpClient/FnHttpClientCookie';
 import { FnHttpClientGalleryOps, GalleryHlsAuthProbe } from './fnHttpClient/FnHttpClientGalleryOps';
-import { BackupFileHashQuery, FnHttpClientUploadOps } from './fnHttpClient/FnHttpClientUploadOps';
+import { FnHttpClientUploadOps } from './fnHttpClient/FnHttpClientUploadOps';
 import {
   CERT_CODES,
   DEFAULT_TIMEOUT,
@@ -1322,11 +1322,6 @@ export class FnHttpClient {
 
   async uploadPhotoByUri(uri: string, timeoutMs: number = 120000, albumUploadDirHint?: string): Promise<FnClientResult<Object>> {
     return this.uploadOps.uploadPhotoByUri(uri, timeoutMs, albumUploadDirHint);
-  }
-
-  /** 整库内容指纹查询。失败时 ok 为 false，不能当成这些指纹不存在。 */
-  async queryBackupFileHashes(fileHashes: string[], timeoutMs: number = 60000): Promise<BackupFileHashQuery> {
-    return this.uploadOps.queryBackupFileHashes(fileHashes, timeoutMs);
   }
 
   /**

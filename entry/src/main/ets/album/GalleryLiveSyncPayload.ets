@@ -7,7 +7,6 @@
 import { common } from '@kit.AbilityKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { taskpool } from '@kit.ArkTS';
-import { contentFingerprintOf } from './GalleryContentHash';
 import { assembleLiveFile, fileHasEmbeddedLiveVideo } from './GalleryLiveSyncIo';
 import { FnClientResult } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
@@ -20,7 +19,6 @@ export class LiveSyncPayload {
   uploadUri: string = '';
   /** 拼接出来的临时文件，上传结束或确认已存在后删除。空串表示不拥有文件。 */
   ownedPath: string = '';
-  fingerprint: string = '';
 }
 
 async function deleteQuiet(path: string): Promise<void> {
@@ -88,13 +86,8 @@ export async function prepareLiveSyncPayload(
     embedded = false;
   }
   if (embedded) {
-    const fingerprint = await contentFingerprintOf(sourceUri);
-    if (fingerprint.length === 0) {
-      return null;
-    }
     const ready = new LiveSyncPayload();
     ready.uploadUri = sourceUri;
-    ready.fingerprint = fingerprint.toLowerCase();
     return ready;
   }
   const pair = await exportLocalMovingPhotoPair(ctx, sourceUri);
@@ -125,15 +118,9 @@ export async function prepareLiveSyncPayload(
       await deleteQuiet(outPath);
       return null;
     }
-    const fingerprint = await contentFingerprintOf(outPath);
-    if (fingerprint.length === 0) {
-      await deleteQuiet(outPath);
-      return null;
-    }
     const ready = new LiveSyncPayload();
     ready.uploadUri = fileUri.getUriFromPath(outPath);
     ready.ownedPath = outPath;
-    ready.fingerprint = fingerprint.toLowerCase();
     return ready;
   } finally {
     await deleteQuiet(pair.imagePath);

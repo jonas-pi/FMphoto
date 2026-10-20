@@ -1,9 +1,8 @@
 /**
  * 批量同步上传（进入任务队列，不阻塞界面）。
- * 扫描阶段已经用整库 file_hash 去掉已存在的内容，这里只上传未命中的那一份字节。
+ * 扫描阶段已用本机账本和 NAS 文件名单过滤；服务端 notice 负责最终内容去重。
  */
 import { common } from '@kit.AbilityKit';
-import { fileUri } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
@@ -11,7 +10,7 @@ import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTrans
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { FnClientResult } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
-import { deleteOwnedLivePayload } from './GalleryLiveSyncPayload';
+import { deleteOwnedLivePayload, prepareLiveSyncPayload } from './GalleryLiveSyncPayload';
 import { GalleryAutoSyncLedger, LedgerPut } from './GalleryAutoSyncLedger';
 import { SyncUploadPiece } from './GalleryAutoSyncCompare';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
@@ -30,18 +29,22 @@ export interface AutoSyncRunnerCallbacks {
 }
 
 async function uploadPiece(
+  ctx: common.UIAbilityContext,
   client: FnHttpClient,
   piece: SyncUploadPiece,
   timeoutMs: number,
   albumDirHint: string | undefined
 ): Promise<FnClientResult<Object>> {
-  if (piece.role === 'live' && piece.payloadPath.length > 0) {
-    const uri = fileUri.getUriFromPath(piece.payloadPath);
-    const uploaded = await client.uploadPhotoByUri(uri, timeoutMs, albumDirHint);
-    if (uploaded.success) {
-      await deleteOwnedLivePayload(piece.payloadPath);
+  if (piece.role === 'live') {
+    const payload = await prepareLiveSyncPayload(ctx, piece.sourceUri, piece.fileName, true);
+    if (payload === null) {
+      return { success: false, message: '实况照片导出失败' };
     }
-    return uploaded;
+    try {
+      return await client.uploadPhotoByUri(payload.uploadUri, timeoutMs, albumDirHint);
+    } finally {
+      await deleteOwnedLivePayload(payload.ownedPath);
+    }
   }
   return client.uploadPhotoByUri(piece.sourceUri, timeoutMs, albumDirHint);
 }
@@ -98,7 +101,7 @@ export function runAutoSyncInBackground(
                 }
                 const photo = photos[index];
                 try {
-                  const res = await uploadPiece(client, photo, 150000, albumDirHint);
+                  const res = await uploadPiece(ctx, client, photo, 150000, albumDirHint);
                   if (res.success) {
                     ok++;
                     const put = new LedgerPut();
@@ -106,7 +109,6 @@ export function runAutoSyncInBackground(
                     put.size = photo.sourceSize;
                     put.mtimeMs = photo.sourceMtimeMs;
                     put.role = photo.role;
-                    put.hash = photo.fingerprint;
                     await GalleryAutoSyncLedger.remember(ctx, put);
                     GalleryAutoSyncStore.markPieceSynced(photo.sourceUri, photo.role);
                   } else if (failMsg.length === 0) {

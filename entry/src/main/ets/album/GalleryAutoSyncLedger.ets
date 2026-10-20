@@ -1,6 +1,6 @@
 /**
- * 本机同步账本：只记本机已经确认在整库里的内容指纹。
- * 键是 uri + 大小 + 修改时间。大小和修改时间没变就直接复用指纹，不再读文件。
+ * 本机同步账本：记录本机媒体是否已经在 NAS。
+ * 键是 uri + 大小 + 修改时间。大小和修改时间没变就直接跳过，不再读文件。
  * 不保存 NAS 全库索引。退出登录时整份删除。
  */
 import { preferences } from '@kit.ArkData';
@@ -20,17 +20,16 @@ export class LedgerPut {
   size: number = 0;
   mtimeMs: number = 0;
   role: string = 'file';
-  hash: string = '';
 }
 
 class LedgerRow {
   uri: string = '';
   size: number = 0;
   mtimeMs: number = 0;
-  fileHash: string = '';
-  coverHash: string = '';
-  videoHash: string = '';
-  liveHash: string = '';
+  fileConfirmed: boolean = false;
+  coverConfirmed: boolean = false;
+  videoConfirmed: boolean = false;
+  liveConfirmed: boolean = false;
 }
 
 export class GalleryAutoSyncLedger {
@@ -46,36 +45,22 @@ export class GalleryAutoSyncLedger {
     if (row === null) {
       return false;
     }
-    if (row.fileHash.length > 0) {
+    if (row.fileConfirmed) {
       return true;
     }
-    return row.coverHash.length > 0 && row.videoHash.length > 0;
+    return row.coverConfirmed && row.videoConfirmed;
   }
 
-  /** 实况账本按 URI 记原文件指纹，不用封面大小。 */
-  static liveFingerprint(uri: string): string {
+  /** 实况账本按 URI 记录，不使用封面大小。 */
+  static isLiveSettled(uri: string): boolean {
     if (GalleryAutoSyncLedger.rows === null || uri.length === 0) {
-      return '';
+      return false;
     }
     const row = GalleryAutoSyncLedger.rows.get(GalleryAutoSyncLedger.liveKey(uri));
     if (row === undefined) {
-      return '';
+      return false;
     }
-    return row.liveHash;
-  }
-
-  static confirmedHash(uri: string, size: number, mtimeMs: number, role: string): string {
-    const row = GalleryAutoSyncLedger.rowOf(uri, size, mtimeMs);
-    if (row === null) {
-      return '';
-    }
-    if (role === 'cover') {
-      return row.coverHash;
-    }
-    if (role === 'video') {
-      return row.videoHash;
-    }
-    return row.fileHash;
+    return row.liveConfirmed;
   }
 
   /** 兼容旧调用。传入的集合不再使用，以本机账本文件为准。 */
@@ -184,8 +169,8 @@ export class GalleryAutoSyncLedger {
       const size = Number(parts[1]);
       const mtimeMs = Number(parts[2]);
       const role = parts[3];
-      const hash = parts[4].trim().toLowerCase();
-      if (uri.length === 0 || !Number.isFinite(size) || hash.length === 0) {
+      const marker = parts[4].trim();
+      if (uri.length === 0 || !Number.isFinite(size) || marker.length === 0) {
         continue;
       }
       if (size <= 0 && role !== 'live') {
@@ -196,14 +181,12 @@ export class GalleryAutoSyncLedger {
       put.size = Math.floor(size);
       put.mtimeMs = Number.isFinite(mtimeMs) ? Math.floor(mtimeMs) : 0;
       put.role = role;
-      put.hash = hash;
       GalleryAutoSyncLedger.applyPutTo(rows, put);
     }
   }
 
   private static applyPutTo(rows: Map<string, LedgerRow>, put: LedgerPut): void {
-    const hash = put.hash.trim().toLowerCase();
-    if (put.uri.length === 0 || hash.length === 0) {
+    if (put.uri.length === 0) {
       return;
     }
     if (put.role !== 'live' && put.size <= 0) {
@@ -223,25 +206,25 @@ export class GalleryAutoSyncLedger {
     if (put.role === 'live') {
       row.size = 0;
       row.mtimeMs = 0;
-      row.fileHash = '';
-      row.coverHash = '';
-      row.videoHash = '';
-      row.liveHash = hash;
+      row.fileConfirmed = false;
+      row.coverConfirmed = false;
+      row.videoConfirmed = false;
+      row.liveConfirmed = true;
       return;
     }
     if (put.role === 'cover') {
-      row.fileHash = '';
-      row.coverHash = hash;
+      row.fileConfirmed = false;
+      row.coverConfirmed = true;
       return;
     }
     if (put.role === 'video') {
-      row.fileHash = '';
-      row.videoHash = hash;
+      row.fileConfirmed = false;
+      row.videoConfirmed = true;
       return;
     }
-    row.coverHash = '';
-    row.videoHash = '';
-    row.fileHash = hash;
+    row.coverConfirmed = false;
+    row.videoConfirmed = false;
+    row.fileConfirmed = true;
   }
 
   private static async persist(ctx: common.UIAbilityContext): Promise<void> {
@@ -252,17 +235,17 @@ export class GalleryAutoSyncLedger {
     const lines: string[] = ['v3'];
     rows.forEach((row: LedgerRow): void => {
       const enc = encodeURIComponent(row.uri);
-      if (row.fileHash.length > 0) {
-        lines.push(`${enc}\t${row.size}\t${row.mtimeMs}\tfile\t${row.fileHash}`);
+      if (row.fileConfirmed) {
+        lines.push(`${enc}\t${row.size}\t${row.mtimeMs}\tfile\t1`);
       }
-      if (row.coverHash.length > 0) {
-        lines.push(`${enc}\t${row.size}\t${row.mtimeMs}\tcover\t${row.coverHash}`);
+      if (row.coverConfirmed) {
+        lines.push(`${enc}\t${row.size}\t${row.mtimeMs}\tcover\t1`);
       }
-      if (row.videoHash.length > 0) {
-        lines.push(`${enc}\t${row.size}\t${row.mtimeMs}\tvideo\t${row.videoHash}`);
+      if (row.videoConfirmed) {
+        lines.push(`${enc}\t${row.size}\t${row.mtimeMs}\tvideo\t1`);
       }
-      if (row.liveHash.length > 0) {
-        lines.push(`${enc}\t0\t0\tlive\t${row.liveHash}`);
+      if (row.liveConfirmed) {
+        lines.push(`${enc}\t0\t0\tlive\t1`);
       }
     });
     const path = GalleryAutoSyncLedger.filePath(ctx);

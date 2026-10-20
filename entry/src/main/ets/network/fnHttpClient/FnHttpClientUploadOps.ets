@@ -85,12 +85,6 @@ function readUploadFileAndMtimeConcurrent(uri: string): UploadFileReadResult {
 /** 飞牛官方上传前存在性检查结果 */
 export type PhotoUploadExistCheck = 'exists' | 'missing' | 'unknown';
 
-/** v1 整库内容指纹查询。ok 为 false 时不得把这批当成缺失。 */
-export class BackupFileHashQuery {
-  ok: boolean = false;
-  hits: string[] = [];
-}
-
 export class FnHttpClientUploadOps {
   /** 入库通知串行。四路上传同时 notice 时飞牛会回 system busy。 */
   private static noticeTail: Promise<void> = Promise.resolve();
@@ -455,124 +449,6 @@ export class FnHttpClientUploadOps {
       return scan(dataObj as Record<string, string | number | boolean | Object | undefined>);
     }
     return 'unknown';
-  }
-
-  /**
-   * 整库内容指纹是否已存在。只走 v1：v2 只查这台设备的备份目录。
-   * 失败时 ok=false，调用方不得把这批照片当成缺失。
-   */
-  async queryBackupFileHashes(fileHashes: string[], timeoutMs: number = 60000): Promise<BackupFileHashQuery> {
-    const failed = new BackupFileHashQuery();
-    const hashes: string[] = [];
-    for (let i = 0; i < fileHashes.length && hashes.length < 1000; i++) {
-      const one = fileHashes[i].trim().toLowerCase();
-      if (one.length > 0) {
-        hashes.push(one);
-      }
-    }
-    if (hashes.length === 0) {
-      failed.ok = true;
-      return failed;
-    }
-    const bodyParts: string[] = [];
-    for (let i = 0; i < hashes.length; i++) {
-      bodyParts.push(`"${escapeJsonString(hashes[i])}"`);
-    }
-    const bodyStr = `{"fileHash":[${bodyParts.join(',')}]}`;
-    const activeBase = fnWebViewBaseUrl(this.baseUrl);
-    const path = `${FN_PHOTO_API_PREFIX}/backup/identifier/file_hash`;
-    const cookie = mergeGalleryWebCookieIntoNativeHeader(
-      buildFnApiCookieHeader(this.token, this.longToken),
-      activeBase
-    );
-    try {
-      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
-      const headers = this.buildGalleryFetchHeaders(authx, cookie);
-      headers['Content-Type'] = 'application/json';
-      const raw = await this.rawRequest(
-        `${activeBase}${path}`,
-        http.RequestMethod.POST,
-        headers,
-        bodyStr,
-        timeoutMs,
-        CertPolicy.isTrusted(activeBase)
-      );
-      if (raw.code < 200 || raw.code >= 300) {
-        hilog.warn(DOMAIN, TAG, 'file_hash http=%{public}d', raw.code);
-        return failed;
-      }
-      const hits = FnHttpClientUploadOps.parseBackupFileHashHits(raw.body);
-      const preview = raw.body.length > 240 ? raw.body.substring(0, 240) : raw.body;
-      if (hits === null) {
-        hilog.warn(DOMAIN, TAG, 'file_hash unreadable asked=%{public}d body=%{public}s', hashes.length, preview);
-        fnDiagRecord('W', TAG, `file_hash unreadable asked=${hashes.length} body=${preview}`);
-        return failed;
-      }
-      hilog.info(DOMAIN, TAG, 'file_hash asked=%{public}d hits=%{public}d body=%{public}s', hashes.length, hits.length, preview);
-      fnDiagRecord('I', TAG, `file_hash asked=${hashes.length} hits=${hits.length} body=${preview}`);
-      const ok = new BackupFileHashQuery();
-      ok.ok = true;
-      ok.hits = hits;
-      return ok;
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'file_hash failed: %{public}s', String(e));
-      return failed;
-    }
-  }
-
-  private static parseBackupFileHashHits(body: string): string[] | null {
-    let parsed: Record<string, string | number | Object | undefined>;
-    try {
-      parsed = JSON.parse(body) as Record<string, string | number | Object | undefined>;
-    } catch (_e) {
-      return null;
-    }
-    if (!FnHttpClientUploadOps.galleryEnvelopeBizOk(parsed)) {
-      return null;
-    }
-    const direct = FnHttpClientUploadOps.fileHashListFrom(parsed['list']);
-    if (direct !== null) {
-      return direct;
-    }
-    const data = parsed['data'];
-    if (Array.isArray(data)) {
-      return FnHttpClientUploadOps.fileHashListFrom(data);
-    }
-    if (data !== undefined && data !== null && typeof data === 'object' && !Array.isArray(data)) {
-      const dataRec = data as Record<string, string | number | Object | undefined>;
-      return FnHttpClientUploadOps.fileHashListFrom(dataRec['list']);
-    }
-    return null;
-  }
-
-  private static fileHashListFrom(node: string | number | Object | undefined): string[] | null {
-    if (!Array.isArray(node)) {
-      return null;
-    }
-    const hits: string[] = [];
-    const arr = node as Object[];
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i];
-      if (typeof item === 'string') {
-        const text = item.trim().toLowerCase();
-        if (text.length > 0) {
-          hits.push(text);
-        }
-        continue;
-      }
-      if (item === undefined || item === null || typeof item !== 'object' || Array.isArray(item)) {
-        continue;
-      }
-      const rec = item as Record<string, string | number | Object | undefined>;
-      const raw = rec['fileHash'] ?? rec['file_hash'] ?? rec['hash'];
-      if (typeof raw === 'string') {
-        const text = raw.trim().toLowerCase();
-        if (text.length > 0) {
-          hits.push(text);
-        }
-      }
-    }
-    return hits;
   }
 
   /**

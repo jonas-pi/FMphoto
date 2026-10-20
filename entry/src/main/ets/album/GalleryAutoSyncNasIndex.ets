@@ -1,5 +1,5 @@
 /**
- * 拉取 NAS 全库媒体指纹（original_name + size + mtime），供本地同步去重。
+ * 拉取 NAS 全库媒体元数据（original_name + size + mtime），供本地同步去重。
  * 分页遍历时间轴各日条目，避免只对比 UI 已加载的一页数据。
  * 扫完写入本机文件，下次在有效期内直接用，不再把时间轴按天重拉一遍。
  */
@@ -315,27 +315,6 @@ export class GalleryAutoSyncNasIndex {
       }
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'persist nas index failed: %{public}s', String(e));
-    }
-  }
-
-  /**
-   * 只读今天已经落盘的全库名单，不按天重拉。
-   * 内容指纹没命中时，用文件名和大小再认一次已经在 NAS 上的照片。
-   */
-  static async loadDiskNameSize(ctx: common.UIAbilityContext): Promise<boolean> {
-    if (GalleryAutoSyncNasIndex.pendingDiscard) {
-      return false;
-    }
-    if (GalleryAutoSyncNasIndex.isFresh(false) && GalleryAutoSyncNasIndex.index.nameSizeKeys.size > 0) {
-      return true;
-    }
-    try {
-      const text = await fileIo.readText(GalleryAutoSyncNasIndex.indexPath(ctx));
-      const before = GalleryAutoSyncNasIndex.cachedAt;
-      GalleryAutoSyncNasIndex.applyDiskText(text);
-      return GalleryAutoSyncNasIndex.cachedAt !== before && GalleryAutoSyncNasIndex.index.nameSizeKeys.size > 0;
-    } catch (_e) {
-      return false;
     }
   }
 
