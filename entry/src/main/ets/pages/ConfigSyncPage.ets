@@ -1,5 +1,6 @@
 /**
- * 配置同步：二维码导出/导入 + WebDAV 上传/下载智能分类与相册布局。
+ * 配置同步：二维码导出/导入 + WebDAV 上传/下载。
+ * 含分类、相册布局、备份策略与路径、相册父目录、主题和幻灯片。
  */
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -17,7 +18,19 @@ import {
   smartCategorySaveLayout,
   SmartCategoryLayout
 } from '../album/SmartCategoryLayoutPreferences';
+import { gallerySlideshowLoadConfig, gallerySlideshowSaveConfig } from '../album/slideshow/GallerySlideshowPreferences';
+import { GallerySlideshowPlayMode } from '../album/slideshow/GallerySlideshowTypes';
 import {
+  fnNormalizeThemeHex,
+  fnSaveFollowSystemColors,
+  fnSaveThemeScheme,
+  FN_CUSTOM_ACCENT_KEY,
+  FN_CUSTOM_BG_KEY,
+  FN_FOLLOW_SYSTEM_COLORS_KEY
+} from '../common/FnThemeColors';
+import {
+  AppSettingsAlbumBackup,
+  AppSettingsClientPrefs,
   AppSettingsAlbumsHome,
   AppSettingsEnvelope,
   AppSettingsLogin,
@@ -32,6 +45,11 @@ import {
   settingsNasMismatchMessage,
   settingsNasTokensFromLogin
 } from '../sync/AppSettingsEnvelope';
+import {
+  cloneAlbumBackupSettings,
+  loadAlbumBackupSettings,
+  saveAlbumBackupSettings
+} from '../sync/AlbumBackupSettings';
 import { albumsHomeApplyLayoutFromCtx, albumsHomeSnapshotFromCtx } from '../album/AlbumsHomeTileOrderPreferences';
 import { mediaCategoryApplyOrderKeys, mediaCategorySavedOrder } from '../album/MediaCategoryOrderPreferences';
 import {
@@ -184,6 +202,91 @@ export struct ConfigSyncSheet {
     return slice;
   }
 
+  private async loadAlbumBackupSlice(): Promise<AppSettingsAlbumBackup> {
+    const backup = await loadAlbumBackupSettings(this.hostContext());
+    return {
+      displayPath: backup.displayPath.trim(),
+      deviceBackupPath: backup.deviceBackupPath.trim(),
+      backupSourceFolders: backup.backupSourceFolders.slice(),
+      policyPresent: true,
+      folderManageMode: backup.folderManageMode,
+      renameStrategy: backup.renameStrategy,
+      photosOnly: backup.photosOnly,
+      useCellularData: backup.useCellularData,
+      stopWhenBatteryLow: backup.stopWhenBatteryLow,
+      syncCreateAlbum: backup.syncCreateAlbum
+    };
+  }
+
+  private async loadClientPrefsSlice(): Promise<AppSettingsClientPrefs> {
+    const ctx = this.hostContext();
+    const show = await gallerySlideshowLoadConfig(ctx);
+    const stored = AppSession.getStored() ?? await SessionPreferences.load(ctx);
+    const follow = AppStorage.get<boolean>(FN_FOLLOW_SYSTEM_COLORS_KEY);
+    return {
+      albumParentGuid: stored !== null ? stored.albumParentGuid.trim() : '',
+      followSystemColors: follow !== false,
+      customPageBg: fnNormalizeThemeHex(AppStorage.get<string>(FN_CUSTOM_BG_KEY) ?? ''),
+      customAccent: fnNormalizeThemeHex(AppStorage.get<string>(FN_CUSTOM_ACCENT_KEY) ?? ''),
+      slideshowIntervalSec: show.intervalSec,
+      slideshowIncludeVideo: show.includeVideo,
+      slideshowIncludeGif: show.includeGif,
+      slideshowPlayMode: show.playMode === GallerySlideshowPlayMode.SEQUENTIAL ? 'sequential' : 'random'
+    };
+  }
+
+  private async persistImportedAlbumBackup(slice: AppSettingsAlbumBackup): Promise<void> {
+    const ctx = this.hostContext();
+    const merged = cloneAlbumBackupSettings(await loadAlbumBackupSettings(ctx));
+    merged.displayPath = slice.displayPath.trim();
+    merged.deviceBackupPath = slice.deviceBackupPath.trim();
+    merged.backupSourceFolders = slice.backupSourceFolders.slice();
+    if (merged.displayPath.length === 0 && merged.deviceBackupPath.length > 0) {
+      merged.displayPath = merged.deviceBackupPath;
+    }
+    if (slice.policyPresent) {
+      merged.folderManageMode = slice.folderManageMode;
+      merged.renameStrategy = slice.renameStrategy;
+      merged.photosOnly = slice.photosOnly;
+      merged.useCellularData = slice.useCellularData;
+      merged.stopWhenBatteryLow = slice.stopWhenBatteryLow;
+      merged.syncCreateAlbum = slice.syncCreateAlbum;
+    }
+    await saveAlbumBackupSettings(ctx, merged);
+  }
+
+  private async persistImportedClientPrefs(slice: AppSettingsClientPrefs): Promise<void> {
+    const ctx = this.hostContext();
+    const background = fnNormalizeThemeHex(slice.customPageBg);
+    const accent = fnNormalizeThemeHex(slice.customAccent);
+    if (slice.followSystemColors) {
+      if (background.length > 0 || accent.length > 0) {
+        await fnSaveThemeScheme(ctx, background, accent);
+      }
+      await fnSaveFollowSystemColors(ctx, true);
+    } else {
+      await fnSaveThemeScheme(ctx, background, accent);
+    }
+    await gallerySlideshowSaveConfig(ctx, {
+      intervalSec: slice.slideshowIntervalSec,
+      includeVideo: slice.slideshowIncludeVideo,
+      includeGif: slice.slideshowIncludeGif,
+      playMode: slice.slideshowPlayMode === 'sequential' ?
+        GallerySlideshowPlayMode.SEQUENTIAL : GallerySlideshowPlayMode.RANDOM
+    });
+    const live = AppSession.getStored();
+    if (live !== null) {
+      AppSession.updateAlbumParentGuid(slice.albumParentGuid.trim());
+      await AppSession.persist(ctx);
+      return;
+    }
+    const loaded = await SessionPreferences.load(ctx);
+    if (loaded !== null) {
+      loaded.albumParentGuid = slice.albumParentGuid.trim();
+      await SessionPreferences.save(ctx, loaded);
+    }
+  }
+
   private async loadLoginConfig(): Promise<AppSettingsLogin> {
     const ctx = this.hostContext();
     const d: LoginFormDefaults = await SessionPreferences.loadLoginFormDefaults(ctx);
@@ -278,7 +381,9 @@ export struct ConfigSyncSheet {
       const updatedAt = layoutLocalUpdatedAt(layout) > 0 ? layoutLocalUpdatedAt(layout) : Date.now();
       const login = await this.loadLoginConfig();
       const albumsHome = await this.loadAlbumsHomeSlice();
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome);
+      const albumBackup = await this.loadAlbumBackupSlice();
+      const clientPrefs = await this.loadClientPrefsSlice();
+      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome, albumBackup, clientPrefs);
       const created = await createSettingsQrImage(envelope);
       if (!created.ok || created.pixelMap === undefined) {
         this.releaseQrPixelMap();
@@ -370,6 +475,9 @@ export struct ConfigSyncSheet {
     const loginApplied = await this.persistImportedLogin(envelope.login);
     const account = smartCategoryCurrentAccount();
     if (account.length === 0) {
+      if (envelope.clientPrefsPresent) {
+        await this.persistImportedClientPrefs(envelope.clientPrefs);
+      }
       this.toast(loginApplied ? '已导入登录配置' : '当前未登录，无法导入分类');
       return;
     }
@@ -378,6 +486,9 @@ export struct ConfigSyncSheet {
     if (!applied.ok || applied.layout === undefined) {
       this.toast(loginApplied ? `登录配置已导入。${applied.message}` : applied.message);
       return;
+    }
+    if (envelope.clientPrefsPresent) {
+      await this.persistImportedClientPrefs(envelope.clientPrefs);
     }
     const saved = await smartCategorySaveLayout(this.hostContext(), applied.layout);
     if (!saved) {
@@ -391,6 +502,9 @@ export struct ConfigSyncSheet {
         applied.albumsHome.hidden
       );
       await mediaCategoryApplyOrderKeys(this.hostContext(), applied.albumsHome.mediaOrder);
+    }
+    if (applied.albumBackupPresent) {
+      await this.persistImportedAlbumBackup(applied.albumBackup);
     }
     this.toast(loginApplied ? `${applied.message}；登录配置已同步` : applied.message);
     await this.refreshQr();
@@ -427,7 +541,9 @@ export struct ConfigSyncSheet {
       const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
       const login = await this.loadLoginConfig();
       const albumsHome = await this.loadAlbumsHomeSlice();
-      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome);
+      const albumBackup = await this.loadAlbumBackupSlice();
+      const clientPrefs = await this.loadClientPrefsSlice();
+      const envelope = envelopeFromLayout(layout, deviceId, updatedAt, login, albumsHome, albumBackup, clientPrefs);
       const res = await webDavPutJson(this.currentWebDavConfig(), serializeEnvelope(envelope));
       this.toast(res.ok ? '已上传到 WebDAV' : res.message);
       if (res.ok) {

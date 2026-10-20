@@ -1,6 +1,7 @@
 /**
  * 跨设备配置信封：二维码与 WebDAV 共用同一份 JSON。
- * 同步智能分类关键词/顺序，以及相册首页宫格排序与隐藏。
+ * 同步智能分类、相册首页宫格、相册备份策略与路径、相册父目录、主题和幻灯片。
+ * 导入前仍做 FN ID / NAS 一致性校验。deviceName 与沉浸式开关不进信封。
  */
 import {
   SMART_CATEGORY_CUSTOM_MAX,
@@ -38,6 +39,35 @@ export interface AppSettingsAlbumsHome {
   mediaOrder: string[];
 }
 
+/** 相册备份：路径、备份源，以及目录偏好等策略。deviceName 仍只留在本机。 */
+export interface AppSettingsAlbumBackup {
+  displayPath: string;
+  deviceBackupPath: string;
+  backupSourceFolders: string[];
+  /** 旧信封没有策略字段时为 false，导入时不覆盖本机开关。 */
+  policyPresent: boolean;
+  /** 1–4 */
+  folderManageMode: number;
+  /** 0 关闭，1 按拍摄日期重命名 */
+  renameStrategy: number;
+  photosOnly: boolean;
+  useCellularData: boolean;
+  stopWhenBatteryLow: boolean;
+  syncCreateAlbum: boolean;
+}
+
+/** 与账号无关的本机观感，以及设置页里的相册父目录。 */
+export interface AppSettingsClientPrefs {
+  albumParentGuid: string;
+  followSystemColors: boolean;
+  customPageBg: string;
+  customAccent: string;
+  slideshowIntervalSec: number;
+  slideshowIncludeVideo: boolean;
+  slideshowIncludeGif: boolean;
+  slideshowPlayMode: string;
+}
+
 /** 登录页可同步字段；勾选保存密码时才带口令。 */
 export interface AppSettingsLogin {
   fnId: string;
@@ -61,6 +91,10 @@ export interface AppSettingsEnvelope {
   smartCategory: AppSettingsSmartCategory;
   albumsHome: AppSettingsAlbumsHome;
   albumsHomePresent: boolean;
+  albumBackup: AppSettingsAlbumBackup;
+  albumBackupPresent: boolean;
+  clientPrefs: AppSettingsClientPrefs;
+  clientPrefsPresent: boolean;
   login: AppSettingsLogin;
 }
 
@@ -77,6 +111,8 @@ export interface ApplyEnvelopeResult {
   layout?: SmartCategoryLayout;
   albumsHomePresent: boolean;
   albumsHome: AppSettingsAlbumsHome;
+  albumBackupPresent: boolean;
+  albumBackup: AppSettingsAlbumBackup;
 }
 
 function asString(value: Object | string | number | boolean | undefined | null, fallback: string): string {
@@ -127,6 +163,126 @@ function emptyAlbumsHome(): AppSettingsAlbumsHome {
 
 export function emptyAlbumsHomeConfig(): AppSettingsAlbumsHome {
   return emptyAlbumsHome();
+}
+
+function emptyAlbumBackup(): AppSettingsAlbumBackup {
+  return {
+    displayPath: '',
+    deviceBackupPath: '',
+    backupSourceFolders: [],
+    policyPresent: false,
+    folderManageMode: 4,
+    renameStrategy: 0,
+    photosOnly: false,
+    useCellularData: false,
+    stopWhenBatteryLow: true,
+    syncCreateAlbum: false
+  };
+}
+
+function emptyClientPrefs(): AppSettingsClientPrefs {
+  return {
+    albumParentGuid: '',
+    followSystemColors: true,
+    customPageBg: '',
+    customAccent: '',
+    slideshowIntervalSec: 5,
+    slideshowIncludeVideo: true,
+    slideshowIncludeGif: true,
+    slideshowPlayMode: 'random'
+  };
+}
+
+export function emptyClientPrefsConfig(): AppSettingsClientPrefs {
+  return emptyClientPrefs();
+}
+
+function asBool(value: Object | string | number | boolean | undefined | null, fallback: boolean): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase();
+    if (text === '1' || text === 'true') {
+      return true;
+    }
+    if (text === '0' || text === 'false') {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+function asBoundedInt(
+  value: Object | string | number | boolean | undefined | null,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  let n = fallback;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    n = Math.floor(value);
+  } else if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      n = Math.floor(parsed);
+    }
+  }
+  if (n < min) {
+    return min;
+  }
+  if (n > max) {
+    return max;
+  }
+  return n;
+}
+
+function backupPolicyPresent(source: LooseJson): boolean {
+  return source['folderManageMode'] !== undefined || source['afm'] !== undefined ||
+    source['renameStrategy'] !== undefined || source['ars'] !== undefined ||
+    source['photosOnly'] !== undefined || source['apo'] !== undefined ||
+    source['useCellularData'] !== undefined || source['ace'] !== undefined ||
+    source['stopWhenBatteryLow'] !== undefined || source['alb'] !== undefined ||
+    source['syncCreateAlbum'] !== undefined || source['asa'] !== undefined;
+}
+
+function readBackupPolicy(source: LooseJson, into: AppSettingsAlbumBackup): void {
+  if (!backupPolicyPresent(source)) {
+    return;
+  }
+  into.policyPresent = true;
+  into.folderManageMode = asBoundedInt(
+    source['folderManageMode'] !== undefined ? source['folderManageMode'] : source['afm'],
+    into.folderManageMode,
+    1,
+    4
+  );
+  into.renameStrategy = asBoundedInt(
+    source['renameStrategy'] !== undefined ? source['renameStrategy'] : source['ars'],
+    into.renameStrategy,
+    0,
+    1
+  );
+  into.photosOnly = asBool(source['photosOnly'] !== undefined ? source['photosOnly'] : source['apo'], into.photosOnly);
+  into.useCellularData = asBool(
+    source['useCellularData'] !== undefined ? source['useCellularData'] : source['ace'],
+    into.useCellularData
+  );
+  into.stopWhenBatteryLow = asBool(
+    source['stopWhenBatteryLow'] !== undefined ? source['stopWhenBatteryLow'] : source['alb'],
+    into.stopWhenBatteryLow
+  );
+  into.syncCreateAlbum = asBool(
+    source['syncCreateAlbum'] !== undefined ? source['syncCreateAlbum'] : source['asa'],
+    into.syncCreateAlbum
+  );
+}
+
+export function emptyAlbumBackupConfig(): AppSettingsAlbumBackup {
+  return emptyAlbumBackup();
 }
 
 function emptySmartCategory(): AppSettingsSmartCategory {
@@ -540,6 +696,111 @@ interface AppSettingsAlbumsHomeParse {
   value: AppSettingsAlbumsHome;
 }
 
+interface AppSettingsAlbumBackupParse {
+  present: boolean;
+  value: AppSettingsAlbumBackup;
+}
+
+function parseAlbumBackupBlock(parsed: LooseJson): AppSettingsAlbumBackupParse {
+  const full = parsed['albumBackup'] !== undefined ? parsed['albumBackup'] : parsed['ab'];
+  if (full !== undefined && typeof full === 'object' && full !== null && !Array.isArray(full)) {
+    const rec = full as LooseJson;
+    const value = emptyAlbumBackup();
+    value.displayPath = asString(rec['displayPath'] !== undefined ? rec['displayPath'] : rec['dp'], '').trim();
+    value.deviceBackupPath = asString(
+      rec['deviceBackupPath'] !== undefined ? rec['deviceBackupPath'] : rec['bp'],
+      ''
+    ).trim();
+    value.backupSourceFolders = parseStringArray(
+      rec['backupSourceFolders'] !== undefined ? rec['backupSourceFolders'] : rec['sf']
+    );
+    readBackupPolicy(rec, value);
+    if (!value.policyPresent) {
+      readBackupPolicy(parsed, value);
+    }
+    return { present: true, value: value };
+  }
+  if (parsed['adp'] !== undefined || parsed['abp'] !== undefined || parsed['asf'] !== undefined ||
+    backupPolicyPresent(parsed)) {
+    const value = emptyAlbumBackup();
+    value.displayPath = asString(parsed['adp'], '').trim();
+    value.deviceBackupPath = asString(parsed['abp'], '').trim();
+    value.backupSourceFolders = parseStringArray(parsed['asf']);
+    readBackupPolicy(parsed, value);
+    return { present: true, value: value };
+  }
+  return { present: false, value: emptyAlbumBackup() };
+}
+
+function clientPrefsPresentIn(source: LooseJson): boolean {
+  return source['albumParentGuid'] !== undefined || source['apg'] !== undefined ||
+    source['followSystemColors'] !== undefined || source['tf'] !== undefined ||
+    source['customPageBg'] !== undefined || source['tb'] !== undefined ||
+    source['customAccent'] !== undefined || source['ta'] !== undefined ||
+    source['slideshowIntervalSec'] !== undefined || source['si'] !== undefined ||
+    source['slideshowIncludeVideo'] !== undefined || source['sv'] !== undefined ||
+    source['slideshowIncludeGif'] !== undefined || source['sg'] !== undefined ||
+    source['slideshowPlayMode'] !== undefined || source['sm'] !== undefined;
+}
+
+function readClientPrefs(source: LooseJson, into: AppSettingsClientPrefs): void {
+  into.albumParentGuid = asString(
+    source['albumParentGuid'] !== undefined ? source['albumParentGuid'] : source['apg'],
+    into.albumParentGuid
+  ).trim();
+  into.followSystemColors = asBool(
+    source['followSystemColors'] !== undefined ? source['followSystemColors'] : source['tf'],
+    into.followSystemColors
+  );
+  into.customPageBg = asString(
+    source['customPageBg'] !== undefined ? source['customPageBg'] : source['tb'],
+    into.customPageBg
+  ).trim();
+  into.customAccent = asString(
+    source['customAccent'] !== undefined ? source['customAccent'] : source['ta'],
+    into.customAccent
+  ).trim();
+  into.slideshowIntervalSec = asBoundedInt(
+    source['slideshowIntervalSec'] !== undefined ? source['slideshowIntervalSec'] : source['si'],
+    into.slideshowIntervalSec,
+    2,
+    30
+  );
+  into.slideshowIncludeVideo = asBool(
+    source['slideshowIncludeVideo'] !== undefined ? source['slideshowIncludeVideo'] : source['sv'],
+    into.slideshowIncludeVideo
+  );
+  into.slideshowIncludeGif = asBool(
+    source['slideshowIncludeGif'] !== undefined ? source['slideshowIncludeGif'] : source['sg'],
+    into.slideshowIncludeGif
+  );
+  const mode = asString(
+    source['slideshowPlayMode'] !== undefined ? source['slideshowPlayMode'] : source['sm'],
+    into.slideshowPlayMode
+  ).trim();
+  into.slideshowPlayMode = mode === 'sequential' ? 'sequential' : 'random';
+}
+
+interface AppSettingsClientPrefsParse {
+  present: boolean;
+  value: AppSettingsClientPrefs;
+}
+
+function parseClientPrefsBlock(parsed: LooseJson): AppSettingsClientPrefsParse {
+  const full = parsed['clientPrefs'] !== undefined ? parsed['clientPrefs'] : parsed['cp'];
+  if (full !== undefined && typeof full === 'object' && full !== null && !Array.isArray(full)) {
+    const value = emptyClientPrefs();
+    readClientPrefs(full as LooseJson, value);
+    return { present: true, value: value };
+  }
+  if (clientPrefsPresentIn(parsed)) {
+    const value = emptyClientPrefs();
+    readClientPrefs(parsed, value);
+    return { present: true, value: value };
+  }
+  return { present: false, value: emptyClientPrefs() };
+}
+
 function parseSmartCategory(raw: Object | string | number | boolean | undefined | null): AppSettingsSmartCategory {
   if (raw === undefined || raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return emptySmartCategory();
@@ -578,7 +839,9 @@ export function envelopeFromLayout(
   deviceId: string,
   updatedAt: number,
   login: AppSettingsLogin = emptyLoginConfig(),
-  albumsHome: AppSettingsAlbumsHome = emptyAlbumsHome()
+  albumsHome: AppSettingsAlbumsHome = emptyAlbumsHome(),
+  albumBackup: AppSettingsAlbumBackup = emptyAlbumBackup(),
+  clientPrefs: AppSettingsClientPrefs = emptyClientPrefs()
 ): AppSettingsEnvelope {
   const custom: AppSettingsCustomItem[] = [];
   for (let i = 0; i < layout.custom.length; i++) {
@@ -608,6 +871,30 @@ export function envelopeFromLayout(
       mediaOrder: albumsHome.mediaOrder.slice()
     },
     albumsHomePresent: true,
+    albumBackup: {
+      displayPath: albumBackup.displayPath.trim(),
+      deviceBackupPath: albumBackup.deviceBackupPath.trim(),
+      backupSourceFolders: albumBackup.backupSourceFolders.slice(),
+      policyPresent: true,
+      folderManageMode: albumBackup.folderManageMode,
+      renameStrategy: albumBackup.renameStrategy,
+      photosOnly: albumBackup.photosOnly,
+      useCellularData: albumBackup.useCellularData,
+      stopWhenBatteryLow: albumBackup.stopWhenBatteryLow,
+      syncCreateAlbum: albumBackup.syncCreateAlbum
+    },
+    albumBackupPresent: true,
+    clientPrefs: {
+      albumParentGuid: clientPrefs.albumParentGuid.trim(),
+      followSystemColors: clientPrefs.followSystemColors,
+      customPageBg: clientPrefs.customPageBg.trim(),
+      customAccent: clientPrefs.customAccent.trim(),
+      slideshowIntervalSec: clientPrefs.slideshowIntervalSec,
+      slideshowIncludeVideo: clientPrefs.slideshowIncludeVideo,
+      slideshowIncludeGif: clientPrefs.slideshowIncludeGif,
+      slideshowPlayMode: clientPrefs.slideshowPlayMode === 'sequential' ? 'sequential' : 'random'
+    },
+    clientPrefsPresent: true,
     login: login
   };
 }
@@ -637,6 +924,33 @@ export function serializeEnvelope(envelope: AppSettingsEnvelope): string {
   albums['hidden'] = envelope.albumsHome.hidden;
   albums['mediaOrder'] = envelope.albumsHome.mediaOrder;
   root['albumsHome'] = albums;
+  if (envelope.albumBackupPresent) {
+    const backup: LooseJson = {};
+    backup['displayPath'] = envelope.albumBackup.displayPath;
+    backup['deviceBackupPath'] = envelope.albumBackup.deviceBackupPath;
+    backup['backupSourceFolders'] = envelope.albumBackup.backupSourceFolders.slice();
+    if (envelope.albumBackup.policyPresent) {
+      backup['folderManageMode'] = envelope.albumBackup.folderManageMode;
+      backup['renameStrategy'] = envelope.albumBackup.renameStrategy;
+      backup['photosOnly'] = envelope.albumBackup.photosOnly;
+      backup['useCellularData'] = envelope.albumBackup.useCellularData;
+      backup['stopWhenBatteryLow'] = envelope.albumBackup.stopWhenBatteryLow;
+      backup['syncCreateAlbum'] = envelope.albumBackup.syncCreateAlbum;
+    }
+    root['albumBackup'] = backup;
+  }
+  if (envelope.clientPrefsPresent) {
+    const prefs: LooseJson = {};
+    prefs['albumParentGuid'] = envelope.clientPrefs.albumParentGuid;
+    prefs['followSystemColors'] = envelope.clientPrefs.followSystemColors;
+    prefs['customPageBg'] = envelope.clientPrefs.customPageBg;
+    prefs['customAccent'] = envelope.clientPrefs.customAccent;
+    prefs['slideshowIntervalSec'] = envelope.clientPrefs.slideshowIntervalSec;
+    prefs['slideshowIncludeVideo'] = envelope.clientPrefs.slideshowIncludeVideo;
+    prefs['slideshowIncludeGif'] = envelope.clientPrefs.slideshowIncludeGif;
+    prefs['slideshowPlayMode'] = envelope.clientPrefs.slideshowPlayMode;
+    root['clientPrefs'] = prefs;
+  }
   const loginRec: LooseJson = {};
   loginRec['fnId'] = envelope.login.fnId;
   loginRec['domain'] = envelope.login.domain;
@@ -732,6 +1046,29 @@ function compactRootObject(
     userRows.push(row);
   }
   root['lu'] = userRows;
+  if (envelope.albumBackupPresent) {
+    root['adp'] = envelope.albumBackup.displayPath;
+    root['abp'] = envelope.albumBackup.deviceBackupPath;
+    root['asf'] = envelope.albumBackup.backupSourceFolders.slice();
+    if (envelope.albumBackup.policyPresent) {
+      root['afm'] = envelope.albumBackup.folderManageMode;
+      root['ars'] = envelope.albumBackup.renameStrategy;
+      root['apo'] = envelope.albumBackup.photosOnly ? '1' : '0';
+      root['ace'] = envelope.albumBackup.useCellularData ? '1' : '0';
+      root['alb'] = envelope.albumBackup.stopWhenBatteryLow ? '1' : '0';
+      root['asa'] = envelope.albumBackup.syncCreateAlbum ? '1' : '0';
+    }
+  }
+  if (envelope.clientPrefsPresent) {
+    root['apg'] = envelope.clientPrefs.albumParentGuid;
+    root['tf'] = envelope.clientPrefs.followSystemColors ? '1' : '0';
+    root['tb'] = envelope.clientPrefs.customPageBg;
+    root['ta'] = envelope.clientPrefs.customAccent;
+    root['si'] = envelope.clientPrefs.slideshowIntervalSec;
+    root['sv'] = envelope.clientPrefs.slideshowIncludeVideo ? '1' : '0';
+    root['sg'] = envelope.clientPrefs.slideshowIncludeGif ? '1' : '0';
+    root['sm'] = envelope.clientPrefs.slideshowPlayMode;
+  }
   if (includeOrders) {
     root['so'] = envelope.smartCategory.sceneOrder;
     root['io'] = envelope.smartCategory.infoOrder;
@@ -814,6 +1151,8 @@ export function parseEnvelopeJson(rawText: string): ParseEnvelopeResult {
     }
     const smart = hasFull ? parseSmartCategory(smartRaw) : parseSmartCategory(parsed);
     const albumsParsed = parseAlbumsHomeBlock(parsed);
+    const backupParsed = parseAlbumBackupBlock(parsed);
+    const clientParsed = parseClientPrefsBlock(parsed);
     const envelope: AppSettingsEnvelope = {
       schema: APP_SETTINGS_SCHEMA,
       updatedAt: asTime(parsed['updatedAt'] !== undefined ? parsed['updatedAt'] : parsed['t']),
@@ -822,6 +1161,10 @@ export function parseEnvelopeJson(rawText: string): ParseEnvelopeResult {
       smartCategory: smart,
       albumsHome: albumsParsed.value,
       albumsHomePresent: albumsParsed.present,
+      albumBackup: backupParsed.value,
+      albumBackupPresent: backupParsed.present,
+      clientPrefs: clientParsed.value,
+      clientPrefsPresent: clientParsed.present,
       login: mergeLoginUsersFromEnvelope(
         parseLoginConfig(parsed['login'] !== undefined ? parsed['login'] : parsed['l']),
         parseLoginUsers(parsed['lu'] !== undefined ? parsed['lu'] : parsed['users'])
@@ -882,7 +1225,9 @@ export function applyEnvelopeToAccount(
       skipped: false,
       message: '当前未登录，无法导入',
       albumsHomePresent: false,
-      albumsHome: emptyAlbumsHome()
+      albumsHome: emptyAlbumsHome(),
+      albumBackupPresent: false,
+      albumBackup: emptyAlbumBackup()
     };
   }
   if (!force && envelope.updatedAt > 0 && localUpdatedAt > envelope.updatedAt) {
@@ -891,11 +1236,13 @@ export function applyEnvelopeToAccount(
       skipped: true,
       message: '远程配置较旧，未覆盖本机',
       albumsHomePresent: false,
-      albumsHome: emptyAlbumsHome()
+      albumsHome: emptyAlbumsHome(),
+      albumBackupPresent: false,
+      albumBackup: emptyAlbumBackup()
     };
   }
   const layout = layoutFromEnvelope(envelope, acc);
-  let message = '已导入分类与相册布局，请返回相册页查看';
+  let message = '已导入分类、相册布局与备份设置，请返回相册页查看';
   const srcAccount = envelope.account.trim();
   if (srcAccount.length > 0 && srcAccount !== acc) {
     message = `已导入到当前账号（来源 ${srcAccount}）`;
@@ -906,6 +1253,8 @@ export function applyEnvelopeToAccount(
     message: message,
     layout: layout,
     albumsHomePresent: envelope.albumsHomePresent,
-    albumsHome: envelope.albumsHome
+    albumsHome: envelope.albumsHome,
+    albumBackupPresent: envelope.albumBackupPresent,
+    albumBackup: envelope.albumBackup
   };
 }
