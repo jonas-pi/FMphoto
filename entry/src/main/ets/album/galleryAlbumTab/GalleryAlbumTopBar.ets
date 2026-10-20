@@ -10,8 +10,10 @@ import {
   HdsNavigationTitleMode,
   IconStyleMode
 } from '@kit.UIDesignKit';
-import { FnHdsMoreMenuAnchor } from '../../common/FnHdsMoreMenu';
+import { FnHdsMoreMenuHandle, FnHdsMoreMenuHost } from '../../common/FnHdsMoreMenu';
 import {
+  FnHdsPressActionGate,
+  FnHdsTitleBarCache,
   fnHdsMiniTitleBarOptions,
   fnHdsRoundCancelIcon,
   fnLiquidGlassGradient
@@ -139,22 +141,25 @@ struct GalleryAlbumSearchField {
 /** 「更多」菜单锚点：独立组件，展开时不要刷新搜索顶栏，避免输入框重建把键盘再次拉起。 */
 @Component
 export struct GalleryAlbumMoreMenuLayer {
-  @Prop expanded: boolean = false;
+  menuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @Prop topSafeInsetVp: number = 0;
   @Prop showMoreMultiselect: boolean = false;
   @Prop showMoreUpload: boolean = false;
+  @Prop showMoreSync: boolean = false;
   onDismiss: () => void = () => {};
   onEnterMultiselect: () => void = () => {};
   onOpenSlideshow: () => void = () => {};
   onStartUpload: () => void = () => {};
+  onStartSync: () => void = () => {};
 
   build() {
     Stack({ alignContent: Alignment.TopEnd }) {
-      FnHdsMoreMenuAnchor({
-        expanded: this.expanded,
+      FnHdsMoreMenuHost({
+        menuHandle: this.menuHandle,
         topSafeInsetVp: this.topSafeInsetVp,
         showMultiselect: this.showMoreMultiselect,
         showUpload: this.showMoreUpload,
+        showSync: this.showMoreSync,
         showSlideshow: true,
         onDismiss: (): void => {
           this.onDismiss();
@@ -164,6 +169,9 @@ export struct GalleryAlbumMoreMenuLayer {
         },
         onUpload: (): void => {
           this.onStartUpload();
+        },
+        onSync: (): void => {
+          this.onStartSync();
         },
         onSlideshow: (): void => {
           this.onOpenSlideshow();
@@ -195,6 +203,8 @@ export struct GalleryAlbumTopBar {
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @Prop searchFilterActive: boolean = false;
   @Prop searchFilterActiveCount: number = 0;
+  /** 本机相册里尚未同步到 NAS 的数量。 */
+  @Prop autoSyncBadgeCount: number = 0;
   @Prop albumsHomeEditMode: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
@@ -216,6 +226,8 @@ export struct GalleryAlbumTopBar {
 
   /** 不进 @State：只挡自动抢焦，避免为了收键盘刷新输入框。 */
   private suppressSearchAutoFocus: boolean = true;
+  private titleBarCache: FnHdsTitleBarCache = new FnHdsTitleBarCache();
+  private pressGate: FnHdsPressActionGate = new FnHdsPressActionGate();
   private searchSubmitted: boolean = false;
   private searchDraft: string = '';
   private searchInputCtrl: TextInputController = new TextInputController();
@@ -333,14 +345,18 @@ export struct GalleryAlbumTopBar {
     if (this.inSearchMode) {
       this.releaseSearchImeForOverlay();
     }
-    this.onOpenSearchFilter();
+    this.pressGate.schedule((): void => {
+      this.onOpenSearchFilter();
+    });
   }
 
   private onMoreMenuAction(): void {
     if (this.inSearchMode) {
       this.releaseSearchImeForOverlay();
     }
-    this.onShowMoreMenu();
+    this.pressGate.schedule((): void => {
+      this.onShowMoreMenu();
+    });
   }
 
   private onSearchTextChange(value: string): void {
@@ -460,6 +476,35 @@ export struct GalleryAlbumTopBar {
   aboutToDisappear(): void {
     this.clearSuppressSearchFocusTimer();
     this.clearSearchFocusKickTimer();
+    this.pressGate.cancel();
+  }
+
+  private titleBarSignature(): string {
+    return [
+      this.inSearchMode ? 's' : 'd',
+      this.homeSurface,
+      this.rootSurfaceTitle,
+      this.inCategoryMode ? '1' : '0',
+      this.inSmartCategoryMode ? '1' : '0',
+      this.inPersonMode ? '1' : '0',
+      this.gallerySelectionMode ? '1' : '0',
+      `${this.gallerySelectedCount}`,
+      `${this.autoSyncBadgeCount}`,
+      this.searchFilterActive ? '1' : '0',
+      `${this.searchFilterActiveCount}`,
+      this.albumsHomeEditMode ? '1' : '0',
+      this.themeTextPrimary,
+      this.themeTextSecondary,
+      this.immersiveLightEnabled ? '1' : '0',
+      this.shouldShowBack() ? '1' : '0'
+    ].join('|');
+  }
+
+  private stableTitleBarOptions(): HdsNavigationTitleBarOptions {
+    const signature = this.titleBarSignature();
+    return this.titleBarCache.resolve(signature, (): HdsNavigationTitleBarOptions => {
+      return this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions();
+    });
   }
 
   @Builder
@@ -599,7 +644,7 @@ export struct GalleryAlbumTopBar {
           this.onStartUpload();
         }
       };
-      items.push(this.menuItem(uploadContent));
+      items.push(this.menuItem(uploadContent, this.autoSyncBadgeCount));
     }
     const searchContent: HdsNavigationIconOptions = {
       label: '搜索',
@@ -622,7 +667,7 @@ export struct GalleryAlbumTopBar {
           this.onMoreMenuAction();
         }
       };
-      items.push(this.menuItem(moreContent));
+      items.push(this.menuItem(moreContent, this.autoSyncBadgeCount));
     }
     return items;
   }
@@ -639,6 +684,6 @@ export struct GalleryAlbumTopBar {
     .hideBackButton(!this.shouldShowBack())
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
     .bindToScrollable(this.scrollerList)
-    .titleBar(this.inSearchMode ? this.searchTitleBarOptions() : this.defaultTitleBarOptions())
+    .titleBar(this.stableTitleBarOptions())
   }
 }

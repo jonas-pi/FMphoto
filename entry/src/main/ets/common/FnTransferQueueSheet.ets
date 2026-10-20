@@ -11,7 +11,7 @@ import {
 } from './FnTransferQueueStore';
 
 /**
- * 传输队列半屏内容区。
+ * 任务队列半屏内容区。
  * 标题与关闭按钮由 bindSheet 的 title / showClose 官方能力提供。
  */
 @Component
@@ -28,6 +28,9 @@ export struct FnTransferQueueSheet {
     }
     if (direction === FnTransferDirection.SYNC) {
       return '#FF059669';
+    }
+    if (direction === FnTransferDirection.SCAN) {
+      return '#FF4A8BFF';
     }
     return '#FFD97706';
   }
@@ -126,7 +129,7 @@ export struct FnTransferQueueSheet {
               .width(16)
               .height(16)
               .color(this.directionColor(task.direction))
-            Text(task.message.length > 0 ? task.message : '处理中…')
+            Text(task.detail.length > 0 ? task.detail : (task.message.length > 0 ? task.message : '处理中…'))
               .fontSize(12)
               .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
               .layoutWeight(1)
@@ -157,10 +160,10 @@ export struct FnTransferQueueSheet {
     Column({ space: 0 }) {
       if (this.tasks.length === 0) {
         Column({ space: 8 }) {
-          Text('暂无传输任务')
+          Text('暂无任务')
             .fontSize(14)
             .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
-          Text('上传、下载或同步会在后台进行，可在此查看进度')
+          Text('扫描、上传、下载或同步会在这里显示进度')
             .fontSize(12)
             .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
             .lineHeight(18)

@@ -220,6 +220,48 @@ export function fnHdsMiniTitleBarOptions(
     content: content
   };
 }
+
+/**
+ * 标题栏配置没变时复用同一对象。
+ * 每次 build 都 new 一份 titleBar，HdsNavigation 会把菜单按钮换掉，按压缩放只剩第一次。
+ */
+export class FnHdsTitleBarCache {
+  private signature: string = '';
+  private options: HdsNavigationTitleBarOptions | null = null;
+
+  resolve(signature: string, create: () => HdsNavigationTitleBarOptions): HdsNavigationTitleBarOptions {
+    if (this.options !== null && this.signature === signature) {
+      return this.options;
+    }
+    const created = create();
+    this.signature = signature;
+    this.options = created;
+    return created;
+  }
+}
+
+/** 按压回弹大约一帧。同步弹出菜单/半模态会吃掉抬手，按钮的按压态不再复位。 */
+const FN_HDS_PRESS_SETTLE_MS: number = 48;
+
+export class FnHdsPressActionGate {
+  private timer: number = -1;
+
+  schedule(action: () => void): void {
+    this.cancel();
+    this.timer = setTimeout((): void => {
+      this.timer = -1;
+      action();
+    }, FN_HDS_PRESS_SETTLE_MS);
+  }
+
+  cancel(): void {
+    if (this.timer >= 0) {
+      clearTimeout(this.timer);
+      this.timer = -1;
+    }
+  }
+}
+
 export const FN_BOTTOM_DOCK_SIDE_PADDING_VP: number = 14;
 export const FN_BOTTOM_DOCK_SIDE_GAP_VP: number = 10;
 export const FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP: number = 54;

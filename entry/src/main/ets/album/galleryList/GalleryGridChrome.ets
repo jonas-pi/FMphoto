@@ -12,8 +12,14 @@ import {
   IconStyleMode,
   TitleBarContentOptions
 } from '@kit.UIDesignKit';
-import { FnHdsMoreMenuAnchor } from '../../common/FnHdsMoreMenu';
-import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions, fnHdsRoundCancelIcon } from '../../common/FnUiCommon';
+import { FnHdsMoreMenuHandle, FnHdsMoreMenuHost } from '../../common/FnHdsMoreMenu';
+import {
+  FN_HDS_NAV_CHROME_HEIGHT_VP,
+  FnHdsPressActionGate,
+  FnHdsTitleBarCache,
+  fnHdsMiniTitleBarOptions,
+  fnHdsRoundCancelIcon
+} from '../../common/FnUiCommon';
 import {
   fnCanUseHdsImmersive,
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
@@ -39,7 +45,7 @@ export struct GalleryGridChrome {
   @Prop topSafeInsetVp: number = 0;
   /** true：右侧「更多」（多选/幻灯片）；false：右侧直接「多选」（回收站） */
   @Prop useMoreMenu: boolean = true;
-  @Prop moreMenuExpanded: boolean = false;
+  menuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @Prop showJumpToFolder: boolean = false;
   @Prop showSlideshow: boolean = true;
   @Prop showGoUp: boolean = false;
@@ -59,6 +65,12 @@ export struct GalleryGridChrome {
   onOpenSlideshowFromMore: () => void = () => {};
   onJumpToFolder: () => void = () => {};
   onReturnToSource: () => void = () => {};
+  private titleBarCache: FnHdsTitleBarCache = new FnHdsTitleBarCache();
+  private pressGate: FnHdsPressActionGate = new FnHdsPressActionGate();
+
+  aboutToDisappear(): void {
+    this.pressGate.cancel();
+  }
 
   private canUseHds(): boolean {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
@@ -96,7 +108,9 @@ export struct GalleryGridChrome {
       type: IconStyleMode.NORMAL,
       isEnabled: true,
       action: (): void => {
-        this.onShowMoreMenu();
+        this.pressGate.schedule((): void => {
+          this.onShowMoreMenu();
+        });
       }
     };
     return content;
@@ -178,9 +192,29 @@ export struct GalleryGridChrome {
     };
   }
 
+  private titleBarSignature(): string {
+    return [
+      this.selectionMode ? '1' : '0',
+      `${this.selectedCount}`,
+      this.title,
+      this.fallbackTitle,
+      `${this.totalCount}`,
+      this.showCountSubtitle ? '1' : '0',
+      this.useMoreMenu ? '1' : '0',
+      this.showGoUp ? '1' : '0',
+      this.canGoUp ? '1' : '0',
+      this.themeTextPrimary,
+      this.themeTextSecondary,
+      this.immersiveLightEnabled ? '1' : '0'
+    ].join('|');
+  }
+
   private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false,
-      fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
+    const signature = this.titleBarSignature();
+    return this.titleBarCache.resolve(signature, (): HdsNavigationTitleBarOptions => {
+      return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false,
+        fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
+    });
   }
 
   @Builder
@@ -211,8 +245,8 @@ export struct GalleryGridChrome {
       .hitTestBehavior(HitTestMode.Default)
 
       if (this.useMoreMenu) {
-        FnHdsMoreMenuAnchor({
-          expanded: this.moreMenuExpanded,
+        FnHdsMoreMenuHost({
+          menuHandle: this.menuHandle,
           topSafeInsetVp: this.topSafeInsetVp,
           showMultiselect: true,
           showSlideshow: this.showSlideshow,

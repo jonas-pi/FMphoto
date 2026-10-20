@@ -93,6 +93,7 @@ import {
   galleryListPopOrRouterBack,
   galleryListTryConsumeOverlays
 } from '../album/galleryList/GalleryListBack';
+import { FnHdsMoreMenuHandle } from '../common/FnHdsMoreMenu';
 import {
   gallerySlideshowLaunchForItems,
   gallerySlideshowLaunchForPerson,
@@ -189,7 +190,7 @@ struct CategoryGallery {
   @State private choiceSheetButtons: string[] = [];
   @State private cgThumbLoadingPaused: boolean = false;
   @State private cgBackgroundLoading: boolean = false;
-  @State private moreMenuExpanded: boolean = false;
+  private moreMenuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @State private slideshowSettingsVisible: boolean = false;
   @State private slideshowPreparing: boolean = false;
 
@@ -230,7 +231,7 @@ struct CategoryGallery {
       new GalleryListBackStep(this.slideshowSettingsVisible, (): void => {
         this.dismissSlideshowSettings();
       }),
-      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+      new GalleryListBackStep(this.moreMenuHandle.expanded, (): void => {
         this.dismissMoreMenu();
       }),
       new GalleryListBackStep(this.selectionMode, (): void => {
@@ -251,14 +252,11 @@ struct CategoryGallery {
   }
 
   private dismissMoreMenu(): void {
-    if (!this.moreMenuExpanded) {
-      return;
-    }
-    this.moreMenuExpanded = false;
+    this.moreMenuHandle.dismiss();
   }
 
   private toggleMoreMenu(): void {
-    this.moreMenuExpanded = !this.moreMenuExpanded;
+    this.moreMenuHandle.toggle();
   }
 
   private enterMultiselectFromMoreMenu(): void {
@@ -1312,7 +1310,7 @@ struct CategoryGallery {
             totalCount: this.totalCount,
             topSafeInsetVp: this.systemTopInsetVp,
             useMoreMenu: this.usesMoreMenuMode(),
-            moreMenuExpanded: this.moreMenuExpanded,
+            menuHandle: this.moreMenuHandle,
             showJumpToFolder: this.canJumpToFolderView(),
             scrollerList: [this.session.overlay.listScroller],
             onCancelSelection: (): void => {

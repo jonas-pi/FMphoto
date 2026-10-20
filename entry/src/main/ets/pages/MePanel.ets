@@ -1017,14 +1017,14 @@ export struct MePanel {
   private transferQueueEntryRow() {
     Row({ space: 10 }) {
       Column({ space: 6 }) {
-        Text('\u4f20\u8f93\u961f\u5217')
+        Text('任务队列')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
         Text(
           FnTransferQueueStore.activeCount() > 0
             ? `${FnTransferQueueStore.activeCount()} \u4e2a\u4efb\u52a1\u8fdb\u884c\u4e2d`
-            : '\u67e5\u770b\u4e0a\u4f20\u3001\u4e0b\u8f7d\u4e0e\u540c\u6b65\u8fdb\u5ea6'
+            : '查看扫描、上传、下载与同步'
         )
           .fontSize(12)
           .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
@@ -1552,7 +1552,7 @@ export struct MePanel {
                 await SessionPreferences.clearSessionPassword(ctx);
               }
               await SessionPreferences.clearSession(ctx);
-              invalidateAutoSync();
+              invalidateAutoSync(ctx);
               await GalleryAutoSyncLedger.clear(ctx);
               GalleryTimelineRefreshStore.bump();
               stopGalleryVideoLanPrefetch();
@@ -1595,7 +1595,7 @@ export struct MePanel {
     .titleBar(this.meTitleBarOptions())
     .backgroundColor(this.pageBg)
     .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsMediumDetentSheetOptions(
-      '传输队列',
+      '任务队列',
       (): void => {
         this.transferQueueVisible = false;
       }

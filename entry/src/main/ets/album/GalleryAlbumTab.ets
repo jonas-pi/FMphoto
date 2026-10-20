@@ -72,6 +72,7 @@ import {
   fnLiquidGlassGradient,
   FnFullLoadingMask
 } from '../common/FnUiCommon';
+import { FnHdsMoreMenuHandle } from '../common/FnHdsMoreMenu';
 import { FN_GLOBAL_TAB_SWITCH_CURVE, FN_GLOBAL_TAB_SWITCH_DURATION } from '../common/FnMotion';
 import { GALLERY_TOP_BAR_PAD_RIGHT_VP } from '../common/GalleryTopBarLayout';
 import {
@@ -225,6 +226,7 @@ import {
   galleryAlbumOpenUserAlbum,
   galleryAlbumPlayModeSwitchMotion,
   galleryAlbumRunSearch,
+  galleryAlbumStartAutoSync,
   galleryAlbumStartUpload,
   galleryAlbumTriggerAutoSync,
 } from './galleryAlbumTab/GalleryAlbumModeOrchestrator';
@@ -506,7 +508,8 @@ export struct GalleryAlbumTab {
   @State private searchError: string = '';
   @State private searchFilterSheetVisible: boolean = false;
   @State private searchFilterActiveCount: number = 0;
-  @State private moreMenuExpanded: boolean = false;
+  /** 不进 @State：展开只刷新菜单锚点，避免标题栏按钮按压动画被重建冲掉。 */
+  private moreMenuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @State private slideshowSettingsVisible: boolean = false;
   @State @Watch('onBottomDockVisibilityChanged') private slideshowPreparing: boolean = false;
   @State @Watch('onBottomDockVisibilityChanged') private inCategoryMode: boolean = false;
@@ -832,10 +835,7 @@ export struct GalleryAlbumTab {
   }
 
   private dismissMoreMenu(): void {
-    if (!this.moreMenuExpanded) {
-      return;
-    }
-    this.moreMenuExpanded = false;
+    this.moreMenuHandle.dismiss();
   }
 
   private setGallerySelectionModeState(value: boolean): void {
@@ -1592,8 +1592,8 @@ export struct GalleryAlbumTab {
       set inPersonMode(value: boolean) { self.inPersonMode = value; }
       get gallerySelectionMode(): boolean { return self.gallerySelectionMode; }
       set gallerySelectionMode(value: boolean) { self.gallerySelectionMode = value; }
-      get moreMenuExpanded(): boolean { return self.moreMenuExpanded; }
-      set moreMenuExpanded(value: boolean) { self.moreMenuExpanded = value; }
+      get moreMenuExpanded(): boolean { return self.moreMenuHandle.expanded; }
+      set moreMenuExpanded(value: boolean) { self.moreMenuHandle.setExpanded(value); }
       get categoryLoading(): boolean { return self.categoryLoading; }
       set categoryLoading(value: boolean) { self.categoryLoading = value; }
       get categoryError(): string { return self.categoryError; }
@@ -2675,6 +2675,14 @@ export struct GalleryAlbumTab {
     galleryAlbumStartUpload(this.asModeOrchestratorHost());
   }
 
+  private startAutoSyncFromMoreMenu(): void {
+    this.dismissMoreMenu();
+    galleryAlbumStartAutoSync(
+      this.asModeOrchestratorHost(),
+      galleryAlbumCollectListedTimelineItems(this.sections)
+    );
+  }
+
   private async startGallerySlideshow(config: GallerySlideshowConfig): Promise<void> {
     if (this.slideshowPreparing) {
       return;
@@ -2815,6 +2823,7 @@ export struct GalleryAlbumTab {
           rootSurfaceTitle: this.currentHomeSurfaceTitle(),
           gallerySelectionMode: this.gallerySelectionMode,
           gallerySelectedCount: this.gallerySelectedCount,
+          autoSyncBadgeCount: this.autoSyncBadgeCount,
           seedQuery: this.searchSeed,
           topSafeInsetVp: this.topSafeInsetVp,
           pageShowSignal: this.pageShowSignal,
@@ -3432,10 +3441,11 @@ export struct GalleryAlbumTab {
         })
         }
         GalleryAlbumMoreMenuLayer({
-          expanded: this.moreMenuExpanded,
+          menuHandle: this.moreMenuHandle,
           topSafeInsetVp: this.topSafeInsetVp,
           showMoreMultiselect: true,
           showMoreUpload: this.shouldShowUploadInMoreMenu(),
+          showMoreSync: this.shouldShowUploadInMoreMenu(),
           onDismiss: (): void => {
             this.dismissMoreMenu();
           },
@@ -3447,6 +3457,9 @@ export struct GalleryAlbumTab {
           },
           onStartUpload: (): void => {
             this.startUploadFromMoreMenu();
+          },
+          onStartSync: (): void => {
+            this.startAutoSyncFromMoreMenu();
           }
         })
       }

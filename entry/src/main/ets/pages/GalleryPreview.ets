@@ -20,6 +20,7 @@ import {
   GalleryListBackStep,
   galleryListTryConsumeOverlays
 } from '../album/galleryList/GalleryListBack';
+import { FnHdsMoreMenuHandle } from '../common/FnHdsMoreMenu';
 import { setGalleryPreviewOpening } from '../album/GalleryPreviewEntryGate';
 import {
   addGalleryPreviewDismissListener,
@@ -184,7 +185,7 @@ struct GalleryPreview {
   @State private folderOpening: boolean = false;
   @State private personOpening: boolean = false;
   @State private similarSearching: boolean = false;
-  @State private moreMenuExpanded: boolean = false;
+  private moreMenuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @State private favoriteToggling: boolean = false;
   @State private currentCollectState: number = -1;
   @State private bottomBarHeight: number = 80;
@@ -236,7 +237,7 @@ struct GalleryPreview {
       new GalleryListBackStep(this.liveSaveSheetVisible, (): void => {
         this.completeLivePhotoSave('cancel');
       }),
-      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+      new GalleryListBackStep(this.moreMenuHandle.expanded, (): void => {
         this.dismissMoreMenu();
       }),
       new GalleryListBackStep(this.detailsVisible, (): void => {
@@ -425,7 +426,7 @@ struct GalleryPreview {
     this.folderOpening = false;
     this.personOpening = false;
     this.similarSearching = false;
-    this.moreMenuExpanded = false;
+    this.moreMenuHandle.dismiss();
     this.downloadProgressPct = 0;
     this.downloadProgressKnown = false;
     trimThumbPixCache(24);
@@ -751,14 +752,11 @@ struct GalleryPreview {
   }
 
   private dismissMoreMenu(): void {
-    if (!this.moreMenuExpanded) {
-      return;
-    }
-    this.moreMenuExpanded = false;
+    this.moreMenuHandle.dismiss();
   }
 
   private toggleMoreMenu(): void {
-    this.moreMenuExpanded = !this.moreMenuExpanded;
+    this.moreMenuHandle.toggle();
   }
 
   private searchSimilarPhotos(): void {
@@ -1254,7 +1252,7 @@ struct GalleryPreview {
         fgColor: this.fgColor(),
         showOriginalAction: this.currentHasOriginal() || this.originalLocked,
         showSearchSimilarAction: this.canSearchSimilar(),
-        moreMenuExpanded: this.moreMenuExpanded,
+        menuHandle: this.moreMenuHandle,
         originalShowing: this.originalPreviewEnabled,
         originalLocked: this.originalLocked,
         sharing: this.sharing,

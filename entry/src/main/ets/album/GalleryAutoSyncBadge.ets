@@ -14,6 +14,7 @@ import { fnEnsureReadImageVideoGranted } from '../common/FnMediaPermission';
 
 import { GalleryListItem } from '../model/FnApiTypes';
 
+import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 
 
@@ -24,54 +25,37 @@ const TAG = 'AutoSyncBadge';
 
 
 
+export interface AutoSyncDetectNotice {
+  unsyncedCount: number;
+  state: 'denied' | 'offline' | 'failed' | 'ready';
+}
+
 export function triggerAutoSyncDetection(
-
   ctx: common.UIAbilityContext,
-
   timelineItems: GalleryListItem[],
-
-  onDetected: (unsyncedCount: number) => void
-
+  onDetected: (notice: AutoSyncDetectNotice) => void
 ): void {
-
   void (async (): Promise<void> => {
-
     try {
-
-      const granted = await fnEnsureReadImageVideoGranted(ctx);
-
-      if (!granted) {
-
-        onDetected(0);
-
-        return;
-
-      }
-
       const client = AppSession.getClient();
-
       if (client === null) {
-
-        onDetected(0);
-
+        onDetected({ unsyncedCount: 0, state: 'offline' });
         return;
-
       }
-
+      const granted = await fnEnsureReadImageVideoGranted(ctx);
+      if (!granted) {
+        hilog.info(DOMAIN, TAG, 'auto sync skipped: read permission denied');
+        onDetected({ unsyncedCount: 0, state: 'denied' });
+        return;
+      }
       const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, false, timelineItems);
-
-      onDetected(result.unsynced.length);
-
+      hilog.info(DOMAIN, TAG, 'auto sync unsynced=%{public}d', result.unsynced.length);
+      onDetected({ unsyncedCount: result.unsynced.length, state: 'ready' });
     } catch (e) {
-
       hilog.warn(DOMAIN, TAG, 'triggerAutoSyncDetection failed: %{public}s', String(e));
-
-      onDetected(0);
-
+      onDetected({ unsyncedCount: 0, state: 'failed' });
     }
-
   })();
-
 }
 
 
@@ -92,10 +76,11 @@ export function markAutoSynced(uris: string[]): void {
 
 
 
-export function invalidateAutoSync(): void {
-
+export function invalidateAutoSync(ctx: common.UIAbilityContext | null = null): void {
   GalleryAutoSyncStore.invalidate();
-
+  if (ctx !== null) {
+    void GalleryAutoSyncNasIndex.discardDisk(ctx);
+  }
 }
 
 

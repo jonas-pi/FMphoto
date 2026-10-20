@@ -105,6 +105,7 @@ import {
   galleryListPopOrRouterBack,
   galleryListTryConsumeOverlays
 } from '../album/galleryList/GalleryListBack';
+import { FnHdsMoreMenuHandle } from '../common/FnHdsMoreMenu';
 import { FolderBrowseNavStore } from './folderBrowsePage/FolderBrowseNavStore';
 import { FolderBrowseSession } from './folderBrowsePage/FolderBrowseSession';
 import {
@@ -163,7 +164,7 @@ struct FolderBrowsePage {
   @State private selectionMode: boolean = false;
   @State private selectedCount: number = 0;
   @State private hasFolderSelected: boolean = false;
-  @State private moreMenuExpanded: boolean = false;
+  private moreMenuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @State private canGoUpFolder: boolean = false;
   @State private canReturnToSource: boolean = false;
   @State private slideshowSettingsVisible: boolean = false;
@@ -199,7 +200,7 @@ struct FolderBrowsePage {
       new GalleryListBackStep(this.slideshowSettingsVisible, (): void => {
         this.dismissSlideshowSettings();
       }),
-      new GalleryListBackStep(this.moreMenuExpanded, (): void => {
+      new GalleryListBackStep(this.moreMenuHandle.expanded, (): void => {
         this.dismissMoreMenu();
       }),
       new GalleryListBackStep(this.selectionMode, (): void => {
@@ -550,14 +551,11 @@ struct FolderBrowsePage {
   }
 
   private dismissMoreMenu(): void {
-    if (!this.moreMenuExpanded) {
-      return;
-    }
-    this.moreMenuExpanded = false;
+    this.moreMenuHandle.dismiss();
   }
 
   private toggleMoreMenu(): void {
-    this.moreMenuExpanded = !this.moreMenuExpanded;
+    this.moreMenuHandle.toggle();
   }
 
   private enterMultiselectFromMoreMenu(): void {
@@ -1305,7 +1303,7 @@ struct FolderBrowsePage {
           totalCount: this.totalCount(),
           topSafeInsetVp: this.systemTopInsetVp,
           useMoreMenu: true,
-          moreMenuExpanded: this.moreMenuExpanded,
+          menuHandle: this.moreMenuHandle,
           showGoUp: true,
           canGoUp: this.canGoUpFolder,
           showReturnToSource: this.canReturnToSource,

@@ -60,23 +60,23 @@ function toLocalPhotoEntry(asset: photoAccessHelper.PhotoAsset): LocalPhotoEntry
   };
 }
 
-/**
- * 查询本地相册中的图片和视频。
- * 使用 predicates.limit + 游标迭代，避免 getAllObjects 全量拉齐再截断。
- * @param ctx UIAbilityContext
- * @param limit 最大返回条数（默认 500）
- */
-export async function queryLocalPhotos(
+const LOCAL_PHOTO_PAGE_SIZE: number = 400;
+
+export interface LocalPhotoScanProgress {
+  onLoaded(count: number): void;
+}
+
+async function queryLocalPhotoPage(
   ctx: common.UIAbilityContext,
-  limit: number = 500
+  limit: number,
+  offset: number
 ): Promise<LocalPhotoEntry[]> {
   let fetchResult: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset> | undefined = undefined;
   try {
     const helper = photoAccessHelper.getPhotoAccessHelper(ctx);
-    const safeLimit: number = Math.max(1, Math.floor(limit));
     const predicates = new dataSharePredicates.DataSharePredicates();
     predicates.orderByDesc(photoAccessHelper.PhotoKeys.DATE_MODIFIED);
-    predicates.limit(safeLimit, 0);
+    predicates.limit(limit, offset);
     const fetchOptions: photoAccessHelper.FetchOptions = {
       fetchColumns: [
         photoAccessHelper.PhotoKeys.URI,
@@ -89,35 +89,16 @@ export async function queryLocalPhotos(
       predicates: predicates
     };
     fetchResult = await helper.getAssets(fetchOptions);
-    const total: number = fetchResult.getCount();
-    const want: number = Math.min(Math.max(0, total), safeLimit);
+    if (fetchResult.getCount() <= 0) {
+      return [];
+    }
+    const assets = await fetchResult.getAllObjects();
     const entries: LocalPhotoEntry[] = [];
-    if (want <= 0) {
-      hilog.info(DOMAIN, TAG, 'queryLocalPhotos count=0 limit=%{public}d', safeLimit);
-      return entries;
+    const count = Math.min(assets.length, limit);
+    for (let i = 0; i < count; i++) {
+      entries.push(toLocalPhotoEntry(assets[i]));
     }
-    // 游标迭代：只物化前 want 条，避免 getAllObjects 全库进内存
-    let asset: photoAccessHelper.PhotoAsset = await fetchResult.getFirstObject();
-    entries.push(toLocalPhotoEntry(asset));
-    for (let i = 1; i < want; i++) {
-      if (fetchResult.isAfterLast()) {
-        break;
-      }
-      asset = await fetchResult.getNextObject();
-      entries.push(toLocalPhotoEntry(asset));
-    }
-    hilog.info(
-      DOMAIN,
-      TAG,
-      'queryLocalPhotos count=%{public}d total=%{public}d limit=%{public}d',
-      entries.length,
-      total,
-      safeLimit
-    );
     return entries;
-  } catch (e) {
-    hilog.warn(DOMAIN, TAG, 'queryLocalPhotos failed: %{public}s', String(e));
-    return [];
   } finally {
     if (fetchResult !== undefined) {
       try {
@@ -125,5 +106,44 @@ export async function queryLocalPhotos(
       } catch (_e) {
       }
     }
+  }
+}
+
+/**
+ * 查询本机相册里的全部图片和视频。
+ * 按页取，避免一次 getAllObjects 把整库放进内存。
+ */
+export async function queryLocalPhotos(
+  ctx: common.UIAbilityContext,
+  progress: LocalPhotoScanProgress | null = null
+): Promise<LocalPhotoEntry[]> {
+  const entries: LocalPhotoEntry[] = [];
+  let offset = 0;
+  try {
+    while (true) {
+      const page = await queryLocalPhotoPage(ctx, LOCAL_PHOTO_PAGE_SIZE, offset);
+      if (page.length === 0) {
+        break;
+      }
+      if (offset > 0 && page[0].uri === entries[0].uri) {
+        hilog.warn(DOMAIN, TAG, 'queryLocalPhotos offset ignored at %{public}d', offset);
+        break;
+      }
+      for (let i = 0; i < page.length; i++) {
+        entries.push(page[i]);
+      }
+      offset += page.length;
+      if (progress !== null) {
+        progress.onLoaded(entries.length);
+      }
+      if (page.length < LOCAL_PHOTO_PAGE_SIZE) {
+        break;
+      }
+    }
+    hilog.info(DOMAIN, TAG, 'queryLocalPhotos count=%{public}d', entries.length);
+    return entries;
+  } catch (e) {
+    hilog.warn(DOMAIN, TAG, 'queryLocalPhotos failed: %{public}s', String(e));
+    return entries;
   }
 }

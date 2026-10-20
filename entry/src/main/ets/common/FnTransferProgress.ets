@@ -7,7 +7,8 @@
 export enum FnTransferDirection {
   UPLOAD = 'upload',
   DOWNLOAD = 'download',
-  SYNC = 'sync'
+  SYNC = 'sync',
+  SCAN = 'scan'
 }
 
 /** 宿主需暴露的进度状态字段 */
@@ -24,6 +25,9 @@ export function fnTransferDirectionLabel(direction: FnTransferDirection): string
   }
   if (direction === FnTransferDirection.SYNC) {
     return '同步中';
+  }
+  if (direction === FnTransferDirection.SCAN) {
+    return '扫描中';
   }
   return '上传中';
 }

@@ -14,7 +14,10 @@ import { AppSession } from '../../auth/AppSession';
 import { FN_GLOBAL_TAB_SWITCH_OFFSET_VP, FN_TAB_SWITCH_CURVE, FN_TAB_SWITCH_IN_DURATION } from '../../common/FnMotion';
 import { CategoryGalleryNavStore } from '../CategoryGalleryNavStore';
 import { GalleryTimelineRefreshStore } from '../GalleryTimelineRefreshStore';
-import { triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
+import { AutoSyncDetectNotice, triggerAutoSyncDetection } from '../GalleryAutoSyncBadge';
+import { AutoSyncRunnerCallbacks, runAutoSyncInBackground } from '../GalleryAutoSyncSheet';
+import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
+import { fnEnsureReadImageVideoGranted } from '../../common/FnMediaPermission';
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
 import { galleryStartUriListUpload } from '../GalleryUriBackgroundUpload';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
@@ -308,7 +311,7 @@ export function galleryAlbumTryConsumeHardwareBack(host: GalleryAlbumModeOrchest
 
 export function galleryAlbumStartUpload(host: GalleryAlbumModeOrchestratorHost): void {
   if (FnTransferQueueStore.hasRunning()) {
-    host.toast('已有传输任务进行中');
+    host.toast('已有任务进行中');
     return;
   }
   host.exitGallerySelection();
@@ -340,17 +343,81 @@ export async function galleryAlbumPickAndUpload(host: GalleryAlbumModeOrchestrat
   galleryAlbumUploadUriListInBackground(host, uris, 'album-upload', '上传');
 }
 
+let lastAutoSyncNotice = '';
+
+class GalleryAutoSyncHostCallbacks implements AutoSyncRunnerCallbacks {
+  private readonly host: GalleryAlbumModeOrchestratorHost;
+
+  constructor(host: GalleryAlbumModeOrchestratorHost) {
+    this.host = host;
+  }
+
+  toast(msg: string): void {
+    this.host.toast(msg);
+  }
+
+  requestBootstrap(debounced: boolean): void {
+    this.host.requestBootstrap(debounced);
+  }
+}
+
 /**
  * Bootstrap 后后台检测未同步数量（非阻塞）。
+ * 对比本机相册全库和 NAS 指纹。
  */
 export function galleryAlbumTriggerAutoSync(
   host: GalleryAlbumModeOrchestratorHost,
   timelineItems: GalleryListItem[]
 ): void {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
-  triggerAutoSyncDetection(ctx, timelineItems, (unsyncedCount: number): void => {
-    host.syncBadgeCount = unsyncedCount;
+  triggerAutoSyncDetection(ctx, timelineItems, (notice: AutoSyncDetectNotice): void => {
+    host.syncBadgeCount = notice.state === 'ready' ? notice.unsyncedCount : 0;
+    let msg = '';
+    if (notice.state === 'denied') {
+      msg = '没有相册读取权限，没法自动扫描';
+    } else if (notice.state === 'failed') {
+      msg = '自动扫描失败';
+    } else if (notice.state === 'ready') {
+      msg = notice.unsyncedCount > 0
+        ? `本机有 ${notice.unsyncedCount} 项还没同步`
+        : '本机相册都已在 NAS';
+    }
+    if (msg.length > 0 && msg !== lastAutoSyncNotice) {
+      lastAutoSyncNotice = msg;
+      host.toast(msg);
+    }
   });
+}
+
+/** 图库「更多 → 同步」：先扫一遍本机全库，再把还没在 NAS 上的传上去。 */
+export function galleryAlbumStartAutoSync(
+  host: GalleryAlbumModeOrchestratorHost,
+  timelineItems: GalleryListItem[]
+): void {
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  void (async (): Promise<void> => {
+    const client = AppSession.getClient();
+    if (client === null) {
+      host.toast('未登录');
+      return;
+    }
+    const granted = await fnEnsureReadImageVideoGranted(ctx);
+    if (!granted) {
+      host.syncBadgeCount = 0;
+      host.toast('没有相册读取权限，没法自动扫描');
+      return;
+    }
+    const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
+    host.syncBadgeCount = result.unsynced.length;
+    if (result.unsynced.length === 0) {
+      lastAutoSyncNotice = '本机相册都已在 NAS';
+      host.toast(lastAutoSyncNotice);
+      return;
+    }
+    lastAutoSyncNotice = `开始同步 ${result.unsynced.length} 项`;
+    host.toast(lastAutoSyncNotice);
+    runAutoSyncInBackground(ctx, result.unsynced, new GalleryAutoSyncHostCallbacks(host));
+  })();
 }
 
 function galleryAlbumUploadUriListInBackground(

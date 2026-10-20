@@ -1,4 +1,5 @@
 import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { FnHdsMoreMenuHandle } from '../../common/FnHdsMoreMenu';
 import { fnHdsBindMenuOptions } from '../../common/FnHdsOverlay';
 import {
   BlurStrategy,
@@ -23,6 +24,8 @@ import {
   fnHdsChromeButtonFallbackBackgroundColor,
   fnHdsImmersiveSystemMaterialEffect,
   fnHdsDockTabsFloatingStyle,
+  FnHdsPressActionGate,
+  FnHdsTitleBarCache,
   fnHdsNavChromeBackgroundStyle,
   fnHdsNavTitleBarPadding,
   fnLiquidGlassGradient,
@@ -65,6 +68,70 @@ import {
   requestGalleryPreviewVideoTogglePlay
 } from './GalleryPreviewVideoStore';
 
+@Component
+struct GalleryPreviewMoreMenuHost {
+  menuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
+  @Prop topSafeInsetVp: number = 0;
+  @Prop showSearchSimilar: boolean = false;
+  onSearchSimilar: () => void = () => {};
+  onOpenDetails: () => void = () => {};
+  onDismiss: () => void = () => {};
+  @State private expanded: boolean = false;
+  private boundApply: (value: boolean) => void = (_value: boolean): void => {
+  };
+
+  aboutToAppear(): void {
+    const self = this;
+    this.boundApply = (value: boolean): void => {
+      self.expanded = value;
+    };
+    this.menuHandle.bind(this.boundApply);
+  }
+
+  aboutToDisappear(): void {
+    this.menuHandle.unbind(this.boundApply);
+  }
+
+  @Builder
+  private previewMoreMenuBuilder() {
+    Menu() {
+      if (this.showSearchSimilar) {
+        MenuItem({ content: '搜索相似照片' })
+          .onClick((): void => {
+            this.onSearchSimilar();
+          })
+      }
+      MenuItem({ content: '查看详情' })
+        .onClick((): void => {
+          this.onOpenDetails();
+        })
+    }
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Row()
+        .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+        .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
+        .margin({
+          top: this.topSafeInsetVp + (FN_HDS_NAV_CHROME_HEIGHT_VP - FN_FLOATING_TOP_CONTROL_SIZE_VP) / 2,
+          right: $r('app.float.hds_title_bar_padding_horizontal')
+        })
+        .hitTestBehavior(HitTestMode.None)
+        .bindMenu(this.expanded, this.previewMoreMenuBuilder, fnHdsBindMenuOptions(
+          Placement.BottomLeft,
+          (): void => {
+            this.menuHandle.dismiss();
+            this.onDismiss();
+          }
+        ))
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+}
+
 const GALLERY_PREVIEW_BOTTOM_DOCK_WIDTH_VP: number = 268;
 const GALLERY_PREVIEW_VIDEO_PLAYING_DOCK_WIDTH_VP: number = 372;
 const GALLERY_PREVIEW_TOP_MENU_SLOT_VP: number = 64;
@@ -87,7 +154,7 @@ export struct GalleryPreviewChrome {
   @Prop fgColor: ResourceColor = Color.White;
   @Prop showOriginalAction: boolean = false;
   @Prop showSearchSimilarAction: boolean = false;
-  @Prop moreMenuExpanded: boolean = false;
+  menuHandle: FnHdsMoreMenuHandle = new FnHdsMoreMenuHandle();
   @Prop originalShowing: boolean = false;
   @Prop originalLocked: boolean = false;
   @Prop sharing: boolean = false;
@@ -118,6 +185,8 @@ export struct GalleryPreviewChrome {
   onDelete: () => void = () => {};
   onBottomBarHeightChange: (height: number) => void = (_: number) => {};
   private chromeOpacityUpdater: GalleryPreviewOpacityUpdater = new GalleryPreviewOpacityUpdater();
+  private titleBarCache: FnHdsTitleBarCache = new FnHdsTitleBarCache();
+  private pressGate: FnHdsPressActionGate = new FnHdsPressActionGate();
   private skipOriginalClick: boolean = false;
   private lastOriginalToggleAt: number = 0;
   private readonly onDismissProgress = (_progress: number): void => {
@@ -137,6 +206,7 @@ export struct GalleryPreviewChrome {
   }
 
   aboutToDisappear(): void {
+    this.pressGate.cancel();
     removeGalleryPreviewDismissListener(this.onDismissProgress);
     removeGalleryPreviewDetailsFitListener(this.onDetailsProgress);
   }
@@ -194,7 +264,27 @@ export struct GalleryPreviewChrome {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
   }
 
+  private titleBarSignature(): string {
+    return [
+      this.titleText,
+      this.toolbarVisible ? '1' : '0',
+      this.showOriginalAction ? '1' : '0',
+      this.originalShowing ? '1' : '0',
+      this.originalLocked ? '1' : '0',
+      this.darkMaterial ? '1' : '0',
+      this.accent,
+      this.immersiveLightEnabled ? '1' : '0'
+    ].join('|');
+  }
+
   private previewTitleBarOptions(): HdsNavigationTitleBarOptions {
+    const signature = this.titleBarSignature();
+    return this.titleBarCache.resolve(signature, (): HdsNavigationTitleBarOptions => {
+      return this.createPreviewTitleBarOptions();
+    });
+  }
+
+  private createPreviewTitleBarOptions(): HdsNavigationTitleBarOptions {
     const material = this.canUseHds() ? fnHdsImmersiveSystemMaterialEffect() : undefined;
     if (material !== undefined) {
       return {
@@ -259,22 +349,6 @@ export struct GalleryPreviewChrome {
     return (FN_HDS_NAV_CHROME_HEIGHT_VP - FN_FLOATING_TOP_CONTROL_SIZE_VP) / 2;
   }
 
-  @Builder
-  private previewMoreMenuBuilder() {
-    Menu() {
-      if (this.showSearchSimilarAction) {
-        MenuItem({ content: '搜索相似照片' })
-          .onClick((): void => {
-            this.onSearchSimilar();
-          })
-      }
-      MenuItem({ content: '查看详情' })
-        .onClick((): void => {
-          this.onOpenDetails();
-        })
-    }
-  }
-
   private onOriginalMenuClick(): void {
     if (this.skipOriginalClick) {
       this.skipOriginalClick = false;
@@ -310,7 +384,9 @@ export struct GalleryPreviewChrome {
       type: IconStyleMode.NORMAL,
       isEnabled: this.toolbarVisible,
       action: (): void => {
-        this.onToggleMoreMenu();
+        this.pressGate.schedule((): void => {
+          this.onToggleMoreMenu();
+        });
       }
     };
     items.push(this.topMenuItem(moreContent));
@@ -721,25 +797,20 @@ export struct GalleryPreviewChrome {
           .hitTestBehavior(HitTestMode.Transparent)
         }
 
-        Stack({ alignContent: Alignment.TopEnd }) {
-            Row()
-              .width(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-              .height(FN_FLOATING_TOP_CONTROL_SIZE_VP)
-              .margin({
-                top: this.topSafeInsetVp + this.originalHitTop(),
-                right: $r('app.float.hds_title_bar_padding_horizontal')
-              })
-              .hitTestBehavior(HitTestMode.None)
-              .bindMenu(this.moreMenuExpanded, this.previewMoreMenuBuilder, fnHdsBindMenuOptions(
-                Placement.BottomLeft,
-                (): void => {
-                  this.onDismissMoreMenu();
-                }
-              ))
+        GalleryPreviewMoreMenuHost({
+          menuHandle: this.menuHandle,
+          topSafeInsetVp: this.topSafeInsetVp,
+          showSearchSimilar: this.showSearchSimilarAction,
+          onSearchSimilar: (): void => {
+            this.onSearchSimilar();
+          },
+          onOpenDetails: (): void => {
+            this.onOpenDetails();
+          },
+          onDismiss: (): void => {
+            this.onDismissMoreMenu();
           }
-          .width('100%')
-          .height('100%')
-          .hitTestBehavior(HitTestMode.Transparent)
+        })
       }
       .width('100%')
       .height('100%')

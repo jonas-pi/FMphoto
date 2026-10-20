@@ -17,10 +17,24 @@ import {
 } from './GalleryAutoSyncOfficialFingerprint';
 import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
-import { queryLocalPhotos, LocalPhotoEntry } from './GalleryAutoSyncService';
+import { FnTransferDirection } from '../common/FnTransferProgress';
+import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { LocalPhotoScanProgress, queryLocalPhotos, LocalPhotoEntry } from './GalleryAutoSyncService';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
+
+class LocalScanQueueProgress implements LocalPhotoScanProgress {
+  private readonly taskId: string;
+
+  constructor(taskId: string) {
+    this.taskId = taskId;
+  }
+
+  onLoaded(count: number): void {
+    FnTransferQueueStore.update(this.taskId, count, `已读取 ${count} 项`);
+  }
+}
 
 /** @deprecated 使用 localPhotoOfficialFingerprint */
 export function localPhotoMediaFingerprint(entry: LocalPhotoEntry): string {
@@ -83,6 +97,12 @@ export class GalleryAutoSyncStore {
   private static lastDetectTime: number = 0;
   private static readonly DETECT_INTERVAL_MS: number = 5 * 60 * 1000;
   private static detecting: boolean = false;
+  /** 同一时刻只允许一次扫描；后来的调用等这一次，不再另开任务。 */
+  private static inflight: Promise<AutoSyncResult> | null = null;
+
+  static isDetecting(): boolean {
+    return GalleryAutoSyncStore.detecting;
+  }
 
   static getUnsyncedCount(): number {
     if (GalleryAutoSyncStore.lastResult === null) {
@@ -122,15 +142,26 @@ export class GalleryAutoSyncStore {
     force: boolean = false,
     partialTimeline: GalleryListItem[] = []
   ): Promise<AutoSyncResult> {
-    if (GalleryAutoSyncStore.detecting) {
-      return GalleryAutoSyncStore.lastResult ?? {
-        unsynced: [],
-        detectedAt: 0,
-        skippedOnNas: 0,
-        skippedInLedger: 0
-      };
+    if (GalleryAutoSyncStore.inflight !== null) {
+      return GalleryAutoSyncStore.inflight;
     }
+    const run = GalleryAutoSyncStore.detectUnsyncedBody(ctx, client, force, partialTimeline);
+    GalleryAutoSyncStore.inflight = run;
+    try {
+      return await run;
+    } finally {
+      if (GalleryAutoSyncStore.inflight === run) {
+        GalleryAutoSyncStore.inflight = null;
+      }
+    }
+  }
 
+  private static async detectUnsyncedBody(
+    ctx: common.UIAbilityContext,
+    client: FnHttpClient,
+    force: boolean,
+    partialTimeline: GalleryListItem[]
+  ): Promise<AutoSyncResult> {
     const now = Date.now();
     if (
       !force &&
@@ -141,8 +172,11 @@ export class GalleryAutoSyncStore {
     }
 
     GalleryAutoSyncStore.detecting = true;
+    const taskId = FnTransferQueueStore.begin(FnTransferDirection.SCAN, '扫描本机相册', 0);
+    let scanOk = false;
+    let scanMessage = '扫描失败';
     try {
-      const localPhotos = await queryLocalPhotos(ctx, 500);
+      const localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
       if (localPhotos.length === 0) {
         GalleryAutoSyncStore.lastResult = {
           unsynced: [],
@@ -151,6 +185,8 @@ export class GalleryAutoSyncStore {
           skippedInLedger: 0
         };
         GalleryAutoSyncStore.lastDetectTime = now;
+        scanOk = true;
+        scanMessage = '本机相册没有可同步的项目';
         return GalleryAutoSyncStore.lastResult;
       }
 
@@ -159,11 +195,14 @@ export class GalleryAutoSyncStore {
       if (ledgerFiltered.unsynced.length === 0) {
         GalleryAutoSyncStore.lastResult = ledgerFiltered;
         GalleryAutoSyncStore.lastDetectTime = now;
+        scanOk = true;
+        scanMessage = '本机相册都已在 NAS';
         return GalleryAutoSyncStore.lastResult;
       }
 
+      FnTransferQueueStore.update(taskId, localPhotos.length, '正在对比 NAS');
       const nasIndex = mergeNasDedupeIndex(
-        await GalleryAutoSyncNasIndex.getIndex(client, false),
+        await GalleryAutoSyncNasIndex.getIndex(client, false, ctx),
         partialTimeline
       );
       const nasFiltered = filterUnsyncedLocalPhotos(
@@ -198,6 +237,10 @@ export class GalleryAutoSyncStore {
 
       GalleryAutoSyncStore.lastResult = filtered;
       GalleryAutoSyncStore.lastDetectTime = now;
+      scanOk = true;
+      scanMessage = filtered.unsynced.length > 0
+        ? `还有 ${filtered.unsynced.length} 项未同步`
+        : '本机相册都已在 NAS';
 
       hilog.info(
         DOMAIN,
@@ -213,7 +256,12 @@ export class GalleryAutoSyncStore {
       );
 
       return GalleryAutoSyncStore.lastResult;
+    } catch (e) {
+      scanMessage = '扫描失败';
+      hilog.warn(DOMAIN, TAG, 'detectUnsynced failed: %{public}s', String(e));
+      throw new Error(String(e));
     } finally {
+      FnTransferQueueStore.finish(taskId, scanOk, scanMessage);
       GalleryAutoSyncStore.detecting = false;
     }
   }
@@ -222,6 +270,7 @@ export class GalleryAutoSyncStore {
     GalleryAutoSyncStore.lastResult = null;
     GalleryAutoSyncStore.lastDetectTime = 0;
     GalleryAutoSyncStore.detecting = false;
+    GalleryAutoSyncStore.inflight = null;
     GalleryAutoSyncNasIndex.invalidate();
     GalleryAutoSyncLedger.invalidate();
   }

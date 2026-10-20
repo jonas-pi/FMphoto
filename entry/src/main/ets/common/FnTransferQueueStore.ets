@@ -1,5 +1,5 @@
 /**
- * 全局传输队列：后台上传/下载/同步进度，供「我的」页展示。
+ * 全局任务队列：扫描、上传、下载、同步的进度，供「我的」页展示。
  */
 import { FnTransferDirection, fnTransferDirectionLabel } from './FnTransferProgress';
 
