@@ -147,6 +147,7 @@ export struct GalleryAlbumMoreMenuLayer {
   @Prop showMoreUpload: boolean = false;
   @Prop showMoreSync: boolean = false;
   @Prop syncBadgeCount: number = 0;
+  @Prop syncChecked: boolean = false;
   onDismiss: () => void = () => {};
   onEnterMultiselect: () => void = () => {};
   onOpenSlideshow: () => void = () => {};
@@ -162,6 +163,7 @@ export struct GalleryAlbumMoreMenuLayer {
         showUpload: this.showMoreUpload,
         showSync: this.showMoreSync,
         syncBadgeCount: this.syncBadgeCount,
+        syncChecked: this.syncChecked,
         showSlideshow: true,
         onDismiss: (): void => {
           this.onDismiss();
@@ -205,8 +207,6 @@ export struct GalleryAlbumTopBar {
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @Prop searchFilterActive: boolean = false;
   @Prop searchFilterActiveCount: number = 0;
-  /** 本机相册里尚未同步到 NAS 的数量。 */
-  @Prop autoSyncBadgeCount: number = 0;
   @Prop albumsHomeEditMode: boolean = false;
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
 
@@ -491,7 +491,6 @@ export struct GalleryAlbumTopBar {
       this.inPersonMode ? '1' : '0',
       this.gallerySelectionMode ? '1' : '0',
       `${this.gallerySelectedCount}`,
-      `${this.autoSyncBadgeCount}`,
       this.searchFilterActive ? '1' : '0',
       `${this.searchFilterActiveCount}`,
       this.albumsHomeEditMode ? '1' : '0',
@@ -646,7 +645,7 @@ export struct GalleryAlbumTopBar {
           this.onStartUpload();
         }
       };
-      items.push(this.menuItem(uploadContent, this.autoSyncBadgeCount));
+      items.push(this.menuItem(uploadContent));
     }
     const searchContent: HdsNavigationIconOptions = {
       label: '搜索',

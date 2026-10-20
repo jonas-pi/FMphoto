@@ -18,6 +18,7 @@ import { AutoSyncDetectNotice, triggerAutoSyncDetection } from '../GalleryAutoSy
 import { AutoSyncRunnerCallbacks, runAutoSyncInBackground } from '../GalleryAutoSyncSheet';
 import { GalleryAutoSyncStore } from '../GalleryAutoSyncStore';
 import { fnEnsureReadImageVideoGranted } from '../../common/FnMediaPermission';
+import { FnTransferDirection } from '../../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
 import { galleryStartUriListUpload } from '../GalleryUriBackgroundUpload';
 import { openPersonAlbumById } from '../PersonAlbumOpenHelper';
@@ -91,6 +92,7 @@ export interface GalleryAlbumModeOrchestratorHost {
   recentOpening: boolean;
   collectOpening: boolean;
   syncBadgeCount: number;
+  syncChecked: boolean;
   lastBootstrapSatisfiedRefreshVersion: number;
   toast(msg: string): void;
   exitGallerySelection(): void;
@@ -310,7 +312,7 @@ export function galleryAlbumTryConsumeHardwareBack(host: GalleryAlbumModeOrchest
 }
 
 export function galleryAlbumStartUpload(host: GalleryAlbumModeOrchestratorHost): void {
-  if (FnTransferQueueStore.hasRunning()) {
+  if (FnTransferQueueStore.hasRunningDirection(FnTransferDirection.UPLOAD)) {
     host.toast('已有任务进行中');
     return;
   }
@@ -359,10 +361,16 @@ class GalleryAutoSyncHostCallbacks implements AutoSyncRunnerCallbacks {
   requestBootstrap(debounced: boolean): void {
     this.host.requestBootstrap(debounced);
   }
+
+  onSyncFinished(): void {
+    GalleryAutoSyncStore.disarmLaunch();
+    this.host.syncChecked = false;
+    this.host.syncBadgeCount = GalleryAutoSyncStore.getUnsyncedCount();
+  }
 }
 
 /**
- * Bootstrap 后后台检测未同步数量（非阻塞）。
+ * 启动后后台检测未同步数量，只更新角标，不弹提示。
  * 对比本机相册全库和 NAS 指纹。
  */
 export function galleryAlbumTriggerAutoSync(
@@ -372,25 +380,22 @@ export function galleryAlbumTriggerAutoSync(
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
   triggerAutoSyncDetection(ctx, timelineItems, (notice: AutoSyncDetectNotice): void => {
     host.syncBadgeCount = notice.state === 'ready' ? notice.unsyncedCount : 0;
-    let msg = '';
-    if (notice.state === 'denied') {
-      msg = '没有相册读取权限，没法自动扫描';
-    } else if (notice.state === 'failed') {
-      msg = '自动扫描失败';
-    } else if (notice.state === 'ready') {
-      msg = notice.unsyncedCount > 0
-        ? `本机有 ${notice.unsyncedCount} 项还没同步`
-        : '本机相册都已在 NAS';
-    }
-    if (msg.length > 0 && msg !== lastAutoSyncNotice) {
-      lastAutoSyncNotice = msg;
-      host.toast(msg);
-    }
+    host.syncChecked = GalleryAutoSyncStore.isLaunchArmed();
   });
 }
 
-/** 图库「更多 → 同步」：先扫一遍本机全库，再把还没在 NAS 上的传上去。 */
-export function galleryAlbumStartAutoSync(
+function autoSyncCheckMessage(unsynced: number, compareFailed: number, unreadable: number): string {
+  if (unsynced > 0) {
+    return `还有 ${unsynced} 项可同步`;
+  }
+  if (compareFailed + unreadable > 0) {
+    return '有照片没能完成对比';
+  }
+  return '已经全部同步';
+}
+
+/** 图库「检查可同步项」：只扫描，不上传。 */
+export function galleryAlbumCheckAutoSync(
   host: GalleryAlbumModeOrchestratorHost,
   timelineItems: GalleryListItem[]
 ): void {
@@ -404,22 +409,39 @@ export function galleryAlbumStartAutoSync(
     const granted = await fnEnsureReadImageVideoGranted(ctx);
     if (!granted) {
       host.syncBadgeCount = 0;
-      host.toast('没有相册读取权限，没法自动扫描');
+      host.toast('没有相册读取权限，没法检查');
       return;
     }
-    const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, false, timelineItems);
-    host.syncBadgeCount = result.unsynced.length;
-    if (result.unsynced.length === 0) {
-      lastAutoSyncNotice = result.compareFailed + result.unreadable > 0
-        ? '有照片没能完成对比，这次没有上传'
-        : '本机相册都已在 NAS';
-      host.toast(lastAutoSyncNotice);
-      return;
+    try {
+      const result = await GalleryAutoSyncStore.detectUnsynced(ctx, client, true, timelineItems);
+      host.syncBadgeCount = result.unsynced.length;
+      if (result.unsynced.length > 0) {
+        GalleryAutoSyncStore.armLaunch();
+        host.syncChecked = true;
+      } else {
+        GalleryAutoSyncStore.disarmLaunch();
+        host.syncChecked = false;
+      }
+      const msg = autoSyncCheckMessage(result.unsynced.length, result.compareFailed, result.unreadable);
+      lastAutoSyncNotice = msg;
+      host.toast(msg);
+    } catch (_e) {
+      host.toast('检查同步失败');
     }
-    lastAutoSyncNotice = `开始同步 ${result.unsynced.length} 项`;
-    host.toast(lastAutoSyncNotice);
-    runAutoSyncInBackground(ctx, result.unsynced, new GalleryAutoSyncHostCallbacks(host));
   })();
+}
+
+/** 图库「启动同步」：上传上一次检查得到的未同步项。 */
+export function galleryAlbumLaunchPreparedAutoSync(host: GalleryAlbumModeOrchestratorHost): void {
+  const pieces = GalleryAutoSyncStore.getUnsyncedPhotos();
+  if (pieces.length === 0) {
+    host.toast('没有可同步的项目');
+    return;
+  }
+  const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
+  lastAutoSyncNotice = `开始同步 ${pieces.length} 项`;
+  host.toast(lastAutoSyncNotice);
+  runAutoSyncInBackground(ctx, pieces, new GalleryAutoSyncHostCallbacks(host));
 }
 
 function galleryAlbumUploadUriListInBackground(

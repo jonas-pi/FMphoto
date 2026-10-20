@@ -73,24 +73,60 @@ struct TipPage {
   @State private buyingId: string = '';
   @State private pressedId: string = '';
   @State private rateOpening: boolean = false;
+  private rateLabelTimer: number = -1;
 
   aboutToAppear(): void {
     void this.reload();
+  }
+
+  aboutToDisappear(): void {
+    if (this.rateLabelTimer >= 0) {
+      clearTimeout(this.rateLabelTimer);
+      this.rateLabelTimer = -1;
+    }
+  }
+
+  private holdRateLabel(startedAt: number): void {
+    const wait = 1200 - (Date.now() - startedAt);
+    if (wait <= 0) {
+      this.rateOpening = false;
+      return;
+    }
+    this.rateLabelTimer = setTimeout((): void => {
+      this.rateLabelTimer = -1;
+      this.rateOpening = false;
+    }, wait);
   }
 
   private hostContext(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
   }
 
+  /** 先把提示画出来，再去拉评分窗。评分窗的连接会占住界面线程。 */
+  private letToastShow(): Promise<void> {
+    return new Promise<void>((resolve: () => void): void => {
+      setTimeout((): void => {
+        resolve();
+      }, 50);
+    });
+  }
+
   private async openRate(): Promise<void> {
     if (this.rateOpening) {
+      this.toast('正在打开评分');
       return;
     }
     this.rateOpening = true;
     this.toast('正在打开评分');
+    await this.letToastShow();
+    const startedAt = Date.now();
     try {
       const result = await fnShowAppGalleryComment(this.hostContext());
+      const elapsed = Date.now() - startedAt;
       if (result.kind === APP_GALLERY_RATE_SHOWN) {
+        if (elapsed < 800) {
+          this.toast('评分窗口没有留住');
+        }
         return;
       }
       if (result.kind === APP_GALLERY_RATE_ALREADY) {
@@ -106,7 +142,7 @@ struct TipPage {
     } catch (_e) {
       this.toast('评分没有打开');
     } finally {
-      this.rateOpening = false;
+      this.holdRateLabel(startedAt);
     }
   }
 
@@ -372,7 +408,7 @@ struct TipPage {
           Blank()
             .layoutWeight(1)
 
-          Button({ type: ButtonType.Normal }) {
+          Button({ type: ButtonType.Normal, stateEffect: false }) {
             Text(this.rateOpening ? '正在打开评分…' : '或者，给个好评吧！')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)

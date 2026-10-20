@@ -54,6 +54,7 @@ import { openPersonAlbumById } from './PersonAlbumOpenHelper';
 import { openRecentAddedGallery } from './RecentAddedOpenHelper';
 import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
+import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import {
   GalleryHomeDayPlain,
   GalleryHomeSectionPlain,
@@ -225,8 +226,9 @@ import {
   galleryAlbumOpenPerson,
   galleryAlbumOpenUserAlbum,
   galleryAlbumPlayModeSwitchMotion,
+  galleryAlbumCheckAutoSync,
+  galleryAlbumLaunchPreparedAutoSync,
   galleryAlbumRunSearch,
-  galleryAlbumStartAutoSync,
   galleryAlbumStartUpload,
   galleryAlbumTriggerAutoSync,
 } from './galleryAlbumTab/GalleryAlbumModeOrchestrator';
@@ -449,7 +451,7 @@ import {
   YearMarker,
   ymKey,
 } from './galleryAlbumTab/GalleryAlbumTabTypes';
-import { FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
+import { FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_PAGE_BG_KEY } from '../common/FnThemeColors';
 
 const GALLERY_GRANULARITY_HOST_SWITCH_DURATION_MS: number = 300;
 const GALLERY_GRANULARITY_HOST_SWITCH_OFFSET_VP: number = 18;
@@ -460,6 +462,7 @@ const GALLERY_GRANULARITY_HOST_SWITCH_START_OPACITY: number = 0.7;
 @Component
 export struct GalleryAlbumTab {
   @StorageProp(FN_RESOLVED_PAGE_BG_KEY) private pageBg: string = '#FFF4F7FB';
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop @Watch('onGalleryBaseUrlChanged') baseUrl: string = '';
   @Prop @Watch('onEpochChange') albumReloadEpoch: number = 0;
   @Prop topSafeInsetVp: number = 0;
@@ -540,6 +543,7 @@ export struct GalleryAlbumTab {
   @State private albumsHomeEditCancelSignal: number = 0;
   @State private personStatVersion: number = 0;
   @State private autoSyncBadgeCount: number = 0;
+  @State private syncChecked: boolean = false;
   /** 主图库长按多选，已通过 draggable(false) 与系统拖拽中转站解耦。 */
   @State private gallerySelectionMode: boolean = false;
   @State private gallerySelectedCount: number = 0;
@@ -1329,6 +1333,8 @@ export struct GalleryAlbumTab {
       set collectOpening(value: boolean) { self.collectOpening = value; }
       get syncBadgeCount(): number { return self.autoSyncBadgeCount; }
       set syncBadgeCount(value: number) { self.autoSyncBadgeCount = value; }
+      get syncChecked(): boolean { return self.syncChecked; }
+      set syncChecked(value: boolean) { self.syncChecked = value; }
       get lastBootstrapSatisfiedRefreshVersion(): number { return self.session.load.lastBootstrapSatisfiedRefreshVersion; }
       set lastBootstrapSatisfiedRefreshVersion(value: number) { self.session.load.lastBootstrapSatisfiedRefreshVersion = value; }
       exitGallerySelection(): void { self.albumCommands().exitSelection(); }
@@ -1445,13 +1451,15 @@ export struct GalleryAlbumTab {
         self.albumCommands().requestVisibleLoadImmediate();
       }
       get commands(): GalleryAlbumCommands { return self.albumCommands(); }
-      onMainTimelineReady(): void {
+      onMainTimelineReady(checkAutoSync: boolean): void {
         if (self.inSearchMode || self.inCategoryMode || self.inSmartCategoryMode || self.inPersonMode) {
           return;
         }
-        self.albumCommands().triggerAutoSync(
-          galleryAlbumCollectListedTimelineItems(self.sections)
-        );
+        if (checkAutoSync) {
+          self.albumCommands().triggerAutoSync(
+            galleryAlbumCollectListedTimelineItems(self.sections)
+          );
+        }
         const persistBaseUrl = self.baseUrl;
         const persistItems = galleryAlbumCollectListedTimelineItems(self.sections);
         const persistMode = self.renderedViewGranularity;
@@ -2291,6 +2299,17 @@ export struct GalleryAlbumTab {
     return galleryAlbumIsPhotosHomeSurface(this.asRootSurfaceHost());
   }
 
+  /** 系统更多按钮没有描边，圆环叠在按钮外侧。 */
+  private showSyncMoreRing(): boolean {
+    if (this.autoSyncBadgeCount <= 0 || this.gallerySelectionMode || this.albumsHomeEditMode) {
+      return false;
+    }
+    if (this.inSearchMode || this.inCategoryMode || this.inSmartCategoryMode || this.inPersonMode) {
+      return false;
+    }
+    return !this.isAlbumsHomeSurface();
+  }
+
   private isAlbumsHomeSurface(): boolean {
     return galleryAlbumIsAlbumsHomeSurface(this.asRootSurfaceHost());
   }
@@ -2591,6 +2610,7 @@ export struct GalleryAlbumTab {
   }
 
   private showMoreMenu(): void {
+    this.syncChecked = GalleryAutoSyncStore.isLaunchArmed();
     galleryAlbumToggleMoreMenu(this.asRootSurfaceHost());
   }
 
@@ -2677,10 +2697,12 @@ export struct GalleryAlbumTab {
 
   private startAutoSyncFromMoreMenu(): void {
     this.dismissMoreMenu();
-    galleryAlbumStartAutoSync(
-      this.asModeOrchestratorHost(),
-      galleryAlbumCollectListedTimelineItems(this.sections)
-    );
+    const host = this.asModeOrchestratorHost();
+    if (GalleryAutoSyncStore.isLaunchArmed()) {
+      galleryAlbumLaunchPreparedAutoSync(host);
+      return;
+    }
+    galleryAlbumCheckAutoSync(host, galleryAlbumCollectListedTimelineItems(this.sections));
   }
 
   private async startGallerySlideshow(config: GallerySlideshowConfig): Promise<void> {
@@ -2782,6 +2804,7 @@ export struct GalleryAlbumTab {
   }
 
   aboutToAppear(): void {
+    this.syncChecked = GalleryAutoSyncStore.isLaunchArmed();
     this.session.selection.galleryMainListDomId = GALLERY_ALBUM_MAIN_LIST_DOM_ID;
     galleryAlbumEnsureSelectionVisualStorage();
     galleryAlbumSyncSelectionVisualState(this.gallerySelectionMode, this.session.selection.gallerySelectedIds);
@@ -2823,7 +2846,6 @@ export struct GalleryAlbumTab {
           rootSurfaceTitle: this.currentHomeSurfaceTitle(),
           gallerySelectionMode: this.gallerySelectionMode,
           gallerySelectedCount: this.gallerySelectedCount,
-          autoSyncBadgeCount: this.autoSyncBadgeCount,
           seedQuery: this.searchSeed,
           topSafeInsetVp: this.topSafeInsetVp,
           pageShowSignal: this.pageShowSignal,
@@ -3447,6 +3469,7 @@ export struct GalleryAlbumTab {
           showMoreUpload: this.shouldShowUploadInMoreMenu(),
           showMoreSync: this.shouldShowUploadInMoreMenu(),
           syncBadgeCount: this.autoSyncBadgeCount,
+          syncChecked: this.syncChecked,
           onDismiss: (): void => {
             this.dismissMoreMenu();
           },
@@ -3466,6 +3489,22 @@ export struct GalleryAlbumTab {
       }
       .width('100%')
       .height('100%')
+
+      if (this.showSyncMoreRing()) {
+        Stack({ alignContent: Alignment.TopEnd }) {
+          Circle()
+            .width(44)
+            .height(44)
+            .fill(Color.Transparent)
+            .stroke(this.accent)
+            .strokeWidth(2)
+            .margin({ top: this.topSafeInsetVp + 6, right: 18 })
+            .hitTestBehavior(HitTestMode.None)
+        }
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
+      }
 
       if (this.galleryBatchDeleting) {
         FnFullLoadingMask({ text: '移入回收站中...', topOffsetVp: this.loadingMaskTopOffsetVp() })

@@ -30,6 +30,7 @@ let syncUploadRunning: boolean = false;
 export interface AutoSyncRunnerCallbacks {
   toast(msg: string): void;
   requestBootstrap(debounced: boolean): void;
+  onSyncFinished(): void;
 }
 
 async function uploadPiece(
@@ -69,7 +70,7 @@ export function runAutoSyncInBackground(
         callbacks.toast(gate.reason.length > 0 ? gate.reason : '当前无法备份');
         return;
       }
-      if (FnTransferQueueStore.hasRunning()) {
+      if (FnTransferQueueStore.hasRunningDirection(FnTransferDirection.SYNC)) {
         callbacks.toast('已有任务进行中');
         return;
       }
@@ -147,6 +148,7 @@ export function runAutoSyncInBackground(
       if (ok > 0) {
         callbacks.toast(`同步完成 ${ok}/${photos.length}`);
         GalleryTimelineRefreshStore.bump();
+        callbacks.onSyncFinished();
         callbacks.requestBootstrap(false);
       } else {
         callbacks.toast(failMsg.length > 0 ? failMsg : '同步失败，请稍后重试');

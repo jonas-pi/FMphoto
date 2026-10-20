@@ -17,6 +17,7 @@ import {
 } from '../common/FnMotion';
 import {
   FN_NAV_INDICATOR_INSET_VP_KEY,
+  FN_SYSTEM_BOTTOM_INSET_VP_KEY,
   FN_SYSTEM_TOP_INSET_VP_KEY
 } from '../common/FnSystemAvoidArea';
 import {
@@ -55,7 +56,8 @@ struct FeedbackPage {
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_SYSTEM_TOP_INSET_VP_KEY) private systemTopInsetVp: number = 0;
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
-  @State private logHint: string = '正在把诊断日志保存到手机…';
+  @StorageProp(FN_SYSTEM_BOTTOM_INSET_VP_KEY) private systemBottomInsetVp: number = 0;
+  @State private logHint: string = '正在把诊断日志保存到设备…';
   @State private logReady: boolean = false;
   @State private formError: string = '';
   @State private webLoading: boolean = false;
@@ -71,18 +73,28 @@ struct FeedbackPage {
     return FN_FEEDBACK_FORM_URL.trim();
   }
 
+  private paintWebBackground(): void {
+    try {
+      this.webController.runJavaScript(
+        "document.documentElement.style.background='#fff';if(document.body){document.body.style.background='#fff';}"
+      ).catch((): void => {
+      });
+    } catch (_e) {
+    }
+  }
+
   private async prepareLog(): Promise<void> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const path = await fnDiagPreparePhoneFile(ctx);
     if (path.length === 0) {
       this.logPath = '';
       this.logReady = false;
-      this.logHint = '诊断日志没能保存到手机，请返回后重试';
+      this.logHint = '诊断日志没能保存到设备，请返回后重试';
       return;
     }
     this.logPath = path;
     this.logReady = true;
-    this.logHint = `诊断日志已在手机里：${LOG_FILE_NAME}。点表单的上传后，选「图片」或「诊断日志」。`;
+    this.logHint = `诊断日志已在设备里：${LOG_FILE_NAME}。点表单的上传后，选「图片」或「诊断日志」。`;
   }
 
   private goBack(): void {
@@ -255,6 +267,8 @@ struct FeedbackPage {
         Web({ src: this.formUrl(), controller: this.webController })
           .width('100%')
           .height('100%')
+          .backgroundColor(Color.White)
+          .darkMode(WebDarkMode.Off)
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .databaseAccess(true)
@@ -269,6 +283,7 @@ struct FeedbackPage {
           })
           .onPageEnd((): void => {
             this.webLoading = false;
+            this.paintWebBackground();
           })
           .onErrorReceive((event: OnErrorReceiveEvent): void => {
             try {
@@ -319,6 +334,8 @@ struct FeedbackPage {
       }
       .width('100%')
       .layoutWeight(1)
+      .backgroundColor(Color.White)
+      .padding({ bottom: Math.max(this.navIndicatorInsetVp, this.systemBottomInsetVp) })
     }
   }
 
@@ -327,7 +344,6 @@ struct FeedbackPage {
       this.topBar()
       this.hintBar()
       this.formBody()
-      Blank().height(this.navIndicatorInsetVp)
     }
     .width('100%')
     .height('100%')

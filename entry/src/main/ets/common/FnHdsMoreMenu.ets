@@ -2,8 +2,8 @@
  * 图库「更多」菜单：各页同一顺序。
  * 多选 → 上传 → 同步 → 幻灯片 → 跳转到文件夹视图 → 返回来源（缺项跳过，不重排）。
  */
-import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { fnHdsBindMenuOptions } from './FnHdsOverlay';
+import { FN_RESOLVED_ACCENT_KEY } from './FnThemeColors';
 
 /**
  * 更多菜单的展开状态。
@@ -45,12 +45,14 @@ export class FnHdsMoreMenuHandle {
 
 @Component
 export struct FnHdsMoreMenuAnchor {
+  @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @Prop expanded: boolean = false;
   @Prop topSafeInsetVp: number = 0;
   @Prop showMultiselect: boolean = false;
   @Prop showUpload: boolean = false;
   @Prop showSync: boolean = false;
   @Prop syncBadgeCount: number = 0;
+  @Prop syncChecked: boolean = false;
   @Prop showSlideshow: boolean = false;
   @Prop showJumpToFolder: boolean = false;
   @Prop showReturnToSource: boolean = false;
@@ -61,6 +63,17 @@ export struct FnHdsMoreMenuAnchor {
   onSlideshow: () => void = () => {};
   onJumpToFolder: () => void = () => {};
   onReturnToSource: () => void = () => {};
+
+  private syncMenuLabel(): string {
+    return this.syncChecked ? '启动同步' : '检查同步';
+  }
+
+  private syncBadgeText(): string {
+    if (this.syncBadgeCount > 99) {
+      return '99+';
+    }
+    return `${this.syncBadgeCount}`;
+  }
 
   @Builder
   private moreMenuBuilder() {
@@ -77,23 +90,17 @@ export struct FnHdsMoreMenuAnchor {
             this.onUpload();
           })
       }
-      if (this.showSync) {
-        if (this.syncBadgeCount > 0) {
-          MenuItem({
-            content: '同步',
-            symbolEndIcon: new SymbolGlyphModifier($r('sys.symbol.circle_fill'))
-              .fontSize(10)
-              .fontColor(['#FFE11D48'])
+      if (this.showSync && this.syncBadgeCount > 0) {
+        MenuItem({ content: this.syncMenuLabel(), labelInfo: this.syncBadgeText() })
+          .labelFontColor(this.accent)
+          .onClick((): void => {
+            this.onSync();
           })
-            .onClick((): void => {
-              this.onSync();
-            })
-        } else {
-          MenuItem({ content: '同步' })
-            .onClick((): void => {
-              this.onSync();
-            })
-        }
+      } else if (this.showSync) {
+        MenuItem({ content: this.syncMenuLabel() })
+          .onClick((): void => {
+            this.onSync();
+          })
       }
       if (this.showSlideshow) {
         MenuItem({ content: '幻灯片' })
@@ -141,6 +148,7 @@ export struct FnHdsMoreMenuHost {
   @Prop showUpload: boolean = false;
   @Prop showSync: boolean = false;
   @Prop syncBadgeCount: number = 0;
+  @Prop syncChecked: boolean = false;
   @Prop showSlideshow: boolean = false;
   @Prop showJumpToFolder: boolean = false;
   @Prop showReturnToSource: boolean = false;
@@ -175,6 +183,7 @@ export struct FnHdsMoreMenuHost {
       showUpload: this.showUpload,
       showSync: this.showSync,
       syncBadgeCount: this.syncBadgeCount,
+      syncChecked: this.syncChecked,
       showSlideshow: this.showSlideshow,
       showJumpToFolder: this.showJumpToFolder,
       showReturnToSource: this.showReturnToSource,

@@ -4,6 +4,7 @@
 import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { AppSession } from '../../auth/AppSession';
+import { FnTransferDirection } from '../../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../../common/FnTransferQueueStore';
 import { galleryStartUriListUpload } from '../GalleryUriBackgroundUpload';
 import { GalleryShareInbox } from './GalleryShareInbox';
@@ -21,7 +22,7 @@ export async function galleryShareTryConsume(
     }
     return;
   }
-  if (FnTransferQueueStore.hasRunning()) {
+  if (FnTransferQueueStore.hasRunningDirection(FnTransferDirection.UPLOAD)) {
     return;
   }
   const uris = GalleryShareInbox.takeAll();

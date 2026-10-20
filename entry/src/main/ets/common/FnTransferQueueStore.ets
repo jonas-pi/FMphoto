@@ -112,6 +112,17 @@ export class FnTransferQueueStore {
     return FnTransferQueueStore.activeCount() > 0;
   }
 
+  /** 只看同一种本地任务。服务端缩略图、人脸、扫描不挡住上传或同步。 */
+  static hasRunningDirection(direction: FnTransferDirection): boolean {
+    for (let i = 0; i < FnTransferQueueStore.tasks.length; i++) {
+      const task = FnTransferQueueStore.tasks[i];
+      if (task.status === FnTransferTaskStatus.RUNNING && task.direction === direction) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static isNasTaskId(id: string): boolean {
     return id.startsWith('nas:');
   }

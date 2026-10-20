@@ -109,7 +109,21 @@ export interface GalleryAlbumLoadOrchestratorHost {
   loadVisibleItemsImmediate(): void;
   /** 下拉原地刷新需要访问可见加载宿主（flow 节点 + sections）。 */
   commands: GalleryAlbumCommands;
-  onMainTimelineReady?(): void;
+  onMainTimelineReady?(checkAutoSync: boolean): void;
+}
+
+function timelineShapeChanged(current: TimelineDayModel[], next: TimelineDayModel[]): boolean {
+  if (current.length !== next.length) {
+    return true;
+  }
+  for (let i = 0; i < current.length; i++) {
+    const a = current[i];
+    const b = next[i];
+    if (a.year !== b.year || a.month !== b.month || a.day !== b.day || a.itemCount !== b.itemCount) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function galleryAlbumMarkTimelineRefreshCaughtUp(host: GalleryAlbumLoadOrchestratorHost): void {
@@ -285,8 +299,8 @@ export function galleryAlbumAbortTimelinePullRefresh(host: GalleryAlbumLoadOrche
 }
 
 /**
- * 官方下拉刷新：保持列表结构，原地拉已加载日首屏并 notifyDataChange。
- * 禁止 bootstrap / reloadAll（那是整表重建，会卡 Refresh 动效）。
+ * 下拉刷新：张数或日期变了就按时间轴重拉，否则只更新已加载日的首屏。
+ * 不在这里检查可同步项。
  */
 export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOrchestratorHost): Promise<void> {
   galleryAlbumSyncTimelineAtTopForPull(host);
@@ -304,7 +318,7 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
   hilog.info(DOMAIN, TAG, 'timeline pull refresh start epoch=%{public}d', epoch);
   try {
     if (host.sections.length === 0 || host.orderedDays.length === 0) {
-      await galleryAlbumBootstrap(host, false);
+      await galleryAlbumBootstrap(host, false, 0, false);
       return;
     }
     GalleryHomeTimelineCache.invalidate();
@@ -326,31 +340,10 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
       const cells = sortDaysDesc(parseTimelineDayCells(cellsIn)).filter(
         (c: TimelineDayModel): boolean => c.itemCount > 0
       );
-      if (cells.length > 0) {
-        const top = cells[0];
-        const cur = host.orderedDays[0];
-        const topChanged = cur === undefined ||
-          top.year !== cur.year || top.month !== cur.month || top.day !== cur.day ||
-          top.itemCount !== cur.itemCount;
-        if (topChanged && (cur === undefined ||
-          top.year !== cur.year || top.month !== cur.month || top.day !== cur.day)) {
-          // 顶部新增日期：结构变了，只能 bootstrap；仍走软刷新保留旧列表至数据就绪
-          await galleryAlbumBootstrap(host, false);
-          return;
-        }
-        // 同步已有日的 itemCount，供后续可见加载使用（不 rebuild）
-        const byKey = new Map<string, TimelineDayModel>();
-        for (let i = 0; i < cells.length; i++) {
-          const d = cells[i];
-          byKey.set(dayKey(d.year, d.month, d.day), d);
-        }
-        for (let i = 0; i < host.orderedDays.length; i++) {
-          const d = host.orderedDays[i];
-          const latest = byKey.get(dayKey(d.year, d.month, d.day));
-          if (latest !== undefined && latest.itemCount !== d.itemCount) {
-            d.itemCount = latest.itemCount;
-          }
-        }
+      if (cells.length > 0 && timelineShapeChanged(host.orderedDays, cells)) {
+        // 日期或张数变了（含别的设备删图）：原地合并不会去掉旧格子，必须按时间轴重拉。
+        await galleryAlbumBootstrap(host, false, 0, false);
+        return;
       }
     }
 
@@ -379,7 +372,7 @@ export async function galleryAlbumOnTimelinePullRefresh(host: GalleryAlbumLoadOr
     galleryAlbumMarkTimelineRefreshCaughtUp(host);
     host.loadVisibleItemsImmediate();
     if (host.onMainTimelineReady !== undefined) {
-      host.onMainTimelineReady();
+      host.onMainTimelineReady(false);
     }
   } finally {
     if (epoch === host.galleryTimelineRefreshEpoch) {
@@ -449,7 +442,8 @@ function scheduleTimelineBootstrapRetry(
 export async function galleryAlbumBootstrap(
   host: GalleryAlbumLoadOrchestratorHost,
   showFullBleedSkeleton: boolean = true,
-  netRetry: number = 0
+  netRetry: number = 0,
+  checkAutoSync: boolean = true
 ): Promise<void> {
   GalleryHomeTimelineCache.invalidate();
   const gen = ++host.loadGen;
@@ -595,7 +589,7 @@ export async function galleryAlbumBootstrap(
       if (retryGen !== host.loadGen || host.exhausted || host.loadingMore) {
         return;
       }
-      void galleryAlbumBootstrap(host, false);
+      void galleryAlbumBootstrap(host, false, 0, checkAutoSync);
     }, 3000);
     return;
   }
@@ -605,7 +599,7 @@ export async function galleryAlbumBootstrap(
       if (retryGen !== host.loadGen || host.exhausted || host.loadingMore) {
         return;
       }
-      void galleryAlbumBootstrap(host, false);
+      void galleryAlbumBootstrap(host, false, 0, checkAutoSync);
     }, 500);
     return;
   }
@@ -615,7 +609,7 @@ export async function galleryAlbumBootstrap(
     }
     host.loadVisibleItemsImmediate();
     if (host.onMainTimelineReady !== undefined) {
-      host.onMainTimelineReady();
+      host.onMainTimelineReady(checkAutoSync);
     }
   }, 0);
 }

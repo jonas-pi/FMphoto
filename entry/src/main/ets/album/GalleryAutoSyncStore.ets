@@ -74,9 +74,27 @@ export class GalleryAutoSyncStore {
   private static detecting: boolean = false;
   /** 同一时刻只允许一次扫描；后来的调用等这一次，不再另开任务。 */
   private static inflight: Promise<AutoSyncResult> | null = null;
+  /** 用户点过「检查同步」且这次结果还没同步完。后台扫描不把它打开。 */
+  private static launchArmed: boolean = false;
 
   static isDetecting(): boolean {
     return GalleryAutoSyncStore.detecting;
+  }
+
+  static hasChecked(): boolean {
+    return GalleryAutoSyncStore.lastResult !== null;
+  }
+
+  static isLaunchArmed(): boolean {
+    return GalleryAutoSyncStore.launchArmed;
+  }
+
+  static armLaunch(): void {
+    GalleryAutoSyncStore.launchArmed = true;
+  }
+
+  static disarmLaunch(): void {
+    GalleryAutoSyncStore.launchArmed = false;
   }
 
   static getUnsyncedCount(): number {
@@ -270,6 +288,7 @@ export class GalleryAutoSyncStore {
   }
 
   static invalidate(): void {
+    GalleryAutoSyncStore.launchArmed = false;
     GalleryAutoSyncStore.lastResult = null;
     GalleryAutoSyncStore.lastDetectTime = 0;
     GalleryAutoSyncStore.detecting = false;
