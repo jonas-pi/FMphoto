@@ -374,6 +374,18 @@ export class RepeatPhotoListData {
   strategy: string = '';
 }
 
+/** `GET /p/api/v1/task-panel/list` 单项（缩略图、人脸、智能分类、重复检查等） */
+export class TaskPanelItem {
+  taskType: string = '';
+  taskId: string = '';
+  name: string = '';
+  successCount: number = 0;
+  total: number = 0;
+  percent: number = 0;
+  running: boolean = false;
+  error: string = '';
+}
+
 /** `GET /p/api/v1/task-panel/list` 里 repeat-photo 任务进度 */
 export class RepeatPhotoTaskProgress {
   running: boolean = false;

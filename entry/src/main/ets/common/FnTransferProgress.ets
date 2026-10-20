@@ -8,7 +8,9 @@ export enum FnTransferDirection {
   UPLOAD = 'upload',
   DOWNLOAD = 'download',
   SYNC = 'sync',
-  SCAN = 'scan'
+  SCAN = 'scan',
+  /** NAS task-panel 后台任务（缩略图、人脸、智能分类等） */
+  NAS = 'nas'
 }
 
 /** 宿主需暴露的进度状态字段 */
@@ -28,6 +30,9 @@ export function fnTransferDirectionLabel(direction: FnTransferDirection): string
   }
   if (direction === FnTransferDirection.SCAN) {
     return '扫描中';
+  }
+  if (direction === FnTransferDirection.NAS) {
+    return '服务端';
   }
   return '上传中';
 }

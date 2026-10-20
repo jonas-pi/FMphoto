@@ -31,6 +31,7 @@ import {
   RepeatPhotoListData,
   RepeatPhotoMergeData,
   RepeatPhotoTaskProgress,
+  TaskPanelItem,
   SearchFilterListData,
   SmartCategoryData,
   UserAlbumData
@@ -425,6 +426,10 @@ export class FnHttpClientGalleryOps {
 
   async getTaskPanelList(timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoTaskProgress>> {
     return this.repeat.getTaskPanelList(timeoutMs);
+  }
+
+  async getTaskPanelItems(timeoutMs: number = 15000): Promise<FnClientResult<TaskPanelItem[]>> {
+    return this.repeat.getTaskPanelItems(timeoutMs);
   }
 
   async startRepeatPhotoCheck(checkSimilarity: boolean, timeoutMs: number = 20000): Promise<FnClientResult<Object>> {

@@ -25,14 +25,16 @@ import {
   RepeatPhotoGroup,
   RepeatPhotoListData,
   RepeatPhotoMergeData,
-  RepeatPhotoTaskProgress
+  RepeatPhotoTaskProgress,
+  TaskPanelItem
 } from '../../model/FnApiTypes';
 import {
   jsonScalarId,
   parseRepeatPhotoGroup,
   parseRepeatPhotoListData,
   parseRepeatPhotoMergeData,
-  parseRepeatPhotoTaskProgress
+  parseRepeatPhotoTaskProgress,
+  parseTaskPanelList
 } from './FnRepeatPhotoParse';
 
 export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
@@ -91,16 +93,28 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
     return { success: true, data: group };
   }
 
-  async getTaskPanelList(timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoTaskProgress>> {
+  private async fetchTaskPanelPayload(timeoutMs: number): Promise<FnClientResult<Object>> {
     const gallerySign: FnGalleryGetSignSpec = {
       signPathOnly: TASK_PANEL_LIST_SIGN_PATH,
       queryParams: GALLERY_QUERY_EMPTY
     };
-    const res = await this.requestGalleryGetJson<Object>(TASK_PANEL_LIST_PATH_CANDIDATES, gallerySign, timeoutMs, 2);
+    return await this.requestGalleryGetJson<Object>(TASK_PANEL_LIST_PATH_CANDIDATES, gallerySign, timeoutMs, 2);
+  }
+
+  async getTaskPanelList(timeoutMs: number = 15000): Promise<FnClientResult<RepeatPhotoTaskProgress>> {
+    const res = await this.fetchTaskPanelPayload(timeoutMs);
     if (!res.success) {
       return { success: false, message: res.message, errorBodyPreview: res.errorBodyPreview };
     }
     return { success: true, data: parseRepeatPhotoTaskProgress(res.data) };
+  }
+
+  async getTaskPanelItems(timeoutMs: number = 15000): Promise<FnClientResult<TaskPanelItem[]>> {
+    const res = await this.fetchTaskPanelPayload(timeoutMs);
+    if (!res.success) {
+      return { success: false, message: res.message, errorBodyPreview: res.errorBodyPreview };
+    }
+    return { success: true, data: parseTaskPanelList(res.data) };
   }
 
   /**

@@ -22,6 +22,27 @@ export struct FnTransferQueueSheet {
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop tasks: FnTransferTaskSnapshot[] = [];
 
+  private completedTaskCount(): number {
+    let n = 0;
+    for (let i = 0; i < this.tasks.length; i++) {
+      if (this.tasks[i].status === FnTransferTaskStatus.COMPLETED) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  private canClearCompleted(): boolean {
+    return this.completedTaskCount() > 0;
+  }
+
+  private onClearCompleted(): void {
+    if (!this.canClearCompleted()) {
+      return;
+    }
+    FnTransferQueueStore.clearCompleted();
+  }
+
   private directionColor(direction: FnTransferDirection): ResourceColor {
     if (direction === FnTransferDirection.DOWNLOAD) {
       return '#FF2563EB';
@@ -31,6 +52,9 @@ export struct FnTransferQueueSheet {
     }
     if (direction === FnTransferDirection.SCAN) {
       return '#FF4A8BFF';
+    }
+    if (direction === FnTransferDirection.NAS) {
+      return '#FF7C3AED';
     }
     return '#FFD97706';
   }
@@ -182,15 +206,30 @@ export struct FnTransferQueueSheet {
           }, (task: FnTransferTaskSnapshot): string => `${task.id}_${task.updatedAt}`)
         }
         .width('100%')
-        .height('100%')
         .layoutWeight(1)
-        .padding({ left: 16, right: 16, bottom: 12 })
+        .padding({ left: 16, right: 16, top: 4, bottom: 8 })
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Off)
         .nestedScroll({
           scrollForward: NestedScrollMode.PARENT_FIRST,
           scrollBackward: NestedScrollMode.SELF_FIRST
         })
+
+        Row() {
+          Text('清除已完成')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.canClearCompleted() ? this.accent : fnResolvedTextSecondary(this.themeTextSecondary))
+            .opacity(this.canClearCompleted() ? 1 : 0.45)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .padding({ top: 12, bottom: 16 })
+            .onClick((): void => {
+              this.onClearCompleted();
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16 })
       }
     }
     .width('100%')

@@ -6,7 +6,8 @@ import {
   RepeatPhotoGroup,
   RepeatPhotoListData,
   RepeatPhotoMergeData,
-  RepeatPhotoTaskProgress
+  RepeatPhotoTaskProgress,
+  TaskPanelItem
 } from '../../model/FnApiTypes';
 import { normalizeGalleryListItems } from '../../album/GalleryListItemNormalize';
 
@@ -143,8 +144,8 @@ export function parseRepeatPhotoMergeData(payload: Object | undefined): RepeatPh
   return out;
 }
 
-function parseTaskSubItem(payload: Object | undefined): RepeatPhotoTaskProgress {
-  const out = new RepeatPhotoTaskProgress();
+function parseTaskSubItem(payload: Object | undefined): TaskPanelItem {
+  const out = new TaskPanelItem();
   const rec = asLoose(payload);
   if (rec === undefined) {
     return out;
@@ -158,23 +159,50 @@ function parseTaskSubItem(payload: Object | undefined): RepeatPhotoTaskProgress 
   const doneRaw = rec['done'];
   const done = doneRaw === true || doneRaw === 1 || doneRaw === 'true';
   const state = readText(rec, ['state', 'status']).toLowerCase();
-  out.running = !done && state !== 'done' && state !== 'finished' && state !== 'success';
+  out.running = !done && state !== 'done' && state !== 'finished' && state !== 'success' && state !== 'failed';
+  if (state === 'failed' || state === 'error') {
+    out.running = false;
+  }
   if (out.total > 0) {
     out.percent = Math.min(100, Math.floor((out.successCount * 100) / out.total));
   } else if (done) {
     out.percent = 100;
   }
   if (errCode !== 0 && failCount > 0 && out.error.length === 0) {
-    out.error = '检查失败';
+    out.error = '任务失败';
   }
   return out;
 }
 
-export function parseRepeatPhotoTaskProgress(payload: Object | undefined): RepeatPhotoTaskProgress {
-  const empty = new RepeatPhotoTaskProgress();
+function taskPanelItemFromRow(row: Object, typeHint: string, idHint: string): TaskPanelItem {
+  const item = asLoose(row);
+  const sub = parseTaskSubItem(row);
+  sub.taskType = typeHint;
+  sub.taskId = idHint;
+  if (item !== undefined) {
+    if (sub.taskType.length === 0) {
+      sub.taskType = readText(item, ['type', 'taskType']);
+    }
+    if (sub.taskId.length === 0) {
+      sub.taskId = readText(item, ['id', 'taskId']);
+    }
+    if (sub.name.length === 0) {
+      sub.name = readText(item, ['name']);
+    }
+    const itemDone = item['done'];
+    if (itemDone === true || itemDone === 1) {
+      sub.running = false;
+    }
+  }
+  return sub;
+}
+
+/** 解析 task-panel 全部任务类型（不只 repeat-photo）。 */
+export function parseTaskPanelList(payload: Object | undefined): TaskPanelItem[] {
+  const out: TaskPanelItem[] = [];
   let rec = asLoose(payload);
   if (rec === undefined) {
-    return empty;
+    return out;
   }
   const nested = asLoose((rec['data'] ?? rec['result']) as Object | undefined);
   if (nested !== undefined && nested['list'] !== undefined) {
@@ -187,20 +215,43 @@ export function parseRepeatPhotoTaskProgress(payload: Object | undefined): Repea
       continue;
     }
     const type = readText(item, ['type', 'taskType']);
-    if (type.length > 0 && type !== 'repeat-photo') {
+    const taskId = readText(item, ['id', 'taskId']);
+    const subList = readObjectArray(item, ['list', 'items']);
+    if (subList.length > 0) {
+      for (let j = 0; j < subList.length; j++) {
+        const subId = taskId.length > 0 ? `${taskId}_${j}` : `${type}_${j}`;
+        out.push(taskPanelItemFromRow(subList[j], type, subId));
+      }
+    } else {
+      const id = taskId.length > 0 ? taskId : `${type}_${i}`;
+      out.push(taskPanelItemFromRow(rawList[i], type, id));
+    }
+  }
+  return out;
+}
+
+function repeatPhotoFromPanelItem(item: TaskPanelItem): RepeatPhotoTaskProgress {
+  const out = new RepeatPhotoTaskProgress();
+  out.taskId = item.taskId;
+  out.name = item.name;
+  out.successCount = item.successCount;
+  out.total = item.total;
+  out.percent = item.percent;
+  out.running = item.running;
+  out.error = item.error;
+  return out;
+}
+
+export function parseRepeatPhotoTaskProgress(payload: Object | undefined): RepeatPhotoTaskProgress {
+  const empty = new RepeatPhotoTaskProgress();
+  const all = parseTaskPanelList(payload);
+  for (let i = 0; i < all.length; i++) {
+    const item = all[i];
+    const type = item.taskType.trim().toLowerCase();
+    if (type.length > 0 && type !== 'repeat-photo' && type !== 'repeat_photo') {
       continue;
     }
-    const subList = readObjectArray(item, ['list', 'items']);
-    const sub = parseTaskSubItem(subList.length > 0 ? subList[0] : rawList[i]);
-    sub.taskId = readText(item, ['id', 'taskId']);
-    if (sub.name.length === 0) {
-      sub.name = readText(item, ['name']);
-    }
-    const itemDone = item['done'];
-    if (itemDone === true) {
-      sub.running = false;
-    }
-    return sub;
+    return repeatPhotoFromPanelItem(item);
   }
   return empty;
 }

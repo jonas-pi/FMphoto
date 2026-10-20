@@ -8,6 +8,7 @@ import { clearOpenApiAuthxCredentials, setOpenApiAuthxCredentials } from '../net
 import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
 import { SessionPreferences, StoredSession } from './SessionPreferences';
 import { applyGalleryLanBurstForSession, resetGalleryLanBurstSession } from '../album/GalleryPerfProfile';
+import { startNasTaskPanelSync, stopNasTaskPanelSync } from '../network/FnNasTaskPanelSync';
 
 /** 当前图库/预览用的 Web 根地址；切网时原地更新，页面用 @StorageProp 跟随，避免重载。 */
 export const FN_MEDIA_BASE_URL: string = 'FN_MEDIA_BASE_URL';
@@ -91,6 +92,7 @@ export class AppSession {
       s.endpointPublicIpv6Url,
       s.endpointRelayUrl
     );
+    startNasTaskPanelSync();
   }
 
   /** 中继不转发 /upload，这些是会话里记下的 NAS 本机地址。 */
@@ -126,6 +128,7 @@ export class AppSession {
   }
 
   static clear(): void {
+    stopNasTaskPanelSync();
     AppSession.stored = null;
     AppSession.client = null;
     AppSession.loginPassword = '';

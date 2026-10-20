@@ -43,6 +43,7 @@ import {
   FnTransferQueueStore,
   FnTransferTaskSnapshot
 } from '../common/FnTransferQueueStore';
+import { kickNasTaskPanelSync } from '../network/FnNasTaskPanelSync';
 import { openFeedbackPage } from './FeedbackPage';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -1057,6 +1058,7 @@ export struct MePanel {
     .borderColor($r('app.color.immersive_panel_border'))
     .clip(true)
     .onClick((): void => {
+      kickNasTaskPanelSync();
       this.refreshTransferQueueTasks();
       this.transferQueueVisible = true;
     })
