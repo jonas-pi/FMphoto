@@ -538,7 +538,19 @@
     },
     {
       "name": "tip_page_hint",
-      "value": "这是自愿赞赏，不会解锁功能。付款由华为应用内支付完成，应用不经手银行卡或支付密码。"
+      "value": "付款由华为应用内支付完成，应用不经手银行卡或支付密码。"
+    },
+    {
+      "name": "tip_hero_title",
+      "value": "谢谢你的支持"
+    },
+    {
+      "name": "tip_hero_body",
+      "value": "如果这个项目对你有帮助，欢迎自愿捐赠，支持我覆盖部分开发与 Token 成本。捐赠完全自愿，不影响任何功能使用，也不附带任何回报承诺。感谢支持！"
+    },
+    {
+      "name": "tip_paying",
+      "value": "支付中"
     },
     {
       "name": "rate_app_entry_title",

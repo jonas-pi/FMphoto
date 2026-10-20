@@ -18,20 +18,27 @@ import {
   fnResolvedCardFill,
   fnResolvedTextPrimary,
   fnResolvedTextSecondary,
+  fnThemeOnColor,
   FN_RESOLVED_ACCENT_KEY,
   FN_RESOLVED_CARD_BG_KEY,
   FN_RESOLVED_PAGE_BG_KEY,
   FN_RESOLVED_TEXT_PRIMARY_KEY,
   FN_RESOLVED_TEXT_SECONDARY_KEY
 } from '../common/FnThemeColors';
+import { fnLiquidGlassGradient, fnSoftCardGlassGradient } from '../common/FnUiCommon';
 import {
   fallbackTipOffers,
   loadTipOffers,
   purchaseTip,
   settleUnfinishedTips,
+  TIP_COFFEE,
+  TIP_DINNER,
+  TIP_LUNCH,
   tipErrorMessage,
   TipOffer
 } from '../iap/TipPurchase';
+
+const TIP_CARD_RADIUS_VP: number = 22;
 
 export function openTipPage(uiContext: UIContext): void {
   uiContext.getRouter().pushUrl({ url: 'pages/TipPage' }).catch((): void => {
@@ -57,6 +64,7 @@ struct TipPage {
   @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
   @State private offers: TipOffer[] = fallbackTipOffers();
   @State private buyingId: string = '';
+  @State private pressedId: string = '';
 
   aboutToAppear(): void {
     void this.reload();
@@ -107,36 +115,145 @@ struct TipPage {
     }
   }
 
+  private accentWash(alphaHex: string): string {
+    const raw = this.accent.trim();
+    if (raw.length === 9 && raw.charAt(0) === '#') {
+      return '#' + alphaHex + raw.substring(3);
+    }
+    return '#334A8BFF';
+  }
+
+  private priceInk(): string {
+    return fnThemeOnColor(this.accent);
+  }
+
+  private detailOf(offer: TipOffer): string {
+    const text = offer.description.trim();
+    if (text.length === 0 || text === '自愿赞赏，不解锁功能') {
+      return '';
+    }
+    return text;
+  }
+
+  private cardGlass(): LinearGradientOptions {
+    if (this.cardBg.length > 0) {
+      return fnSoftCardGlassGradient();
+    }
+    return fnLiquidGlassGradient();
+  }
+
+  @Builder
+  private offerGlyph(productId: string) {
+    if (productId === TIP_COFFEE) {
+      SymbolGlyph($r('sys.symbol.cup_fill'))
+        .fontSize(22)
+        .fontColor([this.accent])
+    } else if (productId === TIP_LUNCH) {
+      SymbolGlyph($r('sys.symbol.fork_knife'))
+        .fontSize(22)
+        .fontColor([this.accent])
+    } else if (productId === TIP_DINNER) {
+      SymbolGlyph($r('sys.symbol.moon_fill'))
+        .fontSize(22)
+        .fontColor([this.accent])
+    } else {
+      SymbolGlyph($r('sys.symbol.heart_fill'))
+        .fontSize(22)
+        .fontColor([this.accent])
+    }
+  }
+
+  @Builder
+  private pricePill(offer: TipOffer) {
+    Row({ space: 6 }) {
+      if (this.buyingId === offer.productId) {
+        LoadingProgress()
+          .width(16)
+          .height(16)
+          .color(this.priceInk())
+        Text($r('app.string.tip_paying'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.priceInk())
+      } else {
+        Text(offer.priceLabel)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.priceInk())
+      }
+    }
+    .constraintSize({ minWidth: 84, minHeight: 36 })
+    .padding({ left: 14, right: 14 })
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.accent)
+    .borderRadius(18)
+  }
+
   @Builder
   private offerRow(offer: TipOffer) {
-    Row({ space: 12 }) {
+    Row({ space: 14 }) {
+      Stack({ alignContent: Alignment.Center }) {
+        Column()
+          .width(44)
+          .height(44)
+          .borderRadius(22)
+          .backgroundColor(this.accentWash('24'))
+        this.offerGlyph(offer.productId)
+      }
+      .width(44)
+      .height(44)
+
       Column({ space: 4 }) {
         Text(offer.name)
-          .fontSize(16)
+          .fontSize(17)
           .fontWeight(FontWeight.Medium)
           .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
-        Text(offer.description)
-          .fontSize(12)
-          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
-          .maxLines(2)
+        if (this.detailOf(offer).length > 0) {
+          Text(this.detailOf(offer))
+            .fontSize(12)
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
-      Text(this.buyingId === offer.productId ? '支付中' : offer.priceLabel)
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.accent)
+      this.pricePill(offer)
     }
     .width('100%')
-    .padding(16)
-    .backgroundColor(fnResolvedCardFill(this.cardBg))
-    .borderRadius($r('app.float.radius_medium'))
+    .padding({ left: 16, right: 14, top: 14, bottom: 14 })
     .alignItems(VerticalAlign.Center)
-    .opacity(this.buyingId.length > 0 && this.buyingId !== offer.productId ? 0.45 : 1)
+    .backgroundColor(this.pressedId === offer.productId ? this.accentWash('14') : '#00000000')
+    .opacity(this.buyingId.length > 0 && this.buyingId !== offer.productId ? 0.4 : 1)
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent): void => {
+      if (this.buyingId.length > 0) {
+        return;
+      }
+      if (event.type === TouchType.Down) {
+        this.pressedId = offer.productId;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.pressedId = '';
+      }
+    })
     .onClick((): void => {
       void this.onBuy(offer);
     })
+  }
+
+  @Builder
+  private offerBlock(offer: TipOffer, index: number) {
+    Column() {
+      if (index > 0) {
+        Divider()
+          .strokeWidth(0.5)
+          .color($r('app.color.immersive_panel_border'))
+          .margin({ left: 74 })
+      }
+      this.offerRow(offer)
+    }
+    .width('100%')
   }
 
   build() {
@@ -151,22 +268,66 @@ struct TipPage {
       })
 
       Scroll() {
-        Column({ space: 12 }) {
-          Text($r('app.string.tip_page_hint'))
-            .fontSize(14)
-            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
-            .lineHeight(22)
-            .width('100%')
+        Column({ space: 18 }) {
+          Column({ space: 10 }) {
+            Stack({ alignContent: Alignment.Center }) {
+              Column()
+                .width(72)
+                .height(72)
+                .borderRadius(36)
+                .backgroundColor(this.accentWash('22'))
+              SymbolGlyph($r('sys.symbol.heart_fill'))
+                .fontSize(32)
+                .fontColor([this.accent])
+            }
+            .width(72)
+            .height(72)
+            .margin({ top: 8 })
 
-          ForEach(this.offers, (offer: TipOffer) => {
-            this.offerRow(offer)
-          }, (offer: TipOffer): string => offer.productId)
+            Text($r('app.string.tip_hero_title'))
+              .fontSize(22)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+              .textAlign(TextAlign.Center)
+
+            Text($r('app.string.tip_hero_body'))
+              .fontSize(14)
+              .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+              .textAlign(TextAlign.Center)
+              .lineHeight(24)
+              .width('100%')
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Center)
+          .padding({ left: 12, right: 12 })
+
+          Column() {
+            ForEach(this.offers, (offer: TipOffer, index: number) => {
+              this.offerBlock(offer, index)
+            }, (offer: TipOffer): string => offer.productId)
+          }
+          .width('100%')
+          .backgroundColor(fnResolvedCardFill(this.cardBg))
+          .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+          .linearGradient(this.cardGlass())
+          .borderRadius(TIP_CARD_RADIUS_VP)
+          .borderWidth(1)
+          .borderColor($r('app.color.immersive_panel_border'))
+          .clip(true)
+
+          Text($r('app.string.tip_page_hint'))
+            .fontSize(12)
+            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+            .lineHeight(18)
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .padding({ left: 12, right: 12 })
         }
         .width('100%')
         .padding({
           left: 16,
           right: 16,
-          top: 12,
+          top: 8,
           bottom: 24 + this.navIndicatorInsetVp
         })
       }

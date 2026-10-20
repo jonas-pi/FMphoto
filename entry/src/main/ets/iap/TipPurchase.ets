@@ -13,9 +13,9 @@ export class TipOffer {
   priceLabel: string = '';
 }
 
-const TIP_COFFEE: string = 'tip_coffee';
-const TIP_LUNCH: string = 'tip_lunch';
-const TIP_DINNER: string = 'tip_dinner';
+export const TIP_COFFEE: string = 'tip_coffee';
+export const TIP_LUNCH: string = 'tip_lunch';
+export const TIP_DINNER: string = 'tip_dinner';
 
 export function fallbackTipOffers(): TipOffer[] {
   const coffee = new TipOffer();
