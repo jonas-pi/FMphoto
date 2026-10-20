@@ -1,5 +1,5 @@
 /**
- * 用本机内容指纹向整库接口核对。
+ * 先用本机内容指纹查询备份标识，再用 NAS 全库文件名+大小补齐普通上传来源。
  * POST /p/api/v1/backup/identifier/file_hash，一次最多 1000 条。
  * 接口失败不当成缺失，避免把已经在相册里的照片再传一遍。
  */
@@ -182,7 +182,6 @@ export async function compareLocalWithBackup(
   }
   const failed = new Set<string>();
   const hits = new Set<string>();
-  const nasByName = await GalleryAutoSyncNasIndex.loadDiskNameSize(ctx);
   for (let offset = 0; offset < unique.length; offset += FILE_HASH_BATCH) {
     const batch: string[] = [];
     const end = Math.min(offset + FILE_HASH_BATCH, unique.length);
@@ -200,6 +199,31 @@ export async function compareLocalWithBackup(
     for (let i = 0; i < queried.hits.length; i++) {
       hits.add(queried.hits[i].trim().toLowerCase());
     }
+  }
+  // file_hash 接口不是相册整库索引：实测 Web upload/notice 已入库且二次 notice
+  // 返回 repeat=true 的同字节文件，仍不会出现在这里。这时拉 NAS 全库名单，
+  // 用服务端返回的原始文件名+大小识别已经存在的普通照片。
+  // 不能只读落盘缓存：内容指纹流程本身不会创建那份缓存，全新安装时它通常不存在。
+  let needsNasNameSize: boolean = false;
+  for (let i = 0; i < fresh.length; i++) {
+    const piece = fresh[i];
+    if (piece.role === 'file' && piece.sourceSize > 0 &&
+      !failed.has(piece.fingerprint) && !hits.has(piece.fingerprint)) {
+      needsNasNameSize = true;
+      break;
+    }
+  }
+  let nasByName: boolean = false;
+  if (needsNasNameSize) {
+    if (progress !== null) {
+      progress.onProgress(photos.length, photos.length, '正在核对 NAS 文件名单');
+    }
+    let nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, false, ctx);
+    // 兼容旧版留下的有效期内空索引；强制重建一次，避免一直复用无 nameSize 的缓存。
+    if (nasIndex.nameSizeKeys.size === 0) {
+      nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, true, ctx);
+    }
+    nasByName = nasIndex.nameSizeKeys.size > 0;
   }
   const puts: LedgerPut[] = [];
   let hashHits: number = 0;
