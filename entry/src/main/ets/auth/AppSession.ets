@@ -5,10 +5,11 @@ import { common } from '@kit.AbilityKit';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { clearOpenApiAuthxCredentials, setOpenApiAuthxCredentials } from '../network/AuthxSigner';
-import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
+import { fnWebViewBaseUrl, normalizeUserServerUrl } from '../network/ServerUrl';
 import { SessionPreferences, StoredSession } from './SessionPreferences';
 import { applyGalleryLanBurstForSession, resetGalleryLanBurstSession } from '../album/GalleryPerfProfile';
 import { startNasTaskPanelSync, stopNasTaskPanelSync } from '../network/FnNasTaskPanelSync';
+import { loadAlbumBackupSettings } from '../sync/AlbumBackupSettings';
 
 /** 当前图库/预览用的 Web 根地址；切网时原地更新，页面用 @StorageProp 跟随，避免重载。 */
 export const FN_MEDIA_BASE_URL: string = 'FN_MEDIA_BASE_URL';
@@ -108,7 +109,7 @@ export class AppSession {
     add(s.endpointLanUrl);
     add(s.endpointLanIpv6Url);
     if (s.endpointLanUrl.trim().length === 0 && s.endpointLanIpv6Url.trim().length === 0) {
-      add(normalizeServerUrl(s.lanInput, s.useHttps));
+      add(normalizeUserServerUrl(s.lanInput, s.useHttps));
     }
     add(s.endpointPublicDomainUrl);
     add(s.endpointPublicIpUrl);
@@ -116,7 +117,7 @@ export class AppSession {
     add(s.endpointPublicUrl);
     if (s.endpointPublicDomainUrl.trim().length === 0 && s.endpointPublicUrl.trim().length === 0 &&
       s.domainInput.trim().length > 0) {
-      add(normalizeServerUrl(s.domainInput, s.useHttps));
+      add(normalizeUserServerUrl(s.domainInput, s.useHttps));
     }
     return out;
   }
@@ -147,6 +148,10 @@ export class AppSession {
     }
     CertPolicy.loadAll(s.trustedHosts);
     AppSession.apply(s);
+    try {
+      await loadAlbumBackupSettings(ctx);
+    } catch (_e) {
+    }
     try {
       await AppSession.ensureLoginPassword(ctx);
     } catch (_e) {

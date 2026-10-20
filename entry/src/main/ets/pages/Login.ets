@@ -15,7 +15,7 @@ import {
   DirectNasAddressSlots,
   fnWebViewBaseUrl,
   isIpLiteralHost,
-  normalizeServerUrl,
+  normalizeUserServerUrl,
   parseNormalizedBaseUrl
 } from '../network/ServerUrl';
 import {
@@ -265,6 +265,34 @@ struct Login {
       return '';
     }
     return split.host;
+  }
+
+  /**
+   * 手填地址会实际连到的 URL。没写端口时不追加端口。
+   */
+  private loginTargetPreview(): string {
+    const slots: DirectNasAddressSlots = this.loginDirectSlots();
+    const urls: string[] = [];
+    const push = (raw: string): void => {
+      const url = normalizeUserServerUrl(raw, this.useHttps);
+      if (url.length === 0) {
+        return;
+      }
+      for (let i = 0; i < urls.length; i++) {
+        if (urls[i] === url) {
+          return;
+        }
+      }
+      urls.push(url);
+    };
+    push(slots.lan);
+    push(slots.publicIpv4);
+    push(slots.publicIpv6);
+    push(slots.domain);
+    if (urls.length === 0) {
+      return '';
+    }
+    return `将连接 ${urls.join('、')}`;
   }
 
   /** 把共用栏直连地址分到探测槽；域名栏优先于共用栏里的主机名。 */
@@ -588,16 +616,16 @@ struct Login {
       this.pendingEndpointRelayUrl = '';
 
       if (publicDomainRaw.length > 0) {
-        this.applyPublicUrl(normalizeServerUrl(publicDomainRaw, this.useHttps));
+        this.applyPublicUrl(normalizeUserServerUrl(publicDomainRaw, this.useHttps));
       }
       if (publicIpRaw.length > 0) {
-        this.applyPublicUrl(normalizeServerUrl(publicIpRaw, this.useHttps));
+        this.applyPublicUrl(normalizeUserServerUrl(publicIpRaw, this.useHttps));
       }
       if (publicIpv6Raw.length > 0) {
-        this.applyPublicUrl(normalizeServerUrl(publicIpv6Raw, this.useHttps));
+        this.applyPublicUrl(normalizeUserServerUrl(publicIpv6Raw, this.useHttps));
       }
       if (lanRaw.length > 0) {
-        this.applyLanUrl(normalizeServerUrl(lanRaw, this.useHttps));
+        this.applyLanUrl(normalizeUserServerUrl(lanRaw, this.useHttps));
       }
 
       // 仅在填写了 FN ID 时走 FN Connect；手填地址优先于云端结果
@@ -986,6 +1014,14 @@ struct Login {
       .width('100%')
       .height(LOGIN_FIELD_HEIGHT_VP)
       .padding({ left: 4, right: 4 })
+
+      if (this.loginTargetPreview().length > 0) {
+        Text(this.loginTargetPreview())
+          .fontSize(12)
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+          .width('100%')
+          .lineHeight(18)
+      }
 
       FnLoginRoutePrefSegment({
         selectedValue: this.endpointPreference,

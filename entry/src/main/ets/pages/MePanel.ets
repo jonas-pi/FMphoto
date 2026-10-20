@@ -30,6 +30,7 @@ import { FnTransferQueueSheet } from '../common/FnTransferQueueSheet';
 import {
   fnHdsFitContentSheetOptions,
   fnHdsLargeSheetOptions,
+  fnHdsQueueSheetOptions,
   fnHdsMediumDetentSheetOptions
 } from '../common/FnHdsOverlay';
 import { ConfigSyncSheet } from './ConfigSyncPage';
@@ -900,7 +901,12 @@ export struct MePanel {
 
   @Builder
   private transferQueueSheetBuilder() {
-    FnTransferQueueSheet({ tasks: this.transferQueueTasks })
+    FnTransferQueueSheet({
+      tasks: this.transferQueueTasks,
+      onClose: (): void => {
+        this.transferQueueVisible = false;
+      }
+    })
   }
 
   @Builder
@@ -945,6 +951,47 @@ export struct MePanel {
   @Builder
   private configSyncSheetBuilder() {
     ConfigSyncSheet()
+  }
+
+  @Builder
+  private albumBackupSyncEntryRow() {
+    Row({ space: 10 }) {
+      Column({ space: 6 }) {
+        Text($r('app.string.album_backup_entry_title'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+        Text($r('app.string.album_backup_entry_subtitle'))
+          .fontSize(12)
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+        .fontSize(18)
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .onClick((): void => {
+      this.getUIContext().getRouter().pushUrl({ url: 'pages/AlbumBackupSyncPage' }).catch((): void => {
+        this.showEndpointToast('同步设置打不开');
+      });
+    })
   }
 
   @Builder
@@ -1490,6 +1537,12 @@ export struct MePanel {
           .width('100%')
           .height(ME_ACTION_GAP_VP)
 
+        this.albumBackupSyncEntryRow()
+
+        Blank()
+          .width('100%')
+          .height(ME_ACTION_GAP_VP)
+
         Column() {
           this.configSyncEntryRow()
         }
@@ -1594,8 +1647,7 @@ export struct MePanel {
     .bindToScrollable([this.meScroller])
     .titleBar(this.meTitleBarOptions())
     .backgroundColor(this.pageBg)
-    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsMediumDetentSheetOptions(
-      '任务队列',
+    .bindSheet(this.transferQueueVisible, this.transferQueueSheetBuilder, fnHdsQueueSheetOptions(
       (): void => {
         this.transferQueueVisible = false;
       }

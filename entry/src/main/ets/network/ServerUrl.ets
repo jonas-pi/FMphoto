@@ -1,7 +1,7 @@
 /**
  * 将用户输入规范为 API baseUrl（无末尾 /）
- * - 飞牛默认端口：HTTP 5666，HTTPS 5667（IP 未写端口时自动补上）
- * - 域名未写端口时先按网站 80/443；登录再并行探测并在 WSS 失败后回退 5666/5667（DDNS 直连飞牛）
+ * - 用户手填地址：只保留写下的端口；没写端口时不追加端口，由协议走默认 443/80
+ * - `normalizeServerUrl` 仍给未写端口的 IP 补飞牛端口，供 FN Connect 等已带端口语义的地址使用
  * - IPv6：裸地址会加 []；含端口时请使用 [addr]:port 形式，避免歧义
  */
 
@@ -90,16 +90,25 @@ function isDirectHostInput(s: string): boolean {
   return isIpv4WithOptionalPort(s);
 }
 
+/** 未写端口且不猜测时，authority 不带冒号端口 */
+function withOptionalPort(authority: string, port: number | null): string {
+  if (port === null) {
+    return authority;
+  }
+  return `${authority}:${port}`;
+}
+
 /**
- * 用户未写协议时的主机部分，输出 authority（含端口；IPv6 为 [addr]:port）
+ * 用户未写协议时的主机部分，输出 authority（IPv6 为 [addr]；有端口才带 :port）
  */
-function normalizeBareAuthority(input: string, useHttps: boolean): string {
-  const def = defaultPort(useHttps, isDirectHostInput(input.trim()));
+function normalizeBareAuthority(input: string, useHttps: boolean, fnDefaultPort: boolean): string {
+  const directHost = fnDefaultPort && isDirectHostInput(input.trim());
+  const fallbackPort: number | null = fnDefaultPort ? defaultPort(useHttps, directHost) : null;
   const t = input.trim();
   if (t.startsWith('[')) {
     const close = t.indexOf(']');
     if (close < 1) {
-      return `[${t.substring(1)}]:${def}`;
+      return withOptionalPort(`[${t.substring(1)}]`, fallbackPort);
     }
     const inside = t.substring(1, close);
     const after = t.substring(close + 1);
@@ -109,7 +118,7 @@ function normalizeBareAuthority(input: string, useHttps: boolean): string {
         return `[${inside}]:${portStr}`;
       }
     }
-    return `[${inside}]:${def}`;
+    return withOptionalPort(`[${inside}]`, fallbackPort);
   }
   const lastColon = t.lastIndexOf(':');
   if (lastColon > 0) {
@@ -127,15 +136,15 @@ function normalizeBareAuthority(input: string, useHttps: boolean): string {
     }
   }
   if (isBareIpv6Shape(t)) {
-    return `[${t}]:${def}`;
+    return withOptionalPort(`[${t}]`, fallbackPort);
   }
   if (isIpv4WithOptionalPort(t)) {
     if (lastColon > 0 && /^\d+$/.test(t.substring(lastColon + 1))) {
       return t;
     }
-    return `${t}:${def}`;
+    return withOptionalPort(t, fallbackPort);
   }
-  return `${t}:${def}`;
+  return withOptionalPort(t, fallbackPort);
 }
 
 /** 从绝对 URL 的 authority 解析主机与端口（不含默认端口补全） */
@@ -231,7 +240,7 @@ function stripFnConnectRelayPort(authority: string): string {
 /**
  * 已为 http(s):// 的 URL：补默认端口（若未写端口）；保留 path（如 fnos.net/{fnId}）
  */
-function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https'): string {
+function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https', fnDefaultPort: boolean): string {
   const prefix = scheme === 'https' ? 'https://' : 'http://';
   const afterScheme = url.substring(prefix.length);
   let cut = afterScheme.length;
@@ -261,7 +270,12 @@ function ensurePortForAbsoluteUrl(url: string, scheme: 'http' | 'https'): string
     return trimTrailingSlash(`${prefix}${hostOnly}${pathSuffix}`);
   }
   const parsed = parseAuthority(authority);
-  const def = defaultPort(scheme === 'https', isDirectParsedAuthority(parsed));
+  if (!fnDefaultPort && parsed.port === null) {
+    const host = parsed.useBracket ? `[${parsed.hostRaw}]` : parsed.hostRaw;
+    return trimTrailingSlash(`${prefix}${host}${pathSuffix}`);
+  }
+  const directHost = fnDefaultPort && isDirectParsedAuthority(parsed);
+  const def = defaultPort(scheme === 'https', directHost);
   const newAuth = buildAuthority(parsed, def);
   return trimTrailingSlash(`${prefix}${newAuth}${pathSuffix}`);
 }
@@ -343,20 +357,35 @@ export function fnWebViewBaseUrl(apiBaseNoSlash: string): string {
   return trimTrailingSlash(`https://${newAuth}`);
 }
 
-export function normalizeServerUrl(domainInput: string, useHttps: boolean): string {
+function normalizeServerUrlMode(domainInput: string, useHttps: boolean, fnDefaultPort: boolean): string {
   const t = domainInput.trim();
   if (t.length === 0) {
     return '';
   }
   if (t.startsWith('http://')) {
-    return ensurePortForAbsoluteUrl(t, 'http');
+    return ensurePortForAbsoluteUrl(t, 'http', fnDefaultPort);
   }
   if (t.startsWith('https://')) {
-    return ensurePortForAbsoluteUrl(t, 'https');
+    return ensurePortForAbsoluteUrl(t, 'https', fnDefaultPort);
   }
   const prefix = useHttps ? 'https://' : 'http://';
-  const auth = normalizeBareAuthority(t, useHttps);
+  const auth = normalizeBareAuthority(t, useHttps, fnDefaultPort);
   return trimTrailingSlash(`${prefix}${auth}`);
+}
+
+/**
+ * 未写端口的 IP 补飞牛 5666/5667。FN Connect 等调用方使用。
+ */
+export function normalizeServerUrl(domainInput: string, useHttps: boolean): string {
+  return normalizeServerUrlMode(domainInput, useHttps, true);
+}
+
+/**
+ * 登录手填地址：端口只认用户写下的数字。
+ * 没写端口时不追加 :80 / :443 / :5666 / :5667，由 https 或 http 走协议默认端口。
+ */
+export function normalizeUserServerUrl(domainInput: string, useHttps: boolean): string {
+  return normalizeServerUrlMode(domainInput, useHttps, false);
 }
 
 export interface ParsedBaseUrlParts {
@@ -398,8 +427,8 @@ export function parseNormalizedBaseUrl(baseUrl: string): ParsedBaseUrlParts | nu
 }
 
 /**
- * 域名/地址被规范成 80/443 时，补飞牛本机端口 5666/5667。
- * Lucky 反代继续走 443；DDNS 直达飞牛时常只开 5667。官方中继与已是飞牛端口不改。
+ * 把 80/443 换成飞牛本机端口 5666/5667。
+ * 登录不再调用：手填地址只连用户写下的端口。
  */
 export function fnosDirectPortFallbackUrl(baseUrl: string): string {
   const parts = parseNormalizedBaseUrl(baseUrl);

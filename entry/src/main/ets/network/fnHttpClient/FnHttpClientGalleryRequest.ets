@@ -186,13 +186,22 @@ export class FnHttpClientGalleryRequest {
       rawList = payload as Object[];
     } else {
       const rec = payload as Record<string, Object | undefined>;
-      const cand = rec['list'] ?? rec['items'] ?? rec['folders'];
+      const cand = rec['list'] ?? rec['items'] ?? rec['folders'] ?? rec['folderList'] ??
+        rec['dirs'] ?? rec['rows'] ?? rec['records'];
       if (Array.isArray(cand)) {
         rawList = cand as Object[];
       }
     }
     for (let i = 0; i < rawList.length; i++) {
       const el = rawList[i];
+      if (typeof el === 'string') {
+        const text = el.trim();
+        if (text.length > 0) {
+          const row: PhotoFolderListItem = { path: text, folderPath: text };
+          items.push(row);
+        }
+        continue;
+      }
       if (typeof el === 'object' && el !== null) {
         items.push(el as PhotoFolderListItem);
       }

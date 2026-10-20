@@ -209,9 +209,50 @@ export function fnHdsMediumDetentSheetOptions(title: ResourceStr, onDisappear: (
   return options;
 }
 
+/** 任务队列：半模态不带系统关闭钮，标题和按钮由内容里的 HdsNavigation 绘制。 */
+export function fnHdsQueueSheetOptions(onDisappear: () => void): SheetOptions {
+  const options: SheetOptions = {
+    height: SheetSize.MEDIUM,
+    detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+    showClose: false,
+    dragBar: false,
+    preferType: SheetType.BOTTOM,
+    backgroundColor: Color.Transparent,
+    onDisappear: onDisappear
+  };
+  const material = fnCanUseHdsImmersive() ? fnHdsSheetSystemMaterial() : undefined;
+  if (material !== undefined) {
+    // @SuppressWarnings compatibility
+    options.systemMaterial = material;
+  } else {
+    options.blurStyle = BlurStyle.Thick;
+  }
+  return options;
+}
+
 /** 几乎全高的底部半模态。不新开页面，状态栏仍留在原来的页面上。 */
 export function fnHdsLargeSheetOptions(title: ResourceStr, onDisappear: () => void): SheetOptions {
   return fnHdsSheetOptions(title, onDisappear, SheetSize.LARGE);
+}
+
+/** 半模态内容由页面自绘顶栏（返回+标题），隐藏系统标题与关闭钮。 */
+export function fnHdsLargeSheetEmbeddedNavOptions(onDisappear: () => void): SheetOptions {
+  const options: SheetOptions = {
+    height: SheetSize.LARGE,
+    showClose: false,
+    dragBar: false,
+    preferType: SheetType.BOTTOM,
+    backgroundColor: Color.Transparent,
+    onDisappear: onDisappear
+  };
+  const material = fnCanUseHdsImmersive() ? fnHdsSheetSystemMaterial() : undefined;
+  if (material !== undefined) {
+    // @SuppressWarnings compatibility
+    options.systemMaterial = material;
+  } else {
+    options.blurStyle = BlurStyle.Thick;
+  }
+  return options;
 }
 
 /**

@@ -6,7 +6,7 @@ import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
 import { preferPublicEndpointUrl, resolvePublicHostnameToIpv6BaseUrl } from './PublicDns';
-import { fnosDirectPortFallbackUrl, isIpLiteralHost, normalizeServerUrl, parseNormalizedBaseUrl } from './ServerUrl';
+import { isIpLiteralHost, normalizeServerUrl, parseNormalizedBaseUrl } from './ServerUrl';
 
 const DOMAIN = 0xFF00;
 const TAG = 'LoginEndpoint';
@@ -637,11 +637,8 @@ function buildCandidatesFromPool(pool: LoginEndpointPool): LoginEndpointCandidat
   push(LOGIN_ENDPOINT_PREF_LAN, pool.lanIpv4Url);
   push(LOGIN_ENDPOINT_PREF_LAN_IPV6, pool.lanIpv6Url);
   push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, pool.publicDomainUrl);
-  push(LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN, fnosDirectPortFallbackUrl(pool.publicDomainUrl));
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, pool.publicIpv4Url);
-  push(LOGIN_ENDPOINT_PREF_PUBLIC_IP, fnosDirectPortFallbackUrl(pool.publicIpv4Url));
   push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, pool.publicIpv6Url);
-  push(LOGIN_ENDPOINT_PREF_PUBLIC_IPV6, fnosDirectPortFallbackUrl(pool.publicIpv6Url));
   push(LOGIN_ENDPOINT_PREF_RELAY, pool.relayUrl);
   return out;
 }
@@ -810,7 +807,7 @@ function normalizeLoginServerKey(baseUrl: string): string {
 
 /**
  * HTTP 探通不等于 WSS 能握手。登录时先走选中路径，连接失败再按
- * 内网 → 公网 IP → 域名 → 飞牛 5667 → 中继 换路，避免卡在一条 HTTP 可达、WebSocket 不可达的地址。
+ * 已探通的其它地址换路，最后才试中继。不另猜 5666/5667。
  */
 export function orderedWsLoginServers(
   selected: LoginEndpointSelectionResult,
@@ -830,7 +827,6 @@ export function orderedWsLoginServers(
     out.push(key);
   };
   add(selected.server);
-  add(fnosDirectPortFallbackUrl(selected.server));
   const rest: LoginEndpointProbeLine[] = [];
   for (let i = 0; i < selected.probeLines.length; i++) {
     const line = selected.probeLines[i];
@@ -849,7 +845,6 @@ export function orderedWsLoginServers(
   }
   for (let j = 0; j < rest.length; j++) {
     add(rest[j].baseUrl);
-    add(fnosDirectPortFallbackUrl(rest[j].baseUrl));
   }
   add(extraRelayUrl);
   return out;

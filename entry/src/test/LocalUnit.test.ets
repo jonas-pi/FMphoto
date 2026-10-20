@@ -3,7 +3,8 @@ import {
   classifyDirectNasAddress,
   fnosDirectPortFallbackUrl,
   fnWebViewBaseUrl,
-  normalizeServerUrl
+  normalizeServerUrl,
+  normalizeUserServerUrl
 } from '../main/ets/network/ServerUrl';
 import { isUnusableIpv6Host, splitFnIdOrHostInput } from '../main/ets/network/FnConnectApi';
 import { resolveLoginRedirectLocation } from '../main/ets/network/LoginEndpointSelector';
@@ -64,6 +65,19 @@ export default function localUnitTest() {
       expect(normalizeServerUrl('nas.local', false)).assertEqual('http://nas.local:80');
       expect(normalizeServerUrl('https://nas.local/', false)).assertEqual('https://nas.local:443');
       expect(normalizeServerUrl('http://nas.local', true)).assertEqual('http://nas.local:80');
+    });
+
+    it('normalizeUserServerUrl_keeps_typed_port_only', 0, () => {
+      expect(normalizeUserServerUrl('nas.jonaspi.top', true)).assertEqual('https://nas.jonaspi.top');
+      expect(normalizeUserServerUrl('nas.example.com', false)).assertEqual('http://nas.example.com');
+      expect(normalizeUserServerUrl('nas.example.com:5666', true)).assertEqual('https://nas.example.com:5666');
+      expect(normalizeUserServerUrl('nas.example.com:5667', false)).assertEqual('http://nas.example.com:5667');
+      expect(normalizeUserServerUrl('192.168.1.2', true)).assertEqual('https://192.168.1.2');
+      expect(normalizeUserServerUrl('192.168.1.2:5666', false)).assertEqual('http://192.168.1.2:5666');
+      expect(normalizeUserServerUrl('https://nas.example.com', false)).assertEqual('https://nas.example.com');
+      expect(normalizeUserServerUrl('https://nas.example.com:8443', false)).assertEqual('https://nas.example.com:8443');
+      expect(normalizeUserServerUrl('[fe80::1]', true)).assertEqual('https://[fe80::1]');
+      expect(normalizeUserServerUrl('', true)).assertEqual('');
     });
 
     it('normalizeServerUrl_ipv6', 0, () => {

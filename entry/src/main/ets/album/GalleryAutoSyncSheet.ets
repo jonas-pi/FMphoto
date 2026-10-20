@@ -12,9 +12,13 @@ import { FnClientResult } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { uploadLocalMediaUri } from './GalleryLiveSyncPayload';
 import { GalleryAutoSyncLedger, LedgerPut } from './GalleryAutoSyncLedger';
+import { GalleryAutoSyncLocalSeen } from './GalleryAutoSyncLocalSeen';
+import { LocalPhotoEntry } from './GalleryAutoSyncService';
 import { SyncUploadPiece } from './GalleryAutoSyncCompare';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
+import { getAlbumBackupSettingsCached } from '../sync/AlbumBackupSettings';
+import { evaluateAlbumBackupUploadGate } from '../sync/AlbumBackupUploadPolicy';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSheet';
@@ -60,6 +64,11 @@ export function runAutoSyncInBackground(
         callbacks.toast('没有需要同步的照片');
         return;
       }
+      const gate = await evaluateAlbumBackupUploadGate();
+      if (!gate.allowed) {
+        callbacks.toast(gate.reason.length > 0 ? gate.reason : '当前无法备份');
+        return;
+      }
       if (FnTransferQueueStore.hasRunning()) {
         callbacks.toast('已有任务进行中');
         return;
@@ -70,10 +79,13 @@ export function runAutoSyncInBackground(
       let ok = 0;
       let failMsg = '';
       const stored = AppSession.getStored();
-      const albumDirHint =
-        stored !== null && stored.albumParentGuid.trim().length > 0
-          ? stored.albumParentGuid.trim()
-          : undefined;
+      const backupPrefs = getAlbumBackupSettingsCached();
+      let albumDirHint: string | undefined = undefined;
+      if (backupPrefs.deviceBackupPath.trim().length > 0) {
+        albumDirHint = backupPrefs.deviceBackupPath.trim();
+      } else if (stored !== null && stored.albumParentGuid.trim().length > 0) {
+        albumDirHint = stored.albumParentGuid.trim();
+      }
 
       try {
         await BackgroundKeepAliveController.withDataTransfer(ctx, 'auto-sync', async (): Promise<void> => {
@@ -100,6 +112,16 @@ export function runAutoSyncInBackground(
                     put.mtimeMs = photo.sourceMtimeMs;
                     put.role = photo.role;
                     await GalleryAutoSyncLedger.remember(ctx, put);
+                    const seen: LocalPhotoEntry = {
+                      uri: photo.sourceUri,
+                      fileName: photo.fileName,
+                      fileSize: photo.sourceSize,
+                      dateModifiedMs: photo.sourceMtimeMs,
+                      mimeType: '',
+                      photoSubtype: 0
+                    };
+                    const seenBatch: LocalPhotoEntry[] = [seen];
+                    await GalleryAutoSyncLocalSeen.remember(ctx, seenBatch);
                     GalleryAutoSyncStore.markPieceSynced(photo.sourceUri, photo.role);
                   } else if (failMsg.length === 0) {
                     failMsg = res.message ?? '同步失败';

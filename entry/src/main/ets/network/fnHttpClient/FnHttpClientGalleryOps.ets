@@ -7,6 +7,7 @@ import { FnHttpClientFolderOps } from './FnHttpClientFolderOps';
 import { FnHttpClientAlbumMetaOps } from './FnHttpClientAlbumMetaOps';
 import { FnHttpClientRecycleOps } from './FnHttpClientRecycleOps';
 import { FnHttpClientRepeatOps } from './FnHttpClientRepeatOps';
+import { FnHttpClientPhotoBackupOps } from './FnHttpClientPhotoBackupOps';
 import {
   AiPersonData,
   AiPersonDetailData,
@@ -25,6 +26,7 @@ import {
   MediaCategoryData,
   MediaCategoryItem,
   PersonInPhotoData,
+  PhotoBackupPathInfo,
   PhotoFolderListData,
   RecycleBinListData,
   RepeatPhotoGroup,
@@ -53,6 +55,7 @@ export class FnHttpClientGalleryOps {
   private readonly albumMeta: FnHttpClientAlbumMetaOps;
   private readonly recycle: FnHttpClientRecycleOps;
   private readonly repeat: FnHttpClientRepeatOps;
+  private readonly photoBackup: FnHttpClientPhotoBackupOps;
 
   constructor(host: FnHttpClientGalleryHost) {
     this.media = new FnHttpClientMediaAssetOps(host);
@@ -63,6 +66,7 @@ export class FnHttpClientGalleryOps {
     this.albumMeta = new FnHttpClientAlbumMetaOps(host);
     this.recycle = new FnHttpClientRecycleOps(host);
     this.repeat = new FnHttpClientRepeatOps(host);
+    this.photoBackup = new FnHttpClientPhotoBackupOps(host);
   }
 
   static clearAssetBufferCache(): void {
@@ -450,5 +454,56 @@ export class FnHttpClientGalleryOps {
 
   async mergeRepeatPhotos(groupId: string, timeoutMs: number = 30000): Promise<FnClientResult<RepeatPhotoMergeData>> {
     return this.repeat.mergeRepeatPhotos(groupId, timeoutMs);
+  }
+
+  async postPhotoFolderList(timeoutMs: number = 20000): Promise<FnClientResult<PhotoFolderListData>> {
+    return this.photoBackup.postPhotoFolderList(timeoutMs);
+  }
+
+  async addPhotoBackupFolder(
+    deviceId: string,
+    folderPath: string,
+    timeoutMs: number = 20000,
+    deviceName: string = ''
+  ): Promise<FnClientResult<Object>> {
+    return this.photoBackup.addPhotoFolder(deviceId, folderPath, timeoutMs, deviceName);
+  }
+
+  async initDefaultPhotoBackupFolder(
+    deviceId: string,
+    timeoutMs: number = 20000,
+    deviceName: string = ''
+  ): Promise<FnClientResult<Object>> {
+    return this.photoBackup.initDefaultPhotoFolder(deviceId, timeoutMs, deviceName);
+  }
+
+  async fetchPhotoBackupPathV1(
+    deviceId: string,
+    deviceName: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<PhotoBackupPathInfo>> {
+    return this.photoBackup.fetchBackupPathV1(deviceId, deviceName, timeoutMs);
+  }
+
+  async fetchPhotoBackupPathV2(
+    deviceId: string,
+    timeoutMs: number = 20000,
+    deviceName: string = ''
+  ): Promise<FnClientResult<PhotoBackupPathInfo>> {
+    return this.photoBackup.fetchBackupPathV2(deviceId, timeoutMs, deviceName);
+  }
+
+  async listPhotoBackupDeviceFolders(deviceId: string, timeoutMs: number = 20000): Promise<FnClientResult<string[]>> {
+    return this.photoBackup.listBackupDeviceFolders(deviceId, timeoutMs);
+  }
+
+  async mergePhotoBackupDeviceFolders(
+    deviceId: string,
+    deviceName: string,
+    deviceBackupPath: string,
+    folders: string[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<Object>> {
+    return this.photoBackup.mergeBackupDeviceFolders(deviceId, deviceName, deviceBackupPath, folders, timeoutMs);
   }
 }

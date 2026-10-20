@@ -58,6 +58,7 @@ import {
   MediaCategoryData,
   MediaCategoryItem,
   PersonInPhotoData,
+  PhotoBackupPathInfo,
   PhotoFolderListData,
   RecycleBinListData,
   RepeatPhotoGroup,
@@ -1143,6 +1144,57 @@ export class FnHttpClient {
     orderBy: number = 2
   ): Promise<FnClientResult<PhotoFolderListData>> {
     return this.galleryOps.getPhotoFolderList(timeoutMs, folderPath, desc, orderBy);
+  }
+
+  async postPhotoFolderList(timeoutMs: number = 20000): Promise<FnClientResult<PhotoFolderListData>> {
+    return this.galleryOps.postPhotoFolderList(timeoutMs);
+  }
+
+  async addPhotoBackupFolder(
+    deviceId: string,
+    folderPath: string,
+    timeoutMs: number = 20000,
+    deviceName: string = ''
+  ): Promise<FnClientResult<Object>> {
+    return this.galleryOps.addPhotoBackupFolder(deviceId, folderPath, timeoutMs, deviceName);
+  }
+
+  async initDefaultPhotoBackupFolder(
+    deviceId: string,
+    timeoutMs: number = 20000,
+    deviceName: string = ''
+  ): Promise<FnClientResult<Object>> {
+    return this.galleryOps.initDefaultPhotoBackupFolder(deviceId, timeoutMs, deviceName);
+  }
+
+  async fetchPhotoBackupPathV1(
+    deviceId: string,
+    deviceName: string,
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<PhotoBackupPathInfo>> {
+    return this.galleryOps.fetchPhotoBackupPathV1(deviceId, deviceName, timeoutMs);
+  }
+
+  async fetchPhotoBackupPathV2(
+    deviceId: string,
+    timeoutMs: number = 20000,
+    deviceName: string = ''
+  ): Promise<FnClientResult<PhotoBackupPathInfo>> {
+    return this.galleryOps.fetchPhotoBackupPathV2(deviceId, timeoutMs, deviceName);
+  }
+
+  async listPhotoBackupDeviceFolders(deviceId: string, timeoutMs: number = 20000): Promise<FnClientResult<string[]>> {
+    return this.galleryOps.listPhotoBackupDeviceFolders(deviceId, timeoutMs);
+  }
+
+  async mergePhotoBackupDeviceFolders(
+    deviceId: string,
+    deviceName: string,
+    deviceBackupPath: string,
+    folders: string[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<Object>> {
+    return this.galleryOps.mergePhotoBackupDeviceFolders(deviceId, deviceName, deviceBackupPath, folders, timeoutMs);
   }
 
   async getFolderViewCover(

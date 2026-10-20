@@ -1,6 +1,8 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagRecord } from '../../common/FnDiagLog';
+import { AppSession } from '../../auth/AppSession';
+import { getAlbumBackupSettingsCached } from '../../sync/AlbumBackupSettings';
 import { fileIo } from '@kit.CoreFileKit';
 import { taskpool } from '@kit.ArkTS';
 import { CertPolicy } from '../CertPolicy';
@@ -519,6 +521,25 @@ export class FnHttpClientUploadOps {
    * GET /p/api/v2 或 v1 /photo/upload/path（不同 NAS 版本只实现其一）。
    * 返回可用的路径提示（若服务端未返回则为空串，不阻断上传）。
    */
+  private static appendAlbumBackupPolicyJsonFields(bodyJson: string): string {
+    const trimmed = bodyJson.trim();
+    if (trimmed.length < 2 || !trimmed.endsWith('}')) {
+      return bodyJson;
+    }
+    const s = getAlbumBackupSettingsCached();
+    const inner = trimmed.substring(0, trimmed.length - 1);
+    const comma = inner.endsWith('{') ? '' : ',';
+    let extra =
+      `${comma}"folder_manage_mode":${s.folderManageMode},"rename_strategy":${s.renameStrategy}`;
+    if (s.syncCreateAlbum && AppSession.getStored() !== null) {
+      const guid = AppSession.getStored()?.albumParentGuid?.trim() ?? '';
+      if (guid.length > 0) {
+        extra += `,"album_id":"${escapeJsonString(guid)}"`;
+      }
+    }
+    return `${inner}${extra}}`;
+  }
+
   private async requestUploadPathHint(fileName: string, timeoutMs: number): Promise<string> {
     const activeBase = fnWebViewBaseUrl(this.baseUrl);
     const cookie = mergeGalleryWebCookieIntoNativeHeader(
@@ -529,11 +550,17 @@ export class FnHttpClientUploadOps {
       '/p/api/v2/photo/upload/path',
       `${FN_PHOTO_API_PREFIX}/photo/upload/path`
     ];
+    const backup = getAlbumBackupSettingsCached();
     const paramsCandidates: Array<Record<string, string | number | boolean>> = [
       GALLERY_QUERY_EMPTY,
       { 'name': fileName },
       { 'fileName': fileName },
-      { 'filename': fileName }
+      { 'filename': fileName },
+      {
+        'name': fileName,
+        'folder_manage_mode': backup.folderManageMode,
+        'rename_strategy': backup.renameStrategy
+      }
     ];
     for (let pi = 0; pi < pathBases.length; pi++) {
       const path = pathBases[pi];
@@ -644,8 +671,9 @@ export class FnHttpClientUploadOps {
     const escName = escapeJsonString(fileName);
     const bodyCandidates: string[] = [];
     const pushCandidate = (v: string): void => {
-      if (bodyCandidates.indexOf(v) < 0) {
-        bodyCandidates.push(v);
+      const withPolicy = FnHttpClientUploadOps.appendAlbumBackupPolicyJsonFields(v);
+      if (bodyCandidates.indexOf(withPolicy) < 0) {
+        bodyCandidates.push(withPolicy);
       }
     };
     // 服务端要求 files 非空，并且要能对上刚才 /upload 落到磁盘的那份文件。

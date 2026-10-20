@@ -11,7 +11,10 @@ import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { FnTransferDirection } from '../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { GalleryAutoSyncLocalSeen } from './GalleryAutoSyncLocalSeen';
 import { LocalPhotoScanProgress, queryLocalPhotos, LocalPhotoEntry } from './GalleryAutoSyncService';
+import { getAlbumBackupSettingsCached } from '../sync/AlbumBackupSettings';
+import { isLikelyVideoFileName } from '../sync/AlbumBackupUploadPolicy';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
@@ -158,7 +161,28 @@ export class GalleryAutoSyncStore {
     let scanOk = false;
     let scanMessage = '扫描失败';
     try {
-      const localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
+      let localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
+      if (getAlbumBackupSettingsCached().photosOnly) {
+        localPhotos = localPhotos.filter((p: LocalPhotoEntry): boolean => !isLikelyVideoFileName(p.fileName));
+      }
+      const seenDiff = await GalleryAutoSyncLocalSeen.diff(ctx, localPhotos);
+      if (seenDiff.freshBaseline) {
+        GalleryAutoSyncStore.lastResult = {
+          unsynced: [],
+          detectedAt: now,
+          skippedOnNas: 0,
+          skippedInLedger: 0,
+          compareFailed: 0,
+          unreadable: 0
+        };
+        GalleryAutoSyncStore.lastDetectTime = now;
+        scanOk = true;
+        scanMessage = seenDiff.baselineCount > 0
+          ? `已记录本机现有 ${seenDiff.baselineCount} 项，之后新增的才会和 NAS 对比`
+          : '本机相册没有可同步的项目';
+        return GalleryAutoSyncStore.lastResult;
+      }
+      const addedPhotos = seenDiff.added;
       if (localPhotos.length === 0) {
         GalleryAutoSyncStore.lastResult = {
           unsynced: [],
@@ -173,9 +197,37 @@ export class GalleryAutoSyncStore {
         scanMessage = '本机相册没有可同步的项目';
         return GalleryAutoSyncStore.lastResult;
       }
+      if (addedPhotos.length === 0) {
+        if (GalleryAutoSyncStore.lastResult === null) {
+          GalleryAutoSyncStore.lastResult = {
+            unsynced: [],
+            detectedAt: now,
+            skippedOnNas: 0,
+            skippedInLedger: 0,
+            compareFailed: 0,
+            unreadable: 0
+          };
+        }
+        GalleryAutoSyncStore.lastDetectTime = now;
+        scanOk = true;
+        scanMessage = '没有新增照片';
+        return GalleryAutoSyncStore.lastResult;
+      }
 
+      FnTransferQueueStore.update(taskId, 0, `本机新增 ${addedPhotos.length} 项，正在和 NAS 对比`, addedPhotos.length);
       const progress = new CompareQueueProgress(taskId);
-      const compared = await compareLocalWithBackup(ctx, client, localPhotos, progress);
+      const compared = await compareLocalWithBackup(ctx, client, addedPhotos, progress);
+      const confirmed: LocalPhotoEntry[] = [];
+      const pendingUris = new Set<string>();
+      for (let i = 0; i < compared.pieces.length; i++) {
+        pendingUris.add(compared.pieces[i].sourceUri);
+      }
+      for (let i = 0; i < addedPhotos.length; i++) {
+        if (!pendingUris.has(addedPhotos[i].uri)) {
+          confirmed.push(addedPhotos[i]);
+        }
+      }
+      await GalleryAutoSyncLocalSeen.remember(ctx, confirmed);
       const filtered: AutoSyncResult = {
         unsynced: compared.pieces,
         detectedAt: Date.now(),
@@ -197,8 +249,9 @@ export class GalleryAutoSyncStore {
       hilog.info(
         DOMAIN,
         TAG,
-        'detectUnsynced local=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d failed=%{public}d unreadable=%{public}d',
+        'detectUnsynced local=%{public}d added=%{public}d unsynced=%{public}d skipNas=%{public}d skipLedger=%{public}d failed=%{public}d unreadable=%{public}d',
         localPhotos.length,
+        addedPhotos.length,
         filtered.unsynced.length,
         filtered.skippedOnNas,
         filtered.skippedInLedger,

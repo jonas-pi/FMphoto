@@ -34,7 +34,7 @@
     },
     {
       "name": "hint_server",
-      "value": "IP/域名或完整 URL；未写端口时域名默认 HTTP:80、HTTPS:443，内网 IP 默认 HTTP:5666、HTTPS:5667；IPv6 建议 [fe80::1] 或 [fe80::1]:端口"
+      "value": "IP/域名或完整 URL。未写端口时不追加端口；飞牛本机端口请写在地址后面，如 example.com:5667"
     },
     {
       "name": "use_https",
@@ -399,6 +399,118 @@
     {
       "name": "config_sync_entry_subtitle",
       "value": "二维码或 WebDAV 同步智能分类"
+    },
+    {
+      "name": "album_backup_entry_title",
+      "value": "同步设置"
+    },
+    {
+      "name": "album_backup_entry_subtitle",
+      "value": "备份位置、目录偏好与上传策略"
+    },
+    {
+      "name": "album_backup_title",
+      "value": "备份设置"
+    },
+    {
+      "name": "album_backup_location_hint",
+      "value": "点击选择 NAS 上的备份目录"
+    },
+    {
+      "name": "album_backup_source_title",
+      "value": "备份源"
+    },
+    {
+      "name": "album_backup_folder_mode_title",
+      "value": "备份目录偏好"
+    },
+    {
+      "name": "album_backup_other_section",
+      "value": "其他备份设置"
+    },
+    {
+      "name": "album_backup_photos_only_title",
+      "value": "仅备份照片"
+    },
+    {
+      "name": "album_backup_photos_only_sub",
+      "value": "仅备份照片，不备份视频"
+    },
+    {
+      "name": "album_backup_cellular_title",
+      "value": "使用流量备份"
+    },
+    {
+      "name": "album_backup_cellular_sub",
+      "value": "将消耗手机流量，建议流量充足时开启"
+    },
+    {
+      "name": "album_backup_low_battery_title",
+      "value": "节能备份"
+    },
+    {
+      "name": "album_backup_low_battery_sub",
+      "value": "电量低于15%停止备份"
+    },
+    {
+      "name": "album_backup_sync_album_title",
+      "value": "同步创建相册"
+    },
+    {
+      "name": "album_backup_sync_album_sub",
+      "value": "上传、备份时同步创建相册（notice album_id，待相册 ID 对接）"
+    },
+    {
+      "name": "album_backup_rename_title",
+      "value": "按拍摄日期重命名"
+    },
+    {
+      "name": "album_backup_rename_sub",
+      "value": "上传时按拍摄日期重命名（rename_strategy）"
+    },
+    {
+      "name": "album_backup_pick_folder_title",
+      "value": "选择备份位置"
+    },
+    {
+      "name": "album_backup_confirm",
+      "value": "确定"
+    },
+    {
+      "name": "album_backup_refresh_nas",
+      "value": "从 NAS 刷新备份信息"
+    },
+    {
+      "name": "album_backup_source_hint",
+      "value": "请选择要备份到飞牛 NAS 的文件夹，以下为设备中有照片或视频的文件夹"
+    },
+    {
+      "name": "album_backup_camera_section",
+      "value": "相机"
+    },
+    {
+      "name": "album_backup_camera_only",
+      "value": "仅相机"
+    },
+    {
+      "name": "album_backup_other_folders_section",
+      "value": "其他文件夹"
+    },
+    {
+      "name": "album_backup_deselect_all",
+      "value": "全不选"
+    },
+    {
+      "name": "album_backup_select_all",
+      "value": "全选"
+    },
+    {
+      "name": "album_backup_grant_permission",
+      "value": "授权访问相册"
+    },
+    {
+      "name": "album_backup_open_settings",
+      "value": "去系统设置"
     },
     {
       "name": "diag_log_entry_title",

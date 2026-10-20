@@ -15,6 +15,7 @@
     "pages/RepeatPhotoPage",
     "pages/FolderBrowsePage",
     "pages/Settings",
+    "pages/AlbumBackupSyncPage",
     "pages/FeedbackPage"
   ]
 }

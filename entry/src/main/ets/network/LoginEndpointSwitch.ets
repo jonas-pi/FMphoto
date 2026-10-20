@@ -27,7 +27,7 @@ import { isFnRelayBaseUrl as isFnRelayBaseUrlImpl, normalizeFnRelayBaseUrl } fro
 import {
   fnWebViewBaseUrl,
   isIpLiteralHost,
-  normalizeServerUrl,
+  normalizeUserServerUrl,
   parseNormalizedBaseUrl
 } from './ServerUrl';
 
@@ -214,8 +214,8 @@ export function resolveStoredEndpointUrls(stored: StoredSession): StoredEndpoint
   if (publicDomainUrl.length === 0 && publicIpv4Url.length === 0 && publicUrl.length === 0 &&
     lanIpv4Url.length === 0 && lanIpv6Url.length === 0 && publicIpv6Url.length === 0 &&
     relayUrl.length === 0) {
-    const fromDomain = normalizeServerUrl(stored.domainInput, stored.useHttps);
-    const fromLan = normalizeServerUrl(stored.lanInput, stored.useHttps);
+    const fromDomain = normalizeUserServerUrl(stored.domainInput, stored.useHttps);
+    const fromLan = normalizeUserServerUrl(stored.lanInput, stored.useHttps);
     if (fromDomain.length > 0) {
       if (isFnRelayBaseUrl(fromDomain)) {
         relayUrl = fromDomain;

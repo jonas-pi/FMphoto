@@ -438,6 +438,13 @@ export interface PhotoFolderListData {
   items?: PhotoFolderListItem[];
 }
 
+/** POST /p/api/v1|v2/photo/backup/path 返回 data */
+export class PhotoBackupPathInfo {
+  displayPath: string = '';
+  deviceBackupPath: string = '';
+  folderPath: string = '';
+}
+
 /** POST /p/api/v1/folder_view/cover 单项，字段随版本宽松兼容 */
 export interface FolderViewCoverItem {
   id?: string | number;

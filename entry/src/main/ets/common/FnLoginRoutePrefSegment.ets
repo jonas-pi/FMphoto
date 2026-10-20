@@ -116,11 +116,17 @@ export struct FnLoginRoutePrefSegment {
     return localX >= left && localX <= right;
   }
 
-  /** 拖动才需要手指坐标。自动化点击没有 fingerList，读 length 会崩，拖动直接不开始。 */
+  /** 拖动才需要手指坐标。无 fingerList、空洞数组或多指时 [0] 可能为 undefined，读 localX 会崩。 */
   private eventLocalX(event: GestureEvent): number {
     const fingers = event.fingerList;
-    if (fingers !== undefined && fingers.length > 0 && Number.isFinite(fingers[0].localX)) {
-      return fingers[0].localX;
+    if (fingers === undefined || fingers.length === 0) {
+      return Number.NaN;
+    }
+    for (let i = 0; i < fingers.length; i++) {
+      const finger = fingers[i];
+      if (finger !== undefined && Number.isFinite(finger.localX)) {
+        return finger.localX;
+      }
     }
     return Number.NaN;
   }

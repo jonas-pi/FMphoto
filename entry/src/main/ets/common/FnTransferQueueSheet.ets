@@ -1,3 +1,18 @@
+import {
+  HdsNavigation,
+  HdsNavigationBackButtonItemOptions,
+  HdsNavigationIconOptions,
+  HdsNavigationMenuItemOptions,
+  HdsNavigationTitleBarOptions,
+  HdsNavigationTitleMode,
+  IconStyleMode,
+  TitleBarContentOptions
+} from '@kit.UIDesignKit';
+import { FN_HDS_NAV_CHROME_HEIGHT_VP, fnHdsMiniTitleBarOptions } from './FnUiCommon';
+import {
+  fnCanUseHdsImmersive,
+  FN_IMMERSIVE_LIGHT_STORAGE_KEY
+} from './FnImmersiveSettings';
 import { FnTransferDirection } from './FnTransferProgress';
 import { fnResolvedCardFill, FN_RESOLVED_ACCENT_KEY, FN_RESOLVED_CARD_BG_KEY,
   fnResolvedTextPrimary,
@@ -11,8 +26,7 @@ import {
 } from './FnTransferQueueStore';
 
 /**
- * 任务队列半屏内容区。
- * 标题与关闭按钮由 bindSheet 的 title / showClose 官方能力提供。
+ * 任务队列半屏。顶栏按钮与设置 / 图库同一套 HdsNavigation 圆形菜单。
  */
 @Component
 export struct FnTransferQueueSheet {
@@ -20,7 +34,9 @@ export struct FnTransferQueueSheet {
   @StorageProp(FN_RESOLVED_TEXT_SECONDARY_KEY) private themeTextSecondary: string = '';
   @StorageProp(FN_RESOLVED_ACCENT_KEY) private accent: string = '#FF4A8BFF';
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
+  @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @Prop tasks: FnTransferTaskSnapshot[] = [];
+  onClose: () => void = (): void => {};
 
   private completedTaskCount(): number {
     let n = 0;
@@ -41,6 +57,59 @@ export struct FnTransferQueueSheet {
       return;
     }
     FnTransferQueueStore.clearCompleted();
+  }
+
+  private canUseHds(): boolean {
+    return fnCanUseHdsImmersive(this.immersiveLightEnabled);
+  }
+
+  private menuItem(content: HdsNavigationIconOptions): HdsNavigationMenuItemOptions {
+    const item: HdsNavigationMenuItemOptions = { content: content };
+    return item;
+  }
+
+  private titleBarContent(): TitleBarContentOptions {
+    const clearContent: HdsNavigationIconOptions = {
+      label: '清除已完成',
+      icon: $r('sys.symbol.trash'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: this.canClearCompleted(),
+      action: (): void => {
+        this.onClearCompleted();
+      }
+    };
+    const closeContent: HdsNavigationIconOptions = {
+      label: '关闭',
+      icon: $r('sys.symbol.xmark'),
+      type: IconStyleMode.NORMAL,
+      isEnabled: true,
+      action: (): void => {
+        this.onClose();
+      }
+    };
+    const backIcon: HdsNavigationBackButtonItemOptions = {
+      label: '返回',
+      isEnabled: false,
+      action: (): void => {
+      }
+    };
+    return {
+      title: { mainTitle: '任务队列' },
+      menu: { value: [this.menuItem(clearContent), this.menuItem(closeContent)] },
+      backIcon: backIcon
+    };
+  }
+
+  private titleBarOptions(): HdsNavigationTitleBarOptions {
+    return fnHdsMiniTitleBarOptions(this.canUseHds(), this.titleBarContent(), false,
+      fnResolvedTextPrimary(this.themeTextPrimary), fnResolvedTextSecondary(this.themeTextSecondary));
+  }
+
+  @Builder
+  private titleBarNavigationBody() {
+    Column()
+      .width('100%')
+      .height(0)
   }
 
   private directionColor(direction: FnTransferDirection): ResourceColor {
@@ -182,6 +251,17 @@ export struct FnTransferQueueSheet {
 
   build() {
     Column({ space: 0 }) {
+      HdsNavigation() {
+        this.titleBarNavigationBody()
+      }
+      .width('100%')
+      .height(FN_HDS_NAV_CHROME_HEIGHT_VP)
+      .mode(NavigationMode.Stack)
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .hideBackButton(true)
+      .titleBar(this.titleBarOptions())
+      .hitTestBehavior(HitTestMode.Default)
+
       if (this.tasks.length === 0) {
         Column({ space: 8 }) {
           Text('暂无任务')
@@ -214,22 +294,6 @@ export struct FnTransferQueueSheet {
           scrollForward: NestedScrollMode.PARENT_FIRST,
           scrollBackward: NestedScrollMode.SELF_FIRST
         })
-
-        Row() {
-          Text('清除已完成')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.canClearCompleted() ? this.accent : fnResolvedTextSecondary(this.themeTextSecondary))
-            .opacity(this.canClearCompleted() ? 1 : 0.45)
-            .width('100%')
-            .textAlign(TextAlign.Center)
-            .padding({ top: 12, bottom: 16 })
-            .onClick((): void => {
-              this.onClearCompleted();
-            })
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16 })
       }
     }
     .width('100%')
