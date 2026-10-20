@@ -9,7 +9,9 @@ import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { taskpool } from '@kit.ArkTS';
 import { contentFingerprintOf } from './GalleryContentHash';
 import { assembleLiveFile, fileHasEmbeddedLiveVideo } from './GalleryLiveSyncIo';
-import { exportLocalMovingPhotoPair } from './livephoto/LivePhotoUpload';
+import { FnClientResult } from '../model/FnApiTypes';
+import { FnHttpClient } from '../network/FnHttpClient';
+import { exportLocalMovingPhotoPair, localMovingPhotoDisplayName } from './livephoto/LivePhotoUpload';
 
 let liveFileSeq: number = 1;
 
@@ -27,6 +29,20 @@ async function deleteQuiet(path: string): Promise<void> {
   }
   try {
     await fileIo.unlink(path);
+  } catch (_e) {
+  }
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  if (slash <= 0) {
+    return;
+  }
+  const parent = path.substring(0, slash);
+  const parentSlash = Math.max(parent.lastIndexOf('/'), parent.lastIndexOf('\\'));
+  const parentName = parentSlash >= 0 ? parent.substring(parentSlash + 1) : parent;
+  if (!parentName.startsWith('liveup')) {
+    return;
+  }
+  try {
+    fileIo.rmdirSync(parent);
   } catch (_e) {
   }
 }
@@ -62,7 +78,8 @@ function assembleLiveConcurrent(imagePath: string, videoPath: string, outPath: s
 export async function prepareLiveSyncPayload(
   ctx: common.UIAbilityContext,
   sourceUri: string,
-  fileName: string
+  fileName: string,
+  keepDisplayName: boolean = false
 ): Promise<LiveSyncPayload | null> {
   let embedded = false;
   try {
@@ -84,8 +101,19 @@ export async function prepareLiveSyncPayload(
   if (pair === undefined) {
     return null;
   }
-  const outPath = `${ctx.cacheDir}/sync${liveFileSeq}_${safeFileName(fileName)}`;
-  liveFileSeq++;
+  let outPath = '';
+  if (keepDisplayName) {
+    const dir = `${ctx.cacheDir}/liveup${liveFileSeq}`;
+    liveFileSeq++;
+    try {
+      fileIo.mkdirSync(dir);
+    } catch (_e) {
+    }
+    outPath = `${dir}/${safeFileName(fileName)}`;
+  } else {
+    outPath = `${ctx.cacheDir}/sync${liveFileSeq}_${safeFileName(fileName)}`;
+    liveFileSeq++;
+  }
   try {
     let wrote = false;
     try {
@@ -115,4 +143,30 @@ export async function prepareLiveSyncPayload(
 
 export async function deleteOwnedLivePayload(path: string): Promise<void> {
   await deleteQuiet(path);
+}
+
+/**
+ * 手动上传：实况合成一份带短视频的文件再传。合成失败不改传封面。
+ * 普通文件直接上传。
+ */
+export async function uploadLocalMediaUri(
+  client: FnHttpClient,
+  context: common.UIAbilityContext,
+  uri: string,
+  timeoutMs: number,
+  albumDirHint?: string
+): Promise<FnClientResult<Object>> {
+  const movingName = await localMovingPhotoDisplayName(context, uri);
+  if (movingName === undefined) {
+    return client.uploadPhotoByUri(uri, timeoutMs, albumDirHint);
+  }
+  const payload = await prepareLiveSyncPayload(context, uri, movingName, true);
+  if (payload === null) {
+    return { success: false, message: '实况照片导出失败' };
+  }
+  try {
+    return await client.uploadPhotoByUri(payload.uploadUri, timeoutMs, albumDirHint);
+  } finally {
+    await deleteOwnedLivePayload(payload.ownedPath);
+  }
 }

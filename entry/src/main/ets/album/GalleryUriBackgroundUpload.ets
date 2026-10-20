@@ -9,7 +9,7 @@ import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { fileNameFromPickerUri } from './GalleryAutoSyncPicker';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
-import { uploadUriMaybeMovingPhoto } from './livephoto/LivePhotoUpload';
+import { uploadLocalMediaUri } from './GalleryLiveSyncPayload';
 
 export type GalleryUriUploadToast = (msg: string) => void;
 export type GalleryUriUploadOnSuccess = () => void;
@@ -47,7 +47,7 @@ export function galleryStartUriListUpload(
         for (let i = 0; i < uris.length; i++) {
           const uri = uris[i];
           FnTransferQueueStore.update(taskId, i + 1, fileNameFromPickerUri(uri));
-          const res = await uploadUriMaybeMovingPhoto(client, ctx, uri, 150000, albumDirHint);
+          const res = await uploadLocalMediaUri(client, ctx, uri, 150000, albumDirHint);
           if (res.success) {
             ok++;
             GalleryAutoSyncStore.markSynced([uri]);

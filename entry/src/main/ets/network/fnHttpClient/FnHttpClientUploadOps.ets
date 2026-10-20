@@ -7,7 +7,8 @@ import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, genFnGalleryAuthxGet, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX, FN_PHOTO_API_V2_PREFIX, FN_PHOTO_H5_ALBUM_PAGE } from '../FnPhotoRoutes';
 import { fnWebDefaultUserAgent, mergeGalleryWebCookieIntoNativeHeader } from '../FnWebCookies';
-import { fnWebViewBaseUrl } from '../ServerUrl';
+import { isFnRelayBaseUrl } from '../FnConnectApi';
+import { fnWebUiBaseUrl, fnWebViewBaseUrl } from '../ServerUrl';
 import { buildFnApiCookieHeader, buildUploadCookieHeader, stripUploadForbiddenCookieKeys } from './FnHttpClientCookie';
 import {
   DOMAIN,
@@ -91,6 +92,8 @@ export class BackupFileHashQuery {
 }
 
 export class FnHttpClientUploadOps {
+  /** 入库通知串行。四路上传同时 notice 时飞牛会回 system busy。 */
+  private static noticeTail: Promise<void> = Promise.resolve();
   private readonly host: FnHttpClientUploadHost;
 
   constructor(host: FnHttpClientUploadHost) {
@@ -343,6 +346,76 @@ export class FnHttpClientUploadOps {
       text.indexOf('重复') >= 0 || text.indexOf('已存在') >= 0 || text.indexOf('已上传') >= 0;
   }
 
+  private static appendUploadOrigin(list: string[], raw: string): void {
+    let u = raw.trim();
+    if (u.length > 1 && u.endsWith('/')) {
+      u = u.substring(0, u.length - 1);
+    }
+    if (u.length === 0 || isFnRelayBaseUrl(u) || list.indexOf(u) >= 0) {
+      return;
+    }
+    list.push(u);
+  }
+
+  /**
+   * 当前会话在前。走飞牛中继时先打中继，Cookie 带 mode=relay，由中继把 /upload 转到 NAS。
+   * 本机地址只在中继上传失败后才试。
+   */
+  private collectUploadOrigins(webHttpsBase: string, sessionNorm: string): string[] {
+    const list: string[] = [];
+    if (isFnRelayBaseUrl(sessionNorm) && sessionNorm.length > 0) {
+      list.push(sessionNorm);
+    } else {
+      FnHttpClientUploadOps.appendUploadOrigin(list, webHttpsBase);
+      FnHttpClientUploadOps.appendUploadOrigin(list, sessionNorm);
+      FnHttpClientUploadOps.appendUploadOrigin(list, fnWebUiBaseUrl(sessionNorm, false));
+    }
+    const directs = this.host.getDirectUploadBases();
+    for (let i = 0; i < directs.length; i++) {
+      const one = directs[i];
+      if (isFnRelayBaseUrl(one)) {
+        continue;
+      }
+      FnHttpClientUploadOps.appendUploadOrigin(list, fnWebUiBaseUrl(one, false));
+      FnHttpClientUploadOps.appendUploadOrigin(list, one);
+      FnHttpClientUploadOps.appendUploadOrigin(list, fnWebViewBaseUrl(one));
+    }
+    return list;
+  }
+
+  /** /upload 打到网页入口时会回相册首页 HTML，不能当成文件已经落盘。 */
+  private static uploadBodyLooksLikeSpa(body: string): boolean {
+    const head = body.trimStart().substring(0, 64).toLowerCase();
+    return head.startsWith('<!doctype') || head.startsWith('<html');
+  }
+
+  /** 飞牛相册入库锁被占用时的文案。这时换请求体没有用，只能等锁放开再发同一份。 */
+  private static isBusyNoticeMessage(msg: string): boolean {
+    const text = msg.trim().toLowerCase();
+    if (text.length === 0) {
+      return false;
+    }
+    return text.indexOf('system busy') >= 0 || text.indexOf('busy') >= 0 || text.indexOf('系统繁忙') >= 0;
+  }
+
+  private static enqueueNotice(job: () => Promise<UploadNoticeResult>): Promise<UploadNoticeResult> {
+    const prev = FnHttpClientUploadOps.noticeTail;
+    let done: (result: UploadNoticeResult) => void = (_result: UploadNoticeResult): void => {};
+    const gate = new Promise<UploadNoticeResult>((resolve: (result: UploadNoticeResult) => void) => {
+      done = resolve;
+    });
+    const run = (): Promise<void> => {
+      return job().then((result: UploadNoticeResult): void => {
+        done(result);
+      }, (): void => {
+        const fail: UploadNoticeResult = { ok: false, message: '入库通知失败' };
+        done(fail);
+      });
+    };
+    FnHttpClientUploadOps.noticeTail = prev.then(run, run);
+    return gate;
+  }
+
   private static parseUploadExistFromBody(rawBody: string): PhotoUploadExistCheck {
     if (rawBody.length === 0) {
       return 'unknown';
@@ -429,11 +502,14 @@ export class FnHttpClientUploadOps {
         return failed;
       }
       const hits = FnHttpClientUploadOps.parseBackupFileHashHits(raw.body);
+      const preview = raw.body.length > 240 ? raw.body.substring(0, 240) : raw.body;
       if (hits === null) {
-        const preview = raw.body.length > 180 ? raw.body.substring(0, 180) : raw.body;
-        hilog.warn(DOMAIN, TAG, 'file_hash unreadable body=%{public}s', preview);
+        hilog.warn(DOMAIN, TAG, 'file_hash unreadable asked=%{public}d body=%{public}s', hashes.length, preview);
+        fnDiagRecord('W', TAG, `file_hash unreadable asked=${hashes.length} body=${preview}`);
         return failed;
       }
+      hilog.info(DOMAIN, TAG, 'file_hash asked=%{public}d hits=%{public}d body=%{public}s', hashes.length, hits.length, preview);
+      fnDiagRecord('I', TAG, `file_hash asked=${hashes.length} hits=${hits.length} body=${preview}`);
       const ok = new BackupFileHashQuery();
       ok.ok = true;
       ok.hits = hits;
@@ -680,7 +756,8 @@ export class FnHttpClientUploadOps {
     timeoutMs: number,
     pathHints: string[] = [],
     uploadMtimSec: string = '',
-    hintedFullPathPlain: string = ''
+    hintedFullPathPlain: string = '',
+    fileSize: number = 0
   ): Promise<UploadNoticeResult> {
     const activeBase = fnWebViewBaseUrl(this.baseUrl);
     const path = `${FN_PHOTO_API_PREFIX}/photo/upload/notice`;
@@ -689,101 +766,146 @@ export class FnHttpClientUploadOps {
       activeBase
     );
     const escName = escapeJsonString(fileName);
-    const escUri = escapeJsonString(sourceUri);
     const bodyCandidates: string[] = [];
     const pushCandidate = (v: string): void => {
       if (bodyCandidates.indexOf(v) < 0) {
         bodyCandidates.push(v);
       }
     };
-    // 与 Web 一致：files 数组 + file_create_time / original_name / file_name（优先尝试）
+    // 服务端要求 files 非空，并且要能对上刚才 /upload 落到磁盘的那份文件。
+    // 不带 files 的请求体只会得到 "files can not be empty"，不再发送。
     const mtimForNotice = uploadMtimSec.trim().length > 0 ? uploadMtimSec.trim() : String(Math.floor(Date.now() / 1000));
     const fc = FnHttpClientUploadOps.formatNoticeFileCreateTime(mtimForNotice);
     const seg = lastUnixPathSegment(hintedFullPathPlain);
     const escFileOnDisk = seg.length > 0 ? escapeJsonString(seg) : escName;
-    pushCandidate(`{"files":[{"file_create_time":"${fc}","original_name":"${escName}","file_name":"${escFileOnDisk}"}]}`);
-    pushCandidate(`{"files":[{"file_create_time":"${fc}","original_name":"${escName}","file_name":"${escName}"}]}`);
-    pushCandidate(`{"name":"${escName}"}`);
-    pushCandidate(`{"fileName":"${escName}"}`);
-    pushCandidate(`{"filename":"${escName}"}`);
-    pushCandidate(`{"uri":"${escUri}","name":"${escName}"}`);
-    pushCandidate(`{"items":[{"name":"${escName}"}]}`);
+    const sizeNum = Number.isFinite(fileSize) && fileSize > 0 ? Math.floor(fileSize) : 0;
+    const fullPath = hintedFullPathPlain.trim();
+    if (fullPath.length > 0) {
+      const escPath = escapeJsonString(fullPath);
+      pushCandidate(
+        `{"files":[{"path":"${escPath}","file":"${escPath}",` +
+        `"file_create_time":"${fc}","fileCreateTime":"${fc}",` +
+        `"original_name":"${escName}","originalName":"${escName}",` +
+        `"file_name":"${escFileOnDisk}","fileName":"${escFileOnDisk}",` +
+        `"file_size":${sizeNum},"fileSize":${sizeNum}}]}`
+      );
+      pushCandidate(`{"files":["${escPath}"]}`);
+    }
+    pushCandidate(
+      `{"files":[{"file_create_time":"${fc}","fileCreateTime":"${fc}",` +
+      `"original_name":"${escName}","originalName":"${escName}",` +
+      `"file_name":"${escFileOnDisk}","fileName":"${escFileOnDisk}",` +
+      `"file_size":${sizeNum},"fileSize":${sizeNum}}]}`
+    );
+    pushCandidate(
+      `{"files":[{"file_create_time":"${fc}","fileCreateTime":"${fc}",` +
+      `"original_name":"${escName}","originalName":"${escName}",` +
+      `"file_name":"${escName}","fileName":"${escName}",` +
+      `"file_size":${sizeNum},"fileSize":${sizeNum}}]}`
+    );
     for (let i = 0; i < pathHints.length; i++) {
       const p = pathHints[i].trim();
-      if (p.length === 0) {
+      if (p.length === 0 || p === fullPath) {
         continue;
       }
       const ep = escapeJsonString(p);
-      pushCandidate(`{"path":"${ep}"}`);
-      pushCandidate(`{"filePath":"${ep}"}`);
-      pushCandidate(`{"uploadPath":"${ep}"}`);
-      pushCandidate(`{"paths":["${ep}"]}`);
-      pushCandidate(`{"name":"${escName}","path":"${ep}"}`);
-      pushCandidate(`{"fileName":"${escName}","path":"${ep}"}`);
-      pushCandidate(`{"uri":"${escUri}","name":"${escName}","path":"${ep}"}`);
-      pushCandidate(`{"items":[{"name":"${escName}","path":"${ep}"}]}`);
+      pushCandidate(
+        `{"files":[{"path":"${ep}","file":"${ep}",` +
+        `"file_create_time":"${fc}","fileCreateTime":"${fc}",` +
+        `"original_name":"${escName}","originalName":"${escName}",` +
+        `"file_name":"${escFileOnDisk}","fileName":"${escFileOnDisk}",` +
+        `"file_size":${sizeNum},"fileSize":${sizeNum}}]}`
+      );
     }
     let lastMsg = '入库通知失败';
+    const busyWaits: number[] = [800, 1600, 3200, 4800];
     for (let i = 0; i < bodyCandidates.length; i++) {
-      try {
-        const bodyStr = bodyCandidates[i];
-        const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
-        const headers = this.buildGalleryFetchHeaders(authx, cookie);
-        headers['Content-Type'] = 'application/json';
-        const raw = await this.rawRequest(
-          `${activeBase}${path}`,
-          http.RequestMethod.POST,
-          headers,
-          bodyStr,
-          timeoutMs,
-          CertPolicy.isTrusted(activeBase)
-        );
-        if (raw.code < 200 || raw.code >= 300) {
-          lastMsg = `notice HTTP ${raw.code}`;
-          continue;
-        }
-        let parsed: Record<string, string | number | Object | undefined>;
+      const bodyStr = bodyCandidates[i];
+      let stopCandidates = false;
+      for (let attempt = 0; attempt <= busyWaits.length; attempt++) {
         try {
-          parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
-        } catch (_e) {
-          lastMsg = 'notice 响应解析失败';
-          continue;
-        }
-        if (!FnHttpClientUploadOps.galleryEnvelopeBizOk(parsed)) {
-          const em = FnHttpClientUploadOps.envelopeErrorLine(parsed);
-          lastMsg = em.length > 0 ? em : 'notice 业务失败';
-          continue;
-        }
-        // 对齐 upload.worker：code==0 但 list[0].error 非空也算失败。
-        const dataObj = parsed['data'];
-        if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
-          const dataRec = dataObj as Record<string, string | number | Object | undefined>;
-          const listObj = dataRec['list'];
-          if (Array.isArray(listObj) && listObj.length > 0) {
-            const typedArr = listObj as Array<Object>;
-            const first = typedArr[0];
-            if (first !== undefined && first !== null && typeof first === 'object' && !Array.isArray(first)) {
-              const fr = first as Record<string, string | number | Object | undefined>;
-              const errTxtRaw = fr['error'];
-              const errTxt = errTxtRaw !== undefined && errTxtRaw !== null ? String(errTxtRaw).trim() : '';
-              const errCodeRaw = fr['errorCode'];
-              const errCode = errCodeRaw !== undefined && Number.isFinite(Number(errCodeRaw))
-                ? Math.floor(Number(errCodeRaw))
-                : 0;
-              if (errTxt.length > 0 || errCode !== 0) {
-                if (FnHttpClientUploadOps.isDuplicateUploadMessage(errTxt)) {
-                  const dupRes: UploadNoticeResult = { ok: true, message: '已存在' };
-                  return dupRes;
+          const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+          const headers = this.buildGalleryFetchHeaders(authx, cookie);
+          headers['Content-Type'] = 'application/json';
+          const raw = await this.rawRequest(
+            `${activeBase}${path}`,
+            http.RequestMethod.POST,
+            headers,
+            bodyStr,
+            timeoutMs,
+            CertPolicy.isTrusted(activeBase)
+          );
+          if (raw.code < 200 || raw.code >= 300) {
+            lastMsg = `notice HTTP ${raw.code}`;
+            break;
+          }
+          let parsed: Record<string, string | number | Object | undefined>;
+          try {
+            parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+          } catch (_e) {
+            lastMsg = 'notice 响应解析失败';
+            break;
+          }
+          if (!FnHttpClientUploadOps.galleryEnvelopeBizOk(parsed)) {
+            const em = FnHttpClientUploadOps.envelopeErrorLine(parsed);
+            lastMsg = em.length > 0 ? em : 'notice 业务失败';
+            const preview = raw.body.length > 180 ? raw.body.substring(0, 180) : raw.body;
+            fnDiagRecord('W', TAG, `notice fail i=${i} try=${attempt} ${lastMsg} body=${preview}`);
+            if (FnHttpClientUploadOps.isBusyNoticeMessage(lastMsg) && attempt < busyWaits.length) {
+              await FnHttpClientUploadOps.sleep(busyWaits[attempt]);
+              continue;
+            }
+            stopCandidates = FnHttpClientUploadOps.isBusyNoticeMessage(lastMsg);
+            break;
+          }
+          // 对齐 upload.worker：code==0 但 list[0].error 非空也算失败。
+          const dataObj = parsed['data'];
+          if (dataObj !== undefined && dataObj !== null && typeof dataObj === 'object' && !Array.isArray(dataObj)) {
+            const dataRec = dataObj as Record<string, string | number | Object | undefined>;
+            const listObj = dataRec['list'];
+            if (Array.isArray(listObj) && listObj.length > 0) {
+              const typedArr = listObj as Array<Object>;
+              const first = typedArr[0];
+              if (first !== undefined && first !== null && typeof first === 'object' && !Array.isArray(first)) {
+                const fr = first as Record<string, string | number | Object | undefined>;
+                const errTxtRaw = fr['error'];
+                const errTxt = errTxtRaw !== undefined && errTxtRaw !== null ? String(errTxtRaw).trim() : '';
+                const errCodeRaw = fr['errorCode'];
+                const errCode = errCodeRaw !== undefined && Number.isFinite(Number(errCodeRaw))
+                  ? Math.floor(Number(errCodeRaw))
+                  : 0;
+                if (errTxt.length > 0 || errCode !== 0) {
+                  if (FnHttpClientUploadOps.isDuplicateUploadMessage(errTxt)) {
+                    const dupRes: UploadNoticeResult = { ok: true, message: '已存在' };
+                    return dupRes;
+                  }
+                  lastMsg = errTxt.length > 0 ? errTxt : `notice errorCode=${errCode}`;
+                  const preview = raw.body.length > 180 ? raw.body.substring(0, 180) : raw.body;
+                  if (attempt === 0) {
+                    const reqPreview = bodyStr.length > 240 ? bodyStr.substring(0, 240) : bodyStr;
+                    fnDiagRecord('W', TAG, `notice req i=${i} ${reqPreview}`);
+                  }
+                  fnDiagRecord('W', TAG, `notice item fail i=${i} try=${attempt} ${lastMsg} body=${preview}`);
+                  if (FnHttpClientUploadOps.isBusyNoticeMessage(lastMsg) && attempt < busyWaits.length) {
+                    await FnHttpClientUploadOps.sleep(busyWaits[attempt]);
+                    continue;
+                  }
+                  stopCandidates = FnHttpClientUploadOps.isBusyNoticeMessage(lastMsg);
+                  break;
                 }
-                lastMsg = errTxt.length > 0 ? errTxt : `notice errorCode=${errCode}`;
-                continue;
               }
             }
           }
+          const okRes: UploadNoticeResult = { ok: true, message: '' };
+          return okRes;
+        } catch (_e) {
+          lastMsg = 'notice 请求异常';
+          break;
         }
-        const okRes: UploadNoticeResult = { ok: true, message: '' };
-        return okRes;
-      } catch (_e) {}
+      }
+      if (stopCandidates) {
+        break;
+      }
     }
     const failRes: UploadNoticeResult = { ok: false, message: lastMsg };
     return failRes;
@@ -922,11 +1044,8 @@ export class FnHttpClientUploadOps {
     if (sessionNorm.length > 1 && sessionNorm.endsWith('/')) {
       sessionNorm = sessionNorm.substring(0, sessionNorm.length - 1);
     }
-    /** 部分 NAS 上 /upload 只接受 http:5666 或只接受 https:5667；Origin/Cookie 合并须与 POST 的 origin 一致 */
-    const uploadOrigins: string[] = [webHttpsBase];
-    if (sessionNorm.length > 0 && sessionNorm !== webHttpsBase) {
-      uploadOrigins.push(sessionNorm);
-    }
+    const uploadOrigins = this.collectUploadOrigins(webHttpsBase, sessionNorm);
+    fnDiagRecord('I', TAG, `upload origins ${uploadOrigins.length > 0 ? uploadOrigins.join(' | ') : '(none)'}`);
     const req = http.createHttp();
     this.registerPendingRequest(req);
     let uploadRespText = '';
@@ -961,12 +1080,12 @@ export class FnHttpClientUploadOps {
       for (let bi = 0; bi < uploadOrigins.length; bi++) {
         const originBase = uploadOrigins[bi];
         const uploadUrl = `${originBase}${uploadPath}`;
-        const uploadCookie = stripUploadForbiddenCookieKeys(
-          mergeGalleryWebCookieIntoNativeHeader(
-            buildUploadCookieHeader(this.token, this.longToken),
-            originBase
-          )
-        );
+        const relayUpload = isFnRelayBaseUrl(originBase);
+        const uploadCookieBase = relayUpload
+          ? buildFnApiCookieHeader(this.token, this.longToken)
+          : buildUploadCookieHeader(this.token, this.longToken);
+        const uploadCookieMerged = mergeGalleryWebCookieIntoNativeHeader(uploadCookieBase, originBase);
+        const uploadCookie = relayUpload ? uploadCookieMerged : stripUploadForbiddenCookieKeys(uploadCookieMerged);
         const uploadReferer = `${originBase}${FN_PHOTO_H5_ALBUM_PAGE}`;
         lastCookieForLog = uploadCookie;
         lastUploadUrl = uploadUrl;
@@ -1017,14 +1136,21 @@ export class FnHttpClientUploadOps {
             method: http.RequestMethod.POST,
             header: headers,
             expectDataType: http.HttpDataType.STRING,
-            connectTimeout: timeoutMs,
+            connectTimeout: Math.min(12000, timeoutMs),
             readTimeout: timeoutMs,
             extraData: multipart.body
           };
-          if (CertPolicy.isTrusted(this.baseUrl) || CertPolicy.isTrusted(originBase)) {
+          if (CertPolicy.isTrusted(this.baseUrl) || CertPolicy.isTrusted(originBase) || originBase.startsWith('http://')) {
             opt.remoteValidation = 'skip';
           }
-          const rawResp = await req.request(uploadUrl, opt);
+          let rawResp: http.HttpResponse;
+          try {
+            rawResp = await req.request(uploadUrl, opt);
+          } catch (e) {
+            lastDetail = String(e);
+            fnDiagRecord('W', TAG, `upload origin fail url=${uploadUrl} ${lastDetail.substring(0, 160)}`);
+            break;
+          }
           const code = Number(rawResp.responseCode);
           lastHttpCode = code;
           uploadRespText = typeof rawResp.result === 'string' ? rawResp.result : JSON.stringify(rawResp.result);
@@ -1039,6 +1165,11 @@ export class FnHttpClientUploadOps {
               }
             }
             continue;
+          }
+          if (FnHttpClientUploadOps.uploadBodyLooksLikeSpa(uploadRespText)) {
+            lastDetail = '上传接口返回了网页';
+            fnDiagRecord('W', TAG, `upload spa shell url=${uploadUrl} http=${code}`);
+            break;
           }
           if (uploadRespText.length > 0) {
             try {
@@ -1056,6 +1187,8 @@ export class FnHttpClientUploadOps {
             }
           }
           uploadOk = true;
+          const okPreview = uploadRespText.length > 160 ? `${uploadRespText.substring(0, 160)}…` : uploadRespText;
+          fnDiagRecord('I', TAG, `upload ok url=${uploadUrl} bytes=${payload.byteLength} resp=${okPreview.length > 0 ? okPreview : '(empty)'}`);
           break outerUpload;
         }
       }
@@ -1109,14 +1242,17 @@ export class FnHttpClientUploadOps {
     if (pathHintFromUpload.length > 0 && noticePathHints.indexOf(pathHintFromUpload) < 0) {
       noticePathHints.push(pathHintFromUpload);
     }
-    const noticeRes = await this.notifyPhotoUploaded(
-      fileName,
-      oneUri,
-      noticeTimeout,
-      noticePathHints,
-      trimMtim,
-      hintedFullPath
-    );
+    const noticeRes = await FnHttpClientUploadOps.enqueueNotice((): Promise<UploadNoticeResult> => {
+      return this.notifyPhotoUploaded(
+        fileName,
+        oneUri,
+        noticeTimeout,
+        noticePathHints,
+        trimMtim,
+        hintedFullPath,
+        payload.byteLength
+      );
+    });
     let noticed = noticeRes.ok;
     let failReason = noticeRes.message;
     if (!noticed) {
@@ -1142,14 +1278,16 @@ export class FnHttpClientUploadOps {
       const em = failReason.length > 0 ? `上传完成但入库通知失败：${failReason}` : '上传完成但入库通知失败';
       const hintsStr =
         noticePathHints.length > 0 ? noticePathHints.join(' | ') : '(none)';
+      const uploadPreview = uploadRespText.length > 200 ? `${uploadRespText.substring(0, 200)}…` : uploadRespText;
       hilog.warn(
         DOMAIN,
         TAG,
         '[upload] notice/verify failed reason=%{public}s pathHints=%{public}s uploadBodyPreview=%{public}s',
         failReason.length > 0 ? failReason : '(empty)',
         hintsStr,
-        uploadRespText.length > 200 ? `${uploadRespText.substring(0, 200)}…` : uploadRespText
+        uploadPreview
       );
+      fnDiagRecord('W', TAG, `notice/verify failed ${failReason} hints=${hintsStr} upload=${uploadPreview}`);
       return { success: false, message: em };
     }
     return { success: true };

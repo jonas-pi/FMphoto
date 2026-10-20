@@ -29,6 +29,7 @@ export interface FnHttpClientGalleryHost {
 }
 
 export interface FnHttpClientUploadHost extends FnHttpClientGalleryHost {
+  getDirectUploadBases(): string[];
   getWsSignKeyB64(): string;
   primeWebCookiesForPStack(webHttpsBaseNoSlash: string): void;
   getGalleryTimeline(extraParams?: Record<string, string | number | boolean>): Promise<FnClientResult<GalleryTimelineData>>;

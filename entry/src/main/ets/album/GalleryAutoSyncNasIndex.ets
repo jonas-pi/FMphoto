@@ -14,6 +14,7 @@ import {
   emptyNasDedupeIndex,
   localPhotoNameSizeKey,
   localPhotoOfficialFingerprint,
+  officialNameSizeKey,
   localPhotoSizeMtimeKey,
   NasDedupeIndex
 } from './GalleryAutoSyncOfficialFingerprint';
@@ -315,6 +316,36 @@ export class GalleryAutoSyncNasIndex {
     } catch (e) {
       hilog.warn(DOMAIN, TAG, 'persist nas index failed: %{public}s', String(e));
     }
+  }
+
+  /**
+   * 只读今天已经落盘的全库名单，不按天重拉。
+   * 内容指纹没命中时，用文件名和大小再认一次已经在 NAS 上的照片。
+   */
+  static async loadDiskNameSize(ctx: common.UIAbilityContext): Promise<boolean> {
+    if (GalleryAutoSyncNasIndex.pendingDiscard) {
+      return false;
+    }
+    if (GalleryAutoSyncNasIndex.isFresh(false) && GalleryAutoSyncNasIndex.index.nameSizeKeys.size > 0) {
+      return true;
+    }
+    try {
+      const text = await fileIo.readText(GalleryAutoSyncNasIndex.indexPath(ctx));
+      const before = GalleryAutoSyncNasIndex.cachedAt;
+      GalleryAutoSyncNasIndex.applyDiskText(text);
+      return GalleryAutoSyncNasIndex.cachedAt !== before && GalleryAutoSyncNasIndex.index.nameSizeKeys.size > 0;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  static nameSizeCount(): number {
+    return GalleryAutoSyncNasIndex.index.nameSizeKeys.size;
+  }
+
+  static hasNameSize(fileName: string, fileSize: number): boolean {
+    const key = officialNameSizeKey(fileName, fileSize);
+    return key.length > 0 && GalleryAutoSyncNasIndex.index.nameSizeKeys.has(key);
   }
 
   static discardDisk(ctx: common.UIAbilityContext): Promise<void> {

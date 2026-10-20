@@ -143,6 +143,7 @@ class FnHttpClientGalleryHostBridge implements FnHttpClientGalleryHost {
 }
 
 class FnHttpClientUploadHostBridge extends FnHttpClientGalleryHostBridge implements FnHttpClientUploadHost {
+  private readonly getDirectUploadBasesFn: () => string[];
   private readonly getWsSignKeyB64Fn: () => string;
   private readonly primeWebCookiesForPStackFn: (webHttpsBaseNoSlash: string) => void;
   private readonly getGalleryTimelineFn: (extraParams?: Record<string, string | number | boolean>) => Promise<FnClientResult<GalleryTimelineData>>;
@@ -152,6 +153,7 @@ class FnHttpClientUploadHostBridge extends FnHttpClientGalleryHostBridge impleme
     getBaseUrlFn: () => string,
     getTokenFn: () => string,
     getLongTokenFn: () => string,
+    getDirectUploadBasesFn: () => string[],
     getWsSignKeyB64Fn: () => string,
     registerPendingRequestFn: (req: http.HttpRequest) => void,
     unregisterPendingRequestFn: (req: http.HttpRequest) => void,
@@ -172,10 +174,15 @@ class FnHttpClientUploadHostBridge extends FnHttpClientGalleryHostBridge impleme
       requestGalleryGetJsonFn,
       rawRequestFn
     );
+    this.getDirectUploadBasesFn = getDirectUploadBasesFn;
     this.getWsSignKeyB64Fn = getWsSignKeyB64Fn;
     this.primeWebCookiesForPStackFn = primeWebCookiesForPStackFn;
     this.getGalleryTimelineFn = getGalleryTimelineFn;
     this.getGalleryListFn = getGalleryListFn;
+  }
+
+  getDirectUploadBases(): string[] {
+    return this.getDirectUploadBasesFn();
   }
 
   getWsSignKeyB64(): string {
@@ -202,6 +209,8 @@ export class FnHttpClient {
   private longToken: string = '';
   /** WebSocket secret 解密后的 key（Base64），用于 upload trim-sign 兼容签名 */
   private wsSignKeyB64: string = '';
+  /** 中继上传失败时再试的 NAS 本机地址。 */
+  private directUploadBases: string[] = [];
   /** 当前仍在进行的 HTTP 请求（用于页面关闭时主动释放连接） */
   private pendingRequests: http.HttpRequest[] = [];
   private readonly galleryOps: FnHttpClientGalleryOps;
@@ -240,6 +249,7 @@ export class FnHttpClient {
       (): string => self.baseUrl,
       (): string => self.token,
       (): string => self.longToken,
+      (): string[] => self.directUploadBases,
       (): string => self.wsSignKeyB64,
       (req: http.HttpRequest): void => self.registerPendingRequest(req),
       (req: http.HttpRequest): void => self.unregisterPendingRequest(req),
@@ -274,6 +284,17 @@ export class FnHttpClient {
 
   setLongToken(token: string): void {
     this.longToken = token;
+  }
+
+  setDirectUploadBases(bases: string[]): void {
+    const next: string[] = [];
+    for (let i = 0; i < bases.length; i++) {
+      const u = bases[i].trim();
+      if (u.length > 0 && next.indexOf(u) < 0) {
+        next.push(u);
+      }
+    }
+    this.directUploadBases = next;
   }
 
   setWsSignKeyB64(keyB64: string): void {

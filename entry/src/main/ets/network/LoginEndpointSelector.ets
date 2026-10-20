@@ -3,9 +3,13 @@
  * 中继走云端 `fn` 主机（可能是 *.fnos.net 或 *.5ddd.com），第三方 WSS 可被反代转发。
  */
 import { http } from '@kit.NetworkKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
-import { preferPublicEndpointUrl } from './PublicDns';
-import { fnosDirectPortFallbackUrl, normalizeServerUrl } from './ServerUrl';
+import { preferPublicEndpointUrl, resolvePublicHostnameToIpv6BaseUrl } from './PublicDns';
+import { fnosDirectPortFallbackUrl, isIpLiteralHost, normalizeServerUrl, parseNormalizedBaseUrl } from './ServerUrl';
+
+const DOMAIN = 0xFF00;
+const TAG = 'LoginEndpoint';
 
 export const LOGIN_ENDPOINT_PREF_AUTO = 'auto';
 export const LOGIN_ENDPOINT_PREF_PUBLIC = 'public';
@@ -42,6 +46,11 @@ export function emptyEndpointPool(): LoginEndpointPool {
 /** 连通性探测：短超时，只确认可达（官方竞速思路） */
 const FAST_CONNECT_TIMEOUT_MS = 1600;
 const FAST_READ_TIMEOUT_MS = 1600;
+/**
+ * 公网 IPv6 / 纯 AAAA 域名。默认地址族在部分蜂窝网上会把「只有 AAAA」当成解析失败，
+ * 字面量也要显式 ONLY_V6，超时比 IPv4 竞速略长。
+ */
+const IPV6_PROBE_TIMEOUT_MS = 4000;
 const FAST_MAX_BYTES = 8 * 1024;
 /** 带宽测速仅在「带宽优先」时使用 */
 const BW_CONNECT_TIMEOUT_MS = 4500;
@@ -274,10 +283,31 @@ export async function resolveLoginRedirectServer(baseUrl: string, maxHops: numbe
   }
 }
 
-async function probeEndpoint(
+function isIpv6LiteralBaseUrl(baseUrl: string): boolean {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  return parts !== null && parts.useBracket;
+}
+
+function isDnsHostnameBaseUrl(baseUrl: string): boolean {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null || parts.host.length === 0) {
+    return false;
+  }
+  return !isIpLiteralHost(parts.host);
+}
+
+function v6ProbeBudget(probeTimeoutMs: number): number {
+  if (probeTimeoutMs > 0) {
+    return probeTimeoutMs;
+  }
+  return IPV6_PROBE_TIMEOUT_MS;
+}
+
+async function probeEndpointOnce(
   candidate: LoginEndpointCandidate,
   bandwidthMode: boolean,
-  probeTimeoutMs: number = 0
+  probeTimeoutMs: number,
+  family: http.AddressFamily
 ): Promise<LoginEndpointProbeResult> {
   const req = http.createHttp();
   const startedAt = Date.now();
@@ -301,7 +331,8 @@ async function probeEndpoint(
       expectDataType: http.HttpDataType.ARRAY_BUFFER,
       connectTimeout,
       readTimeout,
-      maxLimit: bandwidthMode ? BW_MAX_BYTES : FAST_MAX_BYTES
+      maxLimit: bandwidthMode ? BW_MAX_BYTES : FAST_MAX_BYTES,
+      addressFamily: family
     };
     opt.remoteValidation = 'skip';
     const resp = await req.request(probeUrl, opt);
@@ -332,6 +363,47 @@ async function probeEndpoint(
     } catch (_e) {
     }
   }
+}
+
+async function probeEndpoint(
+  candidate: LoginEndpointCandidate,
+  bandwidthMode: boolean,
+  probeTimeoutMs: number = 0
+): Promise<LoginEndpointProbeResult> {
+  // 公网/内网 IPv6 字面量必须指定 ONLY_V6，默认地址族经常直接失败
+  if (isIpv6LiteralBaseUrl(candidate.baseUrl)) {
+    return probeEndpointOnce(
+      candidate, bandwidthMode, v6ProbeBudget(probeTimeoutMs), http.AddressFamily.ONLY_V6);
+  }
+  const first = await probeEndpointOnce(
+    candidate, bandwidthMode, probeTimeoutMs, http.AddressFamily.DEFAULT);
+  if (first.ok || !isDnsHostnameBaseUrl(candidate.baseUrl)) {
+    return first;
+  }
+  // 纯 AAAA 域名在部分网络上会被 NetStack 当成解析失败；IPv4 不通时再强制走 IPv6
+  const second = await probeEndpointOnce(
+    candidate, bandwidthMode, v6ProbeBudget(probeTimeoutMs), http.AddressFamily.ONLY_V6);
+  if (!second.ok) {
+    hilog.info(DOMAIN, TAG, 'v6 probe miss %{public}s %{public}s', candidate.baseUrl, second.message);
+    return first;
+  }
+  if (isFnRelayBaseUrl(candidate.baseUrl)) {
+    return second;
+  }
+  const literal = await resolvePublicHostnameToIpv6BaseUrl(candidate.baseUrl);
+  if (literal.length === 0) {
+    hilog.info(DOMAIN, TAG, 'v6 probe ok but no AAAA %{public}s', candidate.baseUrl);
+    return second;
+  }
+  hilog.info(DOMAIN, TAG, 'v6 probe rewrite %{public}s -> %{public}s', candidate.baseUrl, literal);
+  return {
+    candidate: { kind: candidate.kind, baseUrl: literal },
+    ok: true,
+    latencyMs: second.latencyMs,
+    bytesPerSecond: second.bytesPerSecond,
+    score: 0,
+    message: ''
+  };
 }
 
 function assignScores(

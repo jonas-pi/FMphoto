@@ -6,10 +6,12 @@
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { contentFingerprintOf } from './GalleryContentHash';
 import { deleteOwnedLivePayload, prepareLiveSyncPayload } from './GalleryLiveSyncPayload';
 import { GalleryAutoSyncLedger, LedgerPut } from './GalleryAutoSyncLedger';
+import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
 
 const DOMAIN = 0xFF00;
@@ -180,6 +182,7 @@ export async function compareLocalWithBackup(
   }
   const failed = new Set<string>();
   const hits = new Set<string>();
+  const nasByName = await GalleryAutoSyncNasIndex.loadDiskNameSize(ctx);
   for (let offset = 0; offset < unique.length; offset += FILE_HASH_BATCH) {
     const batch: string[] = [];
     const end = Math.min(offset + FILE_HASH_BATCH, unique.length);
@@ -199,6 +202,8 @@ export async function compareLocalWithBackup(
     }
   }
   const puts: LedgerPut[] = [];
+  let hashHits: number = 0;
+  let nameHits: number = 0;
   for (let i = 0; i < fresh.length; i++) {
     const piece = fresh[i];
     if (failed.has(piece.fingerprint)) {
@@ -209,6 +214,20 @@ export async function compareLocalWithBackup(
     if (hits.has(piece.fingerprint)) {
       await deleteOwnedLivePayload(piece.payloadPath);
       result.skippedOnNas++;
+      hashHits++;
+      const put = new LedgerPut();
+      put.uri = piece.sourceUri;
+      put.size = piece.sourceSize;
+      put.mtimeMs = piece.sourceMtimeMs;
+      put.role = piece.role;
+      put.hash = piece.fingerprint;
+      puts.push(put);
+      continue;
+    }
+    if (nasByName && piece.role === 'file' &&
+      GalleryAutoSyncNasIndex.hasNameSize(piece.fileName, piece.sourceSize)) {
+      result.skippedOnNas++;
+      nameHits++;
       const put = new LedgerPut();
       put.uri = piece.sourceUri;
       put.size = piece.sourceSize;
@@ -223,16 +242,22 @@ export async function compareLocalWithBackup(
   if (puts.length > 0) {
     await GalleryAutoSyncLedger.rememberMany(ctx, puts);
   }
-  hilog.info(
-    DOMAIN,
-    TAG,
-    'compare local=%{public}d ledger=%{public}d hit=%{public}d upload=%{public}d failed=%{public}d unreadable=%{public}d',
-    photos.length,
-    result.skippedInLedger,
-    result.skippedOnNas,
-    result.pieces.length,
-    result.compareFailed,
-    result.unreadable
-  );
+  let uploadSample: string = '';
+  const sampleCount: number = Math.min(12, result.pieces.length);
+  for (let i = 0; i < sampleCount; i++) {
+    const piece = result.pieces[i];
+    uploadSample += `${piece.role}:${piece.fileName}:${piece.sourceSize};`;
+  }
+  const summary =
+    `local=${photos.length} pending=${fresh.length} ledger=${result.skippedInLedger} ` +
+    `hashHit=${hashHits} nameHit=${nameHits} upload=${result.pieces.length} ` +
+    `failed=${result.compareFailed} unreadable=${result.unreadable} nasIndex=${nasByName} ` +
+    `nameSize=${GalleryAutoSyncNasIndex.nameSizeCount()}`;
+  hilog.info(DOMAIN, TAG, 'compare %{public}s', summary);
+  fnDiagRecord('I', TAG, summary);
+  if (uploadSample.length > 0) {
+    hilog.info(DOMAIN, TAG, 'uploadSample %{public}s', uploadSample);
+    fnDiagRecord('I', TAG, `uploadSample ${uploadSample}`);
+  }
   return result;
 }

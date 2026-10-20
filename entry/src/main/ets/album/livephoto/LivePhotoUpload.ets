@@ -1,29 +1,22 @@
 /**
- * 本机动态照片上传：检测 MOVING_PHOTO 后导出图+视频再分别上传。
+ * 本机动态照片：识别 MOVING_PHOTO，并导出封面和短视频供合成。
  */
 import { common } from '@kit.AbilityKit';
 import { dataSharePredicates } from '@kit.ArkData';
 import { fileUri } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { FnClientResult } from '../../model/FnApiTypes';
-import { FnHttpClient } from '../../network/FnHttpClient';
-import { LivePhotoPairFiles, unlinkLivePhotoPair } from './LivePhotoSandbox';
+import { LivePhotoPairFiles } from './LivePhotoSandbox';
 import { writeBufferToFile } from './MotionPhotoSplit';
 
 class MovingPhotoReadyHandler implements photoAccessHelper.MediaAssetDataHandler<photoAccessHelper.MovingPhoto> {
-  private resolveFn: (photo: photoAccessHelper.MovingPhoto | undefined) => void =
-    (_: photoAccessHelper.MovingPhoto | undefined) => {};
+  /** 系统回调不绑定 this，必须用闭包接住结果。 */
+  onDataPrepared: (movingPhoto: photoAccessHelper.MovingPhoto) => Promise<void>;
 
   constructor(resolveFn: (photo: photoAccessHelper.MovingPhoto | undefined) => void) {
-    this.resolveFn = resolveFn;
-  }
-
-  async onDataPrepared(movingPhoto: photoAccessHelper.MovingPhoto): Promise<void> {
-    if (movingPhoto === undefined) {
-      this.resolveFn(undefined);
-      return;
-    }
-    this.resolveFn(movingPhoto);
+    this.onDataPrepared = (movingPhoto: photoAccessHelper.MovingPhoto): Promise<void> => {
+      resolveFn(movingPhoto);
+      return Promise.resolve();
+    };
   }
 }
 
@@ -171,31 +164,19 @@ export async function exportLocalMovingPhotoPair(
   }
 }
 
-/**
- * 动态照片则先传封面再传伴生视频；普通 URI 走原上传。
- */
-export async function uploadUriMaybeMovingPhoto(
-  client: FnHttpClient,
+/** 是实况则返回展示文件名，否则返回 undefined。 */
+export async function localMovingPhotoDisplayName(
   context: common.UIAbilityContext,
-  uri: string,
-  timeoutMs: number,
-  albumDirHint?: string
-): Promise<FnClientResult<Object>> {
-  const pair = await exportLocalMovingPhotoPair(context, uri);
-  if (pair === undefined) {
-    return client.uploadPhotoByUri(uri, timeoutMs, albumDirHint);
+  uri: string
+): Promise<string | undefined> {
+  const asset = await queryAssetByUri(context, uri);
+  if (asset === undefined || photoAssetSubtype(asset) !== photoAccessHelper.PhotoSubtype.MOVING_PHOTO) {
+    return undefined;
   }
-  try {
-    const imgRes = await client.uploadPhotoByUri(pair.imageUri, timeoutMs, albumDirHint);
-    if (!imgRes.success) {
-      return imgRes;
-    }
-    const vidRes = await client.uploadPhotoByUri(pair.videoUri, timeoutMs, albumDirHint);
-    if (!vidRes.success) {
-      return vidRes;
-    }
-    return imgRes;
-  } finally {
-    await unlinkLivePhotoPair(pair);
+  const displayRaw = asset.displayName;
+  if (displayRaw !== undefined && displayRaw.length > 0) {
+    return displayRaw;
   }
+  const fromUri = fileNameFromUri(uri);
+  return fromUri.length > 0 ? fromUri : 'live.jpg';
 }

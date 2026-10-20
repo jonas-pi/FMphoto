@@ -77,7 +77,6 @@ import {
   setGalleryLanBurstForceEnabled
 } from '../album/GalleryPerfProfile';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
-import { GalleryAutoSyncLedger } from '../album/GalleryAutoSyncLedger';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import {
@@ -1553,7 +1552,6 @@ export struct MePanel {
               }
               await SessionPreferences.clearSession(ctx);
               invalidateAutoSync(ctx);
-              await GalleryAutoSyncLedger.clear(ctx);
               GalleryTimelineRefreshStore.bump();
               stopGalleryVideoLanPrefetch();
               AppSession.clear();

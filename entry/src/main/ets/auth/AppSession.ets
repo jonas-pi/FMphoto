@@ -5,7 +5,7 @@ import { common } from '@kit.AbilityKit';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { clearOpenApiAuthxCredentials, setOpenApiAuthxCredentials } from '../network/AuthxSigner';
-import { fnWebViewBaseUrl } from '../network/ServerUrl';
+import { fnWebViewBaseUrl, normalizeServerUrl } from '../network/ServerUrl';
 import { SessionPreferences, StoredSession } from './SessionPreferences';
 import { applyGalleryLanBurstForSession, resetGalleryLanBurstSession } from '../album/GalleryPerfProfile';
 
@@ -79,6 +79,7 @@ export class AppSession {
       AppSession.client.setLongToken(long);
       AppSession.client.setWsSignKeyB64(signKey);
     }
+    AppSession.client.setDirectUploadBases(AppSession.directUploadBasesOf(s));
     AppStorage.setOrCreate<string>(FN_MEDIA_BASE_URL, fnWebViewBaseUrl(s.baseUrl));
     applyGalleryLanBurstForSession(
       s.baseUrl,
@@ -90,6 +91,32 @@ export class AppSession {
       s.endpointPublicIpv6Url,
       s.endpointRelayUrl
     );
+  }
+
+  /** 中继不转发 /upload，这些是会话里记下的 NAS 本机地址。 */
+  private static directUploadBasesOf(s: StoredSession): string[] {
+    const out: string[] = [];
+    const add = (raw: string): void => {
+      const u = raw.trim();
+      if (u.length === 0 || out.indexOf(u) >= 0) {
+        return;
+      }
+      out.push(u);
+    };
+    add(s.endpointLanUrl);
+    add(s.endpointLanIpv6Url);
+    if (s.endpointLanUrl.trim().length === 0 && s.endpointLanIpv6Url.trim().length === 0) {
+      add(normalizeServerUrl(s.lanInput, s.useHttps));
+    }
+    add(s.endpointPublicDomainUrl);
+    add(s.endpointPublicIpUrl);
+    add(s.endpointPublicIpv6Url);
+    add(s.endpointPublicUrl);
+    if (s.endpointPublicDomainUrl.trim().length === 0 && s.endpointPublicUrl.trim().length === 0 &&
+      s.domainInput.trim().length > 0) {
+      add(normalizeServerUrl(s.domainInput, s.useHttps));
+    }
+    return out;
   }
 
   static updateAlbumParentGuid(guid: string): void {
