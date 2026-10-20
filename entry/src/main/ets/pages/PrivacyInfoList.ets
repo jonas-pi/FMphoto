@@ -148,11 +148,11 @@ struct PrivacyInfoList {
       this.bullet('处理方式：经系统选择器读取，发送到你的 NAS。公开发布包不扫描本机相册。')
 
       this.sectionTitle('配置同步（可选）')
-      this.bullet('信息种类：登录配置、智能分类和相册布局；若含记住密码，可能包含密码字段。')
-      this.bullet('使用目的：在设备间同步应用设置。')
-      this.bullet('使用场景：二维码导出 / 导入，或你填写的 WebDAV。')
+      this.bullet('信息种类：登录配置、备份路径与策略、相册布局、智能分类、主题和幻灯片。记住密码开启时含登录口令。不含 token、签名密钥、WebDAV 账号密码、本机设备名和自动同步账本。')
+      this.bullet('使用目的：在设备间同步这些应用设置。')
+      this.bullet('使用场景：二维码导出 / 导入、你填写的 WebDAV，或华为云空间。')
       this.bullet('是否必要：可选。')
-      this.bullet('处理方式：二维码在本机处理；WebDAV 发往你填写的服务器。')
+      this.bullet('处理方式：二维码在本机处理。WebDAV 发往你填写的服务器。华为云空间在端侧加密后写入你的华为账号，开关在系统「设置 - 云空间」。')
 
       this.sectionTitle('临时文件与运行日志')
       this.bullet('信息种类：缓存文件；崩溃快照、播放失败等诊断摘要、主机或文件名。')
@@ -180,6 +180,16 @@ struct PrivacyInfoList {
       this.bullet('共享方式：HTTPS 接口提交 FN ID；随后可能经 HTTPS 反代转发。')
       this.bullet('第三方政策：https://fnnas.com/privacy')
       this.bullet('FN Connect 协议：https://fnnas.com/terms-of-fn-connect')
+
+      this.sectionTitle('华为云空间')
+      this.bullet('第三方名称：华为云空间（随你的华为账号提供）。')
+      this.bullet('产品类型：结构化数据同步。')
+      this.bullet('共享信息：你选择同步的应用配置。记住密码开启时含登录口令。照片、视频、token 和签名密钥不会写入。')
+      this.bullet('使用目的：在登录同一华为账号的设备之间同步这些设置。')
+      this.bullet('使用场景：你在配置同步页上传或下载，或在系统「设置 - 云空间」打开飞马相册同步之后。')
+      this.bullet('共享方式：配置在端侧加密后保存到你本人的云空间。开发者不能在控制台查看加密内容，也不能查看其他用户的记录。')
+      this.bullet('管理方式：系统「设置 - 云空间」关闭本应用同步，或在云空间中删除数据。')
+      this.bullet('第三方政策：https://consumer.huawei.com/cn/privacy/privacy-policy/')
 
       this.sectionTitle('你自行指定的 NAS / WebDAV / 反代')
       this.bullet('第三方名称：由你填写的服务器运营方，不是本应用预置的 SDK 合作方。')

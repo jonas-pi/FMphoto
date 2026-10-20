@@ -306,7 +306,7 @@
     },
     {
       "name": "privacy_consent_message",
-      "value": "欢迎使用「飞马相册」。请阅读并同意《隐私政策》。未同意前不会恢复会话或进入登录。连接 NAS 需你填写地址或 FN ID、账号和密码。若使用 FN ID，会向飞牛云解析可达地址；可选「记住密码」仅加密保存在本机。相册数据在本机与你的 NAS 之间处理。"
+      "value": "欢迎使用「飞马相册」。请阅读并同意《隐私政策》。未同意前不会恢复会话或进入登录。连接 NAS 需你填写地址或 FN ID、账号和密码。若使用 FN ID，会向飞牛云解析可达地址；可选「记住密码」仅加密保存在本机。相册数据在本机与你的 NAS 之间处理。若使用华为云空间同步配置，相关设置会加密后保存到你的华为云空间，可在系统「设置 - 云空间」关闭。"
     },
     {
       "name": "privacy_consent_view",
@@ -362,11 +362,11 @@
     },
     {
       "name": "privacy_policy_intro",
-      "value": "飞马相册（包名 com.jonas.fmphoto）由个人开发者皮朝猛开发，是面向飞牛 NAS 相册的非官方 HarmonyOS 客户端，用于在你指定的 NAS 上登录、浏览、搜索、预览、上传、下载和管理相册。开发者不运营自己的云端相册服务，不包含广告、第三方统计或崩溃上报 SDK，也不会把你的照片、账号或密码发送到开发者服务器。若使用 FN ID 或官方中继，应用会向飞牛 FN Connect（fnos.net / 5ddd.com）解析地址，登录和相册流量可能经其中继转发到你的 NAS。公网全文：https://jonas-pi.github.io/FMphoto/privacy.html"
+      "value": "飞马相册（包名 com.jonas.fmphoto）由个人开发者皮朝猛开发，是面向飞牛 NAS 相册的非官方 HarmonyOS 客户端，用于在你指定的 NAS 上登录、浏览、搜索、预览、上传、下载和管理相册。开发者不运营自己的云端相册服务，不包含广告、第三方统计或崩溃上报 SDK，也不会把你的照片、账号或密码发送到开发者服务器。若使用 FN ID 或官方中继，应用会向飞牛 FN Connect（fnos.net / 5ddd.com）解析地址，登录和相册流量可能经其中继转发到你的 NAS。若你使用华为云空间同步配置，相关设置会在端侧加密后保存到你本人的华为云空间，不会发到开发者服务器。公网全文：https://jonas-pi.github.io/FMphoto/privacy.html"
     },
     {
       "name": "privacy_policy_updated",
-      "value": "本版本生效日期：2026 年 9 月 15 日（首次发布：2026 年 6 月 10 日）"
+      "value": "本版本生效日期：2026 年 10 月 20 日（首次发布：2026 年 6 月 10 日）"
     },
     {
       "name": "privacy_collected_entry_title",
@@ -555,6 +555,26 @@
     {
       "name": "config_sync_scan",
       "value": "扫一扫导入"
+    },
+    {
+      "name": "config_sync_cloud_section",
+      "value": "华为云空间"
+    },
+    {
+      "name": "config_sync_cloud_hint",
+      "value": "把当前配置（含已保存的登录口令）同步到你的华为云空间，同一华为账号的设备可以下载。请先在系统「设置 - 云空间」里打开飞马相册的同步。"
+    },
+    {
+      "name": "config_sync_cloud_upload",
+      "value": "上传到云空间"
+    },
+    {
+      "name": "config_sync_cloud_download",
+      "value": "从云空间下载"
+    },
+    {
+      "name": "config_sync_cloud_open",
+      "value": "打开云空间设置"
     },
     {
       "name": "config_sync_webdav_section",
