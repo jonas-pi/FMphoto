@@ -275,6 +275,7 @@ struct PrivacyInfoList {
       }
       .width('100%')
       .layoutWeight(1)
+      .align(Alignment.TopStart)
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
     }

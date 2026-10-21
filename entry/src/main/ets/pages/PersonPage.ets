@@ -188,7 +188,7 @@ struct PersonPage {
       } else if (this.error.length > 0) {
         FnStateText({ text: this.error })
       } else {
-        Stack({ alignContent: Alignment.Center }) {
+        Stack({ alignContent: Alignment.TopStart }) {
           Grid() {
             LazyForEach(this.personSource, (item: AiPersonItem) => {
               GridItem() {
@@ -227,8 +227,8 @@ struct PersonPage {
           .columnsGap(8)
           .rowsGap(8)
           .cachedCount(4)
-          .layoutWeight(1)
           .width('100%')
+          .height('100%')
           .padding({ left: 12, right: 12, top: 8, bottom: 10 })
 
           if (this.opening && !this.loading) {

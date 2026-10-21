@@ -193,7 +193,7 @@ struct MediaCategoryPage {
       } else if (this.error.length > 0) {
         FnStateText({ text: this.error })
       } else {
-        Stack({ alignContent: Alignment.Center }) {
+        Stack({ alignContent: Alignment.TopStart }) {
           Grid() {
             ForEach(this.items, (cat: MediaCategoryItem, idx: number) => {
               GridItem() {
@@ -241,8 +241,8 @@ struct MediaCategoryPage {
           .columnsTemplate(fnRepeatFrTemplate(fnAdaptiveGridColumns(2, this.windowWidthBp)))
           .columnsGap(8)
           .rowsGap(8)
-          .layoutWeight(1)
           .width('100%')
+          .height('100%')
           .cachedCount(4)
           .onDidScroll((_offset: number, scrollState: ScrollState): void => {
             this.onGridScrollStateChange(scrollState);

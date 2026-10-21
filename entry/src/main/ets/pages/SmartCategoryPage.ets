@@ -711,7 +711,8 @@ struct SmartCategoryPage {
         .edgeEffect(EdgeEffect.Spring)
         .divider({ strokeWidth: 0 })
       } else {
-        Stack({ alignContent: Alignment.Center }) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          // 外层若用 Alignment.Center，宫格矮于页面时会被整块垂直居中。
           List({ space: 10 }) {
             if (this.customItems.length > 0) {
               ListItemGroup({ header: this.headerMyCategories }) {
@@ -784,8 +785,9 @@ struct SmartCategoryPage {
             }
           }
           .lanes(fnAdaptiveGridColumns(3, this.windowWidthBp), 10)
+          .alignListItem(ListItemAlign.Start)
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .padding({ left: 12, right: 12, bottom: 16 })
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
