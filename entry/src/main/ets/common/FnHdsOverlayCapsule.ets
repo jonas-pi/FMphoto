@@ -10,6 +10,7 @@ import {
   fnHdsCapsuleOverlayWidth,
   fnHdsDockTabsFloatingStyle
 } from './FnUiCommon';
+import { FnPressWatchdog } from './FnPressWatchdog';
 
 @Component
 export struct FnHdsOverlayCapsule {
@@ -29,10 +30,25 @@ export struct FnHdsOverlayCapsule {
   private longPressTimerId: number = -1;
   private lastLongPressAt: number = 0;
   private lastClickAt: number = 0;
+  /** 抬手被弹出的菜单/半模态吃掉时兜底复位，保证按压动画每次都重播。 */
+  private pressWatchdog: FnPressWatchdog = new FnPressWatchdog();
+
+  aboutToAppear(): void {
+    this.pressWatchdog.bind((): void => {
+      this.resetPressState();
+    });
+  }
 
   aboutToDisappear(): void {
+    this.pressWatchdog.disarm();
+    this.resetPressState();
     this.pressActive = false;
     this.clearLongPressTimer();
+  }
+
+  private resetPressState(): void {
+    this.pressShadowType = hdsEffect.PressShadowType.NONE;
+    this.pressActive = false;
   }
 
   private overlayWidth(): number {
@@ -68,6 +84,7 @@ export struct FnHdsOverlayCapsule {
     if (event.type === TouchType.Down) {
       this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
       this.pressActive = true;
+      this.pressWatchdog.arm();
       this.clearLongPressTimer();
       if (this.enableLongPress) {
         this.longPressTimerId = setTimeout((): void => {
@@ -81,8 +98,8 @@ export struct FnHdsOverlayCapsule {
       return;
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.pressShadowType = hdsEffect.PressShadowType.NONE;
-      this.pressActive = false;
+      this.pressWatchdog.disarm();
+      this.resetPressState();
       this.clearLongPressTimer();
     }
   }

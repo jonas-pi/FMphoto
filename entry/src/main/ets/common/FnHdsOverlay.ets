@@ -14,6 +14,7 @@ import {
 import { FN_RESOLVED_ACCENT_KEY, fnResolvedPageBackground,
   fnResolvedTextPrimary,
   FN_RESOLVED_TEXT_PRIMARY_KEY} from './FnThemeColors';
+import { FnPressWatchdog } from './FnPressWatchdog';
 
 /** ArkUI 组件级 systemMaterial（bindSheet / bindMenu）起始 API */
 const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
@@ -339,6 +340,23 @@ struct FnHdsChoiceSheetItem {
   onSelect: () => void = (): void => {};
   @StorageProp(FN_IMMERSIVE_LIGHT_STORAGE_KEY) private immersiveLightEnabled: boolean = true;
   @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
+  /** 抬手被弹出的菜单/半模态吃掉时兜底复位，保证按压动画每次都重播。 */
+  private pressWatchdog: FnPressWatchdog = new FnPressWatchdog();
+
+  aboutToAppear(): void {
+    this.pressWatchdog.bind((): void => {
+      this.resetPressState();
+    });
+  }
+
+  aboutToDisappear(): void {
+    this.pressWatchdog.disarm();
+    this.resetPressState();
+  }
+
+  private resetPressState(): void {
+    this.pressShadowType = hdsEffect.PressShadowType.NONE;
+  }
 
   private shouldUseHds(): boolean {
     return fnCanUseHdsImmersive(this.immersiveLightEnabled);
@@ -350,10 +368,12 @@ struct FnHdsChoiceSheetItem {
     }
     if (event.type === TouchType.Down) {
       this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
+      this.pressWatchdog.arm();
       return;
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.pressShadowType = hdsEffect.PressShadowType.NONE;
+      this.pressWatchdog.disarm();
+      this.resetPressState();
     }
   }
 
