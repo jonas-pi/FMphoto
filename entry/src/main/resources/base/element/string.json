@@ -198,7 +198,7 @@
     },
     {
       "name": "album_parent_hint",
-      "value": "请在设置中填写媒体库目录的 parent_guid（可从飞牛影视 Web 调试或接口文档获取），用于拉取 item/list。"
+      "value": "填写飞牛 NAS 媒体库的目录 ID，用于读取该媒体库中的条目。"
     },
     {
       "name": "album_empty",
@@ -214,7 +214,7 @@
     },
     {
       "name": "album_parent_label",
-      "value": "相册/媒体库 parent_guid"
+      "value": "媒体库目录 ID"
     },
     {
       "name": "save",
@@ -458,7 +458,7 @@
     },
     {
       "name": "album_backup_sync_album_sub",
-      "value": "上传、备份时同步创建相册（notice album_id，待相册 ID 对接）"
+      "value": "上传、备份时同步创建相册（实验性，需手动填写相册 ID）"
     },
     {
       "name": "album_backup_rename_title",
@@ -466,7 +466,7 @@
     },
     {
       "name": "album_backup_rename_sub",
-      "value": "上传时按拍摄日期重命名（rename_strategy）"
+      "value": "上传时按拍摄日期重命名"
     },
     {
       "name": "album_backup_pick_folder_title",

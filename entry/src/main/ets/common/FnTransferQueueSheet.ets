@@ -281,7 +281,7 @@ export struct FnTransferQueueSheet {
           .width('100%')
           .alignItems(VerticalAlign.Center)
         }
-      } else if (task.message.length > 0) {
+      } else if (task.detail.length === 0 && task.message.length > 0) {
         Text(task.message)
           .fontSize(12)
           .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))

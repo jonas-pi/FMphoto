@@ -379,7 +379,18 @@ export function galleryAlbumTriggerAutoSync(
 ): void {
   const ctx = host.getUIContext().getHostContext() as common.UIAbilityContext;
   triggerAutoSyncDetection(ctx, timelineItems, (notice: AutoSyncDetectNotice): void => {
-    host.syncBadgeCount = notice.state === 'ready' ? notice.unsyncedCount : 0;
+    host.syncBadgeCount = notice.state === 'ready'
+      ? notice.unsyncedCount
+      : GalleryAutoSyncStore.getUnsyncedCount();
+    // 打开应用时的自动检测只要发现可同步项，就直接把菜单切到「启动同步」，
+    // 不让用户为了同一个结果再手动点一次「检查同步」。
+    if (notice.state === 'ready') {
+      if (notice.unsyncedCount > 0) {
+        GalleryAutoSyncStore.armLaunch();
+      } else {
+        GalleryAutoSyncStore.disarmLaunch();
+      }
+    }
     host.syncChecked = GalleryAutoSyncStore.isLaunchArmed();
   });
 }
