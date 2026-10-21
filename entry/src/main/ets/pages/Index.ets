@@ -5,6 +5,7 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
+import { GalleryThumbDiskCache } from '../album/GalleryThumbDiskCache';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
 import { scheduleCheck } from '../network/LoginEndpointAutoSwitch';
@@ -206,6 +207,7 @@ struct Index {
         } else {
           SessionPreferences.clearToken(ctx).then(() => {
             AppSession.clear();
+            GalleryThumbDiskCache.invalidateAll();
             void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
               CertPolicy.loadAll(hosts);
             });

@@ -292,6 +292,19 @@ export class FnHttpClientGalleryOps {
     return this.albumMeta.getUserAlbumList(timeoutMs);
   }
 
+  async createUserAlbum(albumName: string, ids: string[] = [], timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
+    return this.albumMeta.createUserAlbum(albumName, ids, timeoutMs);
+  }
+
+  async addPhotosToUserAlbum(
+    albumId: string,
+    albumName: string,
+    ids: string[],
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<Object>> {
+    return this.albumMeta.addPhotosToUserAlbum(albumId, albumName, ids, timeoutMs);
+  }
+
   async getUserAlbumTimeline(
     albumId: string,
     isBaby: boolean,

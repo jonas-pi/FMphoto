@@ -1264,6 +1264,16 @@ export class FnHttpClient {
     return this.galleryOps.getUserAlbumList(timeoutMs);
   }
 
+  /** 新建用户相册（同名已存在时服务端返回 4014）。 */
+  async createUserAlbum(albumName: string, ids: string[] = [], timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.createUserAlbum(albumName, ids, timeoutMs);
+  }
+
+  /** 往已有用户相册批量加照片。 */
+  async addPhotosToUserAlbum(albumId: string, albumName: string, ids: string[], timeoutMs: number = 20000): Promise<FnClientResult<Object>> {
+    return this.galleryOps.addPhotosToUserAlbum(albumId, albumName, ids, timeoutMs);
+  }
+
   async getUserAlbumTimeline(
     albumId: string,
     isBaby: boolean,

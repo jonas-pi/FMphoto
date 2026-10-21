@@ -51,6 +51,9 @@ export class GalleryThumbDiskCache {
   static generation: number = 0;
   private static purgeGen: number = 0;
   private static diskReadyGen: number = 0;
+  /** 只清首屏时的清理代号：与全量清理分开，避免互相关闭读取 */
+  private static purgePrefixGen: number = 0;
+  private static purgePrefixReadyGen: number = 0;
 
   /** Ability 启动时注入 cacheDir；mkdir 延迟到首次读写。 */
   static init(cacheDir: string): void {
@@ -121,6 +124,19 @@ export class GalleryThumbDiskCache {
    * NAS 新增/删除/封面更新后丢弃磁盘 JPEG。
    * 立即抬升 generation，清盘异步进行；期间 tryRead 返回空，强制走网络。
    */
+  /**
+   * NAS 新增/删除/封面更新后丢弃磁盘 JPEG 之外的封面：只清时间线首屏。
+   * 相册封面按 URL 存，服务端换封面会给出新 URL，旧文件由 replaceAlbumCovers 按差异删除，
+   * 不需要每次上传都整页重下。
+   */
+  static invalidateFirstScreen(): void {
+    GalleryThumbDiskCache.firstScreenKeys.clear();
+    GalleryThumbDiskCache.firstScreenLocked = false;
+    const gen = ++GalleryThumbDiskCache.purgePrefixGen;
+    void GalleryThumbDiskCache.purgeFilesWithPrefix('fs_', gen);
+  }
+
+  /** 退出登录 / 换 NAS 时清空所有缩略图文件。 */
   static invalidateAll(): void {
     GalleryThumbDiskCache.generation++;
     GalleryThumbDiskCache.purgeGen = GalleryThumbDiskCache.generation;
@@ -129,6 +145,33 @@ export class GalleryThumbDiskCache {
     GalleryThumbDiskCache.firstScreenLocked = false;
     const gen = GalleryThumbDiskCache.purgeGen;
     void GalleryThumbDiskCache.purgeAllFiles(gen);
+  }
+
+  private static async purgeFilesWithPrefix(prefix: string, gen: number): Promise<void> {
+    const dir = GalleryThumbDiskCache.dirPath();
+    const ready = await GalleryThumbDiskCache.ensureDir();
+    if (!ready) {
+      if (gen === GalleryThumbDiskCache.purgePrefixGen) {
+        GalleryThumbDiskCache.purgePrefixReadyGen = gen;
+      }
+      return;
+    }
+    let names: string[] = [];
+    try {
+      names = await fileIo.listFile(dir);
+    } catch (_e) {
+      names = [];
+    }
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      if (name.indexOf(prefix) !== 0) {
+        continue;
+      }
+      await GalleryThumbDiskCache.unlinkQuiet(`${dir}/${name}`);
+    }
+    if (gen === GalleryThumbDiskCache.purgePrefixGen) {
+      GalleryThumbDiskCache.purgePrefixReadyGen = gen;
+    }
   }
 
   static isPurgeInFlight(): boolean {
@@ -161,13 +204,20 @@ export class GalleryThumbDiskCache {
     if (cacheKey.length <= 0 || GalleryThumbDiskCache.cacheDir.length <= 0) {
       return undefined;
     }
-    if (GalleryThumbDiskCache.isPurgeInFlight()) {
-      return undefined;
+    const fullPurge = GalleryThumbDiskCache.isPurgeInFlight();
+    if (!fullPurge) {
+      // 封面不在「只清首屏」的范围内：上传后封面仍能从磁盘命中，不会空白重下
+      const coverBuf = await GalleryThumbDiskCache.readFile(
+        GalleryThumbDiskCache.filePath(THUMB_DISK_ALBUM_COVER, cacheKey)
+      );
+      if (coverBuf !== undefined) {
+        return coverBuf;
+      }
     }
-    const coverPath = GalleryThumbDiskCache.filePath(THUMB_DISK_ALBUM_COVER, cacheKey);
-    const coverBuf = await GalleryThumbDiskCache.readFile(coverPath);
-    if (coverBuf !== undefined) {
-      return coverBuf;
+    const firstScreenPurge =
+      GalleryThumbDiskCache.purgePrefixGen !== GalleryThumbDiskCache.purgePrefixReadyGen;
+    if (fullPurge || firstScreenPurge) {
+      return undefined;
     }
     return await GalleryThumbDiskCache.readFile(
       GalleryThumbDiskCache.filePath(THUMB_DISK_FIRST_SCREEN, cacheKey)

@@ -20,6 +20,8 @@ export class SyncUploadPiece {
   sourceSize: number = 0;
   sourceMtimeMs: number = 0;
   role: string = 'file';
+  /** 来源本地相册名；开启「同步创建相册」时按它在 NAS 建同名相册 */
+  albumName: string = '';
 }
 
 export class ContentCompareResult {
@@ -41,6 +43,7 @@ function makePiece(entry: LocalPhotoEntry, role: string): SyncUploadPiece {
   piece.sourceSize = entry.fileSize;
   piece.sourceMtimeMs = entry.dateModifiedMs;
   piece.role = role;
+  piece.albumName = entry.sourceAlbumName;
   return piece;
 }
 

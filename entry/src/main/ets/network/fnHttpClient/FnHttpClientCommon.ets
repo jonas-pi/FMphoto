@@ -200,6 +200,8 @@ export interface AssetBufferCacheEntry {
 export interface UploadNoticeResult {
   ok: boolean;
   message: string;
+  /** notice 响应里回带的照片 id（有就用于后续归档到相册） */
+  photoId?: string;
 }
 
 /** 视频转码播放参数（对齐 /p/api/v1/video/decode/play 抓包字段） */

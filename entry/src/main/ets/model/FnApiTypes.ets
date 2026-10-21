@@ -644,4 +644,6 @@ export interface FnClientResult<T> {
   fnosLongToken?: string;
   /** 图库等失败时截取的正文，便于对照 NAS 真实 JSON（不记录完整密钥） */
   errorBodyPreview?: string;
+  /** 上传成功后服务端返回的 photoId（供「自动归档到相册」等后续步骤使用） */
+  uploadedPhotoId?: string;
 }

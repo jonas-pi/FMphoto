@@ -115,7 +115,8 @@ export function localPhotoEntryFromPickerUri(uri: string): LocalPhotoEntry {
     fileSize: fileSizeFromPickerUri(uri),
     dateModifiedMs: mtimeSec > 0 ? mtimeSec * 1000 : 0,
     mimeType: '',
-    photoSubtype: 0
+    photoSubtype: 0,
+    sourceAlbumName: ''
   };
 }
 

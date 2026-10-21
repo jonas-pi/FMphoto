@@ -24,6 +24,8 @@ import {
 import {
   AlbumsHomeTile,
   albumsHomeAlbumTileKey,
+  albumsHomeCachedHiddenKeys,
+  albumsHomeCachedTileOrder,
   albumsHomeHiddenKeysFromUi,
   albumsHomeMediaTileKey,
   albumsHomeMergeMediaOrder,
@@ -133,6 +135,12 @@ export struct GalleryAlbumAlbumsHomeView {
   @State private mediaDragging: boolean = false;
   @State private mediaGridWidthVp: number = 0;
   @State private homeTiles: AlbumsHomeTile[] = [];
+  /**
+   * 用户自定义的板块顺序（唯一真源）。
+   * 不能每次从 homeTiles 反推：列表刷新时 homeTiles 可能还没加载完，
+   * 反推会拿到服务端顺序，把长按排序的结果覆盖掉。
+   */
+  @State private tileOrder: string[] = [];
   @State private hiddenTileKeys: string[] = [];
   @State private restoreSheetVisible: boolean = false;
   @State private restoreCards: AlbumsHomeRestoreCard[] = [];
@@ -160,6 +168,15 @@ export struct GalleryAlbumAlbumsHomeView {
 
   aboutToAppear(): void {
     this.thumbLoadingPaused = false;
+    // 先用内存里已加载的排序/隐藏状态（上次会话）渲染，避免第一帧按服务端顺序闪一下
+    const cachedOrder = albumsHomeCachedTileOrder();
+    if (cachedOrder.length > 0) {
+      this.tileOrder = cachedOrder;
+    }
+    const cachedHidden = albumsHomeCachedHiddenKeys();
+    if (cachedHidden.length > 0) {
+      this.hiddenTileKeys = cachedHidden;
+    }
     this.rebuildHomeTilesFromProps();
     void this.loadHomeTileOrder();
     this.scheduleAlbumCoverPersist();
@@ -567,8 +584,21 @@ export struct GalleryAlbumAlbumsHomeView {
   }
 
   private rebuildHomeTilesFromProps(): void {
-    const order = albumsHomeOrderFromTiles(this.homeTiles);
-    this.homeTiles = buildAlbumsHomeTiles(this.mediaItems, this.userAlbumItems, order, this.hiddenTileKeys);
+    // 优先用显式保存的顺序；只有它为空（还没加载过）才退回当前 tiles 的顺序
+    const order = this.tileOrder.length > 0 ? this.tileOrder : albumsHomeOrderFromTiles(this.homeTiles);
+    const next = buildAlbumsHomeTiles(this.mediaItems, this.userAlbumItems, order, this.hiddenTileKeys);
+    // 只追加新板块，不因为某一帧数据还不全（比如相册先到、媒体后到）就把顺序裁短
+    const builtKeys = albumsHomeOrderFromTiles(next);
+    const merged: string[] = this.tileOrder.slice();
+    for (let i = 0; i < builtKeys.length; i++) {
+      if (merged.indexOf(builtKeys[i]) < 0) {
+        merged.push(builtKeys[i]);
+      }
+    }
+    if (merged.join('|') !== this.tileOrder.join('|')) {
+      this.tileOrder = merged;
+    }
+    this.homeTiles = next;
   }
 
   private async loadHomeTileOrder(): Promise<void> {
@@ -578,7 +608,10 @@ export struct GalleryAlbumAlbumsHomeView {
       return;
     }
     this.hiddenTileKeys = hidden;
-    this.homeTiles = buildAlbumsHomeTiles(this.mediaItems, this.userAlbumItems, order, hidden);
+    if (order.length > 0) {
+      this.tileOrder = order.slice();
+    }
+    this.homeTiles = buildAlbumsHomeTiles(this.mediaItems, this.userAlbumItems, this.tileOrder, hidden);
   }
 
   private onHomeTileMove(from: number, to: number): void {
@@ -587,6 +620,7 @@ export struct GalleryAlbumAlbumsHomeView {
       return;
     }
     this.homeTilesDirty = true;
+    this.tileOrder = albumsHomeOrderFromTiles(next);
     this.homeTiles = next;
   }
 
@@ -737,6 +771,7 @@ export struct GalleryAlbumAlbumsHomeView {
     this.restoreSheetVisible = false;
     this.homeTilesDirty = false;
     this.hiddenTileKeys = this.editHiddenSnapshot.slice();
+    this.tileOrder = this.editOrderSnapshot.slice();
     this.homeTiles = buildAlbumsHomeTiles(
       this.mediaItems,
       this.userAlbumItems,

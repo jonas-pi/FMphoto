@@ -19,6 +19,7 @@ import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
 import { getAlbumBackupSettingsCached } from '../sync/AlbumBackupSettings';
 import { evaluateAlbumBackupUploadGate } from '../sync/AlbumBackupUploadPolicy';
+import { archivePhotosToNasAlbum, normalizeAlbumName } from './GalleryAutoSyncAlbums';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSheet';
@@ -79,8 +80,13 @@ export function runAutoSyncInBackground(
       const taskId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, label, photos.length);
       let ok = 0;
       let failMsg = '';
+      let albumNotArchived = 0;
+      let summary = '';
       const stored = AppSession.getStored();
       const backupPrefs = getAlbumBackupSettingsCached();
+      // 按本机来源相册名建 NAS 同名相册：仅在开关打开时做，失败不影响照片本身入库
+      const archiveToAlbums = backupPrefs.syncCreateAlbum;
+      const albumPending: Map<string, string[]> = new Map<string, string[]>();
       let albumDirHint: string | undefined = undefined;
       if (backupPrefs.deviceBackupPath.trim().length > 0) {
         albumDirHint = backupPrefs.deviceBackupPath.trim();
@@ -107,6 +113,26 @@ export function runAutoSyncInBackground(
                   const res = await uploadPiece(ctx, client, photo, 150000, albumDirHint);
                   if (res.success) {
                     ok++;
+                    hilog.info(DOMAIN, TAG, 'synced file=%{public}s album=%{public}s photoId=%{public}s',
+                      photo.fileName, photo.albumName, res.uploadedPhotoId ?? '');
+                    if (archiveToAlbums && photo.albumName.length > 0) {
+                      const albumKey = normalizeAlbumName(photo.albumName);
+                      const uploadedId = res.uploadedPhotoId ?? '';
+                      if (albumKey.length > 0 && uploadedId.length > 0) {
+                        const bucket = albumPending.get(albumKey);
+                        if (bucket === undefined) {
+                          albumPending.set(albumKey, [uploadedId]);
+                        } else {
+                          bucket.push(uploadedId);
+                        }
+                      } else if (albumKey.length > 0) {
+                        // 上传成功但拿不到 photoId（例如「已存在」的重复入库响应里没有 id）：
+                        // 这张照片没法归档，计数进摘要，避免「同步完成」却悄悄漏归档
+                        albumNotArchived++;
+                        hilog.info(DOMAIN, TAG, 'archive skipped no-photoId file=%{public}s album=%{public}s',
+                          photo.fileName, albumKey);
+                      }
+                    }
                     const put = new LedgerPut();
                     put.uri = photo.sourceUri;
                     put.size = photo.sourceSize;
@@ -119,7 +145,8 @@ export function runAutoSyncInBackground(
                       fileSize: photo.sourceSize,
                       dateModifiedMs: photo.sourceMtimeMs,
                       mimeType: '',
-                      photoSubtype: 0
+                      photoSubtype: 0,
+                      sourceAlbumName: photo.albumName
                     };
                     const seenBatch: LocalPhotoEntry[] = [seen];
                     await GalleryAutoSyncLocalSeen.remember(ctx, seenBatch);
@@ -139,14 +166,38 @@ export function runAutoSyncInBackground(
             })());
           }
           await Promise.all(uploadWorkers);
+
+          // 上传结束后按本地相册名分组归档；这一步失败不回滚已上传的照片
+          const albumNames: string[] = [];
+          albumPending.forEach((_ids: string[], name: string) => {
+            albumNames.push(name);
+          });
+          for (let i = 0; i < albumNames.length; i++) {
+            const ids = albumPending.get(albumNames[i]);
+            if (ids === undefined || ids.length === 0) {
+              continue;
+            }
+            const albumOk = await archivePhotosToNasAlbum(client, albumNames[i], ids);
+            if (!albumOk) {
+              albumNotArchived += ids.length;
+            }
+          }
+          // 归档之后再通知相册列表：此时 NAS 上已经有新相册/新计数，
+          // 提前发会让相册页拉到创建前的结果，并把 lastAlbumsVersion 记成当前版本。
+          if (albumNames.length > 0) {
+            GalleryTimelineRefreshStore.bumpAlbums();
+          }
         });
       } finally {
-        const summary = ok > 0 ? `同步完成 ${ok}/${photos.length}` : (failMsg.length > 0 ? failMsg : '同步失败');
+        summary = ok > 0 ? `同步完成 ${ok}/${photos.length}` : (failMsg.length > 0 ? failMsg : '同步失败');
+        if (albumNotArchived > 0) {
+          summary = `${summary}，${albumNotArchived} 张未归档到相册`;
+        }
         FnTransferQueueStore.finish(taskId, ok > 0, summary);
       }
 
       if (ok > 0) {
-        callbacks.toast(`同步完成 ${ok}/${photos.length}`);
+        callbacks.toast(summary);
         GalleryTimelineRefreshStore.bump();
         callbacks.onSyncFinished();
         callbacks.requestBootstrap(false);

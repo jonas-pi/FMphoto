@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 原生相册 Tab（对齐 fnos_gallery_mobile.py 第 2~4 段主流程）。
  *
  * 数据链路：
@@ -53,7 +53,7 @@ import { CategoryGalleryNavStore } from './CategoryGalleryNavStore';
 import { openPersonAlbumById } from './PersonAlbumOpenHelper';
 import { openRecentAddedGallery } from './RecentAddedOpenHelper';
 import { GalleryDeleteSyncStore } from './GalleryDeleteSyncStore';
-import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
+import { GalleryTimelineRefreshStore, GALLERY_ALBUMS_VERSION_KEY } from './GalleryTimelineRefreshStore';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import {
   GalleryHomeDayPlain,
@@ -477,6 +477,9 @@ export struct GalleryAlbumTab {
   /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
+  /** 相册结构版本（新建/删除/改名/归档后递增）：相册页可见时收到就重拉列表 */
+  @StorageProp(GALLERY_ALBUMS_VERSION_KEY) @Watch('onAlbumsVersionEpochChanged')
+  private albumsVersionEpoch: number = 0;
   @StorageProp(FN_WINDOW_WIDTH_BP_KEY) @Watch('onWindowWidthBpChanged') private windowWidthBp: number =
     WidthBreakpoint.WIDTH_SM;
   private session: GalleryAlbumSession = new GalleryAlbumSession();
@@ -1666,6 +1669,10 @@ export struct GalleryAlbumTab {
       set lastHomeSurface(value: string) { self.session.root.lastHomeSurface = value; }
       get lastAlbumsHomeRefreshVersion(): number { return self.session.root.lastAlbumsHomeRefreshVersion; }
       set lastAlbumsHomeRefreshVersion(value: number) { self.session.root.lastAlbumsHomeRefreshVersion = value; }
+      get lastAlbumsVersion(): number { return self.session.root.lastAlbumsVersion; }
+      set lastAlbumsVersion(value: number) { self.session.root.lastAlbumsVersion = value; }
+      get lastAlbumsFetchAtMs(): number { return self.session.root.lastAlbumsFetchAtMs; }
+      set lastAlbumsFetchAtMs(value: number) { self.session.root.lastAlbumsFetchAtMs = value; }
       dismissMoreMenu(): void { self.dismissMoreMenu(); }
       refreshRootPhotosScrollTitle(): void { self.refreshRootPhotosScrollTitle(); }
       notifySelectionDockStateChange(): void { self.notifySelectionDockStateChange(); }
@@ -2366,6 +2373,13 @@ export struct GalleryAlbumTab {
 
   private ensureAlbumsHomeSupplementaryData(): void {
     galleryAlbumEnsureAlbumsHomeSupplementaryData(this.asRootSurfaceHost());
+  }
+
+  /** 相册结构变化（新建/删除/改名/归档）：只要停在相册页就立刻重拉一次列表 */
+  private onAlbumsVersionEpochChanged(): void {
+    if (galleryAlbumIsAlbumsHomeSurface(this.asRootSurfaceHost())) {
+      galleryAlbumEnsureAlbumsHomeSupplementaryData(this.asRootSurfaceHost());
+    }
   }
 
   private openRecycleBinPage(): void {

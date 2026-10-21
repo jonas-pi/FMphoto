@@ -17,6 +17,13 @@ export interface LocalPhotoEntry {
   dateModifiedMs: number;
   mimeType: string;
   photoSubtype: number;
+  /** 来源相册名（相机 / 微信 / 截图…），用于同步时在 NAS 建同名相册；空表示不归档 */
+  sourceAlbumName: string;
+}
+
+/** PhotoKeys 没有「来源目录」字段，来源相册名由 AlbumBackupLocalSources 建索引后回填。 */
+function sourceAlbumNamePlaceholder(): string {
+  return '';
 }
 
 function photoAssetFileSize(asset: photoAccessHelper.PhotoAsset): number {
@@ -75,7 +82,8 @@ function toLocalPhotoEntry(asset: photoAccessHelper.PhotoAsset): LocalPhotoEntry
     fileSize: photoAssetFileSize(asset),
     dateModifiedMs: photoAssetDateModifiedMs(asset),
     mimeType: '',
-    photoSubtype: photoAssetSubtype(asset)
+    photoSubtype: photoAssetSubtype(asset),
+    sourceAlbumName: sourceAlbumNamePlaceholder()
   };
 }
 

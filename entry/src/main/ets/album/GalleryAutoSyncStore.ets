@@ -15,6 +15,7 @@ import { GalleryAutoSyncLocalSeen } from './GalleryAutoSyncLocalSeen';
 import { LocalPhotoScanProgress, queryLocalPhotos, LocalPhotoEntry } from './GalleryAutoSyncService';
 import { getAlbumBackupSettingsCached } from '../sync/AlbumBackupSettings';
 import { isLikelyVideoFileName } from '../sync/AlbumBackupUploadPolicy';
+import { buildLocalAlbumNameIndex } from '../sync/AlbumBackupLocalSources';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
@@ -180,6 +181,16 @@ export class GalleryAutoSyncStore {
     let scanMessage = '扫描失败';
     try {
       let localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
+      if (getAlbumBackupSettingsCached().syncCreateAlbum) {
+        // 开启「同步创建相册」时，给每张照片补上来源相册名（相机 / 微信 / 截图…）
+        const albumIndex = await buildLocalAlbumNameIndex(ctx);
+        for (let i = 0; i < localPhotos.length; i++) {
+          const name = albumIndex.get(localPhotos[i].uri);
+          if (name !== undefined && name.length > 0) {
+            localPhotos[i].sourceAlbumName = name;
+          }
+        }
+      }
       if (getAlbumBackupSettingsCached().photosOnly) {
         localPhotos = localPhotos.filter((p: LocalPhotoEntry): boolean => !isLikelyVideoFileName(p.fileName));
       }

@@ -529,14 +529,9 @@ export class FnHttpClientUploadOps {
     const s = getAlbumBackupSettingsCached();
     const inner = trimmed.substring(0, trimmed.length - 1);
     const comma = inner.endsWith('{') ? '' : ',';
-    let extra =
+    // album_id 不再塞进上传体：相册归档统一走 /gallery/addTo/album（按本机相册名建同名相册）。
+    const extra =
       `${comma}"folder_manage_mode":${s.folderManageMode},"rename_strategy":${s.renameStrategy}`;
-    if (s.syncCreateAlbum && AppSession.getStored() !== null) {
-      const guid = AppSession.getStored()?.albumParentGuid?.trim() ?? '';
-      if (guid.length > 0) {
-        extra += `,"album_id":"${escapeJsonString(guid)}"`;
-      }
-    }
     return `${inner}${extra}}`;
   }
 
@@ -722,6 +717,7 @@ export class FnHttpClientUploadOps {
       );
     }
     let lastMsg = '入库通知失败';
+    let noticePhotoId = '';
     const busyWaits: number[] = [800, 1600, 3200, 4800];
     for (let i = 0; i < bodyCandidates.length; i++) {
       const bodyStr = bodyCandidates[i];
@@ -772,6 +768,15 @@ export class FnHttpClientUploadOps {
               const first = typedArr[0];
               if (first !== undefined && first !== null && typeof first === 'object' && !Array.isArray(first)) {
                 const fr = first as Record<string, string | number | Object | undefined>;
+                if (noticePhotoId.length === 0) {
+                  const idRaw = fr['id'] ?? fr['photoId'] ?? fr['itemId'] ?? fr['fileId'];
+                  if (idRaw !== undefined && idRaw !== null) {
+                    const idText = String(idRaw).trim();
+                    if (idText.length > 0 && idText !== 'null' && idText !== 'undefined') {
+                      noticePhotoId = idText;
+                    }
+                  }
+                }
                 const errTxtRaw = fr['error'];
                 const errTxt = errTxtRaw !== undefined && errTxtRaw !== null ? String(errTxtRaw).trim() : '';
                 const errCodeRaw = fr['errorCode'];
@@ -780,7 +785,7 @@ export class FnHttpClientUploadOps {
                   : 0;
                 if (errTxt.length > 0 || errCode !== 0) {
                   if (FnHttpClientUploadOps.isDuplicateUploadMessage(errTxt)) {
-                    const dupRes: UploadNoticeResult = { ok: true, message: '已存在' };
+                    const dupRes: UploadNoticeResult = { ok: true, message: '已存在', photoId: noticePhotoId };
                     return dupRes;
                   }
                   lastMsg = errTxt.length > 0 ? errTxt : `notice errorCode=${errCode}`;
@@ -800,7 +805,7 @@ export class FnHttpClientUploadOps {
               }
             }
           }
-          const okRes: UploadNoticeResult = { ok: true, message: '' };
+          const okRes: UploadNoticeResult = { ok: true, message: '', photoId: noticePhotoId };
           return okRes;
         } catch (_e) {
           lastMsg = 'notice 请求异常';
@@ -1159,9 +1164,11 @@ export class FnHttpClientUploadOps {
     });
     let noticed = noticeRes.ok;
     let failReason = noticeRes.message;
+    let uploadPhotoId = noticeRes.photoId !== undefined && noticeRes.photoId.length > 0
+      ? noticeRes.photoId
+      : FnHttpClientUploadOps.firstUploadPhotoIdFromResponse(uploadRespText);
     if (!noticed) {
       // 上传成功但 notice 失败时，尝试用上传响应里的 photoId 做 restore 兼容兜底。
-      const uploadPhotoId = FnHttpClientUploadOps.firstUploadPhotoIdFromResponse(uploadRespText);
       if (uploadPhotoId.length > 0) {
         noticed = await this.restoreUploadedPhoto(uploadPhotoId, noticeTimeout);
         if (!noticed && failReason.length === 0) {
@@ -1173,11 +1180,11 @@ export class FnHttpClientUploadOps {
     }
     if (!noticed) {
       if (FnHttpClientUploadOps.isDuplicateUploadMessage(failReason)) {
-        return { success: true, message: '照片已存在' };
+        return { success: true, message: '照片已存在', uploadedPhotoId: uploadPhotoId };
       }
       const verified = await this.verifyUploadedAppeared(fileName, payload.byteLength);
       if (verified) {
-        return { success: true, message: '上传成功（已入库）' };
+        return { success: true, message: '上传成功（已入库）', uploadedPhotoId: uploadPhotoId };
       }
       const em = failReason.length > 0 ? `上传完成但入库通知失败：${failReason}` : '上传完成但入库通知失败';
       const hintsStr =
@@ -1194,6 +1201,6 @@ export class FnHttpClientUploadOps {
       fnDiagRecord('W', TAG, `notice/verify failed ${failReason} hints=${hintsStr} upload=${uploadPreview}`);
       return { success: false, message: em };
     }
-    return { success: true };
+    return { success: true, uploadedPhotoId: uploadPhotoId };
   }
 }

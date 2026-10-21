@@ -66,7 +66,7 @@ function compactToken(raw: string): string {
 }
 
 /** 来源目录英文名 / 路径末段 → 与官方备份客户端一致的中文文件夹名 */
-function canonicalFolderName(raw: string): string {
+export function canonicalFolderName(raw: string): string {
   const n = raw.trim();
   if (n.length === 0) {
     return '';
@@ -156,6 +156,77 @@ export function displayAlbumFolderName(album: LocalAlbumSummary): string {
     return resolved;
   }
   return '未命名文件夹';
+}
+
+/** 逐页列出某个来源相册里的照片 URI，用于建立「照片 → 来源相册名」索引。 */
+function albumAssetPageOptions(offset: number, limit: number): photoAccessHelper.FetchOptions {
+  const predicates = new dataSharePredicates.DataSharePredicates();
+  predicates.limit(limit, offset);
+  const options: photoAccessHelper.FetchOptions = {
+    fetchColumns: [photoAccessHelper.PhotoKeys.URI],
+    predicates: predicates
+  };
+  return options;
+}
+
+/**
+ * 建立「照片 uri → 来源相册名」映射（相机 / 微信 / 截图…）。
+ * 只在开启「同步创建相册」时调用；读不到权限或没有来源相册时返回空表。
+ */
+export async function buildLocalAlbumNameIndex(ctx: common.UIAbilityContext): Promise<Map<string, string>> {
+  const index: Map<string, string> = new Map<string, string>();
+  try {
+    const granted = await fnEnsureReadImageVideoGranted(ctx);
+    if (!granted) {
+      hilog.info(DOMAIN, TAG, 'album index skipped: no permission');
+      return index;
+    }
+    const helper = photoAccessHelper.getPhotoAccessHelper(ctx);
+    const albums = await readAlbumObjects(
+      helper,
+      photoAccessHelper.AlbumType.SOURCE,
+      photoAccessHelper.AlbumSubtype.SOURCE_GENERIC,
+      undefined
+    );
+    for (let i = 0; i < albums.length; i++) {
+      const row = rowFromSnap(snapFromAlbum(albums[i]), true);
+      if (row === undefined) {
+        continue;
+      }
+      const name = displayAlbumFolderName(row);
+      if (name.length === 0 || isVirtualAlbumName(name)) {
+        continue;
+      }
+      let offset = 0;
+      while (true) {
+        let page: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset> | undefined = undefined;
+        try {
+          page = await albums[i].getAssets(albumAssetPageOptions(offset, 500));
+          const assets = await page.getAllObjects();
+          for (let j = 0; j < assets.length; j++) {
+            const uri = (assets[j].uri ?? '').trim();
+            if (uri.length > 0) {
+              index.set(uri, name);
+            }
+          }
+          if (assets.length < 500) {
+            break;
+          }
+          offset += assets.length;
+        } catch (e) {
+          hilog.warn(DOMAIN, TAG, 'album assets failed name=%{public}s %{public}s', name, String(e));
+          break;
+        } finally {
+          page?.close();
+        }
+      }
+    }
+    hilog.info(DOMAIN, TAG, 'album index albums=%{public}d photos=%{public}d', albums.length, index.size);
+    return index;
+  } catch (e) {
+    hilog.warn(DOMAIN, TAG, 'album index failed %{public}s', String(e));
+    return index;
+  }
 }
 
 export function albumBackupMergeKey(album: LocalAlbumSummary): string {

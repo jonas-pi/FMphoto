@@ -5,9 +5,13 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 import { MediaCategoryItem, UserAlbumItem } from '../model/FnApiTypes';
 import { mediaCategoryStableId, userAlbumId, userAlbumName } from './GalleryAlbumEntityData';
+
+const DOMAIN = 0xFF00;
+const TAG = 'AlbumsTileOrder';
 
 const PREF_NAME: string = 'fnos_client_prefs';
 const K_TILE_ORDER_JSON: string = 'albums_home_tile_order_json';
@@ -296,13 +300,26 @@ async function loadLayoutLocked(ctx: common.UIAbilityContext, account: string): 
   }
 }
 
+/** 同步读取已加载到内存的排序：首次渲染先用它，避免先按服务端顺序画一帧。 */
+export function albumsHomeCachedTileOrder(): string[] {
+  return cacheReady ? cachedOrder.slice() : [];
+}
+
+/** 同步读取已加载到内存的隐藏板块。 */
+export function albumsHomeCachedHiddenKeys(): string[] {
+  return cacheReady ? cachedHidden.slice() : [];
+}
+
 export async function albumsHomeTileOrderFromUi(ui: UIContext): Promise<string[]> {
   const account = currentAccount();
   const ctx = abilityContextFromUi(ui);
   if (ctx === undefined || account.length === 0) {
+    hilog.info(DOMAIN, TAG, 'order load skipped ctx=%{public}s accountLen=%{public}d',
+      ctx === undefined ? 'null' : 'ok', account.length);
     return [];
   }
   await loadLayoutLocked(ctx, account);
+  hilog.info(DOMAIN, TAG, 'order load account=%{public}s n=%{public}d', account, cachedOrder.length);
   return cachedOrder;
 }
 
@@ -346,6 +363,7 @@ export async function albumsHomePersistTileOrderFromUi(ui: UIContext, tiles: Alb
   cachedAccount = account;
   cachedOrder = order;
   cacheReady = true;
+  hilog.info(DOMAIN, TAG, 'order persist account=%{public}s n=%{public}d', account, order.length);
   await persistStringArray(ctx, account, K_TILE_ORDER_JSON, order);
 }
 

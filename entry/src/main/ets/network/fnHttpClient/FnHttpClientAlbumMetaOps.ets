@@ -1,7 +1,7 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CertPolicy } from '../CertPolicy';
-import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet } from '../FnGalleryAuthx';
+import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX, FN_PHOTO_API_V2_PREFIX } from '../FnPhotoRoutes';
 import { mergeGalleryWebCookieIntoNativeHeader } from '../FnWebCookies';
 import { fnWebViewBaseUrl } from '../ServerUrl';
@@ -27,6 +27,19 @@ import {
   SmartCategoryData,
   UserAlbumData
 } from '../../model/FnApiTypes';
+
+interface AlbumCreatePayload {
+  ids: string[];
+  category: number;
+  displayType: number;
+  album_name: string;
+}
+
+interface AlbumAddPhotosPayload {
+  ids: number[];
+  album_id: number;
+  album_name: string;
+}
 
 export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
   constructor(host: FnHttpClientGalleryHost) {
@@ -367,6 +380,105 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       return { success: true, data: { list: normList } };
     } catch (e) {
       return { success: false, message: String(e) || '相册列表加载异常' };
+    }
+  }
+
+  /**
+   * 新建用户相册：POST /p/api/v1/album/create
+   * body 与 Web 端一致：{ ids, category, displayType, album_name }
+   * 服务端重名会返回 4014，调用方需先按名字查列表再决定是否创建。
+   */
+  async createUserAlbum(
+    albumName: string,
+    ids: string[] = [],
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<Object>> {
+    const name = albumName.trim();
+    if (name.length === 0) {
+      return { success: false, message: '相册名不能为空' };
+    }
+    const payload: AlbumCreatePayload = { ids: ids, category: 0, displayType: 1, album_name: name };
+    return this.postAlbumWrite(`${FN_PHOTO_API_PREFIX}/album/create`, payload, timeoutMs);
+  }
+
+  /**
+   * 往已有相册加照片：POST /p/api/v1/gallery/addTo/album
+   * body：{ ids, album_id, album_name }
+   * 实测：ids / album_id 必须是数字，传字符串会直接 HTTP 400。
+   */
+  async addPhotosToUserAlbum(
+    albumId: string,
+    albumName: string,
+    ids: string[],
+    timeoutMs: number = 20000
+  ): Promise<FnClientResult<Object>> {
+    const id = albumId.trim();
+    if (id.length === 0) {
+      return { success: false, message: 'albumId 不能为空' };
+    }
+    if (ids.length === 0) {
+      return { success: false, message: '没有要加入相册的照片' };
+    }
+    const albumNumeric = Number(id);
+    if (!Number.isFinite(albumNumeric)) {
+      return { success: false, message: 'albumId 非法' };
+    }
+    const numericIds: number[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const n = Number(ids[i].trim());
+      if (!Number.isFinite(n)) {
+        return { success: false, message: 'photoId 非法' };
+      }
+      numericIds.push(Math.floor(n));
+    }
+    const payload: AlbumAddPhotosPayload = {
+      ids: numericIds,
+      album_id: Math.floor(albumNumeric),
+      album_name: albumName.trim()
+    };
+    return this.postAlbumWrite(`${FN_PHOTO_API_PREFIX}/gallery/addTo/album`, payload, timeoutMs);
+  }
+
+  /** 相册写操作的公共 POST：签名取实际发送的 JSON 串，避免字段顺序不一致导致 invalid sign。 */
+  private async postAlbumWrite(
+    path: string,
+    payload: Object,
+    timeoutMs: number
+  ): Promise<FnClientResult<Object>> {
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const bodyStr = JSON.stringify(payload);
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: `HTTP ${raw.code}` };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '相册写入响应解析失败' };
+      }
+      if (FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
+        return { success: true, data: parsed['data'] as Object };
+      }
+      const line = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
+      return { success: false, message: line.length > 0 ? line : '相册写入失败' };
+    } catch (e) {
+      return { success: false, message: String(e) || '相册写入异常' };
     }
   }
 

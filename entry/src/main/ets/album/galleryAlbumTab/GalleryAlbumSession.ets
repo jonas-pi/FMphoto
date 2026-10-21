@@ -107,6 +107,10 @@ export class GalleryAlbumRootSurfaceRuntime {
   albumsHomeMediaPrefetchGen: number = 0;
   lastHomeSurface: string = 'photos';
   lastAlbumsHomeRefreshVersion: number = 0;
+  /** 最近一次成功拉取相册列表时的 albumsVersion，用于判断结构是否变化 */
+  lastAlbumsVersion: number = 0;
+  /** 最近一次发起相册列表拉取的时间戳，用于 TTL 兜底校准 */
+  lastAlbumsFetchAtMs: number = 0;
   rootSurfaceSwitchStartTimer: number = -1;
   rootSurfaceSwitchTimer: number = -1;
   rootSurfaceSwitchFrom: string = 'photos';

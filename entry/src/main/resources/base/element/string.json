@@ -458,7 +458,7 @@
     },
     {
       "name": "album_backup_sync_album_sub",
-      "value": "上传、备份时同步创建相册（实验性，需手动填写相册 ID）"
+      "value": "按本机相册名在 NAS 上创建同名相册，并把同步的照片归档进去"
     },
     {
       "name": "album_backup_rename_title",

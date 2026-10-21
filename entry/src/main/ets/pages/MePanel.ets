@@ -74,6 +74,7 @@ import {
 } from '../album/GalleryPerfProfile';
 import { invalidateAutoSync } from '../album/GalleryAutoSyncBadge';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
+import { GalleryThumbDiskCache } from '../album/GalleryThumbDiskCache';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import {
   fnApplyThemeWindowBackground,
@@ -1600,6 +1601,8 @@ export struct MePanel {
               GalleryTimelineRefreshStore.bump();
               stopGalleryVideoLanPrefetch();
               AppSession.clear();
+              // 退出登录：账号相关的缩略图/封面全部丢弃，避免下一个账号看到上一个账号的封面
+              GalleryThumbDiskCache.invalidateAll();
               this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
               });
             })();

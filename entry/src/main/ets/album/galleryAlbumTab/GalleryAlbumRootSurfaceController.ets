@@ -1,4 +1,4 @@
-﻿import { UIContext } from '@kit.ArkUI';
+import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
 import { AiPersonItem, GalleryListItem, MediaCategoryItem, SmartCategoryItem, UserAlbumItem } from '../../model/FnApiTypes';
@@ -18,6 +18,9 @@ import {
   GALLERY_ALBUM_ROUTE_SMART
 } from '../GalleryAlbumNavigation';
 import { FolderBrowseNavStore } from '../../pages/folderBrowsePage/FolderBrowseNavStore';
+
+/** 相册列表 TTL：超过这个时长、相册页再次可见时静默重拉一次，兜住外部客户端的改动 */
+const ALBUMS_LIST_TTL_MS: number = 25_000;
 
 export interface GalleryAlbumRootSurfaceHost {
   getUIContext(): UIContext;
@@ -63,6 +66,10 @@ export interface GalleryAlbumRootSurfaceHost {
   lastHomeSurface: string;
   /** 上次成功拉过相册补充数据时的 RefreshStore.version；落后则强制重拉封面 */
   lastAlbumsHomeRefreshVersion: number;
+  /** 上次成功拉取相册列表时的 albumsVersion（新建/删除/改名/归档后递增） */
+  lastAlbumsVersion: number;
+  /** 上次发起相册列表拉取的时间戳，用于 TTL 兜底 */
+  lastAlbumsFetchAtMs: number;
   dismissMoreMenu(): void;
   refreshRootPhotosScrollTitle(): void;
   notifySelectionDockStateChange(): void;
@@ -99,11 +106,14 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
   }
   // NAS 增删/封面更新后 version 会 bump；已有列表也要重拉，否则封面会一直用旧数据
   const albumsStale = GalleryTimelineRefreshStore.version > host.lastAlbumsHomeRefreshVersion;
+  const albumsVersionStale = GalleryTimelineRefreshStore.albumsVersion > host.lastAlbumsVersion;
+  // 外部客户端（网页 / 别的手机）改了 NAS 时本地没有任何信号，用 TTL 兜底做一次静默校准
+  const albumsTtlStale = Date.now() - host.lastAlbumsFetchAtMs > ALBUMS_LIST_TTL_MS;
   const needMediaPrefetch = albumsStale || (host.categoryItems.length <= 0 && !host.categoryLoading);
   const needSmartPrefetch = albumsStale ||
     (galleryAlbumAlbumsHomeSmartItems(host).length <= 0 && !host.smartCategoryLoading);
   const needPersonPrefetch = albumsStale || (host.personItems.length <= 0 && !host.personLoading);
-  const needUserAlbumPrefetch = albumsStale ||
+  const needUserAlbumPrefetch = albumsStale || albumsVersionStale || albumsTtlStale ||
     (host.albumsHomeUserAlbumPrefetchGen <= 0 && host.userAlbumItems.length <= 0 && !host.userAlbumLoading);
   if (!needMediaPrefetch && !needSmartPrefetch && !needPersonPrefetch && !needUserAlbumPrefetch) {
     return;
@@ -161,6 +171,7 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
     const albumGen = ++host.albumsHomeUserAlbumPrefetchGen;
     host.userAlbumLoading = true;
     host.userAlbumError = '';
+    host.lastAlbumsFetchAtMs = Date.now();
     void (async (): Promise<void> => {
       const result = await requestUserAlbums(client);
       if (albumGen !== host.albumsHomeUserAlbumPrefetchGen) {
@@ -169,6 +180,9 @@ export function galleryAlbumEnsureAlbumsHomeSupplementaryData(host: GalleryAlbum
       host.userAlbumItems = result.items;
       host.userAlbumError = result.error;
       host.userAlbumLoading = false;
+      // 用「发起时的版本」记账：期间又有新的结构变化时，下一轮还会重拉
+      host.lastAlbumsVersion = GalleryTimelineRefreshStore.albumsVersion;
+      host.lastAlbumsFetchAtMs = Date.now();
     })();
   }
 }
