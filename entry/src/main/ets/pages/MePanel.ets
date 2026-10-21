@@ -47,6 +47,7 @@ import {
 import { kickNasTaskPanelSync } from '../network/FnNasTaskPanelSync';
 import { openFeedbackPage } from './FeedbackPage';
 import { openTipPage } from './TipPage';
+import { fnPresentAppGalleryComment } from '../common/AppGalleryRate';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import { CertPolicy } from '../network/CertPolicy';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
@@ -97,6 +98,8 @@ import {
   FN_RESOLVED_TEXT_SECONDARY_KEY
 } from '../common/FnThemeColors';
 
+/** 华为暂不允许应用内支付。恢复赞赏入口时改为 true。 */
+const ME_SHOW_TIP_ENTRY: boolean = false;
 const ME_LAN_BURST_SWITCH_ROW_HEIGHT_VP: number = 80;
 const ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP: number = 22;
 const ME_ACTION_GAP_VP: number = 18;
@@ -1012,6 +1015,41 @@ export struct MePanel {
   }
 
   @Builder
+  private rateEntryRow() {
+    Row({ space: 10 }) {
+      Column({ space: 6 }) {
+        Text($r('app.string.rate_app_entry_title'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+        Text($r('app.string.rate_app_entry_subtitle'))
+          .fontSize(12)
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
+    }
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
+    .backgroundBlurStyle(this.cardBg.length > 0 ? BlurStyle.NONE : BlurStyle.COMPONENT_ULTRA_THICK)
+    .linearGradient(this.cardGlass())
+    .borderRadius(ME_CONNECTION_ROW_RADIUS_VP)
+    .borderWidth(1)
+    .borderColor($r('app.color.immersive_panel_border'))
+    .clip(true)
+    .onClick((): void => {
+      void fnPresentAppGalleryComment(this.getUIContext());
+    })
+  }
+
+  @Builder
   private privacyPolicyLink() {
     Column({ space: 10 }) {
       Text($r('app.string.privacy_policy_title'))
@@ -1506,11 +1544,19 @@ export struct MePanel {
 
         this.diagLogEntryRow()
 
+        if (ME_SHOW_TIP_ENTRY) {
+          Blank()
+            .width('100%')
+            .height(ME_ACTION_GAP_VP)
+
+          this.tipEntryRow()
+        }
+
         Blank()
           .width('100%')
           .height(ME_ACTION_GAP_VP)
 
-        this.tipEntryRow()
+        this.rateEntryRow()
 
         Blank()
           .width('100%')

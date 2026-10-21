@@ -6,6 +6,7 @@ import { commentManager } from '@kit.AppGalleryKit';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { UIContext } from '@kit.ArkUI';
 
 const PREF_NAME: string = 'fnos_client_prefs';
 const K_COMMENT_DONE: string = 'app_gallery_comment_done';
@@ -85,6 +86,108 @@ function errorDetail(err: Object): string {
     return `${code} ${message}`;
   }
   return `${code}`;
+}
+
+let presentingComment: boolean = false;
+let openingToastId: number = -1;
+let resultToastTimer: number = -1;
+
+function showRateToast(ui: UIContext, message: string): void {
+  if (message.length === 0) {
+    return;
+  }
+  try {
+    ui.getPromptAction().showToast({
+      message: message,
+      duration: 2200
+    });
+  } catch (_e) {
+  }
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise<void>((resolve: () => void): void => {
+    setTimeout((): void => {
+      resolve();
+    }, ms);
+  });
+}
+
+function dismissOpeningToast(ui: UIContext): void {
+  if (openingToastId < 0) {
+    return;
+  }
+  const toastId = openingToastId;
+  openingToastId = -1;
+  try {
+    ui.getPromptAction().closeToast(toastId);
+  } catch (_e) {
+  }
+}
+
+function queueRateResultToast(ui: UIContext, message: string): void {
+  dismissOpeningToast(ui);
+  if (resultToastTimer >= 0) {
+    clearTimeout(resultToastTimer);
+  }
+  resultToastTimer = setTimeout((): void => {
+    resultToastTimer = -1;
+    showRateToast(ui, message);
+  }, 360);
+}
+
+/** 先画出「正在打开评分」，再拉起评分窗。评分窗的连接会占住界面线程。 */
+export async function fnPresentAppGalleryComment(ui: UIContext): Promise<void> {
+  if (presentingComment) {
+    showRateToast(ui, '正在打开评分');
+    return;
+  }
+  presentingComment = true;
+  dismissOpeningToast(ui);
+  const startedAt = Date.now();
+  try {
+    try {
+      openingToastId = await ui.getPromptAction().openToast({
+        message: '正在打开评分',
+        duration: 2200
+      });
+    } catch (_e) {
+      openingToastId = -1;
+      showRateToast(ui, '正在打开评分');
+    }
+    await delayMs(50);
+    const result = await fnShowAppGalleryComment(ui.getHostContext() as common.UIAbilityContext);
+    const elapsed = Date.now() - startedAt;
+    if (result.kind === APP_GALLERY_RATE_SHOWN) {
+      if (elapsed < 800) {
+        queueRateResultToast(ui, '评分窗口没有留住');
+      } else {
+        dismissOpeningToast(ui);
+      }
+      return;
+    }
+    if (result.kind === APP_GALLERY_RATE_ALREADY) {
+      queueRateResultToast(ui, '这个版本已经评过了');
+      return;
+    }
+    if (result.kind === APP_GALLERY_RATE_NEED_ID) {
+      queueRateResultToast(ui, '系统未登录华为账号，暂时无法评分');
+      return;
+    }
+    const detail = result.detail.length > 0 ? result.detail : '暂时无法打开评分';
+    queueRateResultToast(ui, detail);
+  } catch (_e) {
+    queueRateResultToast(ui, '评分没有打开');
+  } finally {
+    const wait = 1200 - (Date.now() - startedAt);
+    if (wait <= 0) {
+      presentingComment = false;
+      return;
+    }
+    setTimeout((): void => {
+      presentingComment = false;
+    }, wait);
+  }
 }
 
 export async function fnShowAppGalleryComment(ctx: common.UIAbilityContext): Promise<AppGalleryRateOutcome> {
