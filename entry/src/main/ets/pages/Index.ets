@@ -1,6 +1,6 @@
 /**
- * 启动页：与系统 StartWindow 视觉一致（纯色 + 居中图标），恢复会话后跳转。
- * startIcon.png 建议 ≤192px，系统按资源像素原尺寸居中绘制。
+ * 启动页：与系统增强启动页（start_window.json 的 startWindowBackgroundImage）同一张整图，
+ * 恢复会话后跳转。整图由 start_window_splash.png 提供，深浅色各一份。
  */
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
@@ -305,23 +305,33 @@ struct Index {
   @Builder
   private startWindowSplash() {
     Stack({ alignContent: Alignment.Center }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.start_window_background'))
-
-      Column({ space: 12 }) {
-        Image($r('app.media.startIcon'))
-          .objectFit(ImageFit.None)
+      // 启动页直接铺一张整图（底色与圆角图标已画在图上），与系统增强启动页
+      // 的 startWindowBackgroundImage 保持同一张资源，避免图标裁圆角的兼容问题。
+      // 深浅色显式选图：系统增强启动页按 FOLLOW_SYSTEM 自动选 dark 限定词资源，
+      // 应用内则按 colorMode 直接切换，切换系统主题时立即生效。
+      // 注意：$r() 必须直接作为组件参数传入，放进条件表达式会在运行时取不到资源 id。
+      if (this.colorMode === 1) {
+        Image($r('app.media.start_window_splash_dark'))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
           .interpolation(ImageInterpolation.High)
           .syncLoad(true)
+      } else {
+        Image($r('app.media.start_window_splash'))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .interpolation(ImageInterpolation.High)
+          .syncLoad(true)
+      }
 
-        if (this.splashLoadingVisible) {
-          LoadingProgress()
-            .width(28)
-            .height(28)
-            .color($r('app.color.text_secondary'))
-        }
+      if (this.splashLoadingVisible) {
+        LoadingProgress()
+          .width(28)
+          .height(28)
+          .color('#FFFFFFFF')
+          .translate({ y: 64 })
       }
     }
     .width('100%')

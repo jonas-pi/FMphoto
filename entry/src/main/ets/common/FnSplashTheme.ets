@@ -1,9 +1,9 @@
 import { window } from '@kit.ArkUI';
 import { fnThemeStatusContentColor } from './FnThemeColors';
 
-/** 与 entry 模块 color.json 里 start_window_background 保持一致 */
-export const FN_START_WINDOW_BG_LIGHT: string = '#FFF4F7FB';
-export const FN_START_WINDOW_BG_DARK: string = '#FF000000';
+/** 与 entry 模块 color.json 里 start_window_background 保持一致：品牌蓝底 */
+export const FN_START_WINDOW_BG_LIGHT: string = '#FF1C6AF6';
+export const FN_START_WINDOW_BG_DARK: string = '#FF123A8A';
 
 export function fnIsDarkColorMode(colorMode: number | undefined): boolean {
   return colorMode === 1;
@@ -33,7 +33,8 @@ export function fnApplySplashWindowChrome(mainWindow: window.Window, isDark: boo
       fnSetSplashSystemBarsVisible(mainWindow, false);
     } else {
       fnRestoreAppSystemBars(mainWindow);
-      const content = isDark ? '#FFFFFFFF' : '#FF000000';
+      // 启动页底色恒为品牌蓝，系统栏前景一律用白色，深浅色都一样才看得清。
+      const content = '#FFFFFFFF';
       const bg = fnSplashWindowBackgroundHex(isDark);
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: bg,
