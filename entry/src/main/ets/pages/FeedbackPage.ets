@@ -350,7 +350,9 @@ struct FeedbackPage {
           .fileAccess(true)
           .zoomAccess(true)
           .mixedMode(MixedMode.All)
-          .cacheMode(CacheMode.Online)
+          // 官方定义：Default=优先用未过期 cache，没有才走网络；Online=强制走网络、不用任何缓存。
+          // 飞书表单页资源多，用 Online 每次打开都要整包重下，实测明显慢；改回 Default。
+          .cacheMode(CacheMode.Default)
           .onPageBegin((): void => {
             this.webLoading = true;
           })

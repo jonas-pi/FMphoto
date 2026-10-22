@@ -33,12 +33,13 @@ export function fnApplySplashWindowChrome(mainWindow: window.Window, isDark: boo
       fnSetSplashSystemBarsVisible(mainWindow, false);
     } else {
       fnRestoreAppSystemBars(mainWindow);
-      // 启动页底色恒为品牌蓝，系统栏前景一律用白色，深浅色都一样才看得清。
-      const content = '#FFFFFFFF';
-      const bg = fnSplashWindowBackgroundHex(isDark);
+      // 隐私同意页有自己的底色（Index 里的 FnImmersiveBackdrop，且铺满安全区），
+      // 状态栏必须透明让底色透出来。
+      // 早先这里刷的是启动页品牌蓝，导致同意页顶部状态栏区域残留一块蓝。
+      const content = fnThemeStatusContentColor(isDark);
       mainWindow.setWindowSystemBarProperties({
-        statusBarColor: bg,
-        navigationBarColor: bg,
+        statusBarColor: '#00000000',
+        navigationBarColor: '#00000000',
         statusBarContentColor: content,
         navigationBarContentColor: content
       }).catch((_e: Error): void => {
