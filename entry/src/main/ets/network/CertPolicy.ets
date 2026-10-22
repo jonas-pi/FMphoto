@@ -36,11 +36,47 @@ export class CertPolicy {
     return out;
   }
 
+  /**
+   * 归一化信任键：scheme + 主机（默认端口视同省略）。
+   * `https://host` 与 `https://host:443` 必须算同一项，否则登录地址写法不同
+   * 就会“丢信任”，进而走不了 IP 直连回退（IPv6 不可用时的兜底）。
+   */
   private static normalize(url: string): string {
     let s = url.trim();
     if (s.endsWith('/')) {
       s = s.slice(0, -1);
     }
-    return s;
+    const pe = s.indexOf('://');
+    if (pe < 0) {
+      return s;
+    }
+    const scheme = s.substring(0, pe + 3).toLowerCase();
+    const rest = s.substring(pe + 3);
+    const slash = rest.indexOf('/');
+    const authority = slash >= 0 ? rest.substring(0, slash) : rest;
+    const at = authority.lastIndexOf('@');
+    const hostPort = (at >= 0 ? authority.substring(at + 1) : authority).toLowerCase();
+    const bracket = hostPort.indexOf(']');
+    let host = hostPort;
+    let port = '';
+    if (bracket >= 0) {
+      host = hostPort.substring(0, bracket + 1);
+      const after = hostPort.substring(bracket + 1);
+      if (after.startsWith(':')) {
+        port = after.substring(1);
+      }
+    } else {
+      const colon = hostPort.lastIndexOf(':');
+      if (colon > 0) {
+        host = hostPort.substring(0, colon);
+        port = hostPort.substring(colon + 1);
+      }
+    }
+    const isDefault = (scheme === 'https://' && port === '443') ||
+      (scheme === 'http://' && port === '80');
+    if (port.length === 0 || isDefault) {
+      return `${scheme}${host}`;
+    }
+    return `${scheme}${host}:${port}`;
   }
 }

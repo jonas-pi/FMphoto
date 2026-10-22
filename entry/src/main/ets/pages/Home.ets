@@ -31,6 +31,7 @@ import {
   FN_ENDPOINT_SWITCH_VERSION
 } from '../network/LoginEndpointAutoSwitch';
 import { FnHdsOverlayCapsule } from '../common/FnHdsOverlayCapsule';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { fnWebViewBaseUrl } from '../network/ServerUrl';
 import {
   fnBottomDockBottomGap,
@@ -72,6 +73,9 @@ import {
 import {
   FN_GLOBAL_TAB_SWITCH_CURVE,
   FN_GLOBAL_TAB_SWITCH_DURATION,
+  FN_HOME_ENTER_FADE_CURVE,
+  FN_HOME_ENTER_FADE_MS,
+  FN_HOME_ENTER_OFFSET_VP,
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
   FN_PAGE_EXIT_CURVE,
@@ -112,6 +116,12 @@ struct Home {
   @State private meScrollToTopSignal: number = 0;
   /** 本次 dock 点击是否已经切页：区分「切页」和「重复点击当前页签」。 */
   private navIndexChangedByTap: boolean = false;
+  /** 登录完成进入首页时的内容入场动画（仅 fromLogin 一次）。 */
+  @State private homeEnterOpacity: number = 1;
+  @State private homeEnterOffsetY: number = 0;
+  private homeEnterPending: boolean = false;
+  /** 本次进入首页是否来自登录（用于关掉页面级入场转场，避免与自定义淡入叠加）。 */
+  private homeEnterFromLogin: boolean = false;
   @State private rootContentWidthVp: number = 360;
   @State private galleryShellTranslateX: number = 0;
   @State private mePanelTranslateX: number = 360;
@@ -478,6 +488,7 @@ struct Home {
   aboutToAppear(): void {
     GalleryAlbumNavigation.attach(this.albumNavPathStack);
     this.isDarkTheme = this.colorMode === 1;
+    this.prepareHomeEnterAnimation();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void fnLoadImmersiveLightPreference(ctx);
     const session = AppSession.getStored();
@@ -518,6 +529,41 @@ struct Home {
   aboutToDisappear(): void {
     GalleryAlbumNavigation.detach(this.albumNavPathStack);
     this.clearGallerySelectionDockTimer();
+  }
+
+  /**
+   * 登录完成 → 首页：登录页淡出后，这里让首页内容淡入并轻微上移，避免硬切跳变。
+   * 只在带 fromLogin 参数进入时执行一次；首帧保持透明，onDidBuild 后再开始动画。
+   */
+  private prepareHomeEnterAnimation(): void {
+    try {
+      const rp = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
+      if (rp === undefined || rp['fromLogin'] !== true) {
+        return;
+      }
+    } catch (_e) {
+      return;
+    }
+    this.homeEnterPending = true;
+    this.homeEnterFromLogin = true;
+    this.homeEnterOpacity = 0;
+    this.homeEnterOffsetY = FN_HOME_ENTER_OFFSET_VP;
+  }
+
+  /** 首帧渲染完成后再启动入场动画，避免起始帧就显示内容。 */
+  onDidBuild(): void {
+    if (!this.homeEnterPending) {
+      return;
+    }
+    this.homeEnterPending = false;
+    fnDiagRecord('I', 'HomeEnter', 'login enter animation start');
+    this.getUIContext().animateTo({
+      duration: FN_HOME_ENTER_FADE_MS,
+      curve: FN_HOME_ENTER_FADE_CURVE
+    }, (): void => {
+      this.homeEnterOpacity = 1;
+      this.homeEnterOffsetY = 0;
+    });
   }
 
   /** 相册子页统一由 NavDestination 承载，使用系统默认弹簧转场。 */
@@ -874,71 +920,79 @@ struct Home {
 
   @Builder
   private renderBottomDock() {
-    if (this.canUseHds()) {
-      Stack() {
-        if (this.gallerySelectionDockActive) {
-          this.floatingDockSelectionHdsTabs()
-        } else {
-          this.floatingDockHdsTabs()
-        }
-        if (this.shouldShowGalleryDockSideButtons()) {
-          this.floatingDockGranularityOverlay()
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
-    } else if (this.gallerySelectionDockActive) {
-      Column() {
-        Blank()
-          .layoutWeight(1)
-          .hitTestBehavior(HitTestMode.None)
-        Row() {
-          this.floatingDockSelectionFallbackTabs()
-        }
-        .width('100%')
-        .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: this.bottomDockBottomGap() })
-      }
-      .width('100%')
-      .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
-    } else {
-      Column() {
-        Blank()
-          .layoutWeight(1)
-          .hitTestBehavior(HitTestMode.None)
-        Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
-          if (this.shouldShowGalleryDockSideButtons()) {
-            this.floatingDockFolderButtonFallback()
+    Stack() {
+      if (this.canUseHds()) {
+        Stack() {
+          if (this.gallerySelectionDockActive) {
+            this.floatingDockSelectionHdsTabs()
           } else {
-            Blank()
-              .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-              .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            this.floatingDockHdsTabs()
           }
-
-          this.floatingDockFallbackTabs()
-
           if (this.shouldShowGalleryDockSideButtons()) {
-            this.floatingDockSideButtonFallback()
-          } else {
-            Blank()
-              .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
-              .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            this.floatingDockGranularityOverlay()
           }
         }
         .width('100%')
-        .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: this.bottomDockBottomGap() })
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
+      } else if (this.gallerySelectionDockActive) {
+        Column() {
+          Blank()
+            .layoutWeight(1)
+            .hitTestBehavior(HitTestMode.None)
+          Row() {
+            this.floatingDockSelectionFallbackTabs()
+          }
+          .width('100%')
+          .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: this.bottomDockBottomGap() })
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
+      } else {
+        Column() {
+          Blank()
+            .layoutWeight(1)
+            .hitTestBehavior(HitTestMode.None)
+          Row({ space: FN_BOTTOM_DOCK_SIDE_GAP_VP }) {
+            if (this.shouldShowGalleryDockSideButtons()) {
+              this.floatingDockFolderButtonFallback()
+            } else {
+              Blank()
+                .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+                .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            }
+
+            this.floatingDockFallbackTabs()
+
+            if (this.shouldShowGalleryDockSideButtons()) {
+              this.floatingDockSideButtonFallback()
+            } else {
+              Blank()
+                .width(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+                .height(FN_BOTTOM_DOCK_SIDE_BUTTON_SIZE_VP)
+            }
+          }
+          .width('100%')
+          .padding({ left: FN_BOTTOM_DOCK_SIDE_PADDING_VP, right: FN_BOTTOM_DOCK_SIDE_PADDING_VP })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: this.bottomDockBottomGap() })
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
       }
-      .width('100%')
-      .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
     }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
+    // 登录完成进入首页时的入场（淡入 + 轻微上移）：底栏与内容一起入场
+    .opacity(this.homeEnterOpacity)
+    .translate({ x: 0, y: this.homeEnterOffsetY })
   }
 
   build() {
@@ -1056,6 +1110,9 @@ struct Home {
         }
         .width('100%')
         .height('100%')
+        // 登录完成进入首页时的内容入场（淡入 + 轻微上移）
+        .opacity(this.homeEnterOpacity)
+        .translate({ x: 0, y: this.homeEnterOffsetY })
 
         if (this.shouldShowBottomDock()) {
           this.renderBottomDock()
@@ -1074,6 +1131,12 @@ struct Home {
       // 不在共享图片到位后再次淡出整页，否则会短暂露出 Navigation 底色。
       PageTransitionEnter({ type: RouteType.None, duration: 0 })
       PageTransitionExit({ type: RouteType.None, duration: 0 })
+    } else if (this.homeEnterFromLogin) {
+      // 登录进来时由自定义淡入负责入场；页面级转场会让整页再淡一次，叠成双重淡入
+      PageTransitionEnter({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+        .opacity(0)
+        .translate({ x: -8, y: 0 });
     } else {
       PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
         .opacity(0)

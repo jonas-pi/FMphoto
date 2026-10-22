@@ -9,7 +9,8 @@ import { fnDiagRecord } from '../common/FnDiagLog';
 import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
 import { isFnRelayBaseUrl } from './FnConnectApi';
-import { buildFnMainWebSocketUrl } from './ServerUrl';
+import { buildFnMainWebSocketUrl, isIpLiteralHost, parseNormalizedBaseUrl } from './ServerUrl';
+import { resolvePublicDomainToIpBaseUrl } from './PublicDns';
 import {
   fnWsAesCbcDecryptSecretToHmacKey,
   fnWsBuildEncryptedLogin,
@@ -372,12 +373,20 @@ function httpOriginOf(base: string): string {
 /**
  * WSS 握手头：官方中继需要 Origin + Cookie(mode=relay)。
  * Lucky / 自建反代只带 Origin，勿带 mode=relay（否则握手可能停在普通 HTTP）。
+ * hostOverride：拨号用 IP 字面量时，用原域名做 Host 头，反代才能选到对的站点。
  */
-function buildWsConnectOptions(httpBase: string, isTrustedHost: boolean): webSocket.WebSocketRequestOptions {
+function buildWsConnectOptions(
+  httpBase: string,
+  isTrustedHost: boolean,
+  hostOverride: string = ''
+): webSocket.WebSocketRequestOptions {
   const origin = httpOriginOf(httpBase);
   const header: Record<string, string> = isFnRelayBaseUrl(httpBase)
     ? { 'Origin': origin, 'Cookie': 'mode=relay; language=zh-CN' }
     : { 'Origin': origin };
+  if (hostOverride.length > 0) {
+    header['Host'] = hostOverride;
+  }
   const opt: webSocket.WebSocketRequestOptions = {
     header: header
   };
@@ -385,6 +394,72 @@ function buildWsConnectOptions(httpBase: string, isTrustedHost: boolean): webSoc
     opt.skipServerCertVerification = true;
   }
   return opt;
+}
+
+/** 主机名地址：WS 无法指定地址族，需要靠 IP 字面量回退绕开不可用的 AAAA。 */
+function isHostnameBaseUrl(baseUrl: string): boolean {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null || parts.host.length === 0) {
+    return false;
+  }
+  return !isIpLiteralHost(parts.host);
+}
+
+/** 主机（含非默认端口），用于 IP 字面量拨号时补 Host 头。 */
+function wsHostHeaderOf(baseUrl: string): string {
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null || parts.host.length === 0) {
+    return '';
+  }
+  const port = parts.port;
+  if (port === null || port <= 0) {
+    return parts.host;
+  }
+  const isDefault = (parts.scheme === 'https' && port === 443) || (parts.scheme === 'http' && port === 80);
+  return isDefault ? parts.host : `${parts.host}:${port}`;
+}
+
+/**
+ * 连接层失败（可换地址重试），只认明确的连接失败文案。
+ *
+ * 不把「超时」算进来：'WebSocket 登录超时' / '双重验证超时' 说明协议已经连上，
+ * 这时再按 IP 拨一次等于把刚建立起来的会话重做一遍。
+ */
+function isConnectLevelFailure(message: string): boolean {
+  const m = message.toLowerCase();
+  if (m.indexOf('无法连接') >= 0 || m.indexOf('连接失败') >= 0) {
+    return true;
+  }
+  if (m.indexOf('code: -1') >= 0 || m.indexOf('code:-1') >= 0 || m.indexOf('错误码 -1') >= 0) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 主机名 WS 连不上时，改用解析出的 IP 字面量再试一次。
+ *
+ * ArkUI 的 webSocket 没有 addressFamily（HTTP 有），主机名连接会跟随系统解析顺序；
+ * 家庭宽带 / 路由器下 AAAA 可能指向不可用地址，握手会直接失败（code -1），
+ * 而同一域名的 HTTP 走 happy-eyeballs 反而正常。
+ *
+ * 前提是主机已被信任：连到 IP 时 TLS 的 SNI 是 IP，有效公网证书本来就对不上域名，
+ * 不跳过校验就必然失败，所以这条回退只服务于已信任（自签等）站点；
+ * 有效公网证书的站点走不到这里。
+ */
+async function wsIpLiteralFallback(baseUrl: string): Promise<string> {
+  if (!isHostnameBaseUrl(baseUrl)) {
+    return '';
+  }
+  try {
+    const ipBase = await resolvePublicDomainToIpBaseUrl(baseUrl);
+    if (ipBase.length === 0 || isHostnameBaseUrl(ipBase)) {
+      return '';
+    }
+    return ipBase;
+  } catch (_e) {
+    return '';
+  }
 }
 
 function isTerminalWsLoginResult(r: FnWsLoginResult): boolean {
@@ -490,8 +565,27 @@ export async function fnWsLogin(
   const maxAttempts = isFnRelayBaseUrl(httpBaseNoSlash) ? RELAY_WS_CONNECT_ATTEMPTS : 1;
   let last: FnWsLoginResult = { success: false, message: '无法连接 WebSocket' };
   let timeoutRetries = 0;
+  let ipFallbackTried = false;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     last = await fnWsLoginOnce(httpBaseNoSlash, username, password, isTrustedHost, did);
+    // 主机名 + 连接层失败：改用解析出的 IP 字面量再试一次（绕开不可用的 AAAA）
+    if (!ipFallbackTried && isTrustedHost &&
+      isConnectLevelFailure(last.message !== undefined ? last.message : '')) {
+      const ipBase = await wsIpLiteralFallback(httpBaseNoSlash);
+      if (ipBase.length > 0) {
+        ipFallbackTried = true;
+        const hostHeader = wsHostHeaderOf(httpBaseNoSlash);
+        hilog.info(DOMAIN, TAG, 'WS retry via IP literal %{public}s', ipBase);
+        fnDiagRecord('I', TAG, `WS retry via IP literal ${ipBase}`);
+        const ipResult = await fnWsLoginOnce(
+          ipBase, username, password, isTrustedHost, did, httpBaseNoSlash, hostHeader);
+        if (ipResult.success === true || ipResult.requires2fa === true ||
+          ipResult.requires2faSetup === true) {
+          return ipResult;
+        }
+        last = ipResult;
+      }
+    }
     if (!isRetryableRelayWsFailure(last) || attempt + 1 >= maxAttempts) {
       return last;
     }
@@ -514,11 +608,15 @@ async function fnWsLoginOnce(
   username: string,
   password: string,
   isTrustedHost: boolean,
-  did: string
+  did: string,
+  originBaseNoSlash: string = '',
+  hostOverride: string = ''
 ): Promise<FnWsLoginResult> {
   fnWsResetReqIdCounter();
+  // 拨号地址可以是 IP 字面量；Origin / 中继判定仍用原始域名
+  const originBase = originBaseNoSlash.length > 0 ? originBaseNoSlash : httpBaseNoSlash;
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
-  const relay = isFnRelayBaseUrl(httpBaseNoSlash);
+  const relay = isFnRelayBaseUrl(originBase);
   hilog.info(DOMAIN, TAG, 'WS connect %{public}s trusted=%{public}s relay=%{public}s',
     wsUrl, String(isTrustedHost), String(relay));
   fnDiagRecord('I', TAG, `WS connect ${wsUrl} trusted=${String(isTrustedHost)} relay=${String(relay)}`);
@@ -557,7 +655,7 @@ async function fnWsLoginOnce(
     let pendingAfterAuth: PendingAfterAuth | null = null;
 
     const ws = webSocket.createWebSocket();
-    const connectOptions = buildWsConnectOptions(httpBaseNoSlash, isTrustedHost);
+    const connectOptions = buildWsConnectOptions(originBase, isTrustedHost, hostOverride);
 
     const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
       if (done || failureInFlight) {
@@ -771,10 +869,28 @@ export async function fnWs2faVerify(
   const maxAttempts = isFnRelayBaseUrl(httpBaseNoSlash) ? RELAY_WS_CONNECT_ATTEMPTS : 1;
   let last: FnWsLoginResult = { success: false, message: '无法连接 WebSocket' };
   let timeoutRetries = 0;
+  let ipFallbackTried = false;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     last = await fnWs2faVerifyOnce(
       httpBaseNoSlash, accessToken, code, trustDevice, isTrustedHost, did
     );
+    // 主机名 + 连接层失败：改用解析出的 IP 字面量再试一次（绕开不可用的 AAAA）
+    if (!ipFallbackTried && isTrustedHost &&
+      isConnectLevelFailure(last.message !== undefined ? last.message : '')) {
+      const ipBase = await wsIpLiteralFallback(httpBaseNoSlash);
+      if (ipBase.length > 0) {
+        ipFallbackTried = true;
+        const hostHeader = wsHostHeaderOf(httpBaseNoSlash);
+        hilog.info(DOMAIN, TAG, 'WS 2FA retry via IP literal %{public}s', ipBase);
+        fnDiagRecord('I', TAG, `WS 2FA retry via IP literal ${ipBase}`);
+        const ipResult = await fnWs2faVerifyOnce(
+          ipBase, accessToken, code, trustDevice, isTrustedHost, did, httpBaseNoSlash, hostHeader);
+        if (ipResult.success === true) {
+          return ipResult;
+        }
+        last = ipResult;
+      }
+    }
     if (!isRetryableRelayWsFailure(last) || attempt + 1 >= maxAttempts) {
       return last;
     }
@@ -798,9 +914,13 @@ async function fnWs2faVerifyOnce(
   code: string,
   trustDevice: boolean,
   isTrustedHost: boolean,
-  did: string
+  did: string,
+  originBaseNoSlash: string = '',
+  hostOverride: string = ''
 ): Promise<FnWsLoginResult> {
   fnWsResetReqIdCounter();
+  // 拨号地址可以是 IP 字面量；Origin 仍用原始域名
+  const originBase = originBaseNoSlash.length > 0 ? originBaseNoSlash : httpBaseNoSlash;
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
   hilog.info(DOMAIN, TAG, 'WS 2FA verify %{public}s', wsUrl);
 
@@ -833,7 +953,7 @@ async function fnWs2faVerifyOnce(
     let pendingAfterAuth: PendingAfterAuth | null = null;
 
     const ws = webSocket.createWebSocket();
-    const connectOptions = buildWsConnectOptions(httpBaseNoSlash, isTrustedHost);
+    const connectOptions = buildWsConnectOptions(originBase, isTrustedHost, hostOverride);
 
     const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
       if (done || failureInFlight) {

@@ -33,6 +33,17 @@ export const FN_TAB_HOME_CONTENT_CURVE = Curve.EaseInOut;
 export const FN_UI_FADE_TOGGLE_DURATION = 200;
 export const FN_UI_FADE_TOGGLE_CURVE = Curve.EaseInOut;
 
+/**
+ * 登录完成 → 首页：router.replaceUrl 属于硬切，页面转场不一定生效，
+ * 这里由登录页淡出 + 首页内容入场自行接上，避免“登录后直接跳首页”的突兀感。
+ */
+export const FN_LOGIN_EXIT_FADE_MS = 220;
+export const FN_LOGIN_EXIT_FADE_CURVE = Curve.EaseOut;
+export const FN_HOME_ENTER_FADE_MS = 320;
+export const FN_HOME_ENTER_FADE_CURVE = Curve.EaseOut;
+/** 首页内容入场时的上移距离（vp），配合淡入形成轻微“升起”感。 */
+export const FN_HOME_ENTER_OFFSET_VP = 18;
+
 export const FN_SWIPER_DURATION = 280;
 export const FN_SWIPER_CURVE = Curve.EaseInOut;
 

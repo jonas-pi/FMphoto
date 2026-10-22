@@ -48,6 +48,8 @@ import {
 } from '../common/FnSystemAvoidArea';
 import { fnHdsBindMenuOptions } from '../common/FnHdsOverlay';
 import {
+  FN_LOGIN_EXIT_FADE_CURVE,
+  FN_LOGIN_EXIT_FADE_MS,
   FN_PAGE_ENTER_CURVE,
   FN_PAGE_ENTER_DURATION,
   FN_PAGE_EXIT_CURVE,
@@ -97,6 +99,10 @@ struct Login {
   private previousKeyboardAvoid: KeyboardAvoidMode = KeyboardAvoidMode.OFFSET;
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
+  /** 登录成功后淡出登录页，再进入首页。 */
+  @State private loginFadeOpacity: number = 1;
+  /** 防止重复触发登录跳转。 */
+  private leavingToHome: boolean = false;
   @State private otpCode: string = '';
   @State private trustDevice: boolean = true;
   private pendingAccessToken: string = '';
@@ -449,8 +455,43 @@ struct Login {
     AppSession.apply(stored);
     // 跳转前清空密码框，降低系统根据「提交后仍带密文的输入框」关联保险箱更新提示的概率
     this.password = '';
-    this.getUIContext().getRouter().replaceUrl({ url: 'pages/Home' }).catch(() => {
+    this.leaveToHome();
+  }
+
+  /**
+   * 登录完成 → 首页：先淡出登录表单，再跳转。
+   * router.replaceUrl 是硬切，页面转场不一定生效，这里自己接一段淡出，
+   * 首页侧再用 fromLogin 参数做入场动画（见 Home.onDidBuild）。
+   */
+  private leaveToHome(): void {
+    if (this.leavingToHome) {
+      return;
+    }
+    this.leavingToHome = true;
+    this.getUIContext().animateTo({
+      duration: FN_LOGIN_EXIT_FADE_MS,
+      curve: FN_LOGIN_EXIT_FADE_CURVE
+    }, (): void => {
+      this.loginFadeOpacity = 0;
     });
+    setTimeout((): void => {
+      this.getUIContext().getRouter().replaceUrl({
+        url: 'pages/Home',
+        params: {
+          fromLogin: true
+        }
+      }).catch((): void => {
+        // 跳转失败：表单已淡到透明，必须恢复显示并允许再次登录
+        this.leavingToHome = false;
+        this.getUIContext().animateTo({
+          duration: FN_LOGIN_EXIT_FADE_MS,
+          curve: FN_LOGIN_EXIT_FADE_CURVE
+        }, (): void => {
+          this.loginFadeOpacity = 1;
+        });
+        this.errorText = '进入首页失败，请重试';
+      });
+    }, FN_LOGIN_EXIT_FADE_MS + 20);
   }
 
   private async finishWsLoginSuccess(
@@ -1210,6 +1251,8 @@ struct Login {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
+      // 登录成功后淡出表单；背景保持不透明，避免跳转瞬间闪黑
+      .opacity(this.loginFadeOpacity)
     }
     .width('100%')
     .height('100%')
@@ -1218,11 +1261,17 @@ struct Login {
   }
 
   pageTransition(): void {
-    PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
-      .opacity(0)
-      .translate({ x: 0, y: 28 });
-    PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
-      .opacity(0)
-      .translate({ x: 0, y: -16 });
+    if (this.leavingToHome) {
+      // 跳首页时由 leaveToHome() 自己接管淡出，避免与页面级转场叠加成双重淡出
+      PageTransitionEnter({ type: RouteType.None, duration: 0 })
+      PageTransitionExit({ type: RouteType.None, duration: 0 })
+    } else {
+      PageTransitionEnter({ duration: FN_PAGE_ENTER_DURATION, curve: FN_PAGE_ENTER_CURVE })
+        .opacity(0)
+        .translate({ x: 0, y: 28 });
+      PageTransitionExit({ duration: FN_PAGE_EXIT_DURATION, curve: FN_PAGE_EXIT_CURVE })
+        .opacity(0)
+        .translate({ x: 0, y: -16 });
+    }
   }
 }
