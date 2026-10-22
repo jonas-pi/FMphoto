@@ -19,6 +19,7 @@ import { SyncUploadPiece } from './GalleryAutoSyncCompare';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
 import { getAlbumBackupSettingsCached } from '../sync/AlbumBackupSettings';
+import { albumBackupTargetDir as albumBackupTargetDirFor } from '../sync/AlbumBackupTargetPath';
 import { evaluateAlbumBackupUploadGate } from '../sync/AlbumBackupUploadPolicy';
 import { archivePhotosToNasAlbum, normalizeAlbumName } from './GalleryAutoSyncAlbums';
 
@@ -40,10 +41,22 @@ async function uploadPiece(
   client: FnHttpClient,
   piece: SyncUploadPiece,
   timeoutMs: number,
-  albumDirHint: string | undefined
+  albumDirHint: string | undefined,
+  forceDirHint: boolean = false
 ): Promise<FnClientResult<Object>> {
   const nameHint = piece.fileName.length > 0 ? piece.fileName : undefined;
-  return uploadLocalMediaUri(client, ctx, piece.sourceUri, timeoutMs, albumDirHint, nameHint);
+  return uploadLocalMediaUri(client, ctx, piece.sourceUri, timeoutMs, albumDirHint, nameHint, forceDirHint);
+}
+
+/**
+ * 按「备份目录偏好」算这张照片在 NAS 上的目标目录。
+ * 1 默认：交给 NAS（用服务端 upload/path 提示，本机不干预）
+ * 2 按拍摄日期：<备份位置>/YYYY/MM
+ * 3 按设备文件夹：<备份位置>/<设备内目录>，例如 DCIM/Camera
+ * 4 保存在一个文件夹下：<备份位置>
+ */
+function albumBackupTargetDir(baseDir: string, mode: number, piece: SyncUploadPiece): string {
+  return albumBackupTargetDirFor(baseDir, mode, piece.sourceAlbumPath, piece.sourceTakenMs);
 }
 
 export function runAutoSyncInBackground(
@@ -124,7 +137,12 @@ export function runAutoSyncInBackground(
                 }
                 const photo = photos[index];
                 try {
-                  const res = await uploadPiece(ctx, client, photo, 150000, albumDirHint);
+                  // 目标目录按「备份目录偏好」逐张算（按拍摄日期 / 按设备文件夹会因照片而异）
+                  const targetDir = albumBackupTargetDir(albumDirHint ?? '', backupPrefs.folderManageMode, photo);
+                  // 非「默认」偏好时客户端目录优先，忽略 NAS 的 upload/path 提示
+                  const forceDir = backupPrefs.folderManageMode !== 1 && targetDir.length > 0;
+                  const res = await uploadPiece(ctx, client, photo, 150000,
+                    targetDir.length > 0 ? targetDir : albumDirHint, forceDir);
                   if (res.success) {
                     ok++;
                     hilog.info(DOMAIN, TAG, 'synced role=%{public}s', photo.role);
@@ -156,9 +174,11 @@ export function runAutoSyncInBackground(
                       fileName: photo.fileName,
                       fileSize: photo.sourceSize,
                       dateModifiedMs: photo.sourceMtimeMs,
+                      dateTakenMs: photo.sourceTakenMs,
                       mimeType: '',
                       photoSubtype: 0,
-                      sourceAlbumName: photo.albumName
+                      sourceAlbumName: photo.albumName,
+                      sourceAlbumPath: photo.sourceAlbumPath
                     };
                     const seenBatch: LocalPhotoEntry[] = [seen];
                     await GalleryAutoSyncLocalSeen.remember(ctx, seenBatch);

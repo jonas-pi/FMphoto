@@ -3,7 +3,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagError, fnDiagSetState } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagRecord, fnDiagSetState } from '../common/FnDiagLog';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { buildNasDedupeIndex, localPhotoOfficialFingerprint } from './GalleryAutoSyncOfficialFingerprint';
@@ -13,15 +13,20 @@ import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { FnTransferDirection } from '../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { GalleryAutoSyncLocalSeen } from './GalleryAutoSyncLocalSeen';
-import { LocalPhotoScanProgress, queryLocalPhotos, LocalPhotoEntry } from './GalleryAutoSyncService';
-import { getAlbumBackupSettingsCached } from '../sync/AlbumBackupSettings';
+import { LocalPhotoScanProgress, queryLocalPhotos, queryLocalPhotosInAlbums, LocalPhotoEntry } from './GalleryAutoSyncService';
+import { getAlbumBackupSettingsCached, resolveBackupSourceScope } from '../sync/AlbumBackupSettings';
 import { isLikelyVideoFileName } from '../sync/AlbumBackupUploadPolicy';
-import { buildLocalAlbumNameIndex } from '../sync/AlbumBackupLocalSources';
+import { buildLocalAlbumRefIndex } from '../sync/AlbumBackupLocalSources';
+import { albumBackupTargetDir } from '../sync/AlbumBackupTargetPath';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
 /** 已见快照读失败时的扫描说明（要如实反映「没比对」，不能报成没有新增）。 */
 const SEEN_READ_FAIL_MESSAGE = '已见记录读失败，本次未比对';
+/** 备份源扫描失败：权限缺失或扫相册抛错。不能当作「本机没有可同步项目」。 */
+const SOURCE_SCAN_FAIL_MESSAGE = '备份源扫描失败，请检查相册权限后重试';
+/** 备份源里的相册在当前本机一个都找不到（配置与本机脱节）。 */
+const SOURCE_ALBUMS_MISSING_MESSAGE = '备份源里的相册在本机找不到，请重新选择备份源';
 
 class CompareQueueProgress implements ContentCompareProgress {
   private readonly taskId: string;
@@ -185,19 +190,79 @@ export class GalleryAutoSyncStore {
     // 本次自动同步的结果类别（只记类别，不记文件名）。
     let syncState: string = 'failed: exception';
     try {
-      let localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
-      if (getAlbumBackupSettingsCached().syncCreateAlbum) {
-        // 开启「同步创建相册」时，给每张照片补上来源相册名（相机 / 微信 / 截图…）
-        const albumIndex = await buildLocalAlbumNameIndex(ctx);
+      const backupPrefs = getAlbumBackupSettingsCached();
+      // 备份源 = 扫描范围：只扫用户勾选的相册，其余目录的文件根本不会被枚举，
+      // 因此不参与「新媒体」判定、也不会被上传。
+      // 主键读不出来时用影子副本还原上一次的选择——绝不能把「读失败」当成「备份所有文件夹」，
+      // 否则用户明确排除过的目录会被一并上传。
+      const scope = resolveBackupSourceScope(backupPrefs);
+      if (scope.degraded) {
+        fnDiagRecord('W', 'AlbumBackup', scope.guessed
+          ? 'source folders unreadable and no shadow copy, fallback to all folders'
+          : 'source folders unreadable, using shadow copy n=' + String(scope.keys.length));
+      }
+      let localPhotos: LocalPhotoEntry[];
+      if (scope.scoped) {
+        const scanResult = await queryLocalPhotosInAlbums(ctx, scope.keys, new LocalScanQueueProgress(taskId));
+        localPhotos = scanResult.entries;
+        if (scanResult.failed || !scanResult.granted) {
+          // 权限缺失 / 扫相册抛错：这是失败，不是「本机没有可同步项目」
+          syncState = 'failed: source scan';
+          scanMessage = SOURCE_SCAN_FAIL_MESSAGE;
+          throw new Error(SOURCE_SCAN_FAIL_MESSAGE);
+        }
+        if (scanResult.albumsScanned === 0) {
+          // 选中的备份源一个都没对上当前本机相册：配置和本机脱节，同样不能当成功
+          syncState = 'failed: source albums missing';
+          scanMessage = SOURCE_ALBUMS_MISSING_MESSAGE;
+          throw new Error(SOURCE_ALBUMS_MISSING_MESSAGE);
+        }
+        fnDiagRecord('I', 'AlbumBackup', 'source scope photos=' + String(localPhotos.length) +
+          ' albums=' + String(scanResult.albumsScanned) + ' selected=' + String(scope.keys.length));
+      } else {
+        localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
+      }
+      // 统一补齐：全库扫描没有相册信息；按备份源扫描时用户相册/系统相册没有 lpath。
+      // 两条路径都补成「优先用 SOURCE 相册的设备内路径」，否则 mode 3 会落到备份根目录。
+      const needName = backupPrefs.syncCreateAlbum;
+      const needPath = backupPrefs.folderManageMode === 3;
+      if (needName || needPath) {
+        let missing = false;
         for (let i = 0; i < localPhotos.length; i++) {
-          const name = albumIndex.get(localPhotos[i].uri);
-          if (name !== undefined && name.length > 0) {
-            localPhotos[i].sourceAlbumName = name;
+          if ((needName && localPhotos[i].sourceAlbumName.length === 0) ||
+            (needPath && localPhotos[i].sourceAlbumPath.length === 0)) {
+            missing = true;
+            break;
+          }
+        }
+        if (missing) {
+          const albumRefIndex = await buildLocalAlbumRefIndex(ctx);
+          for (let i = 0; i < localPhotos.length; i++) {
+            const ref = albumRefIndex.get(localPhotos[i].uri);
+            if (ref === undefined) {
+              continue;
+            }
+            if (needName && localPhotos[i].sourceAlbumName.length === 0 && ref.name.length > 0) {
+              localPhotos[i].sourceAlbumName = ref.name;
+            }
+            if (needPath && localPhotos[i].sourceAlbumPath.length === 0 && ref.lpath.length > 0) {
+              localPhotos[i].sourceAlbumPath = ref.lpath;
+            }
           }
         }
       }
-      if (getAlbumBackupSettingsCached().photosOnly) {
+      if (backupPrefs.photosOnly) {
         localPhotos = localPhotos.filter((p: LocalPhotoEntry): boolean => !isLikelyVideoFileName(p.fileName));
+      }
+      if (backupPrefs.folderManageMode === 2 || backupPrefs.folderManageMode === 3) {
+        // 「按拍摄日期 / 按设备文件夹」会按照片算不同目录，打一条样本方便核对落位
+        const sample: LocalPhotoEntry | undefined = localPhotos.length > 0 ? localPhotos[0] : undefined;
+        if (sample !== undefined) {
+          const sampleDir = albumBackupTargetDir(backupPrefs.deviceBackupPath, backupPrefs.folderManageMode,
+            sample.sourceAlbumPath, sample.dateTakenMs);
+          fnDiagRecord('I', 'AlbumBackup', 'target dir mode=' + String(backupPrefs.folderManageMode) +
+            ' dir=' + sampleDir + ' src=' + sample.sourceAlbumPath);
+        }
       }
       const seenDiff = await GalleryAutoSyncLocalSeen.diff(ctx, localPhotos);
       if (seenDiff.readFailed) {

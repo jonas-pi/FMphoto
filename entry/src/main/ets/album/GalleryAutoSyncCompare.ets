@@ -19,9 +19,13 @@ export class SyncUploadPiece {
   fileName: string = '';
   sourceSize: number = 0;
   sourceMtimeMs: number = 0;
+  /** 拍摄时间（毫秒）。「按拍摄日期」分目录只用它，0 表示没有拍摄时间。 */
+  sourceTakenMs: number = 0;
   role: string = 'file';
   /** 来源本地相册名；开启「同步创建相册」时按它在 NAS 建同名相册 */
   albumName: string = '';
+  /** 来源目录路径（如 /DCIM/Camera）；「按设备文件夹」目录模式用它拼目标目录 */
+  sourceAlbumPath: string = '';
 }
 
 export class ContentCompareResult {
@@ -42,8 +46,10 @@ function makePiece(entry: LocalPhotoEntry, role: string): SyncUploadPiece {
   piece.fileName = entry.fileName;
   piece.sourceSize = entry.fileSize;
   piece.sourceMtimeMs = entry.dateModifiedMs;
+  piece.sourceTakenMs = entry.dateTakenMs;
   piece.role = role;
   piece.albumName = entry.sourceAlbumName;
+  piece.sourceAlbumPath = entry.sourceAlbumPath;
   return piece;
 }
 

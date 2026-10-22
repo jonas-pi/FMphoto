@@ -6,6 +6,14 @@ import { dataSharePredicates } from '@kit.ArkData';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagRecord } from '../common/FnDiagLog';
+import {
+  LocalSourcePhoto,
+  photoAssetDateModifiedMs,
+  photoAssetDateTakenMs,
+  photoAssetFileSize,
+  photoAssetSubtype,
+  scanLocalBackupSourcePhotos
+} from '../sync/AlbumBackupLocalSources';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSvc';
@@ -16,66 +24,19 @@ export interface LocalPhotoEntry {
   fileName: string;
   fileSize: number;
   dateModifiedMs: number;
+  /** 拍摄时间（毫秒）。0 表示未知；「按拍摄日期」只用它，不用 dateModifiedMs。 */
+  dateTakenMs: number;
   mimeType: string;
   photoSubtype: number;
   /** 来源相册名（相机 / 微信 / 截图…），用于同步时在 NAS 建同名相册；空表示不归档 */
   sourceAlbumName: string;
+  /** 来源目录路径（如 /DCIM/Camera），用于「按设备文件夹」目录模式拼目标目录；空表示未知 */
+  sourceAlbumPath: string;
 }
 
 /** PhotoKeys 没有「来源目录」字段，来源相册名由 AlbumBackupLocalSources 建索引后回填。 */
 function sourceAlbumNamePlaceholder(): string {
   return '';
-}
-
-function photoAssetFileSize(asset: photoAccessHelper.PhotoAsset): number {
-  const raw = asset.get(photoAccessHelper.PhotoKeys.SIZE);
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return raw;
-  }
-  if (typeof raw === 'string') {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return 0;
-}
-
-function photoAssetDateModifiedMs(asset: photoAccessHelper.PhotoAsset): number {
-  const raw = asset.get(photoAccessHelper.PhotoKeys.DATE_MODIFIED_MS);
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return raw;
-  }
-  if (typeof raw === 'string') {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  const sec = asset.get(photoAccessHelper.PhotoKeys.DATE_MODIFIED);
-  if (typeof sec === 'number' && Number.isFinite(sec)) {
-    return sec * 1000;
-  }
-  return 0;
-}
-
-function photoAssetSubtype(asset: photoAccessHelper.PhotoAsset): number {
-  try {
-    const raw = asset.get(photoAccessHelper.PhotoKeys.PHOTO_SUBTYPE);
-    if (typeof raw === 'number' && Number.isFinite(raw)) {
-      return raw;
-    }
-    if (typeof raw === 'string') {
-      const parsed = Number(raw);
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  } catch (_e) {
-    // 读不到 subtype 时实况照片会被当成普通图处理。
-    fnDiagRecord('W', TAG, 'photo subtype read failed');
-  }
-  return photoAccessHelper.PhotoSubtype.DEFAULT;
 }
 
 function toLocalPhotoEntry(asset: photoAccessHelper.PhotoAsset): LocalPhotoEntry {
@@ -84,9 +45,11 @@ function toLocalPhotoEntry(asset: photoAccessHelper.PhotoAsset): LocalPhotoEntry
     fileName: asset.displayName ?? '',
     fileSize: photoAssetFileSize(asset),
     dateModifiedMs: photoAssetDateModifiedMs(asset),
+    dateTakenMs: photoAssetDateTakenMs(asset),
     mimeType: '',
     photoSubtype: photoAssetSubtype(asset),
-    sourceAlbumName: sourceAlbumNamePlaceholder()
+    sourceAlbumName: sourceAlbumNamePlaceholder(),
+    sourceAlbumPath: ''
   };
 }
 
@@ -114,6 +77,8 @@ async function queryLocalPhotoPage(
         photoAccessHelper.PhotoKeys.SIZE,
         photoAccessHelper.PhotoKeys.DATE_MODIFIED,
         photoAccessHelper.PhotoKeys.DATE_MODIFIED_MS,
+        photoAccessHelper.PhotoKeys.DATE_TAKEN,
+        photoAccessHelper.PhotoKeys.DATE_TAKEN_MS,
         photoAccessHelper.PhotoKeys.PHOTO_SUBTYPE
       ],
       predicates: predicates
@@ -137,6 +102,59 @@ async function queryLocalPhotoPage(
       }
     }
   }
+}
+
+/**
+ * 只扫描「备份源」选中的相册。
+ * 备份源即扫描范围：选中相册之外的文件根本不会被枚举，
+ * 因此既不参与「新媒体」判定，也不会被上传。
+ */
+export class LocalAlbumPhotoScan {
+  entries: LocalPhotoEntry[] = [];
+  /** 真正枚举过的相册数 */
+  albumsScanned: number = 0;
+  granted: boolean = true;
+  failed: boolean = false;
+}
+
+export async function queryLocalPhotosInAlbums(
+  ctx: common.UIAbilityContext,
+  selectedKeys: string[],
+  progress: LocalPhotoScanProgress | null = null
+): Promise<LocalAlbumPhotoScan> {
+  const out = new LocalAlbumPhotoScan();
+  const scanResult = await scanLocalBackupSourcePhotos(
+    ctx,
+    selectedKeys,
+    (count: number): void => {
+      if (progress !== null) {
+        progress.onLoaded(count);
+      }
+    }
+  );
+  out.albumsScanned = scanResult.albumsScanned;
+  out.granted = scanResult.granted;
+  out.failed = scanResult.failed;
+  const scanned: LocalSourcePhoto[] = scanResult.photos;
+  const entries: LocalPhotoEntry[] = [];
+  for (let i = 0; i < scanned.length; i++) {
+    const s = scanned[i];
+    entries.push({
+      uri: s.uri,
+      fileName: s.fileName,
+      fileSize: s.fileSize,
+      dateModifiedMs: s.dateModifiedMs,
+      dateTakenMs: s.dateTakenMs,
+      mimeType: '',
+      photoSubtype: s.photoSubtype,
+      sourceAlbumName: s.albumName,
+      sourceAlbumPath: s.albumPath
+    });
+  }
+  out.entries = entries;
+  hilog.info(DOMAIN, TAG, 'queryLocalPhotosInAlbums count=%{public}d albums=%{public}d failed=%{public}s',
+    entries.length, out.albumsScanned, out.failed ? '1' : '0');
+  return out;
 }
 
 /**

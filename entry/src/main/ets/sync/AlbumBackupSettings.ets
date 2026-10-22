@@ -18,6 +18,12 @@ const K_DISPLAY_PATH: string = 'album_backup_display_path';
 const K_BACKUP_PATH: string = 'album_backup_device_path';
 const K_DEVICE_NAME: string = 'album_backup_device_name';
 const K_SOURCE_FOLDERS: string = 'album_backup_source_folders_json';
+/**
+ * 影子副本：每次成功保存源列表时同步写一份。
+ * 主键万一损坏（写入截断、外部改坏），还能恢复出上一次的选择，
+ * 既不用用户全部重选，导出到云端/WebDAV 时也不会把云端那份列表弄丢。
+ */
+const K_SOURCE_FOLDERS_LAST: string = 'album_backup_source_folders_last_json';
 
 /** 界面顺序与官方一致，对应服务端 folder_manage_mode 的 1–4（具体映射以 NAS 为准）。 */
 export const FOLDER_MANAGE_MODE_LABELS: string[] = [
@@ -27,6 +33,12 @@ export const FOLDER_MANAGE_MODE_LABELS: string[] = [
   '保存在一个文件夹下'
 ];
 
+/**
+ * 备份设置数据。必须加 @Observed：页面里用 @State 持有本对象，
+ * 整体替换（this.settings = merged）时 ArkUI 才会重新渲染，
+ * 否则界面会一直停留在替换前（缓存）的旧值。
+ */
+@Observed
 export class AlbumBackupSettings {
   /** 1–4 */
   folderManageMode: number = 4;
@@ -46,6 +58,50 @@ export class AlbumBackupSettings {
    * 此时 backupSourceFolders 为空并不代表「备份所有文件夹」，保存时也不能用它覆盖磁盘原文。
    */
   backupSourceFoldersValid: boolean = true;
+  /**
+   * 主键损坏时从影子副本恢复出来的「上一次选择」，仅供恢复/导出使用，
+   * 不代表当前生效配置；为空表示没有可恢复的历史。
+   */
+  backupSourceFoldersRecoverable: string[] = [];
+  /**
+   * 影子副本是否存在（解析成功）。true 且列表为空表示「上次就是备份所有文件夹」，
+   * 这同样是有效信息，不能和「没有影子」混为一谈。
+   */
+  backupSourceFoldersRecoverablePresent: boolean = false;
+}
+
+/**
+ * 备份源的实际生效范围。
+ * 主键读失败时必须用影子副本还原上一次的选择，绝不能把「读失败」当成「备份所有文件夹」。
+ */
+export class BackupSourceScope {
+  /** true = 只扫 keys 里的相册；false = 备份所有文件夹（扫全库） */
+  scoped: boolean = false;
+  keys: string[] = [];
+  /** 主键不可读，结论来自影子副本（或完全无从判断） */
+  degraded: boolean = false;
+  /** 连影子副本都没有，degraded 时为 true，表示「按备份所有处理」属于兜底猜测 */
+  guessed: boolean = false;
+}
+
+export function resolveBackupSourceScope(s: AlbumBackupSettings): BackupSourceScope {
+  const out = new BackupSourceScope();
+  if (s.backupSourceFoldersValid) {
+    out.scoped = s.backupSourceFolders.length > 0;
+    out.keys = s.backupSourceFolders.slice();
+    return out;
+  }
+  out.degraded = true;
+  if (s.backupSourceFoldersRecoverablePresent) {
+    // 影子存在：空数组表示上次就是「备份所有文件夹」，非空表示上次的选择。
+    out.keys = s.backupSourceFoldersRecoverable.slice();
+    out.scoped = out.keys.length > 0;
+    return out;
+  }
+  // 连影子都没有：只能按备份所有处理，但标记为猜测，让调用方记告警。
+  out.scoped = false;
+  out.guessed = true;
+  return out;
 }
 
 let memoryCache: AlbumBackupSettings | null = null;
@@ -80,10 +136,17 @@ async function prefsGet(p: preferences.Preferences, key: string, def: string): P
   }
 }
 
-/** 读取失败返回 null，与「键不存在 / 值为空」区分，避免把读取故障当成空列表。 */
+/**
+ * 读取失败或值不是字符串时返回 null，与「键不存在 / 值为空」区分，
+ * 避免把读取故障当成空列表，也避免对非字符串调用字符串方法。
+ */
 async function prefsGetOptional(p: preferences.Preferences, key: string): Promise<string | null> {
   try {
-    return await p.get(key, '') as string;
+    const raw = await p.get(key, '');
+    if (typeof raw === 'string') {
+      return raw;
+    }
+    return null;
   } catch (_e) {
     return null;
   }
@@ -112,6 +175,7 @@ export async function loadAlbumBackupSettings(ctx: common.UIAbilityContext): Pro
     // 读取失败：保持空列表，但标记为不可信，界面不得显示「备份所有文件夹」。
     out.backupSourceFoldersValid = false;
     fnDiagError(TAG, 'read source folders failed', null);
+    await loadRecoverableSources(p, out);
   } else if (srcJson.trim().length > 0) {
     try {
       const parsed = JSON.parse(srcJson) as Object;
@@ -128,15 +192,50 @@ export async function loadAlbumBackupSettings(ctx: common.UIAbilityContext): Pro
       } else {
         out.backupSourceFoldersValid = false;
         fnDiagRecord('W', TAG, 'source folders json is not array');
+        await loadRecoverableSources(p, out);
       }
     } catch (e) {
       // JSON 损坏：保留磁盘原文，标记列表不可信；不能把空数组当成「全部文件夹」。
       out.backupSourceFoldersValid = false;
       fnDiagError(TAG, 'parse source folders failed', e);
+      await loadRecoverableSources(p, out);
     }
   }
   memoryCache = out;
   return out;
+}
+
+/**
+ * 主键不可读时，尝试从影子副本里恢复出「上一次的选择」。
+ * 只作为恢复/导出素材，不写回主键（主键原文保留，等用户确认后再修）。
+ */
+async function loadRecoverableSources(p: preferences.Preferences, out: AlbumBackupSettings): Promise<void> {
+  const raw = await prefsGetOptional(p, K_SOURCE_FOLDERS_LAST);
+  if (raw === null || raw.trim().length === 0) {
+    return;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Object;
+    if (!Array.isArray(parsed)) {
+      return;
+    }
+    const arr: string[] = [];
+    const parsedArr = parsed as Object[];
+    for (let i = 0; i < parsedArr.length; i++) {
+      const el: Object = parsedArr[i];
+      if (typeof el === 'string' && el.trim().length > 0) {
+        arr.push(el.trim());
+      }
+    }
+    if (arr.length > 0) {
+      out.backupSourceFoldersRecoverable = arr;
+      fnDiagRecord('I', TAG, 'recoverable source folders from shadow n=' + String(arr.length));
+    }
+    // 影子是空数组 = 上次就是「备份所有文件夹」，同样算有效信息。
+    out.backupSourceFoldersRecoverablePresent = true;
+  } catch (e) {
+    fnDiagError(TAG, 'parse shadow source folders failed', e);
+  }
 }
 
 export async function saveAlbumBackupSettings(
@@ -160,7 +259,10 @@ export async function saveAlbumBackupSettings(
     await p.put(K_DEVICE_NAME, settings.deviceName);
     // 列表不可信时跳过源文件夹键：保留磁盘原文，避免整包保存把空数组（=全部）写回去。
     if (settings.backupSourceFoldersValid) {
-      await p.put(K_SOURCE_FOLDERS, JSON.stringify(settings.backupSourceFolders));
+      const json = JSON.stringify(settings.backupSourceFolders);
+      await p.put(K_SOURCE_FOLDERS, json);
+      // 影子副本同步写：主键损坏时还能恢复出上一次的选择。
+      await p.put(K_SOURCE_FOLDERS_LAST, json);
     }
     await p.flush();
     memoryCache = settings;
@@ -191,7 +293,30 @@ export function cloneAlbumBackupSettings(src: AlbumBackupSettings): AlbumBackupS
   c.deviceName = src.deviceName;
   c.backupSourceFolders = src.backupSourceFolders.slice();
   c.backupSourceFoldersValid = src.backupSourceFoldersValid;
+  c.backupSourceFoldersRecoverable = src.backupSourceFoldersRecoverable.slice();
+  c.backupSourceFoldersRecoverablePresent = src.backupSourceFoldersRecoverablePresent;
   return c;
+}
+
+/**
+ * 把 src 的字段就地写入 target。
+ * 页面用 @State 持有同一个 AlbumBackupSettings 对象：整体替换对象时 ArkUI 只会在
+ * build 里直接读取的状态上失效，界面容易停留在旧值；就地写入才能让每一行都跟着刷新。
+ */
+export function applyAlbumBackupSettings(target: AlbumBackupSettings, src: AlbumBackupSettings): void {
+  target.folderManageMode = src.folderManageMode;
+  target.renameStrategy = src.renameStrategy;
+  target.photosOnly = src.photosOnly;
+  target.useCellularData = src.useCellularData;
+  target.stopWhenBatteryLow = src.stopWhenBatteryLow;
+  target.syncCreateAlbum = src.syncCreateAlbum;
+  target.displayPath = src.displayPath;
+  target.deviceBackupPath = src.deviceBackupPath;
+  target.deviceName = src.deviceName;
+  target.backupSourceFolders = src.backupSourceFolders.slice();
+  target.backupSourceFoldersValid = src.backupSourceFoldersValid;
+  target.backupSourceFoldersRecoverable = src.backupSourceFoldersRecoverable.slice();
+  target.backupSourceFoldersRecoverablePresent = src.backupSourceFoldersRecoverablePresent;
 }
 
 export function invalidateAlbumBackupSettingsCache(): void {

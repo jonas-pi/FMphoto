@@ -6,7 +6,7 @@ import { common } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
-import { FnPrimaryButton } from '../common/FnUiCommon';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { fnRequestReadImageVideoAccess, FnReadImageVideoAuth } from '../common/FnMediaPermission';
 import {
@@ -24,6 +24,7 @@ import { ALBUM_BACKUP_FOLDER_MODE_OPTIONS, AlbumBackupFolderModeOption } from '.
 import { AlbumBackupSourcePicker } from './AlbumBackupSourcePicker';
 import {
   AlbumBackupSettings,
+  applyAlbumBackupSettings,
   cloneAlbumBackupSettings,
   FOLDER_MANAGE_MODE_LABELS,
   getAlbumBackupSettingsCached,
@@ -40,6 +41,12 @@ export class AlbumBackupPageBack {
 }
 
 type BackupSettingsSubPage = 'main' | 'folder' | 'mode' | 'source';
+
+/** 设置行的副标题来源：@Builder 内按值传参不会刷新，这里用枚举在 Builder 体内读对应状态。 */
+enum BackupRowSubtitle {
+  SOURCE = 0,
+  MODE = 1
+}
 
 function folderItemPath(item: PhotoFolderListItem): string {
   const rec = item as Record<string, Object | string | number | undefined | null>;
@@ -90,7 +97,7 @@ export struct AlbumBackupSyncSheet {
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @State private settings: AlbumBackupSettings = new AlbumBackupSettings();
   @State private busy: boolean = false;
-  @State private statusLine: string = '';
+
   @State private folderChoices: PhotoFolderListItem[] = [];
   @State private locationLoading: boolean = false;
   @State private locationError: string = '';
@@ -99,6 +106,11 @@ export struct AlbumBackupSyncSheet {
   @State private sourceSelectAllPulse: number = 0;
   private bootstrapTimerId: number = -1;
   private bootstrapGeneration: number = 0;
+  /** 备份源 / 目录偏好的副标题。用 @State 承载：普通方法里读 settings 不会被 ArkUI 追踪到。 */
+  @State private sourceSubtitle: string = '';
+  @State private modeSubtitle: string = '';
+  /** 是否已从磁盘读到真实设置。未读到之前不允许回写，避免用默认空列表覆盖磁盘。 */
+  @State private settingsHydrated: boolean = false;
 
   aboutToAppear(): void {
     AlbumBackupPageBack.pop = (): void => {
@@ -110,8 +122,11 @@ export struct AlbumBackupSyncSheet {
     this.sourceNavRight = '';
     this.sourceSelectAllPulse = 0;
     this.busy = false;
-    this.statusLine = '';
-    this.settings = cloneAlbumBackupSettings(getAlbumBackupSettingsCached());
+
+    this.settingsHydrated = false;
+    applyAlbumBackupSettings(this.settings, getAlbumBackupSettingsCached());
+    this.refreshSubtitles();
+    fnDiagRecord('I', 'AlbumBackup', 'sheet open cached valid=' + String(this.settings.backupSourceFoldersValid));
     this.scheduleDeferredBootstrap(gen);
   }
 
@@ -200,11 +215,18 @@ export struct AlbumBackupSyncSheet {
   }
 
   private async persistLocal(): Promise<void> {
+    if (!this.settingsHydrated) {
+      // 磁盘值还没读出来时先不回写，避免用默认空列表（=备份所有文件夹）覆盖磁盘上的备份源。
+      return;
+    }
     await saveAlbumBackupSettings(this.hostContext(), this.settings);
   }
 
   private backupSourceSubtitle(): string {
-    if (!this.settings.backupSourceFoldersValid) {
+    if (this.settingsHydrated && !this.settings.backupSourceFoldersValid) {
+      if (this.settings.backupSourceFoldersRecoverablePresent) {
+        return '读取失败，可恢复上次选择';
+      }
       return '读取失败，请重新选择';
     }
     if (this.settings.backupSourceFolders.length === 0) {
@@ -221,13 +243,24 @@ export struct AlbumBackupSyncSheet {
     return FOLDER_MANAGE_MODE_LABELS[3];
   }
 
+  /** settings 变化后同步两行副标题。 */
+  private refreshSubtitles(): void {
+    this.sourceSubtitle = this.backupSourceSubtitle();
+    this.modeSubtitle = this.folderModeSubtitle();
+  }
+
   private async bootstrapFromDiskAndNas(): Promise<void> {
     const ctx = this.hostContext();
     const loaded = await loadAlbumBackupSettings(ctx);
     const merged = cloneAlbumBackupSettings(loaded);
     merged.deviceName = this.resolveDeviceNameFrom(merged);
-    this.settings = merged;
-    await this.refreshFromNas(false);
+    // 先置 hydrated 再写字段：ArkUI 可能同步重建，此时必须已经知道「已读到磁盘值」。
+    this.settingsHydrated = true;
+    applyAlbumBackupSettings(this.settings, merged);
+    this.refreshSubtitles();
+    fnDiagRecord('I', 'AlbumBackup', 'sheet hydrated valid=' + String(merged.backupSourceFoldersValid) +
+      ' count=' + String(merged.backupSourceFolders.length));
+    await this.refreshFromNas();
   }
 
   private resolveDeviceNameFrom(base: AlbumBackupSettings): string {
@@ -270,27 +303,24 @@ export struct AlbumBackupSyncSheet {
     return wrote;
   }
 
-  /** @param interactive true：用户点「刷新」；false：打开页面后的静默同步 */
-  private async refreshFromNas(interactive: boolean): Promise<void> {
+  /**
+   * 打开设置页后自动拉一次 NAS 备份信息（官方应用也是登录后自动拉一次，之后不再手动刷新）。
+   * 失败信息统一走 locationError（显示在备份位置下方），不在顶部加状态行，避免把控件整体下推。
+   */
+  private async refreshFromNas(): Promise<void> {
     const client = AppSession.getClient();
     if (client === null) {
       this.locationError = '未登录';
-      if (interactive) {
-        this.statusLine = '未登录';
-      }
       return;
     }
     this.locationLoading = true;
-    if (interactive) {
-      this.busy = true;
-      this.statusLine = '正在同步 NAS 备份信息…';
-    }
     try {
       const ctx = this.hostContext();
       const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
       const deviceName = this.resolveDeviceNameFrom(this.settings);
-      const next = cloneAlbumBackupSettings(this.settings);
-      next.deviceName = deviceName;
+      // 请求期间用户可能改开关/目录偏好：这里只留一份请求开始时的快照用于判断，
+      // 结果写回时只碰 NAS 相关字段，绝不整份覆盖用户的新选择。
+      const snapshot = cloneAlbumBackupSettings(this.settings);
 
       let folderChoices: PhotoFolderListItem[] = [];
       let folderMessage = '';
@@ -319,8 +349,9 @@ export struct AlbumBackupSyncSheet {
       if (!v1.success && (v1.message ?? '').length > 0) {
         pathMessage = v1.message ?? pathMessage;
       }
-      const keepLocal = next.displayPath.trim().length > 0 || next.deviceBackupPath.trim().length > 0;
-      if (!keepLocal && pathHolder.displayPath.trim().length === 0 && pathHolder.deviceBackupPath.trim().length === 0) {
+      const keepLocal = snapshot.displayPath.trim().length > 0 || snapshot.deviceBackupPath.trim().length > 0;
+      if (!keepLocal && pathHolder.displayPath.trim().length === 0 && snapshot.deviceBackupPath.trim().length === 0) {
+        // 还没有备份位置时，在 NAS 上创建默认备份目录（官方应用登录后自动完成这一步）。
         const initRes = await client.initDefaultPhotoBackupFolder(deviceId, 20000, deviceName);
         if (initRes.success) {
           const againV2 = await client.fetchPhotoBackupPathV2(deviceId, 20000, deviceName);
@@ -336,19 +367,23 @@ export struct AlbumBackupSyncSheet {
       } else {
         pathMessage = '';
       }
+      // 只回写 NAS 决定的字段，其余字段保持用户当前值（请求期间改过的不能被盖掉）
       if (pathHolder.displayPath.trim().length > 0) {
-        next.displayPath = pathHolder.displayPath.trim();
+        this.settings.displayPath = pathHolder.displayPath.trim();
       }
       if (pathHolder.deviceBackupPath.trim().length > 0) {
-        next.deviceBackupPath = pathHolder.deviceBackupPath.trim();
+        this.settings.deviceBackupPath = pathHolder.deviceBackupPath.trim();
       }
-      if (next.displayPath.trim().length === 0 && next.deviceBackupPath.trim().length > 0) {
-        next.displayPath = next.deviceBackupPath;
+      if (this.settings.displayPath.trim().length === 0 && this.settings.deviceBackupPath.trim().length > 0) {
+        this.settings.displayPath = this.settings.deviceBackupPath;
+      }
+      if (deviceName.trim().length > 0) {
+        this.settings.deviceName = deviceName;
       }
 
       this.folderChoices = folderChoices.length > 0 ? folderChoices : this.folderChoices;
-      this.settings = next;
-      const stillEmpty = next.displayPath.trim().length === 0 && this.folderChoices.length === 0;
+      this.refreshSubtitles();
+      const stillEmpty = this.settings.displayPath.trim().length === 0 && this.folderChoices.length === 0;
       if (stillEmpty) {
         const reason = pathMessage.length > 0 ? pathMessage : folderMessage;
         this.locationError = reason.length > 0 ? `备份位置获取失败：${reason}` : '备份位置获取失败';
@@ -356,19 +391,10 @@ export struct AlbumBackupSyncSheet {
         this.locationError = '';
       }
       await this.persistLocal();
-      if (interactive) {
-        this.statusLine = this.locationError;
-      }
     } catch (e) {
       this.locationError = `备份位置获取失败：${String(e)}`;
-      if (interactive) {
-        this.statusLine = this.locationError;
-      }
     } finally {
       this.locationLoading = false;
-      if (interactive) {
-        this.busy = false;
-      }
     }
   }
 
@@ -395,15 +421,17 @@ export struct AlbumBackupSyncSheet {
       const picked = cloneAlbumBackupSettings(this.settings);
       picked.deviceBackupPath = path;
       picked.displayPath = path;
-      this.settings = picked;
+      applyAlbumBackupSettings(this.settings, picked);
+      this.refreshSubtitles();
       await this.persistLocal();
       this.popNavToMain();
-      await this.refreshFromNas(true);
+      await this.refreshFromNas();
       if (this.settings.displayPath.trim().length === 0) {
         const again = cloneAlbumBackupSettings(this.settings);
         again.deviceBackupPath = path;
         again.displayPath = path;
-        this.settings = again;
+        applyAlbumBackupSettings(this.settings, again);
+        this.refreshSubtitles();
         await this.persistLocal();
       }
       this.toast('备份位置已更新');
@@ -417,6 +445,15 @@ export struct AlbumBackupSyncSheet {
     if (client === null) {
       return;
     }
+    if (!this.settingsHydrated) {
+      // 先把磁盘设置读出来再操作，避免在默认空列表上做同步。
+      await this.bootstrapFromDiskAndNas();
+    }
+    if (!this.settings.backupSourceFoldersValid && keys.length === 0) {
+      // 原列表不可读时不允许空选确认：空列表会被当成「备份所有文件夹」并同步到 NAS。
+      this.toast('请至少选择一个要备份的文件夹');
+      return;
+    }
     const ctx = this.hostContext();
     const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
     const deviceName = this.resolveDeviceNameFrom(this.settings);
@@ -427,16 +464,20 @@ export struct AlbumBackupSyncSheet {
     }
     this.busy = true;
     try {
-      const res = await client.mergePhotoBackupDeviceFolders(deviceId, deviceName, backupPath, keys);
-      if (!res.success) {
-        this.toast(res.message ?? '备份源同步失败');
-        return;
-      }
+      // 先写本机：备份源首先是本机「哪些相册需要备份」的记录，必须落盘。
       this.settings.backupSourceFolders = keys.slice();
       this.settings.backupSourceFoldersValid = true;
+      this.refreshSubtitles();
       await this.persistLocal();
+      // 再尽力登记到 NAS。部分 NAS 版本没有实现 /photo/backup/device/merge（会回 501），
+      // 这时不能因为 NAS 拒绝就丢弃用户刚选的内容。
+      const res = await client.mergePhotoBackupDeviceFolders(deviceId, deviceName, backupPath, keys);
       this.popNavToMain();
-      this.toast('备份源已保存');
+      if (res.success) {
+        this.toast('备份源已保存');
+      } else {
+        this.toast('已保存到本机；NAS 未接受备份源登记');
+      }
     } finally {
       this.busy = false;
     }
@@ -477,14 +518,19 @@ export struct AlbumBackupSyncSheet {
     .alignItems(VerticalAlign.Center)
   }
 
+  /**
+   * 设置行。副标题不能用参数传进来：@Builder 默认按值传参，状态变量变化不会刷新
+   * Builder 内的 UI（见 arkts-builder「按值传递参数」）。所以按 kind 在 Builder 体内
+   * 直接读 @State。
+   */
   @Builder
-  private navRow(title: Resource, subtitle: string, onTap: () => void) {
+  private navRow(title: Resource, kind: BackupRowSubtitle, onTap: () => void) {
     Row() {
       Column({ space: 4 }) {
         Text(title)
           .fontSize(16)
           .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
-        Text(subtitle)
+        Text(kind === BackupRowSubtitle.SOURCE ? this.sourceSubtitle : this.modeSubtitle)
           .fontSize(12)
           .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
           .maxLines(2)
@@ -508,12 +554,6 @@ export struct AlbumBackupSyncSheet {
   private mainSettingsBody() {
     Scroll() {
         Column({ space: 12 }) {
-        if (this.statusLine.length > 0) {
-          Text(this.statusLine)
-            .fontSize(12)
-            .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
-        }
-
         Column() {
           Text(this.settings.displayPath.length > 0 ? this.settings.displayPath : '未设置备份位置')
             .fontSize(15)
@@ -534,11 +574,11 @@ export struct AlbumBackupSyncSheet {
         })
 
         Column() {
-          this.navRow($r('app.string.album_backup_source_title'), this.backupSourceSubtitle(), (): void => {
+          this.navRow($r('app.string.album_backup_source_title'), BackupRowSubtitle.SOURCE, (): void => {
             void this.openBackupSourcePage();
           })
           Divider().strokeWidth(0.5).opacity(0.2)
-          this.navRow($r('app.string.album_backup_folder_mode_title'), this.folderModeSubtitle(), (): void => {
+          this.navRow($r('app.string.album_backup_folder_mode_title'), BackupRowSubtitle.MODE, (): void => {
             this.pushNav('mode');
           })
         }
@@ -608,15 +648,6 @@ export struct AlbumBackupSyncSheet {
         .backgroundColor(fnResolvedCardFill(this.cardBg))
         .borderRadius($r('app.float.radius_medium'))
         .clip(true)
-
-        FnPrimaryButton({
-          text: $r('app.string.album_backup_refresh_nas'),
-          action: (): void => {
-            void this.refreshFromNas(true);
-          }
-        })
-          .width('100%')
-          .enabled(!this.busy)
         }
         .padding({ left: 16, right: 16, top: 8, bottom: 32 })
         .width('100%')
@@ -703,6 +734,7 @@ export struct AlbumBackupSyncSheet {
     .padding({ left: 16, right: 16, top: 16, bottom: 16 })
     .onClick((): void => {
       this.settings.folderManageMode = opt.mode;
+      this.refreshSubtitles();
       void this.persistLocal();
       this.popNav();
     })
@@ -737,6 +769,8 @@ export struct AlbumBackupSyncSheet {
       AlbumBackupSourcePicker({
         initialSelectedKeys: this.settings.backupSourceFolders,
         initialSelectionKnown: this.settings.backupSourceFoldersValid,
+        recoverableKeys: this.settings.backupSourceFoldersRecoverable,
+        recoverablePresent: this.settings.backupSourceFoldersRecoverablePresent,
         accentColor: this.accent,
         selectAllPulse: this.sourceSelectAllPulse,
         onSelectAllLabelChange: (label: string): void => {

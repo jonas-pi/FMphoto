@@ -181,11 +181,12 @@ export async function uploadLocalMediaUri(
   uri: string,
   timeoutMs: number,
   albumDirHint?: string,
-  fileNameHint?: string
+  fileNameHint?: string,
+  forceDirHint: boolean = false
 ): Promise<FnClientResult<Object>> {
   const movingName = await localMovingPhotoDisplayName(context, uri);
   if (movingName === undefined) {
-    return client.uploadPhotoByUri(uri, timeoutMs, albumDirHint);
+    return client.uploadPhotoByUri(uri, timeoutMs, albumDirHint, forceDirHint);
   }
   const outName =
     fileNameHint !== undefined && fileNameHint.trim().length > 0 ? fileNameHint.trim() : movingName;
@@ -194,7 +195,7 @@ export async function uploadLocalMediaUri(
     return { success: false, message: '实况照片导出失败' };
   }
   try {
-    return await client.uploadPhotoByUri(payload.uploadUri, timeoutMs, albumDirHint);
+    return await client.uploadPhotoByUri(payload.uploadUri, timeoutMs, albumDirHint, forceDirHint);
   } finally {
     await deleteOwnedLivePayload(payload.ownedPath);
   }

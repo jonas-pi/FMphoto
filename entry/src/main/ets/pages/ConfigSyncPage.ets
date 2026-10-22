@@ -7,6 +7,7 @@ import { image } from '@kit.ImageKit';
 import { scanBarcode, scanCore } from '@kit.ScanKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { FnPrimaryButton, FnSecondaryButton } from '../common/FnUiCommon';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { SessionPreferences, LoginFormDefaults, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
 import { AppSession } from '../auth/AppSession';
 import { extractFnId } from '../network/FnConnectApi';
@@ -206,11 +207,19 @@ export struct ConfigSyncSheet {
 
   private async loadAlbumBackupSlice(): Promise<AppSettingsAlbumBackup> {
     const backup = await loadAlbumBackupSettings(this.hostContext());
+    // 本机列表读取失败时，用影子副本里「上一次的选择」参与导出，
+    // 这样云端/WebDAV 那份不会因为本机这一处损坏而丢掉备份源列表。
+    const recoverable = backup.backupSourceFoldersRecoverable;
+    const useRecoverable = !backup.backupSourceFoldersValid && backup.backupSourceFoldersRecoverablePresent;
+    fnDiagRecord('I', 'AppSettings', 'export album backup slice present=' +
+      String(backup.backupSourceFoldersValid || useRecoverable) +
+      ' n=' + String(backup.backupSourceFoldersValid ? backup.backupSourceFolders.length : recoverable.length) +
+      ' recovered=' + String(backup.backupSourceFoldersRecoverablePresent));
     return {
       displayPath: backup.displayPath.trim(),
       deviceBackupPath: backup.deviceBackupPath.trim(),
-      backupSourceFolders: backup.backupSourceFolders.slice(),
-      backupSourceFoldersPresent: backup.backupSourceFoldersValid,
+      backupSourceFolders: backup.backupSourceFoldersValid ? backup.backupSourceFolders.slice() : recoverable.slice(),
+      backupSourceFoldersPresent: backup.backupSourceFoldersValid || useRecoverable,
       policyPresent: true,
       folderManageMode: backup.folderManageMode,
       renameStrategy: backup.renameStrategy,

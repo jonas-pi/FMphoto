@@ -1405,8 +1405,9 @@ export class FnHttpClient {
     return this.galleryOps.mergeRepeatPhotos(groupId, timeoutMs);
   }
 
-  async uploadPhotoByUri(uri: string, timeoutMs: number = 120000, albumUploadDirHint?: string): Promise<FnClientResult<Object>> {
-    return this.uploadOps.uploadPhotoByUri(uri, timeoutMs, albumUploadDirHint);
+  async uploadPhotoByUri(uri: string, timeoutMs: number = 120000, albumUploadDirHint?: string,
+    forceDirHint: boolean = false): Promise<FnClientResult<Object>> {
+    return this.uploadOps.uploadPhotoByUri(uri, timeoutMs, albumUploadDirHint, forceDirHint);
   }
 
   /**

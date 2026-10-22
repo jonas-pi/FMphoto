@@ -971,7 +971,8 @@ export class FnHttpClientUploadOps {
   async uploadPhotoByUri(
     uri: string,
     timeoutMs: number = 120000,
-    albumUploadDirHint?: string
+    albumUploadDirHint?: string,
+    forceDirHint: boolean = false
   ): Promise<FnClientResult<Object>> {
     const oneUri = uri.trim();
     if (oneUri.length === 0) {
@@ -986,7 +987,12 @@ export class FnHttpClientUploadOps {
     }
     const payload = filePack.buffer;
     const fileName = FnHttpClientUploadOps.fileNameFromUri(oneUri);
-    let pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+    let pathHintBeforeUpload = '';
+    // forceDirHint：备份目录偏好不是「默认」时，必须用客户端按偏好算出来的目录，
+    // 不能被 NAS 的 upload/path 提示（形如 <库根>/PhotoLibrary/YYYY/MM）覆盖。
+    if (!forceDirHint) {
+      pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+    }
     if (pathHintBeforeUpload.length === 0 && albumUploadDirHint !== undefined) {
       const d = albumUploadDirHint.trim();
       if (d.length > 0) {

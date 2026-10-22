@@ -6,7 +6,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagMaskUrl, fnDiagRecord, fnDiagError } from '../common/FnDiagLog';
 import { openFeedbackPage } from './FeedbackPage';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { CertPolicy } from '../network/CertPolicy';
@@ -32,6 +32,7 @@ import { preferPublicEndpointUrl } from '../network/PublicDns';
 import { fnWs2faVerify, fnWsLogin, shouldTryNextLoginEndpoint } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
+import { loadAlbumBackupSettings } from '../sync/AlbumBackupSettings';
 import { LoginFormDefaults, LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
@@ -463,6 +464,14 @@ struct Login {
       return;
     }
     AppSession.apply(stored);
+    // 新登录没有 AppSession.restore 这一步，不主动加载的话备份设置缓存为空：
+    // 「仅备份照片/使用流量备份/同步创建相册/重命名/目录偏好」会被当成默认值，
+    // 要等下次冷启动才生效。这里登录成功后立刻读一次。
+    try {
+      await loadAlbumBackupSettings(ctx);
+    } catch (e) {
+      fnDiagError('Login', 'loadAlbumBackupSettings fail', e);
+    }
     // 跳转前清空密码框，降低系统根据「提交后仍带密文的输入框」关联保险箱更新提示的概率
     this.password = '';
     this.leaveToHome();

@@ -116,6 +116,10 @@ export struct AlbumBackupSourcePicker {
   @Prop initialSelectedKeys: string[] = [];
   /** false 表示原配置读取失败：不能把空列表当成「全选」，要求用户重新确认。 */
   @Prop initialSelectionKnown: boolean = true;
+  /** 原配置损坏时从影子副本恢复出的「上一次选择」，用来预勾选，避免用户全部重选。 */
+  @Prop recoverableKeys: string[] = [];
+  /** 影子副本是否存在；true 且列表为空表示上次就是「备份所有文件夹」。 */
+  @Prop recoverablePresent: boolean = false;
   /** 父级顶栏点「全选/全不选」时递增，触发本组件切换 */
   @Prop @Watch('onSelectAllPulseChanged') selectAllPulse: number = 0;
   onConfirm: (keys: string[]) => void = (_: string[]): void => {};
@@ -125,6 +129,7 @@ export struct AlbumBackupSourcePicker {
   @State private selectedKeys: string[] = [];
   @State private loading: boolean = true;
   @State private loadHint: string = '';
+  @State private sourceWarn: string = '';
   @State private lastAuth: FnReadImageVideoAuth = FnReadImageVideoAuth.DENIED;
 
   aboutToAppear(): void {
@@ -166,12 +171,27 @@ export struct AlbumBackupSourcePicker {
     return keys;
   }
 
+  /**
+   * 是否允许确认。原列表不可读时必须显式选过文件夹：
+   * 空选会被当成「备份所有文件夹」，既会覆盖本地配置，也会把空列表同步到 NAS。
+   */
+  private canConfirm(): boolean {
+    if (this.loading || this.albums.length === 0) {
+      return false;
+    }
+    if (!this.initialSelectionKnown && this.selectedKeys.length === 0) {
+      return false;
+    }
+    return true;
+  }
+
   private async loadAlbums(): Promise<void> {
     this.loading = true;
     this.loadHint = '正在读取本机相册目录…';
     const scan = await scanLocalBackupSourceAlbums(this.hostContext(), true);
     this.lastAuth = scan.auth;
     this.albums = scan.albums;
+    this.sourceWarn = '';
     if (scan.auth !== FnReadImageVideoAuth.GRANTED) {
       this.loadHint = '需要「图片和视频」访问权限，才能列出相机、微信等文件夹';
       this.selectedKeys = [];
@@ -181,8 +201,25 @@ export struct AlbumBackupSourcePicker {
     } else {
       if (!this.initialSelectionKnown) {
         // 原列表不可读时不能默认全选：否则会把读取失败当成「备份全部」并覆盖原配置。
-        this.selectedKeys = [];
-        this.loadHint = '原备份源读取失败，请重新选择要备份的文件夹';
+        const recovered = this.recoveredKeys();
+        if (this.recoverablePresent && this.recoverableKeys.length === 0) {
+          // 影子是空数组：上次确实就是「备份所有文件夹」，按全选恢复。
+          this.selectedKeys = this.allMergeKeys();
+          this.sourceWarn = '已恢复上次的选择（备份所有文件夹），可直接确认或重新选择';
+        } else if (this.recoverablePresent && recovered.length > 0) {
+          // 影子有记录且能对上本机目录：预勾选它，用户确认即可修复配置。
+          this.selectedKeys = recovered;
+          this.sourceWarn = `已恢复上次选择的 ${recovered.length} 个文件夹，可直接确认或重新选择`;
+        } else if (this.recoverablePresent) {
+          // 影子有记录但一个都对不上当前相册：不能默认全选（那等于把用户排除过的目录又放回来），
+          // 也不该谎称「已恢复」，交给用户重新选择。
+          this.selectedKeys = [];
+          this.sourceWarn = '上次选择的文件夹在当前设备上找不到，请重新选择要备份的文件夹（不选择无法确认）';
+        } else {
+          this.selectedKeys = [];
+          this.sourceWarn = '原备份源读取失败，请重新选择要备份的文件夹（不选择无法确认）';
+        }
+        this.loadHint = '';
       } else {
         this.loadHint = '';
         if (this.initialSelectedKeys.length > 0) {
@@ -194,6 +231,22 @@ export struct AlbumBackupSourcePicker {
     }
     this.loading = false;
     this.emitSelectAllLabel();
+  }
+
+  /** 影子副本里能对上本机目录的上一次选择。 */
+  private recoveredKeys(): string[] {
+    if (this.recoverableKeys.length === 0) {
+      return [];
+    }
+    const available = this.allMergeKeys();
+    const out: string[] = [];
+    for (let i = 0; i < this.recoverableKeys.length; i++) {
+      const key = this.recoverableKeys[i];
+      if (available.indexOf(key) >= 0 && out.indexOf(key) < 0) {
+        out.push(key);
+      }
+    }
+    return out;
   }
 
   private async onRequestPermission(): Promise<void> {
@@ -340,6 +393,14 @@ export struct AlbumBackupSourcePicker {
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 8 })
 
+      if (this.sourceWarn.length > 0) {
+        Text(this.sourceWarn)
+          .fontSize(13)
+          .fontColor('#E11D48')
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 8 })
+      }
+
       if (this.loading) {
         Text(this.loadHint.length > 0 ? this.loadHint : '加载中…')
           .fontSize(14)
@@ -469,11 +530,16 @@ export struct AlbumBackupSourcePicker {
         FnPrimaryButton({
           text: $r('app.string.album_backup_confirm'),
           action: (): void => {
+            // 二次校验：原列表不可读时不允许空选确认。
+            if (!this.canConfirm()) {
+              return;
+            }
             this.onConfirm(this.selectedKeys.slice());
           }
         })
           .width('100%')
-          .enabled(!this.loading && this.albums.length > 0)
+          // 原列表不可读时必须显式选过文件夹：空选会被当成「备份所有文件夹」并同步到 NAS。
+          .enabled(this.canConfirm())
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 16 })
