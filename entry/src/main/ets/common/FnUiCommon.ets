@@ -47,12 +47,9 @@ import {
   fnResolvedTextPrimary,
   fnResolvedTextSecondary
 } from './FnThemeColors';
-import { FnPressWatchdog } from './FnPressWatchdog';
 
 export const FN_FLOATING_TOP_MARGIN_VP: number = 8;
 export const FN_FLOATING_TOP_BOTTOM_GAP_VP: number = 6;
-/** 按下时向内收缩的比例。 */
-export const FN_PRESSED_SCALE: number = 0.92;
 export const FN_FLOATING_TOP_CONTROL_SIZE_VP: number = 40;
 export const FN_FLOATING_TOP_CONTROL_RADIUS_VP: number = FN_FLOATING_TOP_CONTROL_SIZE_VP / 2;
 export const FN_FLOATING_TOP_PILL_MIN_WIDTH_VP: number = 62;
@@ -243,13 +240,8 @@ export class FnHdsTitleBarCache {
   }
 }
 
-/**
- * 按压回弹的等待时间。
- * 抬起事件晚于这个时间到达，菜单遮罩就会把抬手吃掉，按钮的按压态不再复位：
- * 第一次点击能看到「向内收缩」的动画，之后按钮一直卡在按压态，再按就没有动画了。
- * 所以要等抬手先落到按钮上（普通点按抬手在 60~120ms），再弹菜单。
- */
-const FN_HDS_PRESS_SETTLE_MS: number = 160;
+/** 按压回弹大约一帧。同步弹出菜单/半模态会吃掉抬手，按钮的按压态不再复位。 */
+const FN_HDS_PRESS_SETTLE_MS: number = 48;
 
 export class FnHdsPressActionGate {
   private timer: number = -1;
@@ -495,23 +487,6 @@ export struct FnHdsPillButton {
   @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
   action: () => void = () => {};
   private lastActionAt: number = 0;
-  /** 抬手被弹出的菜单/半模态吃掉时兜底复位，保证按压动画每次都重播。 */
-  private pressWatchdog: FnPressWatchdog = new FnPressWatchdog();
-
-  aboutToAppear(): void {
-    this.pressWatchdog.bind((): void => {
-      this.resetPressState();
-    });
-  }
-
-  aboutToDisappear(): void {
-    this.pressWatchdog.disarm();
-  }
-
-  private resetPressState(): void {
-    this.isPressed = false;
-    this.pressShadowType = hdsEffect.PressShadowType.NONE;
-  }
 
   private shapeRadius(): number {
     return this.radiusValue >= 0 ? this.radiusValue : this.heightValue / 2;
@@ -549,12 +524,11 @@ export struct FnHdsPillButton {
     if (event.type === TouchType.Down) {
       this.isPressed = true;
       this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
-      this.pressWatchdog.arm();
       return;
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.pressWatchdog.disarm();
-      this.resetPressState();
+      this.isPressed = false;
+      this.pressShadowType = hdsEffect.PressShadowType.NONE;
     }
   }
 
@@ -624,7 +598,6 @@ export struct FnHdsPillButton {
     }
     .width(this.widthValue)
     .height(this.heightValue)
-    .scale({ x: this.isPressed ? FN_PRESSED_SCALE : 1, y: this.isPressed ? FN_PRESSED_SCALE : 1 })
     .visualEffect(new hdsEffect.HdsEffectBuilder()
       .pressShadow(this.pressShadowType)
       .buildEffect())
@@ -653,23 +626,6 @@ export struct FnHdsSymbolButton {
   @State private pressShadowType: hdsEffect.PressShadowType = hdsEffect.PressShadowType.NONE;
   action: () => void = () => {};
   private lastActionAt: number = 0;
-  /** 抬手被弹出的菜单/半模态吃掉时兜底复位，保证按压动画每次都重播。 */
-  private pressWatchdog: FnPressWatchdog = new FnPressWatchdog();
-
-  aboutToAppear(): void {
-    this.pressWatchdog.bind((): void => {
-      this.resetPressState();
-    });
-  }
-
-  aboutToDisappear(): void {
-    this.pressWatchdog.disarm();
-  }
-
-  private resetPressState(): void {
-    this.isPressed = false;
-    this.pressShadowType = hdsEffect.PressShadowType.NONE;
-  }
 
   private shapeRadius(): number {
     return this.radiusValue >= 0 ? this.radiusValue : Math.min(this.heightValue, this.numericWidth()) / 2;
@@ -711,12 +667,11 @@ export struct FnHdsSymbolButton {
     if (event.type === TouchType.Down) {
       this.isPressed = true;
       this.pressShadowType = hdsEffect.PressShadowType.BLEND_WHITE;
-      this.pressWatchdog.arm();
       return;
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.pressWatchdog.disarm();
-      this.resetPressState();
+      this.isPressed = false;
+      this.pressShadowType = hdsEffect.PressShadowType.NONE;
     }
   }
 
@@ -769,7 +724,6 @@ export struct FnHdsSymbolButton {
     }
     .width(this.widthValue)
     .height(this.heightValue)
-    .scale({ x: this.isPressed ? FN_PRESSED_SCALE : 1, y: this.isPressed ? FN_PRESSED_SCALE : 1 })
     .visualEffect(new hdsEffect.HdsEffectBuilder()
       .pressShadow(this.pressShadowType)
       .buildEffect())
