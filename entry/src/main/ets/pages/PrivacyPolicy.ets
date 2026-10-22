@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { SessionPreferences } from '../auth/SessionPreferences';
+import { PrivacyConsentState, SessionPreferences } from '../auth/SessionPreferences';
 import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -68,14 +68,10 @@ struct PrivacyPolicy {
 
   private async loadConsentState(): Promise<void> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    try {
-      const ok = await SessionPreferences.isPrivacyPolicyAccepted(ctx);
-      this.accepted = ok;
-      this.decisionRequired = !ok;
-    } catch (_e) {
-      this.accepted = false;
-      this.decisionRequired = true;
-    }
+    const state = await SessionPreferences.readPrivacyPolicyConsent(ctx);
+    this.accepted = state === PrivacyConsentState.ACCEPTED;
+    // 读取失败时不能强制用户重新决断，否则会把一次读取故障变成又一次同意流程。
+    this.decisionRequired = state === PrivacyConsentState.NOT_ACCEPTED;
   }
 
   private goBack(): void {

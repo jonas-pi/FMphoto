@@ -6,7 +6,7 @@ import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import { GalleryThumbDiskCache } from '../album/GalleryThumbDiskCache';
-import { SessionPreferences } from '../auth/SessionPreferences';
+import { PrivacyConsentState, SessionPreferences } from '../auth/SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
 import { scheduleCheck } from '../network/LoginEndpointAutoSwitch';
 import { FnImmersiveBackdrop } from '../common/FnUiCommon';
@@ -87,35 +87,28 @@ struct Index {
   /** 首次启动隐私政策确认：同意前不恢复会话、不进入登录页。 */
   private async ensurePrivacyConsentAccepted(): Promise<boolean> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    try {
-      const accepted = await SessionPreferences.isPrivacyPolicyAccepted(ctx);
-      if (accepted) {
-        return true;
-      }
-      this.privacyConsentRequired = true;
-      this.hint = '请先阅读并同意隐私政策';
-      return false;
-    } catch (e) {
-      fnDiagError('Index', 'privacy pref read failed', e);
+    const state = await SessionPreferences.readPrivacyPolicyConsent(ctx);
+    if (state === PrivacyConsentState.NOT_ACCEPTED) {
       this.privacyConsentRequired = true;
       this.hint = '请先阅读并同意隐私政策';
       return false;
     }
+    if (state === PrivacyConsentState.UNKNOWN) {
+      // 读取失败不等于未同意：继续启动，避免 preferences 故障时每次冷启动都重复索要同意。
+      fnDiagRecord('W', 'Index', 'privacy consent unreadable, skip prompt');
+    }
+    return true;
   }
 
   private async resumeIfPrivacyAccepted(): Promise<void> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    try {
-      const accepted = await SessionPreferences.isPrivacyPolicyAccepted(ctx);
-      if (!accepted) {
-        return;
-      }
-      this.privacyConsentRequired = false;
-      this.hint = '正在初始化…';
-      this.restoreSessionAndRoute();
-    } catch (e) {
-      fnDiagError('Index', 'restore after consent failed', e);
+    const state = await SessionPreferences.readPrivacyPolicyConsent(ctx);
+    if (state !== PrivacyConsentState.ACCEPTED) {
+      return;
     }
+    this.privacyConsentRequired = false;
+    this.hint = '正在初始化…';
+    this.restoreSessionAndRoute();
   }
 
   private openPrivacyPolicy(): void {

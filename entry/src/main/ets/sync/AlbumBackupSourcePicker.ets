@@ -114,6 +114,8 @@ export struct AlbumBackupSourcePicker {
   @StorageProp(FN_RESOLVED_CARD_BG_KEY) private cardBg: string = '';
   @Prop accentColor: string = '#FF4A8BFF';
   @Prop initialSelectedKeys: string[] = [];
+  /** false 表示原配置读取失败：不能把空列表当成「全选」，要求用户重新确认。 */
+  @Prop initialSelectionKnown: boolean = true;
   /** 父级顶栏点「全选/全不选」时递增，触发本组件切换 */
   @Prop @Watch('onSelectAllPulseChanged') selectAllPulse: number = 0;
   onConfirm: (keys: string[]) => void = (_: string[]): void => {};
@@ -177,11 +179,17 @@ export struct AlbumBackupSourcePicker {
       this.loadHint = '未找到含照片或视频的文件夹，请确认系统相册里是否有内容';
       this.selectedKeys = [];
     } else {
-      this.loadHint = '';
-      if (this.initialSelectedKeys.length > 0) {
-        this.selectedKeys = this.initialSelectedKeys.slice();
+      if (!this.initialSelectionKnown) {
+        // 原列表不可读时不能默认全选：否则会把读取失败当成「备份全部」并覆盖原配置。
+        this.selectedKeys = [];
+        this.loadHint = '原备份源读取失败，请重新选择要备份的文件夹';
       } else {
-        this.selectedKeys = this.allMergeKeys();
+        this.loadHint = '';
+        if (this.initialSelectedKeys.length > 0) {
+          this.selectedKeys = this.initialSelectedKeys.slice();
+        } else {
+          this.selectedKeys = this.allMergeKeys();
+        }
       }
     }
     this.loading = false;

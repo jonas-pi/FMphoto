@@ -44,6 +44,11 @@ export interface AppSettingsAlbumBackup {
   displayPath: string;
   deviceBackupPath: string;
   backupSourceFolders: string[];
+  /**
+   * 源文件夹列表是否随信封导出。false / 缺省表示导出方列表不可读或旧格式未带该字段：
+   * 导入时保留本机原列表，序列化时省略该字段，避免空数组（=全部文件夹）覆盖原配置。
+   */
+  backupSourceFoldersPresent?: boolean;
   /** 旧信封没有策略字段时为 false，导入时不覆盖本机开关。 */
   policyPresent: boolean;
   /** 1–4 */
@@ -170,6 +175,7 @@ function emptyAlbumBackup(): AppSettingsAlbumBackup {
     displayPath: '',
     deviceBackupPath: '',
     backupSourceFolders: [],
+    backupSourceFoldersPresent: false,
     policyPresent: false,
     folderManageMode: 4,
     renameStrategy: 0,
@@ -711,9 +717,10 @@ function parseAlbumBackupBlock(parsed: LooseJson): AppSettingsAlbumBackupParse {
       rec['deviceBackupPath'] !== undefined ? rec['deviceBackupPath'] : rec['bp'],
       ''
     ).trim();
-    value.backupSourceFolders = parseStringArray(
-      rec['backupSourceFolders'] !== undefined ? rec['backupSourceFolders'] : rec['sf']
-    );
+    const srcRaw = rec['backupSourceFolders'] !== undefined ? rec['backupSourceFolders'] : rec['sf'];
+    value.backupSourceFolders = parseStringArray(srcRaw);
+    // 只有确实带了数组才认为可导入；字段缺失/类型错误时保留本机原列表。
+    value.backupSourceFoldersPresent = Array.isArray(srcRaw);
     readBackupPolicy(rec, value);
     if (!value.policyPresent) {
       readBackupPolicy(parsed, value);
@@ -726,6 +733,7 @@ function parseAlbumBackupBlock(parsed: LooseJson): AppSettingsAlbumBackupParse {
     value.displayPath = asString(parsed['adp'], '').trim();
     value.deviceBackupPath = asString(parsed['abp'], '').trim();
     value.backupSourceFolders = parseStringArray(parsed['asf']);
+    value.backupSourceFoldersPresent = Array.isArray(parsed['asf']);
     readBackupPolicy(parsed, value);
     return { present: true, value: value };
   }
@@ -875,6 +883,7 @@ export function envelopeFromLayout(
       displayPath: albumBackup.displayPath.trim(),
       deviceBackupPath: albumBackup.deviceBackupPath.trim(),
       backupSourceFolders: albumBackup.backupSourceFolders.slice(),
+      backupSourceFoldersPresent: albumBackup.backupSourceFoldersPresent !== false,
       policyPresent: true,
       folderManageMode: albumBackup.folderManageMode,
       renameStrategy: albumBackup.renameStrategy,
@@ -928,7 +937,9 @@ export function serializeEnvelope(envelope: AppSettingsEnvelope): string {
     const backup: LooseJson = {};
     backup['displayPath'] = envelope.albumBackup.displayPath;
     backup['deviceBackupPath'] = envelope.albumBackup.deviceBackupPath;
-    backup['backupSourceFolders'] = envelope.albumBackup.backupSourceFolders.slice();
+    if (envelope.albumBackup.backupSourceFoldersPresent !== false) {
+      backup['backupSourceFolders'] = envelope.albumBackup.backupSourceFolders.slice();
+    }
     if (envelope.albumBackup.policyPresent) {
       backup['folderManageMode'] = envelope.albumBackup.folderManageMode;
       backup['renameStrategy'] = envelope.albumBackup.renameStrategy;
@@ -1049,7 +1060,9 @@ function compactRootObject(
   if (envelope.albumBackupPresent) {
     root['adp'] = envelope.albumBackup.displayPath;
     root['abp'] = envelope.albumBackup.deviceBackupPath;
-    root['asf'] = envelope.albumBackup.backupSourceFolders.slice();
+    if (envelope.albumBackup.backupSourceFoldersPresent !== false) {
+      root['asf'] = envelope.albumBackup.backupSourceFolders.slice();
+    }
     if (envelope.albumBackup.policyPresent) {
       root['afm'] = envelope.albumBackup.folderManageMode;
       root['ars'] = envelope.albumBackup.renameStrategy;

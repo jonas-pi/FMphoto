@@ -210,6 +210,7 @@ export struct ConfigSyncSheet {
       displayPath: backup.displayPath.trim(),
       deviceBackupPath: backup.deviceBackupPath.trim(),
       backupSourceFolders: backup.backupSourceFolders.slice(),
+      backupSourceFoldersPresent: backup.backupSourceFoldersValid,
       policyPresent: true,
       folderManageMode: backup.folderManageMode,
       renameStrategy: backup.renameStrategy,
@@ -242,7 +243,10 @@ export struct ConfigSyncSheet {
     const merged = cloneAlbumBackupSettings(await loadAlbumBackupSettings(ctx));
     merged.displayPath = slice.displayPath.trim();
     merged.deviceBackupPath = slice.deviceBackupPath.trim();
-    merged.backupSourceFolders = slice.backupSourceFolders.slice();
+    if (slice.backupSourceFoldersPresent !== false) {
+      merged.backupSourceFolders = slice.backupSourceFolders.slice();
+      merged.backupSourceFoldersValid = true;
+    }
     if (merged.displayPath.length === 0 && merged.deviceBackupPath.length > 0) {
       merged.displayPath = merged.deviceBackupPath;
     }

@@ -4,7 +4,7 @@
  */
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { fnDiagError } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 
 const TAG: string = 'AlbumBackup';
 const PREF_NAME: string = 'fnos_client_prefs';
@@ -41,6 +41,11 @@ export class AlbumBackupSettings {
   deviceName: string = 'FMphoto';
   /** NAS 已登记的备份源目录；空表示「备份所有文件夹」语义（merge 时由界面决定）。 */
   backupSourceFolders: string[] = [];
+  /**
+   * 源文件夹列表是否可信。false 表示磁盘 JSON 读取失败：
+   * 此时 backupSourceFolders 为空并不代表「备份所有文件夹」，保存时也不能用它覆盖磁盘原文。
+   */
+  backupSourceFoldersValid: boolean = true;
 }
 
 let memoryCache: AlbumBackupSettings | null = null;
@@ -75,10 +80,20 @@ async function prefsGet(p: preferences.Preferences, key: string, def: string): P
   }
 }
 
+/** 读取失败返回 null，与「键不存在 / 值为空」区分，避免把读取故障当成空列表。 */
+async function prefsGetOptional(p: preferences.Preferences, key: string): Promise<string | null> {
+  try {
+    return await p.get(key, '') as string;
+  } catch (_e) {
+    return null;
+  }
+}
+
 export async function loadAlbumBackupSettings(ctx: common.UIAbilityContext): Promise<AlbumBackupSettings> {
   const p = await openPrefs(ctx);
   const out = defaults();
   if (p === null) {
+    out.backupSourceFoldersValid = false;
     memoryCache = out;
     return out;
   }
@@ -92,24 +107,33 @@ export async function loadAlbumBackupSettings(ctx: common.UIAbilityContext): Pro
   out.displayPath = await prefsGet(p, K_DISPLAY_PATH, '');
   out.deviceBackupPath = await prefsGet(p, K_BACKUP_PATH, '');
   out.deviceName = await prefsGet(p, K_DEVICE_NAME, 'FMphoto');
-  const srcJson = await prefsGet(p, K_SOURCE_FOLDERS, '[]');
-  try {
-    const parsed = JSON.parse(srcJson) as Object;
-    if (Array.isArray(parsed)) {
-      const parsedArr = parsed as Object[];
-      const arr: string[] = [];
-      for (let i = 0; i < parsedArr.length; i++) {
-        const el: Object = parsedArr[i];
-        if (typeof el === 'string' && el.trim().length > 0) {
-          arr.push(el.trim());
+  const srcJson = await prefsGetOptional(p, K_SOURCE_FOLDERS);
+  if (srcJson === null) {
+    // 读取失败：保持空列表，但标记为不可信，界面不得显示「备份所有文件夹」。
+    out.backupSourceFoldersValid = false;
+    fnDiagError(TAG, 'read source folders failed', null);
+  } else if (srcJson.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(srcJson) as Object;
+      if (Array.isArray(parsed)) {
+        const parsedArr = parsed as Object[];
+        const arr: string[] = [];
+        for (let i = 0; i < parsedArr.length; i++) {
+          const el: Object = parsedArr[i];
+          if (typeof el === 'string' && el.trim().length > 0) {
+            arr.push(el.trim());
+          }
         }
+        out.backupSourceFolders = arr;
+      } else {
+        out.backupSourceFoldersValid = false;
+        fnDiagRecord('W', TAG, 'source folders json is not array');
       }
-      out.backupSourceFolders = arr;
+    } catch (e) {
+      // JSON 损坏：保留磁盘原文，标记列表不可信；不能把空数组当成「全部文件夹」。
+      out.backupSourceFoldersValid = false;
+      fnDiagError(TAG, 'parse source folders failed', e);
     }
-  } catch (e) {
-    // 源文件夹 JSON 损坏时 backupSourceFolders 被静默清空。
-    fnDiagError(TAG, 'parse source folders failed', e);
-    out.backupSourceFolders = [];
   }
   memoryCache = out;
   return out;
@@ -134,7 +158,10 @@ export async function saveAlbumBackupSettings(
     await p.put(K_DISPLAY_PATH, settings.displayPath);
     await p.put(K_BACKUP_PATH, settings.deviceBackupPath);
     await p.put(K_DEVICE_NAME, settings.deviceName);
-    await p.put(K_SOURCE_FOLDERS, JSON.stringify(settings.backupSourceFolders));
+    // 列表不可信时跳过源文件夹键：保留磁盘原文，避免整包保存把空数组（=全部）写回去。
+    if (settings.backupSourceFoldersValid) {
+      await p.put(K_SOURCE_FOLDERS, JSON.stringify(settings.backupSourceFolders));
+    }
     await p.flush();
     memoryCache = settings;
     return true;
@@ -163,6 +190,7 @@ export function cloneAlbumBackupSettings(src: AlbumBackupSettings): AlbumBackupS
   c.deviceBackupPath = src.deviceBackupPath;
   c.deviceName = src.deviceName;
   c.backupSourceFolders = src.backupSourceFolders.slice();
+  c.backupSourceFoldersValid = src.backupSourceFoldersValid;
   return c;
 }
 

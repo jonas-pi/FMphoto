@@ -204,6 +204,9 @@ export struct AlbumBackupSyncSheet {
   }
 
   private backupSourceSubtitle(): string {
+    if (!this.settings.backupSourceFoldersValid) {
+      return '读取失败，请重新选择';
+    }
     if (this.settings.backupSourceFolders.length === 0) {
       return '备份所有文件夹';
     }
@@ -430,6 +433,7 @@ export struct AlbumBackupSyncSheet {
         return;
       }
       this.settings.backupSourceFolders = keys.slice();
+      this.settings.backupSourceFoldersValid = true;
       await this.persistLocal();
       this.popNavToMain();
       this.toast('备份源已保存');
@@ -732,6 +736,7 @@ export struct AlbumBackupSyncSheet {
     if (this.currentNavPage() === 'source') {
       AlbumBackupSourcePicker({
         initialSelectedKeys: this.settings.backupSourceFolders,
+        initialSelectionKnown: this.settings.backupSourceFoldersValid,
         accentColor: this.accent,
         selectAllPulse: this.sourceSelectAllPulse,
         onSelectAllLabelChange: (label: string): void => {

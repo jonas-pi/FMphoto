@@ -37,6 +37,18 @@ const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
 /** 政策正文变更后递增；与已存值不同则下次启动需重新同意。 */
 export const PRIVACY_POLICY_VERSION = '202610202';
+
+/**
+ * 隐私同意读取结果。
+ * UNKNOWN 表示 preferences 打不开或读取失败，不能等同于「未同意」，
+ * 否则一次读取故障就会让用户重新走一遍同意流程。
+ */
+export enum PrivacyConsentState {
+  UNKNOWN = 0,
+  ACCEPTED = 1,
+  NOT_ACCEPTED = 2
+}
+
 /** 飞牛 WS 登录 did，用于 2FA 信任设备识别（退出登录不清理） */
 const K_WS_DEVICE_ID = 'ws_device_id';
 const K_REMEMBER_PASSWORD = 'remember_password';
@@ -352,9 +364,24 @@ function migrateLoginChannelFields(fnIdPref: string, lanPref: string, shared: st
 }
 
 export class SessionPreferences {
+  /**
+   * 读取隐私同意状态。读取失败返回 UNKNOWN，由调用方决定如何处理，
+   * 不能在读取失败时直接当成「未同意」。
+   */
+  static async readPrivacyPolicyConsent(ctx: common.UIAbilityContext): Promise<PrivacyConsentState> {
+    try {
+      const p = await openPrefs(ctx);
+      const stored = await prefsGetString(p, K_PRIVACY_ACCEPTED, '');
+      return stored === PRIVACY_POLICY_VERSION ? PrivacyConsentState.ACCEPTED : PrivacyConsentState.NOT_ACCEPTED;
+    } catch (e) {
+      fnDiagError('SessionPref', 'privacy consent read failed', e);
+      return PrivacyConsentState.UNKNOWN;
+    }
+  }
+
+  /** 旧调用方保留：读取失败只能返回 false；启动流程请用 readPrivacyPolicyConsent 区分 UNKNOWN。 */
   static async isPrivacyPolicyAccepted(ctx: common.UIAbilityContext): Promise<boolean> {
-    const p = await openPrefs(ctx);
-    return (await prefsGetString(p, K_PRIVACY_ACCEPTED, '')) === PRIVACY_POLICY_VERSION;
+    return (await SessionPreferences.readPrivacyPolicyConsent(ctx)) === PrivacyConsentState.ACCEPTED;
   }
 
   static async setPrivacyPolicyAccepted(ctx: common.UIAbilityContext, accepted: boolean): Promise<void> {
