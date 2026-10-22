@@ -107,6 +107,11 @@ struct Home {
   @State private galleryViewGranularity: GalleryViewGranularity = GalleryViewGranularity.DAY;
   @State private albumReloadEpoch: number = 0;
   @State private pageShowSignal: number = 0;
+  /** 再次点击 dock 当前 tab 时自增，通知对应页面回到顶部。 */
+  @State private galleryScrollToTopSignal: number = 0;
+  @State private meScrollToTopSignal: number = 0;
+  /** 本次 dock 点击是否已经切页：区分「切页」和「重复点击当前页签」。 */
+  private navIndexChangedByTap: boolean = false;
   @State private rootContentWidthVp: number = 360;
   @State private galleryShellTranslateX: number = 0;
   @State private mePanelTranslateX: number = 360;
@@ -452,6 +457,24 @@ struct Home {
     }
   }
 
+  /** 再次点击 dock 当前 tab：该页面回到顶部。 */
+  private scrollCurrentTabToTop(): void {
+    if (this.bottomNavIndex === 2) {
+      this.meScrollToTopSignal++;
+      return;
+    }
+    this.galleryScrollToTopSignal++;
+  }
+
+  /** dock 点击：切页；点在当前 tab 上则回到顶部。 */
+  private onDockTabTapped(index: number): void {
+    if (index === this.bottomNavIndex) {
+      this.scrollCurrentTabToTop();
+      return;
+    }
+    this.switchTab(index);
+  }
+
   aboutToAppear(): void {
     GalleryAlbumNavigation.attach(this.albumNavPathStack);
     this.isDarkTheme = this.colorMode === 1;
@@ -581,7 +604,22 @@ struct Home {
     .barBackgroundColor(Color.Transparent)
     .hitTestBehavior(HitTestMode.Transparent)
     .onChange((index: number): void => {
+      // 记录本次点击已经切页：onTabBarClick 与 onChange 的先后顺序不固定，
+      // 有了这个标记就不会把「切到别的页签」误判成「重复点击当前页签」。
+      this.navIndexChangedByTap = true;
       this.switchTab(index, true);
+      setTimeout((): void => {
+        this.navIndexChangedByTap = false;
+      }, 0);
+    })
+    // 重复点击当前页签：回到当前页面顶部（切页仍由 onChange 处理）
+    .onTabBarClick((index: number): void => {
+      if (this.navIndexChangedByTap) {
+        return;
+      }
+      if (index === this.bottomNavIndex) {
+        this.scrollCurrentTabToTop();
+      }
     })
   }
 
@@ -605,7 +643,7 @@ struct Home {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .onClick((): void => {
-      this.switchTab(index);
+      this.onDockTabTapped(index);
     })
   }
 
@@ -955,6 +993,7 @@ struct Home {
                 baseUrl: this.galleryBaseUrl,
                 albumReloadEpoch: this.albumReloadEpoch,
                 pageShowSignal: this.pageShowSignal,
+                scrollToTopSignal: this.galleryScrollToTopSignal,
                 topSafeInsetVp: this.systemTopInsetVp,
                 bottomSafeInsetVp: this.systemBottomInsetVp,
                 floatingDockInsetBottomVp: this.dockReserveHeight(),
@@ -989,6 +1028,7 @@ struct Home {
               topSafeInsetVp: this.systemTopInsetVp,
               floatingDockInsetBottomVp: this.dockReserveHeight(),
               pageShowSignal: this.pageShowSignal,
+              scrollToTopSignal: this.meScrollToTopSignal,
               onEndpointSwitched: (): void => {
                 const stored = AppSession.getStored();
                 this.sessionOk = stored !== null;

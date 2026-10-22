@@ -71,6 +71,7 @@ import {
 import {
   fnImmersiveBackgroundEffect,
   fnLiquidGlassGradient,
+  fnScrollToTopAnimated,
   FnFullLoadingMask
 } from '../common/FnUiCommon';
 import { FnHdsMoreMenuHandle } from '../common/FnHdsMoreMenu';
@@ -476,6 +477,8 @@ export struct GalleryAlbumTab {
   onViewGranularityChange: (mode: GalleryViewGranularity) => void = (_: GalleryViewGranularity): void => {};
   /** Home.onPageShow() 递增后触发删除同步，作为不依赖子组件 onPageShow 传播的兜底。 */
   @Prop @Watch('onPageShowSignal') pageShowSignal: number = 0;
+  /** 再次点击 dock 当前 tab：当前可见列表回到顶部。 */
+  @Prop @Watch('onScrollToTopSignalChanged') scrollToTopSignal: number = 0;
   @StorageProp(GALLERY_PREVIEW_OPENING_KEY) private previewOpening: boolean = false;
   /** 相册结构版本（新建/删除/改名/归档后递增）：相册页可见时收到就重拉列表 */
   @StorageProp(GALLERY_ALBUMS_VERSION_KEY) @Watch('onAlbumsVersionEpochChanged')
@@ -2334,6 +2337,34 @@ export struct GalleryAlbumTab {
     }
     this.session.titleBarScrollerBindList = [next];
     return this.session.titleBarScrollerBindList;
+  }
+
+  private onScrollToTopSignalChanged(): void {
+    this.scrollCurrentSurfaceToTop();
+  }
+
+  /**
+   * 再次点击 dock 当前 tab：当前可见的列表回到顶部。
+   * 照片流回到顶部时，时间轴会随 onScrollIndex 同步回最新（不用另写时间轴复位）。
+   */
+  private scrollCurrentSurfaceToTop(): void {
+    if (this.inSearchMode) {
+      this.scrollScrollerToTop(this.session.searchScroller);
+      return;
+    }
+    if (this.isAlbumsHomeSurface()) {
+      // 拖动排序编辑中不打断用户操作
+      if (this.albumsHomeEditMode) {
+        return;
+      }
+      this.scrollScrollerToTop(this.session.albumsScroller);
+      return;
+    }
+    this.scrollScrollerToTop(this.session.scrollerRef);
+  }
+
+  private scrollScrollerToTop(scroller: Scroller): void {
+    fnScrollToTopAnimated(scroller);
   }
 
   private setRootPhotosScrollTitle(title: string): void {

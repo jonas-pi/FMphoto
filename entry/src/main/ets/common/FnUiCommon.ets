@@ -889,6 +889,20 @@ export function fnLiquidGlassGradient(
   };
 }
 
+/**
+ * 滚动到顶部（带动画）。
+ *
+ * 官方 FAQ《返回顶部按钮功能异常》说明：scrollEdge 只有 Scroll 组件默认带动画，
+ * List / Grid / WaterFlow 默认无动画；回到顶部应改用 scrollTo 并配置 animation。
+ * animation 传 true 表示使用默认弹簧动画（API 18+）。
+ */
+export function fnScrollToTopAnimated(scroller: Scroller): void {
+  try {
+    scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: true });
+  } catch (_e) {
+  }
+}
+
 @Component
 export struct FnFloatingTopPillButton {
   @Prop text: ResourceStr = '';

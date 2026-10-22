@@ -61,6 +61,7 @@ import {
   fnHdsMiniTitleBarOptions,
   fnImmersiveBackgroundEffect,
   fnLiquidGlassGradient,
+  fnScrollToTopAnimated,
   fnSoftCardGlassGradient,
   FnHdsPillButton,
   FnPrimaryButton
@@ -259,12 +260,16 @@ export struct MePanel {
   /** 给悬浮底栏留空，滚动到底时退出登录仍露在 dock 上方。 */
   @Prop floatingDockInsetBottomVp: number = 0;
   @Prop @Watch('onPageShowSignalChanged') pageShowSignal: number = 0;
+  /** 再次点击 dock 当前 tab：面板回到顶部。 */
+  @Prop @Watch('onScrollToTopSignalChanged') scrollToTopSignal: number = 0;
   onEndpointSwitched: () => void = () => {};
   /** 用户手动满载；内网自动满载由独立状态展示，不会改写用户开关 */
   @State private lanBurstForceEnabled: boolean = false;
   @State private lanBurstAutoEnabled: boolean = false;
   @State private lanBurstEnabled: boolean = false;
   @State private endpointInfo: EndpointConnectionInfo = resolveEndpointConnectionInfo(null);
+  /** 隐藏 NAS 地址（域名 / FN ID / 局域网 IP）：演示、截图时避免暴露。 */
+  @State private endpointAddressHidden: boolean = false;
   @State private endpointSwitching: boolean = false;
   @State private probeSheetVisible: boolean = false;
   @State private probeSheetLoading: boolean = false;
@@ -332,6 +337,21 @@ export struct MePanel {
     this.refreshEndpointInfo();
     this.refreshTransferQueueTasks();
     this.refreshSystemColorPreview();
+  }
+
+  private onScrollToTopSignalChanged(): void {
+    fnScrollToTopAnimated(this.meScroller);
+  }
+
+  /** 地址行显示内容：隐藏时用掩码代替真实域名 / FN ID / 局域网 IP。 */
+  private endpointAddressDisplay(): string {
+    if (this.endpointSwitching) {
+      return '正在切换…';
+    }
+    if (this.endpointAddressHidden) {
+      return '••••••••';
+    }
+    return this.endpointInfo.addressText;
   }
 
   private meScrollBottomPaddingVp(): number {
@@ -1185,16 +1205,31 @@ export struct MePanel {
             this.openEndpointProbeSheet();
           })
 
-          Text(this.endpointSwitching ? '正在切换…' : this.endpointInfo.addressText)
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .onClick((): void => {
-              this.openEndpointProbeSheet();
-            })
+          Row() {
+            Text(this.endpointAddressDisplay())
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+              .onClick((): void => {
+                this.openEndpointProbeSheet();
+              })
+
+            // 隐藏 / 显示地址：防止演示或截图时暴露域名
+            SymbolGlyph(this.endpointAddressHidden ? $r('sys.symbol.eye_slash') : $r('sys.symbol.eye'))
+              .fontSize(19)
+              .fontColor([fnResolvedTextSecondary(this.themeTextSecondary)])
+              .width(30)
+              .height(30)
+              .accessibilityText(this.endpointAddressHidden ? '显示地址' : '隐藏地址')
+              .onClick((): void => {
+                this.endpointAddressHidden = !this.endpointAddressHidden;
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
 
           if (this.endpointInfo.canSwitch) {
             Row() {
