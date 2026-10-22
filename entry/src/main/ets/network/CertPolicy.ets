@@ -1,6 +1,8 @@
 /**
  * 按站点记录「信任自签证书」的内存策略；持久化由 SessionPreferences 加载/保存
  */
+import { fnDiagRecord } from '../common/FnDiagLog';
+
 export class CertPolicy {
   private static trusted: Set<string> = new Set();
 
@@ -11,10 +13,12 @@ export class CertPolicy {
 
   static addTrusted(baseUrl: string): void {
     CertPolicy.trusted.add(CertPolicy.normalize(baseUrl));
+    fnDiagRecord('I', 'CertPolicy', `trusted set count=${CertPolicy.trusted.size}`);
   }
 
   static removeTrusted(baseUrl: string): void {
     CertPolicy.trusted.delete(CertPolicy.normalize(baseUrl));
+    fnDiagRecord('I', 'CertPolicy', `trusted remove count=${CertPolicy.trusted.size}`);
   }
 
   static clear(): void {
@@ -26,6 +30,7 @@ export class CertPolicy {
     for (let i = 0; i < urls.length; i++) {
       CertPolicy.trusted.add(CertPolicy.normalize(urls[i]));
     }
+    fnDiagRecord('I', 'CertPolicy', `trusted load count=${CertPolicy.trusted.size}`);
   }
 
   static dumpAll(): string[] {

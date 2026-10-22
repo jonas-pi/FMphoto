@@ -8,6 +8,7 @@ import { AppSession } from '../auth/AppSession';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
 import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { fnDiagRecord, fnDiagSetState } from '../common/FnDiagLog';
 import { FnClientResult } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { uploadLocalMediaUri } from './GalleryLiveSyncPayload';
@@ -51,6 +52,8 @@ export function runAutoSyncInBackground(
   callbacks: AutoSyncRunnerCallbacks
 ): void {
   if (syncUploadRunning) {
+    fnDiagRecord('W', TAG, 'sync skipped: task running');
+    fnDiagSetState('autoSync', 'disabled');
     callbacks.toast('已有任务进行中');
     return;
   }
@@ -59,22 +62,33 @@ export function runAutoSyncInBackground(
     try {
       const client = AppSession.getClient();
       if (client === null) {
+        fnDiagSetState('autoSync', 'disabled');
         callbacks.toast('未登录');
         return;
       }
       if (photos.length === 0) {
+        fnDiagSetState('autoSync', 'disabled');
         callbacks.toast('没有需要同步的照片');
         return;
       }
       const gate = await evaluateAlbumBackupUploadGate();
       if (!gate.allowed) {
+        // 只记门控类别，不记门控文案。
+        const reason: string = gate.reason.indexOf('电量') >= 0
+          ? 'battery'
+          : (gate.reason.indexOf('流量') >= 0 ? 'cellular' : 'other');
+        fnDiagRecord('W', TAG, `upload gate blocked ${reason}`);
+        fnDiagSetState('autoSync', 'disabled');
         callbacks.toast(gate.reason.length > 0 ? gate.reason : '当前无法备份');
         return;
       }
       if (FnTransferQueueStore.hasRunningDirection(FnTransferDirection.SYNC)) {
+        fnDiagRecord('W', TAG, 'sync skipped: queue busy');
+        fnDiagSetState('autoSync', 'disabled');
         callbacks.toast('已有任务进行中');
         return;
       }
+      fnDiagSetState('autoSync', 'enabled');
 
       const label = fnTransferDirectionLabel(FnTransferDirection.SYNC);
       const taskId = FnTransferQueueStore.begin(FnTransferDirection.SYNC, label, photos.length);
@@ -113,8 +127,7 @@ export function runAutoSyncInBackground(
                   const res = await uploadPiece(ctx, client, photo, 150000, albumDirHint);
                   if (res.success) {
                     ok++;
-                    hilog.info(DOMAIN, TAG, 'synced file=%{public}s album=%{public}s photoId=%{public}s',
-                      photo.fileName, photo.albumName, res.uploadedPhotoId ?? '');
+                    hilog.info(DOMAIN, TAG, 'synced role=%{public}s', photo.role);
                     if (archiveToAlbums && photo.albumName.length > 0) {
                       const albumKey = normalizeAlbumName(photo.albumName);
                       const uploadedId = res.uploadedPhotoId ?? '';
@@ -129,8 +142,7 @@ export function runAutoSyncInBackground(
                         // 上传成功但拿不到 photoId（例如「已存在」的重复入库响应里没有 id）：
                         // 这张照片没法归档，计数进摘要，避免「同步完成」却悄悄漏归档
                         albumNotArchived++;
-                        hilog.info(DOMAIN, TAG, 'archive skipped no-photoId file=%{public}s album=%{public}s',
-                          photo.fileName, albumKey);
+                        hilog.info(DOMAIN, TAG, 'archive skipped no-photoId role=%{public}s', photo.role);
                       }
                     }
                     const put = new LedgerPut();
@@ -180,6 +192,7 @@ export function runAutoSyncInBackground(
             const albumOk = await archivePhotosToNasAlbum(client, albumNames[i], ids);
             if (!albumOk) {
               albumNotArchived += ids.length;
+              fnDiagRecord('W', TAG, `archive to album failed count=${ids.length}`);
             }
           }
           // 归档之后再通知相册列表：此时 NAS 上已经有新相册/新计数，

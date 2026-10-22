@@ -10,6 +10,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { lookupFnConnect } from './FnConnectApi';
+import { maskWsFailureMessage } from './FnWsLogin';
 import {
   endpointPoolFromStored,
   resolveEndpointConnectionInfo,
@@ -151,13 +152,14 @@ async function probeAndSwitch(ctx: common.UIAbilityContext, stored: StoredSessio
   }
   const selected = await selectAmongEndpointPool(pool, LOGIN_ENDPOINT_PREF_AUTO, AUTO_PROBE_TIMEOUT_MS);
   if (selected.server.length === 0) {
+    fnDiagRecord('W', TAG, 'auto probe all fail');
     scheduleUnreachableRetry();
     return;
   }
   const res = await switchStoredLoginEndpointToUrl(ctx, selected.server, true, true);
   if (!res.ok) {
     hilog.warn(DOMAIN, TAG, 'auto switch failed: %{public}s', res.message);
-    fnDiagRecord('W', TAG, `auto switch failed ${res.message}`);
+    fnDiagRecord('W', TAG, `auto switch failed ${maskWsFailureMessage(res.message, selected.server)}`);
     if (shouldRetryFailedAutoSwitch(res.message)) {
       scheduleUnreachableRetry();
     }
@@ -297,5 +299,6 @@ export function stop(): void {
       }
     });
   } catch (_e) {
+    fnDiagRecord('I', TAG, 'net unregister throw');
   }
 }

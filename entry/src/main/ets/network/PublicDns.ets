@@ -3,7 +3,7 @@
  */
 import { connection } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagMaskHost, fnDiagRecord } from '../common/FnDiagLog';
 import { isIpLiteralHost, parseNormalizedBaseUrl, replaceBaseUrlHost } from './ServerUrl';
 
 const DOMAIN = 0xFF00;
@@ -61,14 +61,15 @@ export async function resolvePublicDomainToIpBaseUrl(domainBaseUrl: string): Pro
     }
     const chosen = ipv4.length > 0 ? ipv4 : ipv6;
     if (chosen.length === 0) {
+      fnDiagRecord('W', TAG, `dns no usable record host=${fnDiagMaskHost(parts.host)}`);
       return '';
     }
     const rebuilt = replaceBaseUrlHost(base, chosen);
-    hilog.info(DOMAIN, TAG, 'dns %{public}s -> %{public}s', parts.host, chosen);
+    hilog.info(DOMAIN, TAG, 'dns %{public}s -> %{public}s', fnDiagMaskHost(parts.host), fnDiagMaskHost(chosen));
     return rebuilt;
   } catch (e) {
-    hilog.warn(DOMAIN, TAG, 'dns failed %{public}s: %{public}s', parts.host, String(e));
-    fnDiagRecord('W', TAG, `dns failed ${parts.host}: ${String(e)}`);
+    hilog.warn(DOMAIN, TAG, 'dns failed %{public}s', fnDiagMaskHost(parts.host));
+    fnDiagError(TAG, `dns failed ${fnDiagMaskHost(parts.host)}`, e);
     return '';
   }
 }
@@ -104,7 +105,8 @@ async function lookupGlobalIpv6(host: string): Promise<string> {
     const addrs = await connection.getAddressesByName(host);
     return firstGlobalIpv6(addrs);
   } catch (e) {
-    hilog.warn(DOMAIN, TAG, 'dns v6 failed %{public}s: %{public}s', host, String(e));
+    hilog.warn(DOMAIN, TAG, 'dns v6 failed %{public}s', fnDiagMaskHost(host));
+    fnDiagError(TAG, `dns v6 failed ${fnDiagMaskHost(host)}`, e);
     return '';
   }
 }
@@ -127,7 +129,7 @@ export async function resolvePublicHostnameToIpv6BaseUrl(domainBaseUrl: string):
     return '';
   }
   const rebuilt = replaceBaseUrlHost(base, ipv6);
-  hilog.info(DOMAIN, TAG, 'aaaa %{public}s -> %{public}s', parts.host, rebuilt);
+  hilog.info(DOMAIN, TAG, 'aaaa %{public}s -> %{public}s', fnDiagMaskHost(parts.host), fnDiagMaskHost(ipv6));
   return rebuilt;
 }
 

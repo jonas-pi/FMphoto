@@ -13,6 +13,7 @@ import { FnImmersiveBackdrop } from '../common/FnUiCommon';
 import { fnApplySplashWindowChrome, fnRestoreAppSystemBars } from '../common/FnSplashTheme';
 import { fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { FN_RESOLVED_ACCENT_KEY,
   fnResolvedTextPrimary,
   FN_RESOLVED_TEXT_PRIMARY_KEY,
@@ -94,7 +95,8 @@ struct Index {
       this.privacyConsentRequired = true;
       this.hint = '请先阅读并同意隐私政策';
       return false;
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError('Index', 'privacy pref read failed', e);
       this.privacyConsentRequired = true;
       this.hint = '请先阅读并同意隐私政策';
       return false;
@@ -111,7 +113,8 @@ struct Index {
       this.privacyConsentRequired = false;
       this.hint = '正在初始化…';
       this.restoreSessionAndRoute();
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError('Index', 'restore after consent failed', e);
     }
   }
 
@@ -130,7 +133,8 @@ struct Index {
       this.privacyConsentRequired = false;
       this.hint = '正在初始化…';
       this.restoreSessionAndRoute();
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError('Index', 'privacy consent save failed', e);
       try {
         this.getUIContext().getPromptAction().showToast({
           message: $r('app.string.privacy_consent_save_failed'),
@@ -167,7 +171,10 @@ struct Index {
       this.splashOpacity = 0.0;
     });
     setTimeout((): void => {
-      this.getUIContext().getRouter().replaceUrl({ url: url }).catch((): void => {
+      this.getUIContext().getRouter().replaceUrl({ url: url }).catch((e: Error): void => {
+        const slash: number = url.indexOf('/');
+        const pageName: string = slash >= 0 ? url.substring(slash + 1) : url;
+        fnDiagError('Index', `navigate failed url=${pageName}`, e);
       });
     }, 210);
   }
@@ -205,6 +212,7 @@ struct Index {
           scheduleCheck();
           this.fadeSplashAndNavigate('pages/Home');
         } else {
+          fnDiagRecord('W', 'Index', 'token check failed, session reset');
           SessionPreferences.clearToken(ctx).then(() => {
             AppSession.clear();
             GalleryThumbDiskCache.invalidateAll();
@@ -215,7 +223,8 @@ struct Index {
           });
         }
       });
-    }).catch(() => {
+    }).catch((e: Error): void => {
+      fnDiagError('Index', 'session restore failed', e);
       this.hint = '读取配置失败';
       void SessionPreferences.loadTrustedHostsSnapshot(ctx).then((hosts: string[]) => {
         CertPolicy.loadAll(hosts);

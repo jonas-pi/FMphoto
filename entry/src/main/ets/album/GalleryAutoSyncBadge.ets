@@ -11,6 +11,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
 
 import { fnEnsureReadImageVideoGranted } from '../common/FnMediaPermission';
+import { fnDiagRecord } from '../common/FnDiagLog';
 
 import { GalleryListItem } from '../model/FnApiTypes';
 
@@ -45,6 +46,7 @@ export function triggerAutoSyncDetection(
       const granted = await fnEnsureReadImageVideoGranted(ctx);
       if (!granted) {
         hilog.info(DOMAIN, TAG, 'auto sync skipped: read permission denied');
+        fnDiagRecord('W', TAG, 'read permission denied, sync skipped');
         onDetected({ unsyncedCount: 0, state: 'denied' });
         return;
       }

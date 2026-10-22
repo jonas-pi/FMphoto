@@ -1,7 +1,9 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { fnDiagRecord } from './FnDiagLog';
 
+const TAG: string = 'FnImmersive';
 const PREF_NAME: string = 'fnos_client_prefs';
 const K_IMMERSIVE_LIGHT_ENABLED: string = 'ui_immersive_light_enabled';
 
@@ -11,7 +13,8 @@ export const FN_HDS_MIN_SDK_API_VERSION: number = 23;
 async function tryOpenPrefs(ctx: common.UIAbilityContext): Promise<preferences.Preferences | null> {
   try {
     return await preferences.getPreferences(ctx, PREF_NAME);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('W', TAG, `open prefs failed ${String(e).substring(0, 90)}`);
     return null;
   }
 }
@@ -56,7 +59,8 @@ export async function fnLoadImmersiveLightPreference(ctx: common.UIAbilityContex
       await p.put(K_IMMERSIVE_LIGHT_ENABLED, '1');
       await p.flush();
     }
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('W', TAG, `persist immersive light failed ${String(e).substring(0, 90)}`);
   }
   return true;
 }

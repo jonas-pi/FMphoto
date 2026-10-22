@@ -1,6 +1,7 @@
 import { UIContext } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { AppSession } from '../../auth/AppSession';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import { FnClientResult, GalleryListItem, PhotoFolderListData, PhotoFolderListItem } from '../../model/FnApiTypes';
 import { galleryItemsMatchingSelectedIds, runBatchDownloadGalleryItemsInBackground } from '../../album/GalleryBatchDownload';
 import {
@@ -188,7 +189,8 @@ export async function folderBrowseConfirmBatchDelete(host: FolderBrowseBatchActi
     if (dlg.index !== 1) {
       return;
     }
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('W', 'FolderBrowse', `delete confirm dialog error ${String(e)}`);
     return;
   }
   const client = AppSession.getClient();
@@ -252,7 +254,8 @@ async function folderBrowseConfirmPermanentDelete(host: FolderBrowseBatchActions
     if (dlg.index !== 1) {
       return;
     }
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('W', 'FolderBrowse', `delete confirm dialog error ${String(e)}`);
     return;
   }
   const client = AppSession.getClient();
@@ -264,6 +267,8 @@ async function folderBrowseConfirmPermanentDelete(host: FolderBrowseBatchActions
   try {
     const res = await client.deleteFolderOrFile(host.currentPath(), mediaIds, dirNames, 30000);
     if (!res.success) {
+      const msg: string = res.message !== undefined && res.message.length > 0 ? res.message : 'unknown';
+      fnDiagRecord('E', 'FolderBrowse', `delete failed ${msg}`);
       host.toast(res.message ?? '删除失败');
       return;
     }

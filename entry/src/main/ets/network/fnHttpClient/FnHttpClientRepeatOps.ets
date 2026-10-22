@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { fnDiagError } from '../../common/FnDiagLog';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { fnWebViewBaseUrl } from '../ServerUrl';
@@ -17,6 +18,7 @@ import {
   TASK_PANEL_CLEAR_DONE_PATH,
   TASK_PANEL_LIST_PATH_CANDIDATES,
   TASK_PANEL_LIST_SIGN_PATH,
+  TAG,
   escapeJsonString
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
@@ -151,6 +153,7 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
       const errLine = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
       return { success: false, message: errLine.length > 0 ? errLine : '清除已完成失败' };
     } catch (e) {
+      fnDiagError(TAG, 'clearTaskPanelDone exception', e);
       return { success: false, message: String(e) || '清除已完成失败' };
     }
   }
@@ -263,6 +266,7 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
       const errLine = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
       return { success: false, message: errLine.length > 0 ? errLine : failText };
     } catch (e) {
+      fnDiagError(TAG, 'repeatPhotoApi exception', e);
       return { success: false, message: String(e) || failText };
     }
   }

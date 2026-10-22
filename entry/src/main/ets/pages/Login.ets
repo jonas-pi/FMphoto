@@ -6,7 +6,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
 import { openFeedbackPage } from './FeedbackPage';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { CertPolicy } from '../network/CertPolicy';
@@ -70,6 +70,16 @@ const LOGIN_FIELD_HEIGHT_VP: number = 44;
 const LOGIN_HERO_ICON_VP: number = 72;
 /** 前景卡片相对状态栏 / 小白条的额外留白，上下共用 */
 const LOGIN_PANEL_EDGE_GAP_VP: number = 12;
+
+/**
+ * 日志脱敏：把消息里的裸主机名 / IP 掩掉。
+ * 服务端返回的提示里常带地址（如「请检查 192.168.1.10 是否可达」），不能原样落盘。
+ */
+function fnLoginMaskHosts(text: string): string {
+  let out: string = text.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/g, '<ipv4>');
+  out = out.replace(/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:\d+)?/g, '<host>');
+  return out;
+}
 
 @Entry
 @Component
@@ -481,6 +491,7 @@ struct Login {
           fromLogin: true
         }
       }).catch((): void => {
+        fnDiagRecord('E', LOGIN_TAG, 'navigate to home failed');
         // 跳转失败：表单已淡到透明，必须恢复显示并允许再次登录
         this.leavingToHome = false;
         this.getUIContext().animateTo({
@@ -504,6 +515,7 @@ struct Login {
     longToken?: string
   ): Promise<void> {
     if (signKeyB64.length === 0) {
+      fnDiagRecord('E', LOGIN_TAG, 'ws login ok but sign key missing');
       this.errorText = '登录成功但未拿到签名密钥，请重试';
       return;
     }
@@ -525,7 +537,7 @@ struct Login {
     const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
     const wsRes = await fnWsLogin(server, user, pass, trusted, deviceId);
     if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
-      hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok %{public}s', server);
+      hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok %{public}s', fnDiagMaskUrl(server));
       const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
       const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
       await this.finishWsLoginSuccess(ctx, server, user, pass, wsRes.token, sk, lt);
@@ -534,6 +546,7 @@ struct Login {
     if (wsRes.requires2fa === true) {
       const at = wsRes.accessToken !== undefined ? wsRes.accessToken : '';
       if (at.length === 0) {
+        fnDiagRecord('E', LOGIN_TAG, '2fa challenge token missing');
         this.errorText = '需要双重验证但未收到挑战令牌，请重试';
         return true;
       }
@@ -572,7 +585,8 @@ struct Login {
           return await this.attemptLoginWebSocketOnly(ctx, server, user, pass, true);
         }
         this.errorText = '已取消信任证书';
-      } catch (_e) {
+      } catch (e) {
+        fnDiagRecord('W', LOGIN_TAG, `cert trust dialog error ${String(e)}`);
         this.errorText = '已取消信任证书';
       }
       return true;
@@ -580,8 +594,8 @@ struct Login {
     this.errorText =
       wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : 'WebSocket 登录失败';
     if (this.errorText.length > 0) {
-      hilog.warn(LOGIN_DOMAIN, LOGIN_TAG, 'WS login: %{public}s', this.errorText);
-      fnDiagRecord('W', LOGIN_TAG, `WS login ${this.errorText}`);
+      hilog.warn(LOGIN_DOMAIN, LOGIN_TAG, 'WS login: %{public}s', fnLoginMaskHosts(this.errorText));
+      fnDiagRecord('W', LOGIN_TAG, `WS login ${fnLoginMaskHosts(this.errorText)}`);
     }
     return !shouldTryNextLoginEndpoint(wsRes);
   }
@@ -675,6 +689,8 @@ struct Login {
         const hasAny = looked.publicDomainServer.length > 0 || looked.publicIpServer.length > 0 ||
           looked.lanServer.length > 0 || looked.relayServer.length > 0;
         if (!looked.ok || !hasAny) {
+          const lookupMsg: string = looked.message.length > 0 ? looked.message : 'no endpoint';
+          fnDiagRecord('E', LOGIN_TAG, `fn connect lookup failed ${fnLoginMaskHosts(lookupMsg)}`);
           this.errorText = looked.message.length > 0 ? looked.message : 'FN ID 解析失败';
           return;
         }
@@ -713,6 +729,7 @@ struct Login {
         relayUrl: this.pendingEndpointRelayUrl
       }, this.endpointPreference);
       if (selected.server.length === 0 || !selected.selectedOk) {
+        fnDiagRecord('E', LOGIN_TAG, 'all endpoints unreachable');
         this.errorText = selected.summary.length > 0
           ? selected.summary
           : '已填写的地址均不可达';
@@ -738,15 +755,17 @@ struct Login {
           }
         }
         servers.unshift(redirectServer);
-        fnDiagRecord('I', LOGIN_TAG, `login redirect ${selected.server} -> ${redirectServer}`);
+        fnDiagRecord('I', LOGIN_TAG,
+          `login redirect ${fnDiagMaskUrl(selected.server)} -> ${fnDiagMaskUrl(redirectServer)}`);
       }
       const user = this.username.trim();
       const pass = this.password;
       for (let i = 0; i < servers.length; i++) {
         const last = i + 1 >= servers.length;
         hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'WS login try %{public}d/%{public}d %{public}s',
-          i + 1, servers.length, servers[i]);
-        fnDiagRecord('I', LOGIN_TAG, `WS login try ${i + 1}/${servers.length} ${servers[i]}`);
+          i + 1, servers.length, fnDiagMaskUrl(servers[i]));
+        fnDiagRecord('I', LOGIN_TAG,
+          `WS login try ${i + 1}/${servers.length} ${fnDiagMaskUrl(servers[i])}`);
         const stop = await this.attemptLoginWebSocketOnly(ctx, servers[i], user, pass, last);
         if (stop) {
           return;
@@ -754,8 +773,9 @@ struct Login {
       }
     } catch (e) {
       const msg = this.describeLoginError(e);
-      hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'login flow: %{public}s', msg.length > 0 ? msg : 'unknown');
-      fnDiagRecord('E', LOGIN_TAG, `login flow ${msg.length > 0 ? msg : 'unknown'}`);
+      const safeMsg: string = fnLoginMaskHosts(msg.length > 0 ? msg : 'unknown');
+      hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'login flow: %{public}s', safeMsg);
+      fnDiagRecord('E', LOGIN_TAG, `login flow ${safeMsg}`);
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {
       this.loading = false;
@@ -766,10 +786,12 @@ struct Login {
     this.errorText = '';
     const code = this.otpCode.trim();
     if (!/^\d{6}$/.test(code)) {
+      fnDiagRecord('W', LOGIN_TAG, '2fa invalid');
       this.errorText = '请输入身份验证器中的 6 位动态验证码';
       return;
     }
     if (this.pendingAccessToken.length === 0 || this.pendingServer.length === 0 || this.pendingDeviceId.length === 0) {
+      fnDiagRecord('W', LOGIN_TAG, '2fa expired');
       this.errorText = '验证会话已失效，请返回重新登录';
       this.show2faStep = false;
       return;
@@ -800,6 +822,7 @@ struct Login {
         wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : '双重验证失败';
     } catch (e) {
       const msg = this.describeLoginError(e);
+      fnDiagRecord('E', LOGIN_TAG, `2fa verify error ${fnLoginMaskHosts(msg.length > 0 ? msg : 'unknown')}`);
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {
       this.loading = false;

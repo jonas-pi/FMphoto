@@ -3,6 +3,7 @@
  */
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { FnJsonValue } from '../model/FnApiTypes';
 
 const MD5_TAG = 'AuthxMD5';
@@ -296,6 +297,7 @@ export async function sha256DigestSafe(data: Uint8Array): Promise<Uint8Array> {
       sha256CryptoChecked = true;
       sha256CryptoAvailable = false;
       hilog.warn(0xFF00, SHA256_TAG, 'cryptoFramework SHA256 failed, JS fallback: %{public}s', String(e));
+      fnDiagRecord('W', 'Authx', 'sha256 hcf failed, js fallback');
     }
     return sha256Js(data);
   }
@@ -328,6 +330,7 @@ export async function md5HexUtf8(text: string): Promise<string> {
       cryptoChecked = true;
       cryptoAvailable = false;
       hilog.warn(0xFF00, MD5_TAG, 'cryptoFramework MD5 failed, falling back to JS impl: %{public}s', String(e));
+      fnDiagRecord('W', 'Authx', 'md5 hcf failed, js fallback');
     }
     return md5Js(text);
   }
@@ -339,6 +342,7 @@ export async function md5HexUtf8(text: string): Promise<string> {
  */
 export async function genFnAuthx(path: string, bodyForSign: Record<string, FnJsonValue> | null): Promise<string> {
   if (runtimeApiKey.length === 0 || runtimeApiSecret.length === 0) {
+    fnDiagRecord('E', 'Authx', 'authx credential missing');
     throw new Error('Authx 凭据缺失，请先登录以获取签名凭据');
   }
   const nonce = generateRandomDigits();

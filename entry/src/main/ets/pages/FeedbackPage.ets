@@ -7,7 +7,7 @@ import { fileUri } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { webview } from '@kit.ArkWeb';
 import { UIContext } from '@kit.ArkUI';
-import { fnDiagPreparePhoneFile } from '../common/FnDiagLog';
+import { fnDiagPreparePhoneFile, fnDiagRecord, fnDiagShare } from '../common/FnDiagLog';
 import { FN_FEEDBACK_FORM_URL } from '../common/FnFeedbackForm';
 import {
   FN_PAGE_ENTER_CURVE,
@@ -33,6 +33,8 @@ import {
 
 const LOG_FILE_NAME: string = 'fmphoto-diag.txt';
 const FORM_LOAD_FAIL: string = '表单打不开，请检查网络后再试';
+/** 导出的诊断日志包含哪几段，告诉用户上传的是什么。 */
+const LOG_SECTIONS_HINT: string = '日志内含错误摘要、关键状态、网络环境、崩溃记录与会话记录几段。';
 
 export function openFeedbackPage(uiContext: UIContext): void {
   uiContext.getRouter().pushUrl({ url: 'pages/FeedbackPage' }).catch((): void => {
@@ -64,6 +66,8 @@ struct FeedbackPage {
   private webController: webview.WebviewController = new webview.WebviewController();
   private logPath: string = '';
   private picking: boolean = false;
+  private preparing: boolean = false;
+  private sharing: boolean = false;
 
   aboutToAppear(): void {
     void this.prepareLog();
@@ -85,16 +89,27 @@ struct FeedbackPage {
 
   private async prepareLog(): Promise<void> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const path = await fnDiagPreparePhoneFile(ctx);
-    if (path.length === 0) {
+    let path: string = '';
+    try {
+      path = await fnDiagPreparePhoneFile(ctx);
+    } catch (e) {
+      fnDiagRecord('E', 'Feedback', `prepare log failed ${String(e)}`);
       this.logPath = '';
       this.logReady = false;
       this.logHint = '诊断日志没能保存到设备，请返回后重试';
       return;
     }
+    if (path.length === 0) {
+      fnDiagRecord('E', 'Feedback', 'prepare log failed: empty path');
+      this.logPath = '';
+      this.logReady = false;
+      this.logHint = '诊断日志没能保存到设备，请返回后重试';
+      return;
+    }
+    fnDiagRecord('I', 'Feedback', 'prepare log ok');
     this.logPath = path;
     this.logReady = true;
-    this.logHint = `诊断日志已在设备里：${LOG_FILE_NAME}。点表单的上传后，选「图片」或「诊断日志」。`;
+    this.logHint = `诊断日志已在设备里：${LOG_FILE_NAME}。点表单的上传后，选「图片」或「诊断日志」。${LOG_SECTIONS_HINT}`;
   }
 
   private goBack(): void {
@@ -102,6 +117,39 @@ struct FeedbackPage {
       this.getUIContext().getRouter().back();
     } catch (_e) {
     }
+  }
+
+  /** 复现问题后重新生成，保证附件里是最新的一次会话记录。 */
+  private regenerateLog(): void {
+    if (this.preparing) {
+      return;
+    }
+    this.preparing = true;
+    this.logReady = false;
+    this.logHint = '正在重新生成诊断日志…';
+    void this.prepareLog().finally((): void => {
+      this.preparing = false;
+    });
+  }
+
+  /** 直接把诊断日志分享出去（不用经过表单附件选择）。 */
+  private shareLog(): void {
+    if (this.sharing) {
+      return;
+    }
+    this.sharing = true;
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    void fnDiagShare(ctx).then((ok: boolean): void => {
+      this.sharing = false;
+      if (!ok) {
+        fnDiagRecord('E', 'Feedback', 'share log failed');
+        this.logHint = '诊断日志分享失败，请改用表单附件上传';
+      }
+    }).catch((e: Error): void => {
+      this.sharing = false;
+      fnDiagRecord('E', 'Feedback', `share log error ${String(e)}`);
+      this.logHint = '诊断日志分享失败，请改用表单附件上传';
+    });
   }
 
   private acceptLooksLikeImage(types: Array<string>): boolean {
@@ -120,6 +168,7 @@ struct FeedbackPage {
 
   private async deliverLog(result: FileSelectorResult): Promise<void> {
     if (this.logPath.length === 0) {
+      fnDiagRecord('W', 'Feedback', 'log not ready');
       result.handleFileList([]);
       this.logHint = '诊断日志还没保存好，请稍后再点附件';
       return;
@@ -145,7 +194,8 @@ struct FeedbackPage {
         picked.push(uris[i]);
       }
       result.handleFileList(picked);
-    } catch (_e) {
+    } catch (e) {
+      fnDiagRecord('W', 'Feedback', `pick images failed ${String(e)}`);
       result.handleFileList([]);
     }
   }
@@ -172,7 +222,8 @@ struct FeedbackPage {
         return;
       }
       result.handleFileList([]);
-    } catch (_e) {
+    } catch (e) {
+      fnDiagRecord('W', 'Feedback', `choose upload failed ${String(e)}`);
       result.handleFileList([]);
     }
   }
@@ -220,13 +271,35 @@ struct FeedbackPage {
 
   @Builder
   private hintBar() {
-    Text(this.logHint)
-      .fontSize(13)
-      .fontColor(this.logReady ? fnResolvedTextSecondary(this.themeTextSecondary) : Color.Red)
-      .lineHeight(18)
+    Column() {
+      Text(this.logHint)
+        .fontSize(13)
+        .fontColor(this.logReady ? fnResolvedTextSecondary(this.themeTextSecondary) : Color.Red)
+        .lineHeight(18)
+        .width('100%')
+
+      Row({ space: 18 }) {
+        Text('重新生成')
+          .fontSize(13)
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+          .onClick((): void => {
+            this.regenerateLog();
+          })
+
+        Text('分享诊断日志')
+          .fontSize(13)
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+          .onClick((): void => {
+            this.shareLog();
+          })
+      }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-      .backgroundColor(fnResolvedCardFill(this.cardBg))
+      .margin({ top: 6 })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .backgroundColor(fnResolvedCardFill(this.cardBg))
   }
 
   @Builder

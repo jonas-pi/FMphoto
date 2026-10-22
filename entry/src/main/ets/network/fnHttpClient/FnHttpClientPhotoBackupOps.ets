@@ -3,13 +3,14 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError } from '../../common/FnDiagLog';
 import { CertPolicy } from '../CertPolicy';
 import { genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX, FN_PHOTO_API_V2_PREFIX } from '../FnPhotoRoutes';
 import { mergeGalleryWebCookieIntoNativeHeader } from '../FnWebCookies';
 import { fnWebViewBaseUrl } from '../ServerUrl';
 import { buildFnApiCookieHeader } from './FnHttpClientCookie';
-import { escapeJsonString } from './FnHttpClientCommon';
+import { escapeJsonString, TAG } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
 import { FnClientResult, PhotoBackupPathInfo, PhotoFolderListData } from '../../model/FnApiTypes';
@@ -162,6 +163,7 @@ export class FnHttpClientPhotoBackupOps extends FnHttpClientGalleryRequest {
       return { success: true, data: parsed as Object };
     } catch (e) {
       hilog.warn(PHOTO_BACKUP_DOMAIN, PHOTO_BACKUP_TAG, 'request %{public}s %{public}s', path, String(e));
+      fnDiagError(TAG, 'photoBackupApi exception', e);
       return { success: false, message: String(e) || '请求异常' };
     }
   }

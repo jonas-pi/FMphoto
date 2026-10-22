@@ -484,10 +484,33 @@ export function galleryPerfImageRawDataCacheBytes(): number {
   return 24 * 1024 * 1024;
 }
 
+let lastImageCacheCount: number = -1;
+let lastImageCacheBytes: number = -1;
+
+/** 窗口重建后 UIContext 是新的，必须清掉「上次下发值」，否则新窗口不会再下发一次。 */
+export function resetGalleryPerfImageCacheApplied(): void {
+  lastImageCacheCount = -1;
+  lastImageCacheBytes = -1;
+}
+
+/**
+ * 设置 ArkUI 图片缓存上限。
+ *
+ * 只在值变化时真正下发：这几个值最终走到 libace 的原生 ImageCache，
+ * 在 UIContext 还没挂到内容树时调用会在原生层崩（try/catch 接不住），
+ * 所以既要「等内容加载完再调」，也要「同一组值不重复调」。
+ */
 export function applyGalleryPerfImageCache(ui: UIContext): void {
+  const count = galleryPerfImageCacheCount();
+  const bytes = galleryPerfImageRawDataCacheBytes();
+  if (count === lastImageCacheCount && bytes === lastImageCacheBytes) {
+    return;
+  }
   try {
-    ui.setImageCacheCount(galleryPerfImageCacheCount());
-    ui.setImageRawDataCacheSize(galleryPerfImageRawDataCacheBytes());
+    ui.setImageCacheCount(count);
+    ui.setImageRawDataCacheSize(bytes);
+    lastImageCacheCount = count;
+    lastImageCacheBytes = bytes;
   } catch (_e) {
   }
 }

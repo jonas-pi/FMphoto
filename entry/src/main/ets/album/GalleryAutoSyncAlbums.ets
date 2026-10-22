@@ -9,6 +9,7 @@
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { FnHttpClient } from '../network/FnHttpClient';
 
 const DOMAIN = 0xFF00;
@@ -69,7 +70,10 @@ function readAlbumId(data: Object | undefined): string {
 async function findAlbumIdByName(client: FnHttpClient, name: string): Promise<string> {
   const res = await client.getUserAlbumList();
   if (!res.success || res.data === undefined) {
-    hilog.info(DOMAIN, TAG, 'album list failed: %{public}s', res.message ?? '');
+    // 不记相册名与 albumId。
+    const msg: string = (res.message ?? '').trim();
+    hilog.info(DOMAIN, TAG, 'album list failed: %{public}s', msg);
+    fnDiagRecord('W', TAG, `album resolve failed ${msg.substring(0, 80)}`);
     return '';
   }
   const list = res.data.list ?? [];
@@ -111,7 +115,7 @@ export async function ensureNasAlbumId(client: FnHttpClient, rawName: string): P
     const id = readAlbumId(created.data);
     if (id.length > 0) {
       albumIdCache.set(name, id);
-      hilog.info(DOMAIN, TAG, 'album created name=%{public}s id=%{public}s', name, id);
+      hilog.info(DOMAIN, TAG, 'album created');
       return id;
     }
     return '';
@@ -121,11 +125,13 @@ export async function ensureNasAlbumId(client: FnHttpClient, rawName: string): P
     const again = await findAlbumIdByName(client, name);
     if (again.length > 0) {
       albumIdCache.set(name, again);
-      hilog.info(DOMAIN, TAG, 'album reused after duplicate name=%{public}s id=%{public}s', name, again);
+      hilog.info(DOMAIN, TAG, 'album reused after duplicate');
       return again;
     }
   }
-  hilog.info(DOMAIN, TAG, 'album create failed name=%{public}s msg=%{public}s', name, created.message ?? '');
+  const createMsg: string = (created.message ?? '').trim();
+  hilog.info(DOMAIN, TAG, 'album create failed msg=%{public}s', createMsg);
+  fnDiagRecord('W', TAG, `album resolve failed ${createMsg.substring(0, 80)}`);
   return '';
 }
 
@@ -146,11 +152,12 @@ export async function archivePhotosToNasAlbum(
   }
   const res = await client.addPhotosToUserAlbum(albumId, name, photoIds);
   if (!res.success) {
-    hilog.info(DOMAIN, TAG, 'addTo album failed name=%{public}s count=%{public}d msg=%{public}s',
-      name, photoIds.length, res.message ?? '');
+    // 不记相册名与 albumId。
+    hilog.info(DOMAIN, TAG, 'addTo album failed count=%{public}d msg=%{public}s',
+      photoIds.length, res.message ?? '');
     albumIdCache.delete(name);
     return false;
   }
-  hilog.info(DOMAIN, TAG, 'archived name=%{public}s count=%{public}d', name, photoIds.length);
+  hilog.info(DOMAIN, TAG, 'archived count=%{public}d', photoIds.length);
   return true;
 }

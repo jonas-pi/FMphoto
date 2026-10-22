@@ -5,6 +5,7 @@ import { AppSession } from '../auth/AppSession';
 import { taskPanelItemActive } from '../album/FnTaskPanelLabels';
 import { TaskPanelItem } from '../model/FnApiTypes';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { fnDiagError } from '../common/FnDiagLog';
 
 const POLL_FAST_MS: number = 2500;
 const POLL_SLOW_MS: number = 15000;
@@ -52,7 +53,8 @@ async function pollOnce(): Promise<void> {
         }
       }
     }
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError('FnNasTask', 'task panel poll failed', e);
   }
   if (!pollScheduled) {
     return;

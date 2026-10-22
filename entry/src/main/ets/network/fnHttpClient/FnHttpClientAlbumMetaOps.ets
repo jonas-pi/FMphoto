@@ -1,5 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError } from '../../common/FnDiagLog';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxGet, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX, FN_PHOTO_API_V2_PREFIX } from '../FnPhotoRoutes';
@@ -110,6 +111,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       const hint = lastBizMsg.length > 0 ? lastBizMsg : `HTTP ${lastHttp}`;
       return { success: false, message: `媒体分类加载失败: ${hint}` };
     } catch (e) {
+      fnDiagError(TAG, 'mediaCategoryList exception', e);
       return { success: false, message: String(e) || '媒体分类请求异常' };
     }
   }
@@ -158,6 +160,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: { list: normList } };
     } catch (e) {
+      fnDiagError(TAG, 'smartRecCategories exception', e);
       return { success: false, message: String(e) || '智能分类加载异常' };
     }
   }
@@ -203,6 +206,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: { list: normList } };
     } catch (e) {
+      fnDiagError(TAG, 'aiPersonList exception', e);
       return { success: false, message: String(e) || '人物列表加载异常' };
     }
   }
@@ -236,6 +240,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: res.data };
     } catch (e) {
+      fnDiagError(TAG, 'aiPersonDetail exception', e);
       return { success: false, message: String(e) || '人物详情加载异常' };
     }
   }
@@ -266,6 +271,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       };
       return this.requestGalleryGetJson<PersonInPhotoData>(pathCandidates, gallerySign, timeoutMs, 3);
     } catch (e) {
+      fnDiagError(TAG, 'personInPhoto exception', e);
       return { success: false, message: String(e) || '人物识别加载异常' };
     }
   }
@@ -297,6 +303,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: res.data };
     } catch (e) {
+      fnDiagError(TAG, 'aiPersonPhotoTimeline exception', e);
       return { success: false, message: String(e) || '人物时间线加载异常' };
     }
   }
@@ -348,6 +355,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: payload as GalleryGetListData };
     } catch (e) {
+      fnDiagError(TAG, 'aiPersonPhotoList exception', e);
       return { success: false, message: String(e) || '人物照片加载异常' };
     }
   }
@@ -379,6 +387,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       const normList = FnHttpClientGalleryRequest.userAlbumItemsFromData(res.data as Object);
       return { success: true, data: { list: normList } };
     } catch (e) {
+      fnDiagError(TAG, 'userAlbumList exception', e);
       return { success: false, message: String(e) || '相册列表加载异常' };
     }
   }
@@ -478,6 +487,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       const line = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
       return { success: false, message: line.length > 0 ? line : '相册写入失败' };
     } catch (e) {
+      fnDiagError(TAG, 'albumWrite exception', e);
       return { success: false, message: String(e) || '相册写入异常' };
     }
   }
@@ -517,6 +527,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: res.data };
     } catch (e) {
+      fnDiagError(TAG, 'userAlbumTimeline exception', e);
       return { success: false, message: String(e) || '相册时间线加载异常' };
     }
   }
@@ -569,6 +580,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: payload as GalleryGetListData };
     } catch (e) {
+      fnDiagError(TAG, 'userAlbumPhotoList exception', e);
       return { success: false, message: String(e) || '相册照片加载异常' };
     }
   }
@@ -614,6 +626,7 @@ export class FnHttpClientAlbumMetaOps extends FnHttpClientGalleryRequest {
       }
       return { success: true, data: payload as GalleryGetListData };
     } catch (e) {
+      fnDiagError(TAG, 'userAlbumPhotos exception', e);
       return { success: false, message: String(e) || '相册照片加载异常' };
     }
   }

@@ -6,6 +6,7 @@ import {
   resolveLivePhotoWriteAuthorized
 } from '../../album/livephoto/LivePhotoSaveActionSheet';
 import { AppSession } from '../../auth/AppSession';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import { RecycleBinListItem } from '../../model/FnApiTypes';
 import { recycleBinGalleryListForSelection } from './RecycleBinSelectionController';
 import { formatRecycleApiTime, RB_PAGE_LIMIT, RB_SAFETY_MAX_OFFSET } from './RecycleBinTypes';
@@ -46,6 +47,8 @@ export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<vo
       const res = await client.getRecycleBinList(offset, RB_PAGE_LIMIT, startStr, endStr);
       if (!res.success || res.data === undefined) {
         if (merged.length === 0) {
+          const msg: string = res.message !== undefined && res.message.length > 0 ? res.message : 'unknown';
+          fnDiagRecord('E', 'RecycleBin', `list load failed ${msg}`);
           host.error = res.message ?? '回收站列表加载失败';
         }
         break;
@@ -76,6 +79,7 @@ export async function recycleBinLoadAll(host: RecycleBinActionsHost): Promise<vo
     host.items = merged.slice();
   } catch (e) {
     if (merged.length === 0) {
+      fnDiagRecord('E', 'RecycleBin', `list load failed ${String(e)}`);
       host.error = String(e) || '回收站列表加载失败';
     }
   }
@@ -166,6 +170,8 @@ export async function recycleBinRunRestore(host: RecycleBinActionsHost): Promise
   const res = await client.restoreRecycleBinPhotos(ids);
   host.restoring = false;
   if (!res.success) {
+    const msg: string = res.message !== undefined && res.message.length > 0 ? res.message : 'unknown';
+    fnDiagRecord('E', 'RecycleBin', `restore failed ${msg}`);
     host.toast(res.message ?? '还原失败');
     return;
   }

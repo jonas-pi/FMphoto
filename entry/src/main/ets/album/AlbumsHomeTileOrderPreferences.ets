@@ -7,11 +7,13 @@ import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSession } from '../auth/AppSession';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { MediaCategoryItem, UserAlbumItem } from '../model/FnApiTypes';
 import { mediaCategoryStableId, userAlbumId, userAlbumName } from './GalleryAlbumEntityData';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AlbumsTileOrder';
+const DIAG_TAG = 'AlbumsHomeOrder';
 
 const PREF_NAME: string = 'fnos_client_prefs';
 const K_TILE_ORDER_JSON: string = 'albums_home_tile_order_json';
@@ -124,6 +126,8 @@ function parseStore(rawJson: string): Map<string, string[]> {
       }
     }
   } catch (_e) {
+    // 磁贴顺序 JSON 损坏时全部排序静默丢失。
+    fnDiagRecord('W', DIAG_TAG, 'tile order json parse failed');
   }
   return map;
 }
@@ -292,7 +296,8 @@ async function loadLayoutLocked(ctx: common.UIAbilityContext, account: string): 
     cachedOrder = foundOrder !== undefined ? foundOrder : [];
     cachedHidden = foundHidden !== undefined ? foundHidden : [];
     cacheReady = true;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(DIAG_TAG, 'tile order load failed', e);
     cachedAccount = account;
     cachedOrder = [];
     cachedHidden = [];
@@ -319,7 +324,7 @@ export async function albumsHomeTileOrderFromUi(ui: UIContext): Promise<string[]
     return [];
   }
   await loadLayoutLocked(ctx, account);
-  hilog.info(DOMAIN, TAG, 'order load account=%{public}s n=%{public}d', account, cachedOrder.length);
+  hilog.info(DOMAIN, TAG, 'order load n=%{public}d', cachedOrder.length);
   return cachedOrder;
 }
 
@@ -349,7 +354,8 @@ async function persistStringArray(
     map.set(account, values);
     await p.put(prefKey, storeToJson(map));
     await p.flush();
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(DIAG_TAG, 'tile order persist failed', e);
   }
 }
 
@@ -363,7 +369,7 @@ export async function albumsHomePersistTileOrderFromUi(ui: UIContext, tiles: Alb
   cachedAccount = account;
   cachedOrder = order;
   cacheReady = true;
-  hilog.info(DOMAIN, TAG, 'order persist account=%{public}s n=%{public}d', account, order.length);
+  hilog.info(DOMAIN, TAG, 'order persist n=%{public}d', order.length);
   await persistStringArray(ctx, account, K_TILE_ORDER_JSON, order);
 }
 

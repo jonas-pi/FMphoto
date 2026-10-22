@@ -1,5 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { fnDiagError, fnDiagRecord } from '../../common/FnDiagLog';
 import { CertPolicy } from '../CertPolicy';
 import { genFnGalleryAuthxGet, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX } from '../FnPhotoRoutes';
@@ -9,6 +10,7 @@ import { buildFnApiCookieHeader } from './FnHttpClientCookie';
 import {
   AssetBufferCacheEntry,
   GalleryAssetSignParts,
+  TAG,
   escapeJsonString,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost, VideoDecodePlayInfo, VideoDecodePlayRequest } from './FnHttpClientTypes';
@@ -87,8 +89,9 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
           return;
         }
         await fileIo.write(targetFd, piece);
-      }).catch((_e: Error): void => {
+      }).catch((e: Error): void => {
         writeFailed = true;
+        fnDiagError(TAG, 'asset write fail', e);
       });
     };
     const onDataEnd = (): void => {
@@ -145,7 +148,8 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         return false;
       }
       return true;
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'asset download fail', e);
       return false;
     } finally {
       req.off('dataReceive', onDataReceive);
@@ -197,6 +201,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         if (resp.responseCode >= 200 && resp.responseCode < 300) {
           return resp.result as ArrayBuffer;
         }
+        fnDiagRecord('W', TAG, `asset fetch fail code=${resp.responseCode}`);
       } finally {
         this.unregisterPendingRequest(req);
         try {
@@ -204,7 +209,8 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         } catch (_e) {
         }
       }
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'asset fetch fail', e);
     }
     return undefined;
   }
@@ -369,7 +375,8 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         headers['Range'] = 'bytes=0-2047';
         resp.code = await req.requestInStream(fullUrl, opt);
       }
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'hls probe fail', e);
     } finally {
       this.unregisterPendingRequest(req);
       try {
@@ -431,6 +438,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
       try {
         parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
       } catch (_e) {
+        fnDiagRecord('W', TAG, 'decode play parse fail');
         return { success: false, message: '转码播放响应解析失败' };
       }
       if (!FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
@@ -638,6 +646,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
             const v = decodeURIComponent(part.substring(eqIdx + 1));
             queryParams[k] = v;
           } catch (_e) {
+            fnDiagRecord('W', TAG, 'asset url query decode fail');
           }
         }
       }

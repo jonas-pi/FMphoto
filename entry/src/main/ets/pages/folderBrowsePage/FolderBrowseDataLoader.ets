@@ -1,4 +1,5 @@
 import { AppSession } from '../../auth/AppSession';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import {
   FnClientResult,
   FolderViewCoverItem,
@@ -143,6 +144,9 @@ export async function folderBrowseLoadCurrent(host: FolderBrowseDataLoaderHost, 
       return;
     }
     if (!folderRes.success || folderRes.data === undefined) {
+      const msg: string = folderRes.message !== undefined && folderRes.message.length > 0
+        ? folderRes.message : 'unknown';
+      fnDiagRecord('E', 'FolderBrowse', `folder list load failed ${msg}`);
       host.error = folderBrowsePermissionMessage(folderRes.message ?? '文件夹列表加载失败');
       host.loading = false;
       return;
@@ -197,6 +201,7 @@ export async function folderBrowseLoadCurrent(host: FolderBrowseDataLoaderHost, 
     if (gen !== host.loadGen) {
       return;
     }
+    fnDiagRecord('E', 'FolderBrowse', `folder list load failed ${String(e)}`);
     host.error = String(e) || '文件夹加载异常';
     host.loading = false;
   }

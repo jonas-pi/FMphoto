@@ -1,5 +1,6 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { sha256DigestSafe } from './AuthxSigner';
 
 function utf8Encode(str: string): Uint8Array {
@@ -38,6 +39,7 @@ function base64ToUint8(str: string): Uint8Array {
 let reqSeq = 1;
 
 function rethrowCryptoError(scope: string, e: Object): never {
+  fnDiagRecord('E', 'FnWsCrypto', `${scope} failed`);
   throw new Error(`${scope} failed: ${String(e)}`);
 }
 

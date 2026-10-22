@@ -6,6 +6,7 @@
 import { bundleManager, common, errorManager } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { connection } from '@kit.NetworkKit';
 import { hiAppEvent, hilog } from '@kit.PerformanceAnalysisKit';
 import { systemShare } from '@kit.ShareKit';
 
@@ -23,14 +24,34 @@ const MAX_CRASH_FILES: number = 12;
 const MAX_SECTION_CHARS: number = 180000;
 const MAX_DRAIN_EVENTS: number = 32;
 
+/** tag 条数统计项。 */
+interface DiagTagCount {
+  tag: string;
+  count: number;
+}
+
+/** 故障文件分段结果。 */
+interface DiagCrashSections {
+  crash: string;
+  lifecycle: string[];
+}
+
 let filesRoot: string = '';
 let cacheRoot: string = '';
 let dirReady: boolean = false;
 let watcherInstalled: boolean = false;
 const ring: string[] = [];
+/** 最后一条已入队（待落盘）的日志行，用于导出时补上未落盘的部分。 */
+let lastEnqueuedLine: string = '';
 let appendChain: Promise<void> = Promise.resolve();
 let eventPersistChain: Promise<void> = Promise.resolve();
 let eventHolder: hiAppEvent.AppEventPackageHolder | null = null;
+/** 各级别条数，供导出时的「错误摘要」使用。 */
+const levelCounts: Map<string, number> = new Map();
+/** 各 tag 的条数，供导出时快速定位问题模块。 */
+const tagCounts: Map<string, number> = new Map();
+/** 关键状态快照（当前地址、登录结果、同步状态等），导出时单列一段。 */
+const stateMap: Map<string, string> = new Map();
 
 export function fnDiagInit(filesDir: string, cacheDir: string = ''): void {
   const files = trimPath(filesDir);
@@ -56,13 +77,221 @@ export function fnDiagInit(filesDir: string, cacheDir: string = ''): void {
 export function fnDiagRecord(level: string, tag: string, message: string): void {
   const line = `${formatStamp(Date.now())} ${level} [${tag}] ${sanitizeDiagText(message)}`;
   pushRing(line);
+  countRecord(level, tag);
   enqueueAppend(line + '\n');
+  lastEnqueuedLine = line;
+  // W/E 同时进 hilog，hdc hilog 抓日志时能直接看到关键失败
+  if (level === 'W') {
+    hilog.warn(DOMAIN, hilogSafeTag(tag), '%{public}s', sanitizeDiagText(message));
+  } else if (level === 'E') {
+    hilog.error(DOMAIN, hilogSafeTag(tag), '%{public}s', sanitizeDiagText(message));
+  }
+}
+
+/** hilog 的 tag 只能有字母数字下划线且不超过 31 字符。 */
+function hilogSafeTag(tag: string): string {
+  const t = tag.trim();
+  if (t.length === 0) {
+    return 'FnDiag';
+  }
+  let out = '';
+  for (let i = 0; i < t.length && out.length < 31; i++) {
+    const c = t.charAt(i);
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '_') {
+      out += c;
+    } else {
+      out += '_';
+    }
+  }
+  if (out.length === 0 || !(out.charAt(0) >= 'a' && out.charAt(0) <= 'z') &&
+    !(out.charAt(0) >= 'A' && out.charAt(0) <= 'Z')) {
+    out = `T${out}`;
+  }
+  return out;
+}
+
+/**
+ * 统一错误埋点：把异常类型、消息与截断后的堆栈一起记下来。
+ * catch 里只要调一次，就不会再出现「静默失败、事后无迹可查」。
+ */
+export function fnDiagError(tag: string, context: string, err?: Object | Error | null): void {
+  fnDiagRecord('E', tag, `${context}${describeDiagError(err)}`);
+}
+
+/** 关键状态快照：会出现在导出日志的「关键状态」段，便于复现时对齐现场。 */
+export function fnDiagSetState(key: string, value: string): void {
+  const k = key.trim();
+  if (k.length === 0) {
+    return;
+  }
+  const v = sanitizeDiagText(value);
+  stateMap.set(k, v);
+  fnDiagRecord('I', 'State', `${k}=${v}`);
+}
+
+/** 耗时埋点：慢请求、慢同步用。 */
+export function fnDiagTiming(tag: string, name: string, costMs: number): void {
+  fnDiagRecord('I', tag, `${name} cost=${Math.round(costMs)}ms`);
+}
+
+/**
+ * 主机名脱敏：日志与导出会被用户分享出去，域名不能原样落盘。
+ * IP 字面量只留地址族，域名只留后缀，中继子域保留 <fnid> 形式。
+ */
+export function fnDiagMaskHost(host: string): string {
+  const h = host.trim().toLowerCase();
+  if (h.length === 0) {
+    return '<host>';
+  }
+  if (h.indexOf(':') >= 0) {
+    return '<ipv6>';
+  }
+  // 点分四段且每段 0-255 才算 IPv4；只看最后一个点两侧会把 192.168.0.18 误判成域名
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) && isIpv4Octets(h)) {
+    return '<ipv4>';
+  }
+  const dot = h.lastIndexOf('.');
+  if (dot <= 0) {
+    return '<domain>';
+  }
+  const tld = h.substring(dot + 1);
+  if (h.endsWith('.fnos.net') || h.endsWith('.5ddd.com')) {
+    // 中继子域保留后缀，既能分辨中继集群，又不暴露 FN ID
+    const relaySuffix = h.endsWith('.fnos.net') ? '.fnos.net' : '.5ddd.com';
+    return `<fnid>${h.substring(h.length - relaySuffix.length)}`;
+  }
+  return `<domain>.${tld}`;
+}
+
+function isIpv4Octets(h: string): boolean {
+  const parts = h.split('.');
+  for (let i = 0; i < parts.length; i++) {
+    const n = parseInt(parts[i], 10);
+    if (isNaN(n) || n < 0 || n > 255) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 路径脱敏：保留目录结构，文件名换成 ***（文件名可能是私人内容）。 */
+export function fnDiagMaskPath(path: string): string {
+  const p = path.trim();
+  if (p.length === 0) {
+    return '';
+  }
+  const slash = p.lastIndexOf('/');
+  if (slash < 0) {
+    return '***';
+  }
+  return `${p.substring(0, slash + 1)}***`;
+}
+
+/** 标识脱敏：FN ID 等只留首尾各两位。 */
+export function fnDiagMaskId(id: string): string {
+  const s = id.trim();
+  if (s.length <= 4) {
+    return '***';
+  }
+  return `${s.substring(0, 2)}***${s.substring(s.length - 2)}`;
+}
+
+/** URL 脱敏：保留协议、路径与端口，主机名换成掩码。 */
+export function fnDiagMaskUrl(url: string): string {
+  const u = url.trim();
+  const schemeEnd = u.indexOf('://');
+  if (schemeEnd < 0) {
+    return fnDiagMaskHost(u);
+  }
+  const scheme = u.substring(0, schemeEnd + 3);
+  const rest = u.substring(schemeEnd + 3);
+  const slash = rest.indexOf('/');
+  const authority = slash >= 0 ? rest.substring(0, slash) : rest;
+  const tail = slash >= 0 ? rest.substring(slash) : '';
+  const portAt = authority.lastIndexOf(':');
+  const host = portAt > 0 ? authority.substring(0, portAt) : authority;
+  const port = portAt > 0 ? authority.substring(portAt) : '';
+  return `${scheme}${fnDiagMaskHost(host)}${port}${tail}`;
+}
+
+/**
+ * 记录某主机当前的解析结果条数（A / AAAA）。
+ * 只记条数不记地址：用于判断「是不是只有 AAAA 可用 / AAAA 指向不可达」，
+ * 同时避免把域名与 IP 写进可分享的导出文件。
+ */
+export async function fnDiagRecordResolve(host: string): Promise<void> {
+  const h = host.trim();
+  if (h.length === 0) {
+    return;
+  }
+  const masked = fnDiagMaskHost(h);
+  if (masked === '<ipv4>' || masked === '<ipv6>') {
+    return;
+  }
+  try {
+    const addrs = await connection.getAddressesByName(h);
+    let v4 = 0;
+    let v6 = 0;
+    for (let i = 0; i < addrs.length; i++) {
+      const raw = addrs[i].address !== undefined ? String(addrs[i].address).trim() : '';
+      if (raw.length === 0) {
+        continue;
+      }
+      if (raw.indexOf(':') >= 0) {
+        v6++;
+      } else {
+        v4++;
+      }
+    }
+    fnDiagRecord('W', 'Dns', `resolve ${masked} A=${v4} AAAA=${v6}`);
+  } catch (e) {
+    fnDiagRecord('W', 'Dns', `resolve ${masked} failed ${describeDiagError(e)}`);
+  }
+}
+
+function countRecord(level: string, tag: string): void {
+  const lv = levelCounts.get(level);
+  levelCounts.set(level, lv !== undefined ? lv + 1 : 1);
+  const tc = tagCounts.get(tag);
+  tagCounts.set(tag, tc !== undefined ? tc + 1 : 1);
+}
+
+function describeDiagError(err?: Object | Error | null): string {
+  const flat = (s: string): string => {
+    // 一条记录必须只占一行，否则导出摘要与解析都会被堆栈打断
+    return s.replace(/\r?\n/g, ' | ');
+  };
+  if (err === undefined || err === null) {
+    return '';
+  }
+  try {
+    if (err instanceof Error) {
+      const name = err.name !== undefined && err.name.length > 0 ? err.name : 'Error';
+      const msg = err.message !== undefined ? err.message : '';
+      const stack = err.stack !== undefined ? err.stack : '';
+      let out = ` [${name}${msg.length > 0 ? `: ${msg}` : ''}]`;
+      if (stack.length > 0) {
+        out += ` stack=${clip(flat(sanitizeDiagText(stack)), 240)}`;
+      }
+      return flat(out);
+    }
+    // ArkTS 的网络/系统错误多为 BusinessError，不是 Error 实例，
+    // 直接 String() 会得到 [object Object]，这里优先序列化出 code/message。
+    const json = JSON.stringify(err);
+    if (json !== undefined && json.length > 2 && json !== '{}') {
+      return ` [${clip(flat(sanitizeDiagText(json)), 300)}]`;
+    }
+    return ` [${clip(flat(sanitizeDiagText(String(err))), 300)}]`;
+  } catch (_e) {
+    return ' [unprintable error]';
+  }
 }
 
 /** 卡死回调里必须同步落盘，进程随后可能被系统杀掉。 */
 export function fnDiagRecordSync(level: string, tag: string, message: string): void {
   const line = `${formatStamp(Date.now())} ${level} [${tag}] ${sanitizeDiagText(message)}`;
   pushRing(line);
+  countRecord(level, tag);
   appendRuntimeSync(line + '\n');
 }
 
@@ -72,13 +301,16 @@ export async function fnDiagPreparePhoneFile(ctx: common.UIAbilityContext): Prom
     bindShareRoots(ctx);
     const path = await buildExportFile();
     if (path.length === 0) {
+      fnDiagRecord('E', TAG, 'prepare phone file: empty path');
       return '';
     }
     const raw = await fileIo.readText(path);
     await writeUtf8FileAtomic(path, sanitizeDiagText(raw));
+    fnDiagRecord('I', TAG, 'prepare phone file ok');
     return path;
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'diag phone file failed: %{public}s', String(e));
+    fnDiagRecord('E', TAG, `prepare phone file failed ${String(e)}`);
     return '';
   }
 }
@@ -86,9 +318,11 @@ export async function fnDiagPreparePhoneFile(ctx: common.UIAbilityContext): Prom
 export async function fnDiagShare(ctx: common.UIAbilityContext): Promise<boolean> {
   try {
     bindShareRoots(ctx);
-    const path = await buildExportFile();
+    // 与反馈页附件走同一条路径：导出后再整体过一遍脱敏，崩溃原文也不会漏
+    const path = await fnDiagPreparePhoneFile(ctx);
     if (path.length === 0) {
       hilog.error(DOMAIN, TAG, 'diag export wrote empty path');
+      fnDiagRecord('E', TAG, 'share aborted: empty export path');
       return false;
     }
     const shareUri = fileUri.getUriFromPath(path);
@@ -223,7 +457,7 @@ function fnDiagConfigureSystemEvents(): void {
       }
     };
     void hiAppEvent.configEventPolicy(policy)
-      .catch((e: Error): void => fnDiagRecord('W', TAG, `config event policy failed ${String(e)}`));
+      .catch((e: Error): void => fnDiagRecord('W', TAG, `config event policy failed${describeDiagError(e)}`));
     return;
   }
   const jankPolicy: hiAppEvent.EventPolicy = {
@@ -249,7 +483,9 @@ function fnDiagInstallErrorObservers(): void {
   try {
     errorManager.on('globalUnhandledRejectionDetected', (err: errorManager.GlobalError): void => {
       const stack = err.stack !== undefined ? err.stack : '';
-      fnDiagRecord('E', 'Promise', `${err.name}: ${err.message} ${stack}`);
+      // 一条记录只占一行：堆栈里的换行会打断导出摘要与日志解析
+      const oneLine = `${err.name}: ${err.message} ${stack}`.replace(/\r?\n/g, ' | ');
+      fnDiagRecord('E', 'Promise', clip(oneLine, 500));
     });
   } catch (e) {
     fnDiagRecord('W', TAG, `promise observer failed ${String(e)}`);
@@ -374,7 +610,6 @@ function enqueueAppend(chunk: string): void {
   }).catch((_e: Error): void => {
   });
 }
-
 /** 上一进程的运行记录必须保留到下次导出，HiAppEvent 正是在下次启动回调崩溃事件。 */
 function archiveRuntimeLogSync(): void {
   if (!ensureDirSync()) {
@@ -482,17 +717,39 @@ function ensureDirSync(): boolean {
 async function buildExportFile(): Promise<string> {
   const outDir = exportDir();
   if (outDir.length === 0) {
+    fnDiagRecord('E', TAG, 'export skipped: no writable dir');
     return '';
   }
+  const startedAt = Date.now();
   await eventPersistChain;
   await appendChain;
   const blocks: string[] = [];
   blocks.push('=== 飞马相册诊断日志 ===');
+  blocks.push('说明：本文件只在本机生成，由你自行上传；已自动去掉密码、token、Cookie 与 URL 查询参数。');
+  blocks.push('');
   blocks.push(await buildHeader());
+  blocks.push('');
+  blocks.push('--- 错误摘要（本次会话）---');
+  blocks.push(buildErrorSummary());
+  blocks.push('');
+  blocks.push('--- 关键状态 ---');
+  blocks.push(buildStateSection());
+  blocks.push('');
+  blocks.push('--- 网络环境 ---');
+  blocks.push(await buildNetworkInfo());
+  blocks.push('');
+  blocks.push('--- 导出信息 ---');
+  blocks.push(`exported_at=${formatStamp(Date.now())}`);
+  blocks.push('sections=header,summary,state,network,crash,prev_session,current_session');
   blocks.push('');
   blocks.push('--- 崩溃 / 卡死 ---');
   const crashBody = await collectCrashFiles();
-  blocks.push(crashBody.length > 0 ? crashBody : '(无。若刚才闪退，请打开应用后再导出一次。)');
+  blocks.push(crashBody.crash.length > 0 ? crashBody.crash : '(无。若刚才闪退，请打开应用后再导出一次。)');
+  if (crashBody.lifecycle.length > 0) {
+    blocks.push('');
+    blocks.push('--- 应用被结束（正常生命周期，非崩溃）---');
+    blocks.push(crashBody.lifecycle.join('\n'));
+  }
   blocks.push('');
   blocks.push('--- 上次会话（含闪退前记录）---');
   const prevRoll = await readFileCapped(`${diagDir()}/${RUNTIME_PREV_ROLL_NAME}`, MAX_SECTION_CHARS);
@@ -515,9 +772,104 @@ async function buildExportFile(): Promise<string> {
   } else {
     blocks.push('(暂无运行记录，请先复现问题再导出。)');
   }
+  // 落盘可能滞后或失败：若文件里找不到内存中最新一条，就把内存缓冲补在后面
+  if (ring.length > 0) {
+    const newest = ring[ring.length - 1];
+    if (newest.length > 0 && cur.indexOf(newest) < 0) {
+      blocks.push('');
+      blocks.push('--- 内存缓冲（文件里没有的最新日志）---');
+      const from = ring.length > 80 ? ring.length - 80 : 0;
+      for (let i = from; i < ring.length; i++) {
+        blocks.push(ring[i]);
+      }
+    }
+  }
+  const body = blocks.join('\n');
   const outPath = `${outDir}/${EXPORT_NAME}`;
-  await writeUtf8FileAtomic(outPath, blocks.join('\n'));
+  await writeUtf8FileAtomic(outPath, body);
+  fnDiagRecord('I', TAG, `export ok size=${body.length} chars cost=${Date.now() - startedAt}ms`);
   return outPath;
+}
+
+/** 错误摘要：先看这里就知道本次会话大致出了什么问题。 */
+function buildErrorSummary(): string {
+  const lines: string[] = [];
+  const i = levelCounts.get('I');
+  const w = levelCounts.get('W');
+  const e = levelCounts.get('E');
+  lines.push(`counts I=${i !== undefined ? i : 0} W=${w !== undefined ? w : 0} E=${e !== undefined ? e : 0}`);
+  const items: DiagTagCount[] = [];
+  tagCounts.forEach((count: number, tag: string): void => {
+    items.push({ tag: tag, count: count });
+  });
+  items.sort((a: DiagTagCount, b: DiagTagCount): number => {
+    return b.count - a.count;
+  });
+  const top: string[] = [];
+  for (let i2 = 0; i2 < items.length && i2 < 12; i2++) {
+    top.push(`${items[i2].tag}=${items[i2].count}`);
+  }
+  lines.push(`tags ${top.length > 0 ? top.join(' ') : '(无)'}`);
+  const recent: string[] = [];
+  for (let idx = ring.length - 1; idx >= 0 && recent.length < 30; idx--) {
+    const line = ring[idx];
+    if (line.indexOf(' W [') >= 0 || line.indexOf(' E [') >= 0) {
+      recent.push(line);
+    }
+  }
+  if (recent.length > 0) {
+    lines.push('最近告警/错误：');
+    for (let j = 0; j < recent.length; j++) {
+      lines.push(recent[j]);
+    }
+  } else {
+    lines.push('最近告警/错误：(无)');
+  }
+  return lines.join('\n');
+}
+
+/** 关键状态：现场快照，方便对齐复现条件。 */
+function buildStateSection(): string {
+  if (stateMap.size === 0) {
+    return '(无状态记录)';
+  }
+  const lines: string[] = [];
+  stateMap.forEach((value: string, key: string): void => {
+    lines.push(`${key}=${value}`);
+  });
+  return lines.join('\n');
+}
+
+/** 网络环境：默认网络类型与能力，排查「WiFi 能连、流量能连」这类问题用得上。 */
+async function buildNetworkInfo(): Promise<string> {
+  const lines: string[] = [];
+  try {
+    const netHandle = connection.getDefaultNetSync();
+    const caps = connection.getNetCapabilitiesSync(netHandle);
+    lines.push(`defaultNetId=${netHandle.netId !== undefined ? netHandle.netId : '?'}`);
+    const bearers: string[] = [];
+    if (caps.bearerTypes !== undefined) {
+      for (let i = 0; i < caps.bearerTypes.length; i++) {
+        bearers.push(`${caps.bearerTypes[i]}`);
+      }
+    }
+    lines.push(`bearerTypes=${bearers.length > 0 ? bearers.join(',') : '?'}`);
+    const netCaps: string[] = [];
+    let validated = false;
+    if (caps.networkCap !== undefined) {
+      for (let i = 0; i < caps.networkCap.length; i++) {
+        netCaps.push(`${caps.networkCap[i]}`);
+        if (caps.networkCap[i] === connection.NetCap.NET_CAPABILITY_VALIDATED) {
+          validated = true;
+        }
+      }
+    }
+    lines.push(`networkCap=${netCaps.length > 0 ? netCaps.join(',') : '?'}`);
+    lines.push(`validated=${validated}`);
+  } catch (e) {
+    lines.push(`netinfo failed ${String(e)}`);
+  }
+  return lines.join('\n');
 }
 
 async function buildHeader(): Promise<string> {
@@ -553,18 +905,28 @@ async function buildHeader(): Promise<string> {
   return lines.join('\n');
 }
 
-async function collectCrashFiles(): Promise<string> {
+/**
+ * 收集故障文件。
+ * APP_KILLED 是「应用被结束」的正常生命周期事件，不是崩溃；
+ * 混进崩溃段会把真正的崩溃淹掉，所以单独列成紧凑清单。
+ */
+async function collectCrashFiles(): Promise<DiagCrashSections> {
   const names = await listCrashNames();
   if (names.length === 0) {
-    return '';
+    return { crash: '', lifecycle: [] };
   }
   const chunks: string[] = [];
+  const lifecycle: string[] = [];
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
+    if (name.indexOf('APP_KILLED') >= 0) {
+      lifecycle.push(name);
+      continue;
+    }
     chunks.push(`==== ${name} ====`);
     chunks.push(await readFileCapped(`${diagDir()}/${name}`, MAX_SECTION_CHARS));
   }
-  return chunks.join('\n');
+  return { crash: chunks.join('\n'), lifecycle: lifecycle };
 }
 
 async function pruneCrashFiles(): Promise<void> {
@@ -768,14 +1130,15 @@ function formatStamp(ms: number): string {
 export function sanitizeDiagText(raw: string): string {
   let s = raw;
   s = stripQuery(s);
+  s = maskHostsInText(s);
   const quotedKey =
-    /(["']?(?:[a-z0-9_-]*token|cookie|authorization|password|passwd|pwd|secret|authx[a-z0-9_-]*|trim[-_]sign|keypassword|storepassword)["']?\s*[:=]\s*)/gi;
+    /(["']?(?:[a-z0-9_-]*token|cookie|authorization|password|passwd|pwd|secret|authx[a-z0-9_-]*|trim[-_]sign|keypassword|storepassword|signkey|sign[-_]key|hmackey|hmac[-_]key|apikey|api[-_]key|privkey|privatekey|sessionid|session[-_]id|deviceid|device[-_]id)["']?\s*[:=]\s*)/gi;
   s = s.replace(new RegExp(`${quotedKey.source}"[^"]*"`, 'gi'), '$1"***"');
   s = s.replace(new RegExp(`${quotedKey.source}'[^']*'`, 'gi'), "$1'***'");
   s = s.replace(/(cookie\s*[=:]\s*)[^\r\n]+/gi, '$1***');
   s = s.replace(/(authorization\s*[=:]\s*)[^\r\n]+/gi, '$1***');
   s = s.replace(
-    /(["']?(?:[a-z0-9_-]*token|password|passwd|pwd|secret|authx[a-z0-9_-]*|trim[-_]sign|keypassword|storepassword)["']?\s*[=:]\s*)[^\s,;}\]]+/gi,
+    /(["']?(?:[a-z0-9_-]*token|password|passwd|pwd|secret|authx[a-z0-9_-]*|trim[-_]sign|keypassword|storepassword|signkey|sign[-_]key|hmackey|hmac[-_]key|apikey|api[-_]key|privkey|privatekey|sessionid|session[-_]id|deviceid|device[-_]id)["']?\s*[=:]\s*)[^\s,;}\]]+/gi,
     '$1***'
   );
   return s;
@@ -783,4 +1146,78 @@ export function sanitizeDiagText(raw: string): string {
 
 function stripQuery(s: string): string {
   return s.replace(/((?:https?|wss?):\/\/[^\s"'<>?#]+)[?#][^\s"'<>]*/gi, '$1');
+}
+
+/**
+ * 兜底：把文本里所有 `scheme://host` 的主机名换成掩码。
+ * 埋点很多，万一某处漏了掩码函数，也不会把域名带进可分享的导出文件。
+ */
+function maskHostsInText(raw: string): string {
+  let out = '';
+  let rest = raw;
+  for (let guard = 0; guard < 64; guard++) {
+    const at = firstSchemeIndex(rest);
+    if (at < 0) {
+      break;
+    }
+    const schemeEnd = rest.indexOf('://', at);
+    if (schemeEnd < 0) {
+      break;
+    }
+    out += rest.substring(0, schemeEnd + 3);
+    const after = rest.substring(schemeEnd + 3);
+    let end = after.length;
+    for (let i = 0; i < after.length; i++) {
+      const c = after.charAt(i);
+      if (c === '/' || c === '?' || c === '#' || c === '"' || c === '\'' || c === '<' || c === '>' ||
+        c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === ',' || c === ')' || c === ']') {
+        end = i;
+        break;
+      }
+    }
+    out += maskAuthority(after.substring(0, end));
+    rest = after.substring(end);
+  }
+  return `${out}${rest}`;
+}
+
+function firstSchemeIndex(s: string): number {
+  const lower = s.toLowerCase();
+  const schemes: string[] = ['https://', 'http://', 'wss://', 'ws://'];
+  let best = -1;
+  for (let i = 0; i < schemes.length; i++) {
+    const idx = lower.indexOf(schemes[i]);
+    if (idx >= 0 && (best < 0 || idx < best)) {
+      best = idx;
+    }
+  }
+  return best;
+}
+
+/** authority 形如 user@host:port，只掩主机名、保留端口与 userinfo 结构。 */
+function maskAuthority(authority: string): string {
+  if (authority.length === 0) {
+    return authority;
+  }
+  const at = authority.lastIndexOf('@');
+  const userPart = at >= 0 ? authority.substring(0, at + 1) : '';
+  const hostPort = at >= 0 ? authority.substring(at + 1) : authority;
+  const bracket = hostPort.indexOf(']');
+  let host = hostPort;
+  let port = '';
+  if (bracket >= 0) {
+    host = hostPort.substring(0, bracket + 1);
+    const after = hostPort.substring(bracket + 1);
+    if (after.startsWith(':')) {
+      port = after.substring(1);
+    }
+  } else {
+    const colon = hostPort.lastIndexOf(':');
+    if (colon > 0) {
+      host = hostPort.substring(0, colon);
+      port = hostPort.substring(colon + 1);
+    }
+  }
+  const masked = fnDiagMaskHost(host);
+  return port.length > 0 ? `${userPart}${masked}:${port}` : `${userPart}${masked}`;
 }

@@ -6,9 +6,11 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { MediaCategoryItem } from '../model/FnApiTypes';
 import { categoryTitle } from './GalleryAlbumEntityData';
 
+const TAG: string = 'MediaCatOrder';
 const PREF_NAME: string = 'fnos_client_prefs';
 const K_ORDER_JSON: string = 'media_category_order_json';
 
@@ -99,6 +101,8 @@ function parseStore(rawJson: string): Map<string, string[]> {
       }
     }
   } catch (_e) {
+    // 排序 JSON 损坏时全部排序静默丢失。
+    fnDiagRecord('W', TAG, 'parse order json failed');
   }
   return map;
 }
@@ -238,7 +242,9 @@ export async function mediaCategoryPersistOrder(
     map.set(account, order);
     await p.put(K_ORDER_JSON, storeToJson(map));
     await p.flush();
-  } catch (_e) {
+  } catch (e) {
+    // 保存失败时重启后排序会丢失。
+    fnDiagError(TAG, 'persist order failed', e);
   }
 }
 
@@ -278,6 +284,7 @@ export async function mediaCategoryApplyOrderKeys(
     map.set(account, cachedOrder);
     await p.put(K_ORDER_JSON, storeToJson(map));
     await p.flush();
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'persist order failed', e);
   }
 }

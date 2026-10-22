@@ -5,7 +5,9 @@
 import { common, Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { relationalStore } from '@kit.ArkData';
+import { fnDiagError } from '../common/FnDiagLog';
 
+const TAG = 'CloudSync';
 const DB_NAME = 'fmphoto_cfg.db';
 const TABLE = 'appsettings';
 const ROW_ID = 'default';
@@ -104,6 +106,8 @@ export async function pushSettingsToCloud(ctx: common.UIAbilityContext, json: st
     result.message = '已上传到云空间';
     return result;
   } catch (err) {
+    // 只记错误本身，不记 payload（里面有账号与地址）。
+    fnDiagError(TAG, 'push cloud sync failed', err as Object);
     return fail(err as Object);
   }
 }
@@ -124,6 +128,7 @@ export async function pullSettingsFromCloud(ctx: common.UIAbilityContext): Promi
     result.message = '已从云空间下载';
     return result;
   } catch (err) {
+    fnDiagError(TAG, 'pull cloud sync failed', err as Object);
     return fail(err as Object);
   }
 }

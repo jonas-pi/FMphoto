@@ -10,7 +10,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { AppSession } from './AppSession';
 import { SessionPreferences } from './SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
@@ -75,8 +75,9 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
             if (probed.length > 0) {
               lt = probed;
             }
-          } catch (_e) {
+          } catch (e) {
             // 探测失败不阻断：已有新 token / signKey 仍可尝试图库
+            fnDiagError(TAG, 'longToken refresh fail after silent relogin', e);
           }
         }
         stored.token = wsRes.token;
@@ -117,7 +118,8 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
       hilog.info(DOMAIN, TAG, 'session recovered: fnos-long-token probe');
       return true;
     }
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'longToken refresh fail fallback', e);
   }
   return false;
 }
@@ -147,8 +149,9 @@ export async function proactiveRefreshLongTokenOnForeground(ctx: common.UIAbilit
       hilog.info(DOMAIN, TAG, 'foreground: long-token refreshed');
       return true;
     }
-  } catch (_e) {
+  } catch (e) {
     // 弱网或 NAS 休眠时忽略，相册页仍可按 401 路径恢复
+    fnDiagError(TAG, 'longToken refresh fail foreground', e);
   }
   return false;
 }

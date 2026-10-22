@@ -1,4 +1,5 @@
 import { util } from '@kit.ArkTS';
+import { fnDiagError } from '../../common/FnDiagLog';
 import { generateRandomDigits, sha256DigestSafe } from '../AuthxSigner';
 import { FN_PHOTO_API_PREFIX } from '../FnPhotoRoutes';
 import { FnJsonValue } from '../../model/FnApiTypes';
@@ -474,14 +475,18 @@ export async function buildTrimSignCandidates(
       const secKey = base64ToUint8Local(wsSignKeyB64);
       const mac = await hmacSha256DigestLocal(secKey, msgBytes);
       pushDistinct(uint8ArrayToBase64Local(mac));
-    } catch (_e) {}
+    } catch (e) {
+      fnDiagError(TAG, 'trim sign candidate fail', e);
+    }
   }
   if (token.length > 0) {
     try {
       const key = utf8EncodeLocal(token);
       const mac = await hmacSha256DigestLocal(key, msgBytes);
       pushDistinct(uint8ArrayToBase64Local(mac));
-    } catch (_e) {}
+    } catch (e) {
+      fnDiagError(TAG, 'trim sign candidate fail', e);
+    }
   }
   return out;
 }

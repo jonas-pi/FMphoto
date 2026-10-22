@@ -63,6 +63,9 @@ export async function compareLocalWithBackup(
     }
     const moving = photo.photoSubtype === photoAccessHelper.PhotoSubtype.MOVING_PHOTO;
     if (!moving && (photo.fileName.length === 0 || photo.fileSize <= 0)) {
+      // 文件名或大小异常的条目被静默丢弃，照片不会被同步。
+      const reason: string = photo.fileName.length === 0 ? 'noName' : 'noSize';
+      fnDiagRecord('W', TAG, `skip invalid entry reason=${reason}`);
       continue;
     }
     const settled = moving
@@ -153,11 +156,12 @@ export async function compareLocalWithBackup(
   if (puts.length > 0) {
     await GalleryAutoSyncLedger.rememberMany(ctx, puts);
   }
+  // 抽样只保留角色与大小，不落文件名（文件名属于私人内容）。
   let uploadSample: string = '';
-  const sampleCount: number = Math.min(12, result.pieces.length);
+  const sampleCount: number = Math.min(6, result.pieces.length);
   for (let i = 0; i < sampleCount; i++) {
     const piece = result.pieces[i];
-    uploadSample += `${piece.role}:${piece.fileName}:${piece.sourceSize};`;
+    uploadSample += `${piece.role}:${piece.sourceSize};`;
   }
   const summary =
     `local=${photos.length} pending=${pending.length} ledger=${result.skippedInLedger} ` +
@@ -167,7 +171,7 @@ export async function compareLocalWithBackup(
   fnDiagRecord('I', TAG, summary);
   if (uploadSample.length > 0) {
     hilog.info(DOMAIN, TAG, 'uploadSample %{public}s', uploadSample);
-    fnDiagRecord('I', TAG, `uploadSample ${uploadSample}`);
+    fnDiagRecord('I', TAG, `upload sample n=${result.pieces.length} ${uploadSample}`);
   }
   return result;
 }

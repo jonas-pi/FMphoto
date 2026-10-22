@@ -7,6 +7,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError } from '../common/FnDiagLog';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
 
 const DOMAIN = 0xFF00;
@@ -76,7 +77,9 @@ export class GalleryAutoSyncLedger {
     try {
       const text = await fileIo.readText(GalleryAutoSyncLedger.filePath(ctx));
       GalleryAutoSyncLedger.parseInto(text, rows);
-    } catch (_e) {
+    } catch (e) {
+      // 账本读不出来时所有条目都会被当成未同步，重复上传。
+      fnDiagError(TAG, 'ledger load failed', e);
     }
     GalleryAutoSyncLedger.rows = rows;
   }

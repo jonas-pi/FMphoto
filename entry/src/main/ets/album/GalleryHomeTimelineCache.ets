@@ -5,6 +5,9 @@
  */
 import { GalleryListItem } from '../model/FnApiTypes';
 import { AppSession } from '../auth/AppSession';
+import { fnDiagRecord } from '../common/FnDiagLog';
+
+const TAG: string = 'HomeCache';
 
 /** 与 GalleryAlbumTab 内 TimelineDayModel 字段一致，便于序列化 */
 export interface GalleryHomeDayPlain {
@@ -91,6 +94,8 @@ export class GalleryHomeTimelineCache {
     }
     const s = GalleryHomeTimelineCache.snap;
     if (s.refreshVersionAtSave !== timelineRefreshVersion) {
+      // 刷新版本变了却静默丢弃快照，界面会重新拉一次时间轴。
+      fnDiagRecord('W', TAG, 'snapshot dropped: refresh version mismatch');
       return null;
     }
     return s;

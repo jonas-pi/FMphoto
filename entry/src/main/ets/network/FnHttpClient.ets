@@ -8,7 +8,7 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { CertPolicy } from './CertPolicy';
 import { genFnAuthx } from './AuthxSigner';
 import { FnGalleryGetSignSpec, genFnGalleryAuthxGet } from './FnGalleryAuthx';
@@ -351,6 +351,7 @@ export class FnHttpClient {
     try {
       injectFnWebCookies(webHttpsBaseNoSlash, this.token, true, lt);
     } catch (_e) {
+      fnDiagRecord('W', TAG, 'prime web cookie fail');
     }
     const raw = this.baseUrl.trim();
     try {
@@ -358,6 +359,7 @@ export class FnHttpClient {
         injectFnWebCookies(raw, this.token, raw.startsWith('https://'), lt);
       }
     } catch (_e2) {
+      fnDiagRecord('W', TAG, 'prime web cookie fail');
     }
   }
 
@@ -384,11 +386,11 @@ export class FnHttpClient {
     return '';
   }
 
-  /** 图库失败：用 warn 与 GalleryTab 同级，便于只开 WARN 也能看到正文片段 */
+  /** 图库失败：用 warn 与 GalleryTab 同级；正文只记长度，不落原文（可能含 NAS 路径）。 */
   private static galleryFailBodyHint(rawBody: string, reason: string): void {
     const hint = FnHttpClient.galleryErrorBodyPreview(rawBody);
-    hilog.warn(DOMAIN, TAG, 'gallery fail %{public}s body: %{public}s', reason, hint);
-    fnDiagRecord('W', TAG, `gallery fail ${reason} body=${hint}`);
+    hilog.warn(DOMAIN, TAG, 'gallery fail %{public}s bodyLen=%{public}d', reason, hint.length);
+    fnDiagRecord('W', TAG, `gallery fail ${reason} bodyLen=${hint.length}`);
   }
 
   /** 供界面与日志共用，与 galleryFailBodyHint 同长度上限 */
@@ -401,6 +403,12 @@ export class FnHttpClient {
       return rawBody;
     }
     return `${rawBody.substring(0, max)}…`;
+  }
+
+  /** 异常摘要：截短后落日志，避免超长报文（含地址）写进诊断日志。 */
+  private static errText(e: Object | Error | string | undefined | null): string {
+    const t = (e !== undefined && e !== null ? String(e) : '').trim();
+    return t.length > 100 ? t.substring(0, 100) : t;
   }
 
   /** 与 Py `fnos_gallery_mobile._response_looks_like_spa_shell`：404 / HTML 壳则换 URL 候选 */
@@ -601,6 +609,7 @@ export class FnHttpClient {
         }
       }
     }
+    fnDiagRecord('W', TAG, 'gallery all candidates exhausted');
     return {
       success: false,
       message: '请求异常',
@@ -699,6 +708,7 @@ export class FnHttpClient {
             );
           } catch (e) {
             hilog.warn(DOMAIN, TAG, 'longToken probe rawRequest: %{public}s', String(e));
+            fnDiagRecord('W', TAG, `longToken probe fail ${FnHttpClient.errText(e)}`);
             break;
           }
           const tok = parseFnosLongTokenFromHeaders(raw.headers);
@@ -719,6 +729,7 @@ export class FnHttpClient {
           break;
         } catch (e) {
           hilog.warn(DOMAIN, TAG, 'longToken probe iter: %{public}s', String(e));
+          fnDiagRecord('W', TAG, `longToken probe fail ${FnHttpClient.errText(e)}`);
           break;
         }
       }
@@ -805,6 +816,7 @@ export class FnHttpClient {
       try {
         resp = await httpRequest.request(fullUrl, opt);
       } catch (e) {
+        fnDiagError(TAG, `raw request fail ${FnHttpClient.errText(e)}`, e);
         throw new Error(`http request failed: ${String(e)}`);
       }
       let text = '';
@@ -814,6 +826,7 @@ export class FnHttpClient {
         try {
           text = JSON.stringify(resp.result);
         } catch (e) {
+          fnDiagError(TAG, 'raw request fail serialize', e);
           throw new Error(`serialize http response failed: ${String(e)}`);
         }
       }
@@ -965,6 +978,7 @@ export class FnHttpClient {
         await FnHttpClient.sleep(100);
       }
     }
+    fnDiagRecord('W', TAG, 'openapi all candidates exhausted');
     return { success: false, message: '请求异常' };
   }
 

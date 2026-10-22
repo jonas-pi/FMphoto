@@ -1,5 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { createFnWsDeviceId } from '../network/FnWsDeviceId';
 import { splitFnIdOrHostInput, FnIdOrHostParts } from '../network/FnConnectApi';
 import { loginSecretLooksWrapped, openLoginSecretReliable, persistLoginSecretReliable } from './LoginSecretStore';
@@ -195,7 +196,8 @@ export function parseSavedUsersJson(raw: string): LoginSavedUser[] {
       }
     }
     return out;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('W', 'SessionPref', 'saved users parse fail');
     return [];
   }
 }
@@ -309,7 +311,8 @@ function savedUsersNeedReseal(users: LoginSavedUser[]): boolean {
 function parseTrustedHostsSafe(raw: string): string[] {
   try {
     return JSON.parse(raw) as string[];
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError('SessionPref', 'trusted hosts parse fail', e);
     return [];
   }
 }

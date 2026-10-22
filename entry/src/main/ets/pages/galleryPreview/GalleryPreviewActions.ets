@@ -16,6 +16,7 @@ import { materializeLivePhotoPair, unlinkLivePhotoPair } from '../../album/livep
 import { openPersonAlbumReplacingCurrent } from '../../album/PersonAlbumOpenHelper';
 import { AppSession } from '../../auth/AppSession';
 import { BackgroundKeepAliveController } from '../../background/BackgroundKeepAliveController';
+import { fnDiagRecord } from '../../common/FnDiagLog';
 import { GalleryListItem, GalleryPhotoDetailData, PersonInPhotoItem } from '../../model/FnApiTypes';
 import { PreviewItemsDataSource } from './GalleryPreviewDataSource';
 import {
@@ -678,7 +679,8 @@ async function galleryPreviewDoDownload(
         return;
       }
       useOriginal = choiceIdx === 0;
-    } catch (_e) {
+    } catch (e) {
+      fnDiagRecord('W', 'GalleryPreview', `quality dialog error ${String(e)}`);
       return;
     }
   }
@@ -716,6 +718,7 @@ async function galleryPreviewDoDownload(
       }
     );
     if (!downloaded) {
+      fnDiagRecord('W', 'GalleryPreview', 'video download failed');
       host.toast('视频下载失败，请重试');
       return;
     }
@@ -738,12 +741,14 @@ async function galleryPreviewDoDownload(
       }
       const saved = await copyGalleryUriContentToAlbumUri(tempFileUri, uris[0]);
       if (!saved) {
+        fnDiagRecord('E', 'GalleryPreview', 'save to album failed');
         host.toast('保存失败，请重试');
         return;
       }
       host.toast('视频已保存到相册');
       return;
-    } catch (_e) {
+    } catch (e) {
+      fnDiagRecord('E', 'GalleryPreview', `save to album failed ${String(e)}`);
       host.toast('保存失败，请重试');
       return;
     } finally {
@@ -776,6 +781,7 @@ async function galleryPreviewDoDownload(
     }
   );
   if (!imageDownloaded) {
+    fnDiagRecord('W', 'GalleryPreview', 'image download failed');
     host.toast('图片下载失败，请重试');
     return;
   }
@@ -799,12 +805,14 @@ async function galleryPreviewDoDownload(
     }
     const saved = await copyGalleryUriContentToAlbumUri(tempFileUri, uris[0]);
     if (!saved) {
+      fnDiagRecord('E', 'GalleryPreview', 'save to album failed');
       host.toast('保存失败，请重试');
       return;
     }
     host.toast(useOriginal ? '原图已保存到相册' : '缩略图已保存到相册');
     return;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('E', 'GalleryPreview', `save to album failed ${String(e)}`);
     host.toast('保存失败，请重试');
     return;
   } finally {
@@ -864,7 +872,8 @@ async function galleryPreviewDoShare(host: GalleryPreviewActionsHost): Promise<v
     );
     await fileIo.write(tmpFile.fd, buf);
     await fileIo.close(tmpFile.fd);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('E', 'GalleryPreview', `temp file write failed ${String(e)}`);
     host.toast('临时文件写入失败');
     return;
   }
@@ -882,7 +891,8 @@ async function galleryPreviewDoShare(host: GalleryPreviewActionsHost): Promise<v
       selectionMode: systemShare.SelectionMode.SINGLE,
       previewMode: systemShare.SharePreviewMode.DETAIL
     });
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('E', 'GalleryPreview', `share failed ${String(e)}`);
     host.toast('分享失败，请重试');
   }
 }

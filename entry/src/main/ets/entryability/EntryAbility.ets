@@ -8,7 +8,8 @@ import {
   applyGalleryMemoryLevel,
   applyGalleryPerfImageCache,
   ensureGalleryPerfProfile,
-  refreshGalleryPerfProfile
+  refreshGalleryPerfProfile,
+  resetGalleryPerfImageCacheApplied
 } from '../album/GalleryPerfProfile';
 import { trimThumbPixCache } from '../album/GalleryAlbumCommon';
 import {
@@ -26,7 +27,7 @@ import {
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
 import { GalleryShareInbox } from '../album/share/GalleryShareInbox';
 import { ensureStarted, scheduleCheck, stop } from '../network/LoginEndpointAutoSwitch';
-import { fnDiagInit, fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagInit, fnDiagRecord } from '../common/FnDiagLog';
 
 /** 应用日志域（与网络模块 FnHttp 同域便于筛选，取值需在 0x0～0xFFFF） */
 const DOMAIN = 0xFF00;
@@ -37,6 +38,8 @@ interface AbilityConfigUpdate {
 
 export default class EntryAbility extends UIAbility {
   private mainWindow: window.Window | null = null;
+  /** loadContent 成功前 UIContext 不可用于下发图片缓存上限。 */
+  private contentLoaded: boolean = false;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
@@ -75,7 +78,9 @@ export default class EntryAbility extends UIAbility {
         fnPublishSystemAvoidArea(this.mainWindow);
       }
       hilog.info(DOMAIN, LOG_TAG, 'onConfigurationUpdate colorMode=%{public}d', dark ? 1 : 0);
-    } catch (_e) {}
+    } catch (e) {
+      fnDiagError(LOG_TAG, 'colorMode switch failed', e);
+    }
   }
 
   onDestroy(): void {
@@ -100,7 +105,9 @@ export default class EntryAbility extends UIAbility {
         }
       });
       hilog.info(DOMAIN, LOG_TAG, 'initial colorMode=%{public}d', dark ? 1 : 0);
-    } catch (_e) {}
+    } catch (e) {
+      fnDiagError(LOG_TAG, 'init colorMode/theme failed', e);
+    }
 
     // 窗口背景与 startWindowBackground 一致，避免 StartWindow → 首帧之间露色
     windowStage.getMainWindow().then((mainWindow: window.Window): void => {
@@ -109,12 +116,9 @@ export default class EntryAbility extends UIAbility {
       fnApplySplashWindowChrome(mainWindow, dark, true);
       fnApplyThemeWindowBackground(mainWindow, this.context);
       fnBindSystemAvoidArea(mainWindow);
-      try {
-        const ui = mainWindow.getUIContext();
-        applyGalleryPerfImageCache(ui);
-      } catch (_e) {
-      }
-    }).catch((_e: Error): void => {
+      // 图片缓存上限必须等 loadContent 之后设（见下方回调），此处不要提前调用
+    }).catch((e: Error): void => {
+      fnDiagError(LOG_TAG, 'main window get failed', e);
     });
 
     windowStage.loadContent('pages/Index', (err) => {
@@ -127,8 +131,12 @@ export default class EntryAbility extends UIAbility {
         const win = windowStage.getMainWindowSync();
         this.mainWindow = win;
         fnBindWindowBreakpoint(win);
-      } catch (_e) {
+      } catch (e) {
+        fnDiagError(LOG_TAG, 'window binding after loadContent failed', e);
       }
+      // 内容加载完成后 UIContext 才可用：提前调用会在 libace 原生层崩溃，try/catch 接不住
+      this.contentLoaded = true;
+      this.applyPerfImageCacheIfReady();
       hilog.info(DOMAIN, LOG_TAG, 'Succeeded in loading the content.');
     });
   }
@@ -136,7 +144,10 @@ export default class EntryAbility extends UIAbility {
   onWindowStageDestroy(): void {
     fnUnbindWindowBreakpoint();
     fnUnbindSystemAvoidArea();
+    // 窗口重建后 UIContext 换了，重置「上次下发值」让新窗口重新下发一次
+    resetGalleryPerfImageCacheApplied();
     this.mainWindow = null;
+    this.contentLoaded = false;
     hilog.info(DOMAIN, LOG_TAG, '%{public}s', 'Ability onWindowStageDestroy');
   }
 
@@ -170,12 +181,14 @@ export default class EntryAbility extends UIAbility {
   }
 
   private applyPerfImageCacheIfReady(): void {
-    if (this.mainWindow === null) {
+    // 内容没加载完时 UIContext 尚未挂到内容树，此时下发缓存上限会在原生层崩溃
+    if (this.mainWindow === null || !this.contentLoaded) {
       return;
     }
     try {
       applyGalleryPerfImageCache(this.mainWindow.getUIContext());
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(LOG_TAG, 'perf image cache apply failed', e);
     }
   }
 }

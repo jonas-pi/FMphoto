@@ -3,6 +3,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError, fnDiagSetState } from '../common/FnDiagLog';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { buildNasDedupeIndex, localPhotoOfficialFingerprint } from './GalleryAutoSyncOfficialFingerprint';
@@ -19,6 +20,8 @@ import { buildLocalAlbumNameIndex } from '../sync/AlbumBackupLocalSources';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncStore';
+/** 已见快照读失败时的扫描说明（要如实反映「没比对」，不能报成没有新增）。 */
+const SEEN_READ_FAIL_MESSAGE = '已见记录读失败，本次未比对';
 
 class CompareQueueProgress implements ContentCompareProgress {
   private readonly taskId: string;
@@ -179,6 +182,8 @@ export class GalleryAutoSyncStore {
     const taskId = FnTransferQueueStore.begin(FnTransferDirection.SCAN, '扫描本机相册', 0);
     let scanOk = false;
     let scanMessage = '扫描失败';
+    // 本次自动同步的结果类别（只记类别，不记文件名）。
+    let syncState: string = 'failed: exception';
     try {
       let localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
       if (getAlbumBackupSettingsCached().syncCreateAlbum) {
@@ -195,6 +200,14 @@ export class GalleryAutoSyncStore {
         localPhotos = localPhotos.filter((p: LocalPhotoEntry): boolean => !isLikelyVideoFileName(p.fileName));
       }
       const seenDiff = await GalleryAutoSyncLocalSeen.diff(ctx, localPhotos);
+      if (seenDiff.readFailed) {
+        // 已见快照读不了：这一轮没有比对，不能当成「空成功」返回——
+        // 否则角标/检查同步会显示「没有待同步」，且 5 分钟内非强制扫描直接复用这份空结果。
+        // 不刷新 lastDetectTime、不复用 lastResult，直接按扫描失败抛给调用方。
+        syncState = 'failed: seen snapshot';
+        scanMessage = SEEN_READ_FAIL_MESSAGE;
+        throw new Error(SEEN_READ_FAIL_MESSAGE);
+      }
       if (seenDiff.freshBaseline) {
         GalleryAutoSyncStore.lastResult = {
           unsynced: [],
@@ -206,6 +219,7 @@ export class GalleryAutoSyncStore {
         };
         GalleryAutoSyncStore.lastDetectTime = now;
         scanOk = true;
+        syncState = 'ok';
         scanMessage = seenDiff.baselineCount > 0
           ? `已记录本机现有 ${seenDiff.baselineCount} 项，之后新增的才会和 NAS 对比`
           : '本机相册没有可同步的项目';
@@ -223,6 +237,7 @@ export class GalleryAutoSyncStore {
         };
         GalleryAutoSyncStore.lastDetectTime = now;
         scanOk = true;
+        syncState = 'ok';
         scanMessage = '本机相册没有可同步的项目';
         return GalleryAutoSyncStore.lastResult;
       }
@@ -239,6 +254,7 @@ export class GalleryAutoSyncStore {
         }
         GalleryAutoSyncStore.lastDetectTime = now;
         scanOk = true;
+        syncState = 'ok';
         scanMessage = '没有新增照片';
         return GalleryAutoSyncStore.lastResult;
       }
@@ -268,6 +284,7 @@ export class GalleryAutoSyncStore {
       GalleryAutoSyncStore.lastResult = filtered;
       GalleryAutoSyncStore.lastDetectTime = now;
       scanOk = true;
+      syncState = (filtered.compareFailed + filtered.unreadable) > 0 ? 'failed: compare' : 'ok';
       if (filtered.unsynced.length > 0) {
         scanMessage = `还有 ${filtered.unsynced.length} 项未同步`;
       } else if (filtered.compareFailed + filtered.unreadable > 0) {
@@ -289,12 +306,17 @@ export class GalleryAutoSyncStore {
       );
       return GalleryAutoSyncStore.lastResult;
     } catch (e) {
-      scanMessage = '扫描失败';
+      // 已见快照读失败有自己的说明，别被通用的「扫描失败」盖掉
+      if (scanMessage !== SEEN_READ_FAIL_MESSAGE) {
+        scanMessage = '扫描失败';
+      }
       hilog.warn(DOMAIN, TAG, 'detectUnsynced failed: %{public}s', String(e));
+      fnDiagError(TAG, 'detect unsynced failed', e);
       throw new Error(String(e));
     } finally {
       FnTransferQueueStore.finish(taskId, scanOk, scanMessage);
       GalleryAutoSyncStore.detecting = false;
+      fnDiagSetState('autoSyncLast', syncState);
     }
   }
 

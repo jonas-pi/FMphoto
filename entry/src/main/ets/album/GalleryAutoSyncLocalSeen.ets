@@ -4,19 +4,31 @@
  * 之后只有新增或改过的照片才拿去和 NAS 去重。
  */
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSeen';
 const SEEN_FILE = 'auto_sync_local_seen_v1.txt';
+/** 文件不存在（ENOENT）；其它错误码都算「读不了」。 */
+const SEEN_ENOENT = 13900002;
 
 export class LocalSeenDiff {
   /** 还没有快照：本次只建立基线，added 为空。 */
   freshBaseline: boolean = false;
+  /** 快照读坏了：这一轮不比对也不写回，避免把已见记录清空。 */
+  readFailed: boolean = false;
   added: LocalPhotoEntry[] = [];
   baselineCount: number = 0;
+}
+
+/** 快照读取结果：必须区分「文件不存在」与「读失败」，前者才能建基线。 */
+interface SeenSnapshot {
+  state: 'missing' | 'ok' | 'failed';
+  keys: Set<string>;
 }
 
 function seenKey(photo: LocalPhotoEntry): string {
@@ -26,16 +38,47 @@ function seenKey(photo: LocalPhotoEntry): string {
 }
 
 export class GalleryAutoSyncLocalSeen {
+  /** 最近一次读快照失败的原因；用于说明「已见记录被清空」的后果。 */
+  private static lastReadError: Object | Error | null = null;
+
   private static filePath(ctx: common.UIAbilityContext): string {
     return `${ctx.filesDir}/${SEEN_FILE}`;
   }
 
-  private static async readKeys(ctx: common.UIAbilityContext): Promise<Set<string> | null> {
+  /**
+   * 只有 ENOENT（13900002）才算「文件不存在」，才允许建立基线；
+   * 其它 stat 错误说明读不了文件，必须按读失败处理。
+   */
+  private static async statState(path: string): Promise<'exists' | 'missing' | 'error'> {
     try {
-      const text = await fileIo.readText(GalleryAutoSyncLocalSeen.filePath(ctx));
+      await fileIo.stat(path);
+      return 'exists';
+    } catch (e) {
+      const code = (e as BusinessError).code;
+      if (code === SEEN_ENOENT) {
+        return 'missing';
+      }
+      fnDiagError(TAG, 'seen snapshot stat failed', e);
+      return 'error';
+    }
+  }
+
+  private static async readSnapshot(ctx: common.UIAbilityContext): Promise<SeenSnapshot> {
+    const path = GalleryAutoSyncLocalSeen.filePath(ctx);
+    const st = await GalleryAutoSyncLocalSeen.statState(path);
+    if (st === 'missing') {
+      return { state: 'missing', keys: new Set<string>() };
+    }
+    if (st === 'error') {
+      return { state: 'failed', keys: new Set<string>() };
+    }
+    try {
+      const text = await fileIo.readText(path);
       const lines = text.split('\n');
       if (lines.length === 0 || lines[0].trim() !== 'v1') {
-        return null;
+        // 文件在但内容不是 v1：当作首次运行，重建基线
+        fnDiagRecord('W', TAG, 'seen snapshot header invalid, rebuild baseline');
+        return { state: 'missing', keys: new Set<string>() };
       }
       const keys = new Set<string>();
       for (let i = 1; i < lines.length; i++) {
@@ -44,9 +87,11 @@ export class GalleryAutoSyncLocalSeen {
           keys.add(line);
         }
       }
-      return keys;
-    } catch (_e) {
-      return null;
+      return { state: 'ok', keys: keys };
+    } catch (e) {
+      GalleryAutoSyncLocalSeen.lastReadError = e;
+      fnDiagError(TAG, 'seen snapshot read failed', e);
+      return { state: 'failed', keys: new Set<string>() };
     }
   }
 
@@ -68,8 +113,15 @@ export class GalleryAutoSyncLocalSeen {
 
   static async diff(ctx: common.UIAbilityContext, photos: LocalPhotoEntry[]): Promise<LocalSeenDiff> {
     const result = new LocalSeenDiff();
-    const known = await GalleryAutoSyncLocalSeen.readKeys(ctx);
-    if (known === null) {
+    const snap = await GalleryAutoSyncLocalSeen.readSnapshot(ctx);
+    if (snap.state === 'failed') {
+      // 读不到就这一轮不比对、不写回：宁可本次不传，也不能把已见记录清空
+      result.readFailed = true;
+      result.baselineCount = 0;
+      fnDiagRecord('W', TAG, 'seen diff skipped: snapshot unreadable');
+      return result;
+    }
+    if (snap.state === 'missing') {
       const keys = new Set<string>();
       for (let i = 0; i < photos.length; i++) {
         if (photos[i].uri.length > 0) {
@@ -82,6 +134,7 @@ export class GalleryAutoSyncLocalSeen {
       hilog.info(DOMAIN, TAG, 'baseline count=%{public}d', keys.size);
       return result;
     }
+    const known = snap.keys;
     const added: LocalPhotoEntry[] = [];
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
@@ -102,10 +155,13 @@ export class GalleryAutoSyncLocalSeen {
     if (photos.length === 0) {
       return;
     }
-    let known = await GalleryAutoSyncLocalSeen.readKeys(ctx);
-    if (known === null) {
-      known = new Set<string>();
+    const snap = await GalleryAutoSyncLocalSeen.readSnapshot(ctx);
+    if (snap.state === 'failed') {
+      // 读失败时不要用空集合写回，否则会把原已见记录整个盖掉
+      fnDiagRecord('W', TAG, 'remember skipped: snapshot unreadable');
+      return;
     }
+    const known = snap.keys;
     let changed = false;
     for (let i = 0; i < photos.length; i++) {
       if (photos[i].uri.length === 0) {

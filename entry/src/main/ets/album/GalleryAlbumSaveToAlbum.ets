@@ -1,6 +1,8 @@
 import { fileIo } from '@kit.CoreFileKit';
+import { fnDiagError } from '../common/FnDiagLog';
 
 const ALBUM_COPY_BUFFER_SIZE = 256 * 1024;
+const TAG: string = 'FnDownload';
 
 export async function copyGalleryUriContentToAlbumUri(srcUri: string, destUri: string): Promise<boolean> {
   let srcFd = -1;
@@ -27,7 +29,8 @@ export async function copyGalleryUriContentToAlbumUri(srcUri: string, destUri: s
       }
     }
     return true;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'copy gallery uri failed', e);
     return false;
   } finally {
     if (srcFd >= 0) {

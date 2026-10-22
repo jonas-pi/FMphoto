@@ -5,6 +5,7 @@ import { common } from '@kit.AbilityKit';
 import { dataSharePredicates } from '@kit.ArkData';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagRecord } from '../common/FnDiagLog';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSvc';
@@ -71,6 +72,8 @@ function photoAssetSubtype(asset: photoAccessHelper.PhotoAsset): number {
       }
     }
   } catch (_e) {
+    // 读不到 subtype 时实况照片会被当成普通图处理。
+    fnDiagRecord('W', TAG, 'photo subtype read failed');
   }
   return photoAccessHelper.PhotoSubtype.DEFAULT;
 }
@@ -175,7 +178,10 @@ export async function queryLocalPhotos(
     hilog.info(DOMAIN, TAG, 'queryLocalPhotos count=%{public}d', entries.length);
     return entries;
   } catch (e) {
+    // 扫描失败时只返回部分结果，界面却会显示「没有新增照片」。
+    const em: string = String(e);
     hilog.warn(DOMAIN, TAG, 'queryLocalPhotos failed: %{public}s', String(e));
+    fnDiagRecord('W', TAG, `local photo scan failed, got ${entries.length} ${em.substring(0, 90)}`);
     return entries;
   }
 }

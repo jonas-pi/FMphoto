@@ -1,3 +1,4 @@
+import { fnDiagError } from '../../common/FnDiagLog';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec } from '../FnGalleryAuthx';
 import {
   EXPLORE_GEOS_PATH_CANDIDATES,
@@ -15,6 +16,7 @@ import {
   MAP_PREVIEW_CENTER_SIGN_PATH,
   MAP_TIMELINE_PATH_CANDIDATES,
   MAP_TIMELINE_SIGN_PATH,
+  TAG,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
@@ -294,6 +296,7 @@ export class FnHttpClientMapOps extends FnHttpClientGalleryRequest {
         fnosLongToken: res.fnosLongToken
       };
     } catch (e) {
+      fnDiagError(TAG, 'exploreGeos exception', e);
       return { success: false, message: String(e) || '地理位置加载异常' };
     }
   }

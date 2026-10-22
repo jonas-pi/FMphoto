@@ -2,6 +2,7 @@
  * 内存会话：FnHttpClient 与当前 StoredSession 镜像
  */
 import { common } from '@kit.AbilityKit';
+import { fnDiagError, fnDiagSetState } from '../common/FnDiagLog';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { CertPolicy } from '../network/CertPolicy';
 import { clearOpenApiAuthxCredentials, setOpenApiAuthxCredentials } from '../network/AuthxSigner';
@@ -52,7 +53,8 @@ export class AppSession {
         AppSession.loginPassword = defaults.password;
         return defaults.password;
       }
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError('AppSession', 'ensureLoginPassword load fail', e);
     }
     return '';
   }
@@ -144,18 +146,22 @@ export class AppSession {
     const s = await SessionPreferences.load(ctx);
     if (s === null) {
       AppSession.clear();
+      fnDiagSetState('session', 'none');
       return null;
     }
     CertPolicy.loadAll(s.trustedHosts);
     AppSession.apply(s);
     try {
       await loadAlbumBackupSettings(ctx);
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError('AppSession', 'loadAlbumBackupSettings fail', e);
     }
     try {
       await AppSession.ensureLoginPassword(ctx);
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError('AppSession', 'restore ensureLoginPassword fail', e);
     }
+    fnDiagSetState('session', 'restored');
     return s;
   }
 

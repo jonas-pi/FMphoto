@@ -4,6 +4,7 @@
  * 相册 Web 常用根路径 /album；另有 /p、/p/album、/p/v1 等以兼容不同版本。
  */
 import { webview } from '@kit.ArkWeb';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { fnPhotoCookieUrls } from './FnPhotoRoutes';
 
 function trimTrailingSlashLocal(s: string): string {
@@ -69,6 +70,7 @@ export function mergeGalleryWebCookieIntoNativeHeader(nativeCookie: string, webV
   try {
     webRaw = webview.WebCookieManager.fetchCookieSync(probeUrl);
   } catch (_e) {
+    fnDiagRecord('W', 'FnWebCookie', 'fetchCookieSync fail');
     return nativeCookie;
   }
   if (webRaw === undefined || webRaw === null) {
@@ -173,12 +175,14 @@ export function injectFnWebCookies(
           try {
             webview.WebCookieManager.configCookieSync(url, lineSimple);
           } catch (_e2) {
+            fnDiagRecord('W', 'FnWebCookie', 'config cookie fail');
           }
         }
       } else {
         try {
           webview.WebCookieManager.configCookieSync(url, lineSimple);
         } catch (_e3) {
+          fnDiagRecord('W', 'FnWebCookie', 'config cookie fail');
         }
       }
     }
@@ -186,6 +190,7 @@ export function injectFnWebCookies(
   try {
     webview.WebCookieManager.saveCookieSync();
   } catch (_e) {
+    fnDiagRecord('W', 'FnWebCookie', 'config cookie fail');
   }
 }
 

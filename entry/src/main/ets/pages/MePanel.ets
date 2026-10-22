@@ -67,6 +67,7 @@ import {
   FnPrimaryButton
 } from '../common/FnUiCommon';
 import { fnCanUseHdsImmersive } from '../common/FnImmersiveSettings';
+import { fnDiagMaskUrl, fnDiagRecord, fnDiagSetState } from '../common/FnDiagLog';
 import {
   isGalleryLanBurstAutoEnabled,
   isGalleryLanBurstEnabled,
@@ -323,6 +324,10 @@ export struct MePanel {
 
   private refreshEndpointInfo(): void {
     this.endpointInfo = resolveEndpointConnectionInfo(AppSession.getStored());
+    // 「隐藏 NAS 地址」开关只挡 UI；日志里的地址一律掩码后记录
+    if (this.endpointInfo.addressText.length > 0) {
+      fnDiagSetState('meEndpoint', fnDiagMaskUrl(this.endpointInfo.addressText));
+    }
     this.refreshLanBurstSwitch();
   }
 
@@ -422,7 +427,11 @@ export struct MePanel {
       this.probeSelectedLatencyText = display.selectedLatencyText;
       this.probeSelectedOk = display.selectedOk;
       this.probeOtherItems = display.otherItems;
-    } catch (_e) {
+      if (display.selectedAddress.length > 0) {
+        fnDiagSetState('meProbeAddress', fnDiagMaskUrl(display.selectedAddress));
+      }
+    } catch (e) {
+      fnDiagRecord('W', 'MePanel', `endpoint probe failed ${String(e)}`);
       if (seq === this.probeSeq) {
         this.clearProbeDisplay();
       }
@@ -469,7 +478,8 @@ export struct MePanel {
         } else {
           res = { ok: false, message: '已取消信任证书' };
         }
-      } catch (_e) {
+      } catch (e) {
+        fnDiagRecord('W', 'MePanel', `cert dialog error ${String(e)}`);
         res = { ok: false, message: '已取消信任证书' };
       }
     }
@@ -494,6 +504,9 @@ export struct MePanel {
     this.pendingTwofaAccessToken = res.accessToken !== undefined ? res.accessToken : '';
     this.pendingTwofaTargetUrl = res.targetUrl !== undefined ? res.targetUrl : '';
     this.pendingTwofaDeviceId = res.deviceId !== undefined ? res.deviceId : '';
+    if (this.pendingTwofaTargetUrl.length > 0) {
+      fnDiagSetState('me2faTarget', fnDiagMaskUrl(this.pendingTwofaTargetUrl));
+    }
     this.twofaCode = '';
     this.twofaError = '';
     this.twofaTrustDevice = true;
@@ -524,11 +537,13 @@ export struct MePanel {
   private async onSwitchTwofaVerifyClick(): Promise<void> {
     const code = this.twofaCode.trim();
     if (!/^\d{6}$/.test(code)) {
+      fnDiagRecord('W', 'MePanel', '2fa invalid');
       this.twofaError = '请输入身份验证器中的 6 位动态验证码';
       return;
     }
     if (this.pendingTwofaAccessToken.length === 0 || this.pendingTwofaTargetUrl.length === 0 ||
       this.pendingTwofaDeviceId.length === 0) {
+      fnDiagRecord('W', 'MePanel', '2fa expired');
       this.twofaError = '验证会话已失效，请重新切换';
       return;
     }
@@ -567,7 +582,8 @@ export struct MePanel {
         } else {
           res = { ok: false, message: '已取消信任证书' };
         }
-      } catch (_e) {
+      } catch (e) {
+        fnDiagRecord('W', 'MePanel', `cert dialog error ${String(e)}`);
         res = { ok: false, message: '已取消信任证书' };
       }
     }
@@ -1638,7 +1654,8 @@ export struct MePanel {
               AppSession.clear();
               // 退出登录：账号相关的缩略图/封面全部丢弃，避免下一个账号看到上一个账号的封面
               GalleryThumbDiskCache.invalidateAll();
-              this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch(() => {
+              this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' }).catch((e: Error): void => {
+                fnDiagRecord('E', 'MePanel', `navigate failed url=Login ${String(e)}`);
               });
             })();
           }

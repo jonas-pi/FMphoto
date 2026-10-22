@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { fnDiagError } from '../../common/FnDiagLog';
 import { CertPolicy } from '../CertPolicy';
 import { buildGallerySortedQuery, FnGalleryGetSignSpec, genFnGalleryAuthxPostRaw } from '../FnGalleryAuthx';
 import { FN_PHOTO_API_PREFIX } from '../FnPhotoRoutes';
@@ -7,6 +8,7 @@ import { fnWebViewBaseUrl } from '../ServerUrl';
 import { buildFnApiCookieHeader } from './FnHttpClientCookie';
 import {
   RECYCLE_BIN_LIST_SIGN_PATH,
+  TAG,
   escapeJsonString,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
@@ -123,6 +125,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
       }
       return { success: false, message: lastMsg };
     } catch (e) {
+      fnDiagError(TAG, 'addPhotoToRecycleBin exception', e);
       return { success: false, message: String(e) || '删除请求异常' };
     }
   }
@@ -200,6 +203,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
       }
       return { success: false, message: lastMsg };
     } catch (e) {
+      fnDiagError(TAG, 'postPreviewCollect exception', e);
       return { success: false, message: String(e) || '收藏请求异常' };
     }
   }
@@ -278,6 +282,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
       }
       return { success: false, message: lastMsg };
     } catch (e) {
+      fnDiagError(TAG, 'postPreviewCollectCancel exception', e);
       return { success: false, message: String(e) || '取消收藏请求异常' };
     }
   }
@@ -333,6 +338,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
       const errLine = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
       return { success: false, message: errLine.length > 0 ? errLine : '恢复失败' };
     } catch (e) {
+      fnDiagError(TAG, 'restoreRecycleBinPhotos exception', e);
       return { success: false, message: String(e) || '恢复请求异常' };
     }
   }

@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../../common/FnDiagLog';
+import { fnDiagError, fnDiagMaskPath, fnDiagMaskUrl, fnDiagRecord } from '../../common/FnDiagLog';
 import { AppSession } from '../../auth/AppSession';
 import { getAlbumBackupSettingsCached } from '../../sync/AlbumBackupSettings';
 import { fileIo } from '@kit.CoreFileKit';
@@ -73,6 +73,7 @@ function readUploadFileAndMtimeConcurrent(uri: string): UploadFileReadResult {
     const buffer = readLen < whole.byteLength ? whole.slice(0, readLen) : whole;
     return { buffer: buffer, mtimeSec: mtimeSec };
   } catch (_e) {
+    fnDiagRecord('E', TAG, `upload read file fail len=${uri.length}`);
     return empty;
   } finally {
     if (fdNum >= 0) {
@@ -82,6 +83,46 @@ function readUploadFileAndMtimeConcurrent(uri: string): UploadFileReadResult {
       }
     }
   }
+}
+
+/**
+ * 只取 JSON 字段名（不取值），用于 notice 请求体诊断：避免把 NAS 路径与原始文件名写进日志。
+ */
+function jsonFieldNamesOf(bodyStr: string): string {
+  const names: string[] = [];
+  const collect = (obj: Object, depth: number): void => {
+    if (depth > 3) {
+      return;
+    }
+    const rec = obj as Record<string, Object | string | number | boolean | undefined | null>;
+    const keys = Object.keys(rec);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (names.indexOf(k) < 0) {
+        names.push(k);
+      }
+      const v = rec[k];
+      if (Array.isArray(v)) {
+        const arr = v as Array<Object>;
+        if (arr.length > 0) {
+          const first = arr[0];
+          if (first !== undefined && first !== null && typeof first === 'object') {
+            collect(first, depth + 1);
+          }
+        }
+      } else if (v !== undefined && v !== null && typeof v === 'object') {
+        collect(v, depth + 1);
+      }
+    }
+  };
+  try {
+    const parsed = JSON.parse(bodyStr) as Object;
+    if (parsed !== null && typeof parsed === 'object') {
+      collect(parsed, 0);
+    }
+  } catch (_e) {
+  }
+  return names.join(',');
 }
 
 /** 飞牛官方上传前存在性检查结果 */
@@ -226,7 +267,8 @@ export class FnHttpClientUploadOps {
         return undefined;
       }
       return pack;
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'upload taskpool read fail', e);
       return undefined;
     }
   }
@@ -404,6 +446,7 @@ export class FnHttpClientUploadOps {
       return job().then((result: UploadNoticeResult): void => {
         done(result);
       }, (): void => {
+        fnDiagRecord('W', TAG, 'notice job reject');
         const fail: UploadNoticeResult = { ok: false, message: '入库通知失败' };
         done(fail);
       });
@@ -513,6 +556,7 @@ export class FnHttpClientUploadOps {
         } catch (_e) {}
       }
     }
+    fnDiagRecord('W', TAG, 'upload exists probe exhausted');
     return 'unknown';
   }
 
@@ -584,6 +628,7 @@ export class FnHttpClientUploadOps {
         } catch (_e) {}
       }
     }
+    fnDiagRecord('W', TAG, 'upload path hint probe exhausted');
     return '';
   }
 
@@ -638,6 +683,7 @@ export class FnHttpClientUploadOps {
         try {
           parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
         } catch (_e) {
+          fnDiagRecord('W', TAG, 'restore parse fail');
           continue;
         }
         if (FnHttpClientUploadOps.galleryEnvelopeBizOk(parsed)) {
@@ -645,6 +691,7 @@ export class FnHttpClientUploadOps {
         }
       } catch (_e) {}
     }
+    fnDiagRecord('W', TAG, 'restore call fail');
     return false;
   }
 
@@ -750,7 +797,7 @@ export class FnHttpClientUploadOps {
             const em = FnHttpClientUploadOps.envelopeErrorLine(parsed);
             lastMsg = em.length > 0 ? em : 'notice 业务失败';
             const preview = raw.body.length > 180 ? raw.body.substring(0, 180) : raw.body;
-            fnDiagRecord('W', TAG, `notice fail i=${i} try=${attempt} ${lastMsg} body=${preview}`);
+            fnDiagRecord('W', TAG, `notice fail i=${i} try=${attempt} ${lastMsg} bodyLen=${preview.length}`);
             if (FnHttpClientUploadOps.isBusyNoticeMessage(lastMsg) && attempt < busyWaits.length) {
               await FnHttpClientUploadOps.sleep(busyWaits[attempt]);
               continue;
@@ -791,10 +838,9 @@ export class FnHttpClientUploadOps {
                   lastMsg = errTxt.length > 0 ? errTxt : `notice errorCode=${errCode}`;
                   const preview = raw.body.length > 180 ? raw.body.substring(0, 180) : raw.body;
                   if (attempt === 0) {
-                    const reqPreview = bodyStr.length > 240 ? bodyStr.substring(0, 240) : bodyStr;
-                    fnDiagRecord('W', TAG, `notice req i=${i} ${reqPreview}`);
+                    fnDiagRecord('W', TAG, `notice req i=${i} fields=${jsonFieldNamesOf(bodyStr)} len=${bodyStr.length}`);
                   }
-                  fnDiagRecord('W', TAG, `notice item fail i=${i} try=${attempt} ${lastMsg} body=${preview}`);
+                  fnDiagRecord('W', TAG, `notice item fail i=${i} try=${attempt} ${lastMsg} bodyLen=${preview.length}`);
                   if (FnHttpClientUploadOps.isBusyNoticeMessage(lastMsg) && attempt < busyWaits.length) {
                     await FnHttpClientUploadOps.sleep(busyWaits[attempt]);
                     continue;
@@ -809,6 +855,7 @@ export class FnHttpClientUploadOps {
           return okRes;
         } catch (_e) {
           lastMsg = 'notice 请求异常';
+          fnDiagRecord('W', TAG, 'notice request exception');
           break;
         }
       }
@@ -954,7 +1001,11 @@ export class FnHttpClientUploadOps {
       sessionNorm = sessionNorm.substring(0, sessionNorm.length - 1);
     }
     const uploadOrigins = this.collectUploadOrigins(webHttpsBase, sessionNorm);
-    fnDiagRecord('I', TAG, `upload origins ${uploadOrigins.length > 0 ? uploadOrigins.join(' | ') : '(none)'}`);
+    const maskedOrigins: string[] = [];
+    for (let oi = 0; oi < uploadOrigins.length; oi++) {
+      maskedOrigins.push(fnDiagMaskUrl(uploadOrigins[oi]));
+    }
+    fnDiagRecord('I', TAG, `upload origins ${maskedOrigins.length > 0 ? maskedOrigins.join(' | ') : '(none)'}`);
     const req = http.createHttp();
     this.registerPendingRequest(req);
     let uploadRespText = '';
@@ -982,6 +1033,8 @@ export class FnHttpClientUploadOps {
       let uploadOk = false;
       let lastHttpCode = 0;
       let lastDetail = '';
+      /** lastDetail 是否来自非 JSON 响应原文（含路径时只记长度） */
+      let lastDetailIsRawBody = false;
       let softUploadAccepted = false;
       let lastCookieForLog = '';
       let lastUploadUrl = '';
@@ -1001,14 +1054,14 @@ export class FnHttpClientUploadOps {
         hilog.warn(
           DOMAIN,
           TAG,
-          '[upload] start origin=%{public}s url=%{public}s file=%{public}s bytes=%{public}d pathHint=%{public}s cookieKeys=%{public}s referer=%{public}s',
-          originBase,
-          uploadUrl,
-          fileName,
+          '[upload] start origin=%{public}s url=%{public}s nameLen=%{public}d bytes=%{public}d pathHint=%{public}s cookieKeys=%{public}s referer=%{public}s',
+          fnDiagMaskUrl(originBase),
+          fnDiagMaskUrl(uploadUrl),
+          fileName.length,
           payload.byteLength,
-          pathHintBeforeUpload.length > 0 ? pathHintBeforeUpload : '(none)',
+          pathHintBeforeUpload.length > 0 ? fnDiagMaskPath(pathHintBeforeUpload) : '(none)',
           cookieKeysSummary(uploadCookie),
-          uploadReferer
+          fnDiagMaskUrl(uploadReferer)
         );
         for (let si = 0; si < allSigns.length; si++) {
           const oneSign = allSigns[si];
@@ -1057,7 +1110,7 @@ export class FnHttpClientUploadOps {
             rawResp = await req.request(uploadUrl, opt);
           } catch (e) {
             lastDetail = String(e);
-            fnDiagRecord('W', TAG, `upload origin fail url=${uploadUrl} ${lastDetail.substring(0, 160)}`);
+            fnDiagRecord('W', TAG, `upload origin fail url=${fnDiagMaskUrl(uploadUrl)} ${lastDetail.substring(0, 160)}`);
             break;
           }
           const code = Number(rawResp.responseCode);
@@ -1070,6 +1123,7 @@ export class FnHttpClientUploadOps {
                 const em = FnHttpClientUploadOps.envelopeErrorLine(parsed);
                 lastDetail = em.length > 0 ? em : '';
               } catch (_e) {
+                lastDetailIsRawBody = true;
                 lastDetail = uploadRespText.length > 120 ? `${uploadRespText.substring(0, 120)}...` : uploadRespText;
               }
             }
@@ -1077,7 +1131,7 @@ export class FnHttpClientUploadOps {
           }
           if (FnHttpClientUploadOps.uploadBodyLooksLikeSpa(uploadRespText)) {
             lastDetail = '上传接口返回了网页';
-            fnDiagRecord('W', TAG, `upload spa shell url=${uploadUrl} http=${code}`);
+            fnDiagRecord('W', TAG, `upload spa shell url=${fnDiagMaskUrl(uploadUrl)} http=${code}`);
             break;
           }
           if (uploadRespText.length > 0) {
@@ -1093,11 +1147,11 @@ export class FnHttpClientUploadOps {
                 continue;
               }
             } catch (_e) {
+              fnDiagRecord('W', TAG, 'upload resp parse fail');
             }
           }
           uploadOk = true;
-          const okPreview = uploadRespText.length > 160 ? `${uploadRespText.substring(0, 160)}…` : uploadRespText;
-          fnDiagRecord('I', TAG, `upload ok url=${uploadUrl} bytes=${payload.byteLength} resp=${okPreview.length > 0 ? okPreview : '(empty)'}`);
+          fnDiagRecord('I', TAG, `upload ok url=${fnDiagMaskUrl(uploadUrl)} bytes=${payload.byteLength} respLen=${uploadRespText.length}`);
           break outerUpload;
         }
       }
@@ -1110,18 +1164,18 @@ export class FnHttpClientUploadOps {
           hilog.warn(
             DOMAIN,
             TAG,
-            '[upload] POST /upload failed url=%{public}s http=%{public}d detail=%{public}s trimPathLen=%{public}d sign×origins=%{public}d×%{public}d cookie(redacted)=%{public}s body=%{public}s',
-            lastUploadUrl.length > 0 ? lastUploadUrl : '(none)',
+            '[upload] POST /upload failed url=%{public}s http=%{public}d detail=%{public}s trimPathLen=%{public}d sign×origins=%{public}d×%{public}d cookie(redacted)=%{public}s bodyLen=%{public}d',
+            lastUploadUrl.length > 0 ? fnDiagMaskUrl(lastUploadUrl) : '(none)',
             lastHttpCode,
             lastDetail.length > 0 ? lastDetail : '(none)',
             encodedTrimPath.length,
             allSigns.length,
             uploadOrigins.length,
             redactCookieHeaderForLog(lastCookieForLog),
-            bodyPrev.length > 0 ? bodyPrev : '(empty)'
+            bodyPrev.length
           );
           fnDiagRecord('W', TAG,
-            `upload POST failed http=${lastHttpCode} ${lastDetail.length > 0 ? lastDetail : ''} body=${bodyPrev}`);
+            `upload POST failed http=${lastHttpCode} ${lastDetailIsRawBody ? '' : lastDetail} bodyLen=${bodyPrev.length}`);
           return {
             success: false,
             message: lastDetail.length > 0 ? `上传失败 HTTP ${lastHttpCode}：${lastDetail}` : `上传失败 HTTP ${lastHttpCode}`
@@ -1131,7 +1185,8 @@ export class FnHttpClientUploadOps {
     } catch (e) {
       const em = String(e);
       hilog.warn(DOMAIN, TAG, '[upload] exception %{public}s', em.length > 0 ? em : 'unknown');
-      fnDiagRecord('W', TAG, `upload exception ${em.length > 0 ? em : 'unknown'}`);
+      const safeEm = em.split(oneUri).join('<local-uri>');
+      fnDiagRecord('W', TAG, `upload exception ${safeEm.length > 0 ? safeEm.substring(0, 160) : 'unknown'}`);
       return { success: false, message: em.length > 0 ? em : '上传请求异常' };
     } finally {
       this.unregisterPendingRequest(req);
@@ -1187,18 +1242,22 @@ export class FnHttpClientUploadOps {
         return { success: true, message: '上传成功（已入库）', uploadedPhotoId: uploadPhotoId };
       }
       const em = failReason.length > 0 ? `上传完成但入库通知失败：${failReason}` : '上传完成但入库通知失败';
+      const maskedHints: string[] = [];
+      for (let hi = 0; hi < noticePathHints.length; hi++) {
+        maskedHints.push(fnDiagMaskPath(noticePathHints[hi]));
+      }
       const hintsStr =
-        noticePathHints.length > 0 ? noticePathHints.join(' | ') : '(none)';
-      const uploadPreview = uploadRespText.length > 200 ? `${uploadRespText.substring(0, 200)}…` : uploadRespText;
+        maskedHints.length > 0 ? maskedHints.join(' | ') : '(none)';
+      const uploadPreviewLen = uploadRespText.length;
       hilog.warn(
         DOMAIN,
         TAG,
-        '[upload] notice/verify failed reason=%{public}s pathHints=%{public}s uploadBodyPreview=%{public}s',
+        '[upload] notice/verify failed reason=%{public}s pathHints=%{public}s uploadBodyLen=%{public}d',
         failReason.length > 0 ? failReason : '(empty)',
         hintsStr,
-        uploadPreview
+        uploadPreviewLen
       );
-      fnDiagRecord('W', TAG, `notice/verify failed ${failReason} hints=${hintsStr} upload=${uploadPreview}`);
+      fnDiagRecord('W', TAG, `notice/verify failed ${failReason} hints=${hintsStr} uploadLen=${uploadPreviewLen}`);
       return { success: false, message: em };
     }
     return { success: true, uploadedPhotoId: uploadPhotoId };

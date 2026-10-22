@@ -6,6 +6,7 @@
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { GalleryGetListData, GalleryListItem, GalleryTimelineData } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import {
@@ -44,6 +45,18 @@ const NAS_DAY_FETCH_CONCURRENCY: number = 8;
 
 /** 按天拉取 NAS 媒体列表时的进度（doneDays ≤ totalDays）。 */
 export type NasIndexDayProgress = (doneDays: number, totalDays: number) => void;
+
+/** 某一天抓取的结果：complete=false 表示这一天没抓全。 */
+interface NasIndexDayPart {
+  items: GalleryListItem[];
+  complete: boolean;
+}
+
+/** 全量抓取结果：只有 complete=true 才允许覆盖索引与磁盘缓存。 */
+interface NasIndexFetch {
+  items: GalleryListItem[];
+  complete: boolean;
+}
 
 function listFromData(data: GalleryGetListData | undefined): GalleryListItem[] {
   return galleryListFromData(data);
@@ -159,13 +172,33 @@ export class GalleryAutoSyncNasIndex {
     client: FnHttpClient,
     onDayProgress: NasIndexDayProgress | null = null
   ): Promise<NasDedupeIndex> {
+    let fetched: NasIndexFetch | null = null;
     try {
       const timeline = await client.getGalleryTimeline();
       if (!timeline.success || timeline.data === undefined) {
         hilog.warn(DOMAIN, TAG, 'timeline failed: %{public}s', timeline.message ?? '');
         return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
       }
-      const items = await GalleryAutoSyncNasIndex.fetchAllTimelineItems(client, timeline.data, onDayProgress);
+      fetched = await GalleryAutoSyncNasIndex.fetchAllTimelineItems(client, timeline.data, onDayProgress);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'loadIndex failed: %{public}s', String(e));
+      return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
+    }
+    if (fetched === null) {
+      return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
+    }
+    if (!fetched.complete) {
+      // 有某天没抓全：不要拿残缺结果覆盖内存索引，也不要续命 24 小时磁盘缓存。
+      // 没有上一份完整索引时必须抛到比对侧（按比对失败结束），不能拿空索引关掉 NAS 去重。
+      if (!GalleryAutoSyncNasIndex.nasIndexUsable()) {
+        fnDiagRecord('E', TAG, 'nas index incomplete and no previous index');
+        throw new Error('nas index incomplete');
+      }
+      fnDiagRecord('W', TAG, 'nas index incomplete, keep previous index');
+      return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
+    }
+    try {
+      const items = fetched.items;
       const built = buildNasDedupeIndex(items);
       GalleryAutoSyncNasIndex.index = built;
       GalleryAutoSyncNasIndex.cachedAt = Date.now();
@@ -181,16 +214,20 @@ export class GalleryAutoSyncNasIndex {
       );
       return cloneNasDedupeIndex(built);
     } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'loadIndex failed: %{public}s', String(e));
+      hilog.warn(DOMAIN, TAG, 'loadIndex build failed: %{public}s', String(e));
       return cloneNasDedupeIndex(GalleryAutoSyncNasIndex.index);
     }
   }
 
+  /**
+   * 抓取某一天的 NAS 名单。
+   * 返回 false 表示这一天没抓全（请求失败），调用方不得用残缺结果覆盖索引。
+   */
   private static async fetchDayPages(
     client: FnHttpClient,
     day: TimelineDayModel,
     target: GalleryListItem[]
-  ): Promise<void> {
+  ): Promise<boolean> {
     const st = fmtDayStart(day.year, day.month, day.day);
     const et = fmtDayEnd(day.year, day.month, day.day);
     let dayOffset = 0;
@@ -198,11 +235,14 @@ export class GalleryAutoSyncNasIndex {
     while (rounds < DAY_MAX_ROUNDS) {
       const res = await client.getGalleryList(st, et, NAS_INDEX_PAGE_SIZE, dayOffset);
       if (!res.success || res.data === undefined) {
-        break;
+        // 这一天抓不全：返回 false，交给上层决定「保留上一份完整索引」
+        const msg: string = (res.message ?? '').trim();
+        fnDiagRecord('W', TAG, `day list failed ${day.year}-${day.month}-${day.day} ${msg.substring(0, 80)}`);
+        return false;
       }
       const list = listFromData(res.data as GalleryGetListData);
       if (list.length === 0) {
-        break;
+        return true;
       }
       for (let i = 0; i < list.length; i++) {
         target.push(list[i]);
@@ -210,17 +250,19 @@ export class GalleryAutoSyncNasIndex {
       dayOffset += list.length;
       rounds++;
       if (list.length < NAS_INDEX_PAGE_SIZE) {
-        break;
+        return true;
       }
     }
+    return true;
   }
 
   private static async fetchAllTimelineItems(
     client: FnHttpClient,
     timeline: GalleryTimelineData,
     onDayProgress: NasIndexDayProgress | null = null
-  ): Promise<GalleryListItem[]> {
+  ): Promise<NasIndexFetch> {
     const out: GalleryListItem[] = [];
+    let complete: boolean = true;
     const days = collectTimelineDays(timeline);
     const totalDays: number = days.length;
     if (onDayProgress !== null && totalDays > 0) {
@@ -229,20 +271,23 @@ export class GalleryAutoSyncNasIndex {
     let doneDays: number = 0;
     for (let i = 0; i < days.length; i += NAS_DAY_FETCH_CONCURRENCY) {
       const chunkEnd: number = Math.min(i + NAS_DAY_FETCH_CONCURRENCY, days.length);
-      const tasks: Promise<GalleryListItem[]>[] = [];
+      const tasks: Promise<NasIndexDayPart>[] = [];
       for (let j = i; j < chunkEnd; j++) {
         const day = days[j];
-        tasks.push((async (): Promise<GalleryListItem[]> => {
+        tasks.push((async (): Promise<NasIndexDayPart> => {
           const part: GalleryListItem[] = [];
-          await GalleryAutoSyncNasIndex.fetchDayPages(client, day, part);
-          return part;
+          const ok = await GalleryAutoSyncNasIndex.fetchDayPages(client, day, part);
+          return { items: part, complete: ok };
         })());
       }
-      const parts: GalleryListItem[][] = await Promise.all(tasks);
+      const parts: NasIndexDayPart[] = await Promise.all(tasks);
       for (let p = 0; p < parts.length; p++) {
         const part = parts[p];
-        for (let k = 0; k < part.length; k++) {
-          out.push(part[k]);
+        for (let k = 0; k < part.items.length; k++) {
+          out.push(part.items[k]);
+        }
+        if (!part.complete) {
+          complete = false;
         }
       }
       doneDays = chunkEnd;
@@ -250,7 +295,7 @@ export class GalleryAutoSyncNasIndex {
         onDayProgress(doneDays, totalDays);
       }
     }
-    return out;
+    return { items: out, complete: complete };
   }
 
   private static indexPath(ctx: common.UIAbilityContext): string {
@@ -270,7 +315,8 @@ export class GalleryAutoSyncNasIndex {
     try {
       const text = await fileIo.readText(path);
       GalleryAutoSyncNasIndex.applyDiskText(text);
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'disk index read failed', e);
     }
   }
 

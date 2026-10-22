@@ -2,8 +2,10 @@
  * 实况文件的同步读写。由 TaskPool 里的并发函数调用，不在界面线程执行。
  */
 import { fileIo } from '@kit.CoreFileKit';
+import { fnDiagError } from '../common/FnDiagLog';
 import { splitEmbeddedLivePhoto } from './livephoto/MotionPhotoSplit';
 
+const TAG: string = 'LiveSyncIo';
 const HEAD_BYTES: number = 512 * 1024;
 const TAIL_BYTES: number = 32 * 1024 * 1024;
 const COPY_CHUNK: number = 256 * 1024;
@@ -69,7 +71,8 @@ function readAt(fdNum: number, position: number, length: number): Uint8Array | n
       return null;
     }
     return new Uint8Array(buffer, 0, n);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=read', e);
     return null;
   }
 }
@@ -81,7 +84,8 @@ function fileSizeOf(fdNum: number): number {
       return 0;
     }
     return Math.floor(size);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=stat', e);
     return 0;
   }
 }
@@ -116,7 +120,8 @@ export function fileHasEmbeddedLiveVideo(pathOrUri: string): boolean {
     const tailLen = Math.min(size, TAIL_BYTES);
     const tail = readAt(fdNum, size - tailLen, tailLen);
     return tail !== null && hasFtyp(tail);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=probe', e);
     return false;
   } finally {
     if (fdNum >= 0) {
@@ -163,7 +168,8 @@ function copyRange(srcFd: number, start: number, length: number, outFd: number):
     try {
       fileIo.lseek(srcFd, pos, fileIo.WhenceType.SEEK_SET);
       n = fileIo.readSync(srcFd, chunk, { length: take });
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'live file io failed op=copy-read', e);
       return false;
     }
     if (n <= 0) {
@@ -172,7 +178,8 @@ function copyRange(srcFd: number, start: number, length: number, outFd: number):
     const slice = n === chunk.byteLength ? chunk : chunk.slice(0, n);
     try {
       fileIo.writeSync(outFd, slice);
-    } catch (_e) {
+    } catch (e) {
+      fnDiagError(TAG, 'live file io failed op=copy-write', e);
       return false;
     }
     pos += n;
@@ -191,7 +198,8 @@ function copyRangeOfPath(path: string, outFd: number): boolean {
       return false;
     }
     return copyRange(fdNum, 0, size, outFd);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=copy-open', e);
     return false;
   } finally {
     if (fdNum >= 0) {
@@ -224,7 +232,8 @@ function readWholeFileSync(path: string): ArrayBuffer | undefined {
     const trimmed = new ArrayBuffer(n);
     new Uint8Array(trimmed).set(new Uint8Array(buffer, 0, n));
     return trimmed;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=read-whole', e);
     return undefined;
   } finally {
     if (fdNum >= 0) {
@@ -249,7 +258,8 @@ function writeWholeFileSync(path: string, data: ArrayBuffer): boolean {
     fdNum = file.fd;
     fileIo.writeSync(fdNum, data);
     return true;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=write', e);
     return false;
   } finally {
     if (fdNum >= 0) {
@@ -312,7 +322,8 @@ export function copyFileSync(src: string, dst: string): boolean {
     );
     outFd = outf.fd;
     return copyRange(inFd, 0, size, outFd);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=copy-file', e);
     return false;
   } finally {
     if (inFd >= 0) {
@@ -336,7 +347,8 @@ function fileSizeOfPath(path: string): number {
     const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
     fdNum = file.fd;
     return fileSizeOf(fdNum);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=stat-path', e);
     return 0;
   } finally {
     if (fdNum >= 0) {
@@ -360,7 +372,8 @@ function concatRawAppend(imagePath: string, videoPath: string, outPath: string):
     const end = fileSizeOf(outFd);
     fileIo.lseek(outFd, end, fileIo.WhenceType.SEEK_SET);
     return copyRangeOfPath(videoPath, outFd);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=concat-append', e);
     return false;
   } finally {
     if (outFd >= 0) {
@@ -406,7 +419,8 @@ function concatFiles(imagePath: string, videoPath: string, outPath: string, vide
       return false;
     }
     return copyRangeOfPath(videoPath, outFd);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'live file io failed op=concat', e);
     return false;
   } finally {
     if (imageFd >= 0) {

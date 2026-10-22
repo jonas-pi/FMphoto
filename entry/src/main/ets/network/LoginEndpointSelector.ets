@@ -4,6 +4,7 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagError, fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
 import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
 import { preferPublicEndpointUrl, resolvePublicHostnameToIpv6BaseUrl } from './PublicDns';
 import { isIpLiteralHost, normalizeServerUrl, parseNormalizedBaseUrl } from './ServerUrl';
@@ -165,6 +166,7 @@ function byteLengthOfResult(result: string | ArrayBuffer | object | undefined): 
   try {
     return JSON.stringify(result).length;
   } catch (_e) {
+    fnDiagRecord('I', TAG, 'probe size calc fail');
     return 0;
   }
 }
@@ -272,6 +274,7 @@ export async function resolveLoginRedirectServer(baseUrl: string, maxHops: numbe
       ? redirectInterceptor.lastRedirectUrl
       : current;
   } catch (_e) {
+    fnDiagRecord('W', TAG, 'redirect resolve fail');
     return redirectInterceptor.lastRedirectUrl.length > 0
       ? redirectInterceptor.lastRedirectUrl
       : current;
@@ -349,6 +352,7 @@ async function probeEndpointOnce(
       message: ok ? '' : `HTTP ${resp.responseCode}`
     };
   } catch (e) {
+    fnDiagError(TAG, `probe fail kind=${candidate.kind}`, e);
     return {
       candidate,
       ok: false,
@@ -384,7 +388,8 @@ async function probeEndpoint(
   const second = await probeEndpointOnce(
     candidate, bandwidthMode, v6ProbeBudget(probeTimeoutMs), http.AddressFamily.ONLY_V6);
   if (!second.ok) {
-    hilog.info(DOMAIN, TAG, 'v6 probe miss %{public}s %{public}s', candidate.baseUrl, second.message);
+    hilog.info(DOMAIN, TAG, 'v6 probe miss %{public}s %{public}s', fnDiagMaskUrl(candidate.baseUrl), second.message);
+    fnDiagRecord('W', TAG, `v6 probe miss ${fnDiagMaskUrl(candidate.baseUrl)}`);
     return first;
   }
   if (isFnRelayBaseUrl(candidate.baseUrl)) {
@@ -392,10 +397,11 @@ async function probeEndpoint(
   }
   const literal = await resolvePublicHostnameToIpv6BaseUrl(candidate.baseUrl);
   if (literal.length === 0) {
-    hilog.info(DOMAIN, TAG, 'v6 probe ok but no AAAA %{public}s', candidate.baseUrl);
+    hilog.info(DOMAIN, TAG, 'v6 probe ok but no AAAA %{public}s', fnDiagMaskUrl(candidate.baseUrl));
     return second;
   }
-  hilog.info(DOMAIN, TAG, 'v6 probe rewrite %{public}s -> %{public}s', candidate.baseUrl, literal);
+  hilog.info(DOMAIN, TAG, 'v6 probe rewrite %{public}s -> %{public}s',
+    fnDiagMaskUrl(candidate.baseUrl), fnDiagMaskUrl(literal));
   return {
     candidate: { kind: candidate.kind, baseUrl: literal },
     ok: true,
@@ -497,6 +503,7 @@ async function retryRelayProbe(
       return last;
     }
   }
+  fnDiagRecord('W', TAG, 'relay probe retry exhausted');
   return last;
 }
 
@@ -973,6 +980,7 @@ export async function selectAmongEndpointPool(
   }
   if (best === null) {
     // 全部探测失败：自动选路不把尚未可达的中继交给 WSS；手动点中继仍试一次
+    fnDiagRecord('W', TAG, 'all endpoints unreachable');
     let fallbackBest: LoginEndpointProbeResult = scored.length > 0 ? scored[0] : {
       candidate: candidates[0],
       ok: false,

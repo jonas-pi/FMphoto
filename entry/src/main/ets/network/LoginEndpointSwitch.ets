@@ -5,6 +5,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { fnDiagMaskUrl, fnDiagRecord, fnDiagSetState } from '../common/FnDiagLog';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { CertPolicy } from './CertPolicy';
@@ -420,6 +421,7 @@ async function finishSwitchSession(
   deferLongTokenProbe: boolean = false
 ): Promise<EndpointSwitchResult> {
   if (signKeyB64.length === 0) {
+    fnDiagRecord('E', TAG, 'switch no sign key');
     return { ok: false, message: '切换成功但未拿到签名密钥' };
   }
   CertPolicy.addTrusted(fnWebViewBaseUrl(newBaseUrl));
@@ -429,6 +431,7 @@ async function finishSwitchSession(
     try {
       longTok = await probeClient.fetchFnosLongTokenProbe(14000);
     } catch (_e) {
+      fnDiagRecord('W', TAG, 'longToken probe fail after switch');
       longTok = '';
     }
   }
@@ -441,7 +444,8 @@ async function finishSwitchSession(
   stored.trustedHosts = CertPolicy.dumpAll();
   AppSession.apply(stored);
   await SessionPreferences.save(ctx, stored);
-  hilog.info(DOMAIN, TAG, 'endpoint switched to %{public}s', newBaseUrl);
+  hilog.info(DOMAIN, TAG, 'endpoint switched to %{public}s', fnDiagMaskUrl(newBaseUrl));
+  fnDiagSetState('endpoint', fnDiagMaskUrl(newBaseUrl));
   if (longTok.length === 0 && deferLongTokenProbe) {
     scheduleDeferredLongTokenProbe(ctx, newBaseUrl, token, signKeyB64);
   }
@@ -469,8 +473,24 @@ function scheduleDeferredLongTokenProbe(
       AppSession.apply(latest);
       await SessionPreferences.save(ctx, latest);
     } catch (_e) {
+      fnDiagRecord('W', TAG, 'deferred longToken probe fail');
     }
   })();
+}
+
+/** 目标地址对应的通道类型，仅用于日志（不落地址）。 */
+function switchKindOfTarget(stored: StoredSession, target: string): string {
+  const urls = resolveStoredEndpointUrls(stored);
+  return resolveKindByUrl(
+    target,
+    urls.publicUrl,
+    urls.publicDomainUrl,
+    urls.publicIpv4Url,
+    urls.publicIpv6Url,
+    urls.lanUrl,
+    urls.lanIpv6Url,
+    urls.relayUrl
+  );
 }
 
 export async function switchStoredLoginEndpointToUrl(
@@ -497,6 +517,7 @@ export async function switchStoredLoginEndpointToUrl(
   const pass = await AppSession.ensureLoginPassword(ctx);
   const user = stored.account.length > 0 ? stored.account : defaults.username;
   if (pass.length === 0 || user.length === 0) {
+    fnDiagRecord('W', TAG, `switch to ${switchKindOfTarget(stored, target)} fail no credential`);
     return { ok: false, message: '缺少保存的登录凭据，请重新登录' };
   }
   const trusted = CertPolicy.isTrusted(target);
@@ -536,6 +557,10 @@ export async function switchStoredLoginEndpointToUrl(
   }
   if (wsRes.success !== true || wsRes.token === undefined || wsRes.token.length === 0) {
     const msg = wsRes.message !== undefined && wsRes.message.length > 0 ? wsRes.message : '切换连接失败';
+    const kind = switchKindOfTarget(stored, target);
+    fnDiagRecord('W', TAG, wsRes.success !== true
+      ? `switch to ${kind} fail ws login`
+      : `switch to ${kind} fail no token`);
     return { ok: false, message: msg };
   }
   const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';

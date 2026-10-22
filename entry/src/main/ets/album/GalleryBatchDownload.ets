@@ -9,6 +9,7 @@ import { AppSession } from '../auth/AppSession';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
 import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { copyGalleryUriContentToAlbumUri } from './GalleryAlbumSaveToAlbum';
 import { isVideoItem, itemFileExt, nasUrl, pickOriginal, pickThumb, pickVideo } from './GalleryAlbumCommon';
@@ -23,6 +24,7 @@ import { materializeLivePhotoPair, unlinkLivePhotoPair } from './livephoto/LiveP
 
 const BATCH_DOWNLOAD_CONCURRENCY = 4;
 const BATCH_DOWNLOAD_MAX_ATTEMPTS = 2;
+const TAG: string = 'FnDownload';
 
 function itemHasOriginalPhoto(it: GalleryListItem): boolean {
   return !isVideoItem(it) && pickOriginal(it).trim().length > 0;
@@ -78,7 +80,8 @@ async function copyPreparedFilesToAlbum(
       savedCount++;
     }
     return savedCount;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'copy to album failed', e);
     return -1;
   }
 }
@@ -265,6 +268,7 @@ export async function runBatchDownloadGalleryItems(
     }
     if (url.length === 0) {
       failedCount++;
+      fnDiagRecord('W', TAG, 'download failed reason=urlEmpty');
       continue;
     }
 
@@ -278,6 +282,7 @@ export async function runBatchDownloadGalleryItems(
       }
       if (!downloaded) {
         failedCount++;
+        fnDiagRecord('W', TAG, 'download failed reason=video');
         continue;
       }
       const videoUri = fileUriUtil.getUriFromPath(tempPath);
@@ -310,6 +315,7 @@ export async function runBatchDownloadGalleryItems(
     }
     if (!downloaded) {
       failedCount++;
+      fnDiagRecord('W', TAG, 'download failed reason=image');
       continue;
     }
 
@@ -374,9 +380,15 @@ export async function runBatchDownloadGalleryItems(
     FnTransferQueueStore.finish(taskId, failedCount === 0,
       `已保存 ${totalSaved}/${items.length} 项${failHint}`);
     toastMsg(`已保存 ${totalSaved}/${items.length} 项${liveHint}${failHint}`);
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'save to album failed', e);
     toastMsg('保存失败，请重试');
   }
+  } catch (e) {
+    // 任何下载步骤直接抛错都要收尾，否则任务会一直停在「进行中」
+    fnDiagError(TAG, 'batch download failed', e);
+    FnTransferQueueStore.finish(taskId, false, '下载失败');
+    toastMsg('下载失败，请重试');
   } finally {
     for (let i = 0; i < tempPaths.length; i++) {
       try {

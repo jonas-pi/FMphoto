@@ -11,6 +11,7 @@ import {
   fnRequestReadImageVideoAccess,
   FnReadImageVideoAuth
 } from '../common/FnMediaPermission';
+import { fnDiagRecord } from '../common/FnDiagLog';
 
 const DOMAIN = 0xFF00;
 const TAG = 'BackupSources';
@@ -179,6 +180,7 @@ export async function buildLocalAlbumNameIndex(ctx: common.UIAbilityContext): Pr
     const granted = await fnEnsureReadImageVideoGranted(ctx);
     if (!granted) {
       hilog.info(DOMAIN, TAG, 'album index skipped: no permission');
+      fnDiagRecord('W', TAG, 'no permission, album index skipped');
       return index;
     }
     const helper = photoAccessHelper.getPhotoAccessHelper(ctx);
@@ -214,7 +216,7 @@ export async function buildLocalAlbumNameIndex(ctx: common.UIAbilityContext): Pr
           }
           offset += assets.length;
         } catch (e) {
-          hilog.warn(DOMAIN, TAG, 'album assets failed name=%{public}s %{public}s', name, String(e));
+          hilog.warn(DOMAIN, TAG, 'album assets failed %{public}s', String(e));
           break;
         } finally {
           page?.close();
@@ -323,7 +325,7 @@ function mergeSnap(base: AlbumFieldSnap, extra: AlbumFieldSnap): void {
 
 function rowFromSnap(snap: AlbumFieldSnap, isSource: boolean): LocalAlbumSummary | undefined {
   if (snap.totalCount <= 0) {
-    hilog.info(DOMAIN, TAG, 'drop empty count name=%{public}s lpath=%{public}s', snap.name, snap.lpath);
+    hilog.info(DOMAIN, TAG, 'drop empty count album');
     return undefined;
   }
   if (snap.subtype === photoAccessHelper.AlbumSubtype.FAVORITE ||
@@ -346,8 +348,7 @@ function rowFromSnap(snap: AlbumFieldSnap, isSource: boolean): LocalAlbumSummary
   refreshCameraFlag(row);
   const shown = displayAlbumFolderName(row);
   if (isVirtualAlbumName(shown)) {
-    hilog.info(DOMAIN, TAG, 'drop virtual name=%{public}s raw=%{public}s lpath=%{public}s count=%{public}d',
-      shown, snap.name, snap.lpath, snap.totalCount);
+    hilog.info(DOMAIN, TAG, 'drop virtual album count=%{public}d', snap.totalCount);
     return undefined;
   }
   if (row.albumUri.length === 0 && row.lpath.length === 0 && row.name.length === 0) {
@@ -432,13 +433,12 @@ async function fetchAlbumCombo(
       continue;
     }
     hilog.info(DOMAIN, TAG,
-      'raw name=%{public}s lpath=%{public}s count=%{public}d cover=%{public}s source=%{public}s',
-      snap.name, snap.lpath, snap.totalCount, snap.coverAssetUri.length > 0 ? '1' : '0', isSource ? '1' : '0');
+      'raw album count=%{public}d cover=%{public}s source=%{public}s',
+      snap.totalCount, snap.coverAssetUri.length > 0 ? '1' : '0', isSource ? '1' : '0');
     try {
       const row = rowFromSnap(snap, isSource);
       if (row !== undefined) {
-        hilog.info(DOMAIN, TAG, 'keep name=%{public}s lpath=%{public}s count=%{public}d',
-          displayAlbumFolderName(row), row.lpath, row.totalCount);
+        hilog.info(DOMAIN, TAG, 'keep album count=%{public}d', row.totalCount);
         out.push(row);
       }
     } catch (itemErr) {

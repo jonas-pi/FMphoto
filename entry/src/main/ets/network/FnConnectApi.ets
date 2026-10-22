@@ -5,7 +5,7 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagMaskId, fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
 import { generateRandomDigits, md5HexUtf8, sha256DigestSafe } from './AuthxSigner';
 import { FN_DEFAULT_PORT_HTTP, FN_DEFAULT_PORT_HTTPS, normalizeServerUrl } from './ServerUrl';
 
@@ -502,6 +502,7 @@ async function buildConnectAuthx(bodyStr: string, timestamp: number): Promise<st
 export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<FnConnectLookupResult> {
   const id = fnId.trim();
   if (!isFnId(id)) {
+    fnDiagRecord('W', TAG, 'fnId format invalid');
     return emptyLookup('FN ID 格式不正确');
   }
 
@@ -643,7 +644,9 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
     const summary = `FN Connect 已解析 ${id}（${labels.join('/')}）`;
     hilog.info(DOMAIN, TAG,
       'lookup ok fnId=%{public}s domain=%{public}s v4=%{public}s v6=%{public}s lan4=%{public}s lan6=%{public}s relay=%{public}s',
-      id, publicDomainServer, publicIpv4Server, publicIpv6Server, lanIpv4Server, lanIpv6Server, relayServer);
+      fnDiagMaskId(id), fnDiagMaskUrl(publicDomainServer), fnDiagMaskUrl(publicIpv4Server),
+      fnDiagMaskUrl(publicIpv6Server), fnDiagMaskUrl(lanIpv4Server), fnDiagMaskUrl(lanIpv6Server),
+      fnDiagMaskUrl(relayServer));
     return {
       ok: true,
       message: '',
@@ -671,7 +674,7 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
 
 /** 云端失败时不臆造中继（FN ID 可能无效）；有有效解析时才拼 {fnId}.5ddd.com */
 function fallbackFnosNet(fnId: string, _useHttps: boolean, reason: string): FnConnectLookupResult {
-  hilog.warn(DOMAIN, TAG, 'fallback fail fnId=%{public}s reason=%{public}s', fnId, reason);
+  hilog.warn(DOMAIN, TAG, 'fallback fail fnId=%{public}s reason=%{public}s', fnDiagMaskId(fnId), reason);
   fnDiagRecord('W', TAG, `FN Connect fallback ${reason}`);
   return emptyLookup(reason);
 }

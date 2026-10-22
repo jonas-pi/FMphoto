@@ -4,6 +4,9 @@
 import { taskPanelDisplayTitle, taskPanelItemActive } from '../album/FnTaskPanelLabels';
 import { TaskPanelItem } from '../model/FnApiTypes';
 import { FnTransferDirection, fnTransferDirectionLabel } from './FnTransferProgress';
+import { fnDiagRecord } from './FnDiagLog';
+
+const TAG: string = 'FnQueue';
 
 export const FN_TRANSFER_QUEUE_VERSION: string = 'FN_TRANSFER_QUEUE_VERSION';
 
@@ -79,6 +82,7 @@ export class FnTransferQueueStore {
       bumpQueueVersion();
       return;
     }
+    fnDiagRecord('W', TAG, 'update unknown task');
   }
 
   static finish(taskId: string, ok: boolean, message: string = ''): void {
@@ -180,10 +184,14 @@ export class FnTransferQueueStore {
     const freshKeys = new Set<string>();
     const seenNasIds = new Set<string>();
     const nasNext: FnTransferTaskSnapshot[] = [];
+    let nasFailed: number = 0;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const key = FnTransferQueueStore.nasTaskKey(item);
       seenNasIds.add(key);
+      if (!item.running && item.error.length > 0) {
+        nasFailed++;
+      }
       if (FnTransferQueueStore.isSuppressedNasId(key)) {
         if (item.running) {
           FnTransferQueueStore.releaseNasId(key);
@@ -208,6 +216,8 @@ export class FnTransferQueueStore {
         old.status = FnTransferTaskStatus.COMPLETED;
         old.message = old.message.length > 0 ? old.message : '已完成';
         old.updatedAt = Date.now();
+        // 服务端已看不到这个任务，只能当成完成，实际结果未知。
+        fnDiagRecord('W', TAG, 'stale nas task marked completed');
       }
       if (old.status === FnTransferTaskStatus.COMPLETED || old.status === FnTransferTaskStatus.FAILED) {
         nasNext.push(old);
@@ -221,6 +231,7 @@ export class FnTransferQueueStore {
       FnTransferQueueStore.tasks.length = FnTransferQueueStore.MAX_TASKS;
     }
     bumpQueueVersion();
+    fnDiagRecord('I', TAG, `sync nas tasks n=${items.length} failed=${nasFailed}`);
   }
 
   static clearNasTasks(): void {

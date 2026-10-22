@@ -4,7 +4,9 @@
  */
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { fnDiagError } from '../common/FnDiagLog';
 
+const TAG: string = 'AlbumBackup';
 const PREF_NAME: string = 'fnos_client_prefs';
 const K_FOLDER_MODE: string = 'album_backup_folder_manage_mode';
 const K_RENAME: string = 'album_backup_rename_strategy';
@@ -104,7 +106,9 @@ export async function loadAlbumBackupSettings(ctx: common.UIAbilityContext): Pro
       }
       out.backupSourceFolders = arr;
     }
-  } catch (_e) {
+  } catch (e) {
+    // 源文件夹 JSON 损坏时 backupSourceFolders 被静默清空。
+    fnDiagError(TAG, 'parse source folders failed', e);
     out.backupSourceFolders = [];
   }
   memoryCache = out;
@@ -117,6 +121,7 @@ export async function saveAlbumBackupSettings(
 ): Promise<boolean> {
   const p = await openPrefs(ctx);
   if (p === null) {
+    fnDiagError(TAG, 'save settings failed', null);
     return false;
   }
   try {
@@ -133,7 +138,8 @@ export async function saveAlbumBackupSettings(
     await p.flush();
     memoryCache = settings;
     return true;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagError(TAG, 'save settings failed', e);
     return false;
   }
 }

@@ -5,7 +5,7 @@
  * 自建反代 / Lucky 直连不带 mode=relay，避免被当成中继通道、握手停在 HTTP。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagMaskUrl, fnDiagRecord, fnDiagRecordResolve, fnDiagSetState } from '../common/FnDiagLog';
 import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
 import { isFnRelayBaseUrl } from './FnConnectApi';
@@ -334,6 +334,7 @@ async function probeHttpsCertificateFailure(httpBaseNoSlash: string): Promise<bo
       if (!isNaN(codeNum) && WS_CERT_ERROR_CODES.indexOf(codeNum) >= 0) {
         return true;
       }
+      fnDiagRecord('W', TAG, `cert probe not-cert code=${codeText}`);
     }
     return isLikelyCertificateError(describeWsError(e as Object | Error | string | undefined | null));
   } finally {
@@ -451,13 +452,20 @@ async function wsIpLiteralFallback(baseUrl: string): Promise<string> {
   if (!isHostnameBaseUrl(baseUrl)) {
     return '';
   }
+  // 记下此刻的解析结果条数：只有 AAAA、或 AAAA 指向不可达，是这类失败的典型成因
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts !== null && parts.host.length > 0) {
+    await fnDiagRecordResolve(parts.host);
+  }
   try {
     const ipBase = await resolvePublicDomainToIpBaseUrl(baseUrl);
     if (ipBase.length === 0 || isHostnameBaseUrl(ipBase)) {
+      fnDiagRecord('W', TAG, 'ws ip fallback resolve fail');
       return '';
     }
     return ipBase;
-  } catch (_e) {
+  } catch (e) {
+    fnDiagRecord('W', TAG, `ws ip fallback resolve fail ${String(e)}`);
     return '';
   }
 }
@@ -467,6 +475,19 @@ function isTerminalWsLoginResult(r: FnWsLoginResult): boolean {
     || r.requires2fa === true
     || r.requires2faSetup === true
     || r.certificateError === true;
+}
+
+/** 失败文案里可能带地址，落日志前把主机名换成掩码（端口等其余内容保留）。 */
+export function maskWsFailureMessage(text: string | undefined, baseUrl: string): string {
+  const t = (text !== undefined ? text : '').trim();
+  if (t.length === 0) {
+    return '';
+  }
+  const parts = parseNormalizedBaseUrl(baseUrl);
+  if (parts === null || parts.host.length < 4) {
+    return t.length > 80 ? t.substring(0, 80) : t;
+  }
+  return t.split(parts.host).join(fnDiagMaskUrl(parts.host));
 }
 
 /** 换一条登录地址再试：连接失败或证书问题；密码错 / 2FA 不换路 */
@@ -559,6 +580,7 @@ export async function fnWsLogin(
   deviceId: string
 ): Promise<FnWsLoginResult> {
   if (deviceId.trim().length === 0) {
+    fnDiagRecord('W', TAG, 'ws login param invalid:did');
     return { success: false, message: '缺少设备标识 did' };
   }
   const did = deviceId.trim();
@@ -568,6 +590,9 @@ export async function fnWsLogin(
   let ipFallbackTried = false;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     last = await fnWsLoginOnce(httpBaseNoSlash, username, password, isTrustedHost, did);
+    if (last.success === true) {
+      fnDiagSetState('login', 'ok');
+    }
     // 主机名 + 连接层失败：改用解析出的 IP 字面量再试一次（绕开不可用的 AAAA）
     if (!ipFallbackTried && isTrustedHost &&
       isConnectLevelFailure(last.message !== undefined ? last.message : '')) {
@@ -575,24 +600,31 @@ export async function fnWsLogin(
       if (ipBase.length > 0) {
         ipFallbackTried = true;
         const hostHeader = wsHostHeaderOf(httpBaseNoSlash);
-        hilog.info(DOMAIN, TAG, 'WS retry via IP literal %{public}s', ipBase);
-        fnDiagRecord('I', TAG, `WS retry via IP literal ${ipBase}`);
+        hilog.info(DOMAIN, TAG, 'WS retry via IP literal %{public}s', fnDiagMaskUrl(ipBase));
+        fnDiagRecord('I', TAG, `WS retry via IP literal ${fnDiagMaskUrl(ipBase)}`);
         const ipResult = await fnWsLoginOnce(
           ipBase, username, password, isTrustedHost, did, httpBaseNoSlash, hostHeader);
         if (ipResult.success === true || ipResult.requires2fa === true ||
           ipResult.requires2faSetup === true) {
+          if (ipResult.success === true) {
+            fnDiagSetState('login', 'ok');
+          }
           return ipResult;
         }
         last = ipResult;
       }
     }
     if (!isRetryableRelayWsFailure(last) || attempt + 1 >= maxAttempts) {
+      if (isRetryableRelayWsFailure(last) && attempt + 1 >= maxAttempts) {
+        fnDiagRecord('W', TAG, `ws login final fail msg=${maskWsFailureMessage(last.message, httpBaseNoSlash)}`);
+      }
       return last;
     }
     const msg = last.message !== undefined ? last.message : '';
     if (msg === 'WebSocket 登录超时') {
       timeoutRetries++;
       if (timeoutRetries > RELAY_WS_TIMEOUT_RETRY_MAX) {
+        fnDiagRecord('W', TAG, `ws login final fail msg=${maskWsFailureMessage(last.message, httpBaseNoSlash)}`);
         return last;
       }
     }
@@ -618,8 +650,8 @@ async function fnWsLoginOnce(
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
   const relay = isFnRelayBaseUrl(originBase);
   hilog.info(DOMAIN, TAG, 'WS connect %{public}s trusted=%{public}s relay=%{public}s',
-    wsUrl, String(isTrustedHost), String(relay));
-  fnDiagRecord('I', TAG, `WS connect ${wsUrl} trusted=${String(isTrustedHost)} relay=${String(relay)}`);
+    fnDiagMaskUrl(wsUrl), String(isTrustedHost), String(relay));
+  fnDiagRecord('I', TAG, `WS connect ${fnDiagMaskUrl(wsUrl)} trusted=${String(isTrustedHost)} relay=${String(relay)}`);
 
   return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
     let done = false;
@@ -638,6 +670,7 @@ async function fnWsLoginOnce(
     };
 
     const timer = setTimeout((): void => {
+      fnDiagRecord('W', TAG, 'ws login timeout');
       finish({
         success: false,
         message: relay
@@ -666,7 +699,8 @@ async function fnWsLoginOnce(
         try {
           const info = await resolveWsFailure(httpBaseNoSlash, err, isTrustedHost, fallbackMessage);
           hilog.error(DOMAIN, TAG, 'ws error %{public}s', info.message);
-          fnDiagRecord('E', TAG, `ws error ${info.message}`);
+          fnDiagRecord('E', TAG, `ws error ${maskWsFailureMessage(info.message, httpBaseNoSlash)}`);
+          fnDiagSetState('lastWsFail', info.certificateError ? 'cert' : 'connect');
           finish({
             success: false,
             message: info.message,
@@ -675,7 +709,8 @@ async function fnWsLoginOnce(
         } catch (e) {
           const em = describeWsError(e);
           hilog.error(DOMAIN, TAG, 'ws error resolve %{public}s', em);
-          fnDiagRecord('E', TAG, `ws error resolve ${em}`);
+          fnDiagRecord('E', TAG, `ws error resolve ${maskWsFailureMessage(em, httpBaseNoSlash)}`);
+          fnDiagSetState('lastWsFail', 'resolve-fail');
           finish({
             success: false,
             message: em.length > 0 ? em : fallbackMessage
@@ -721,6 +756,7 @@ async function fnWsLoginOnce(
               ws.send(fnWsStringifyEncryptedFrame(enc));
               step = 'waitLogin';
             } catch (e) {
+              fnDiagError(TAG, 'ws encrypt fail', e);
               finish({ success: false, message: `加密失败：${String(e)}` });
             }
           })();
@@ -809,6 +845,7 @@ async function fnWsLoginOnce(
               ws.send(frame);
               hilog.info(DOMAIN, TAG, '已发送 user.authToken（HMAC 前缀+JSON）');
             } catch (e) {
+              fnDiagError(TAG, 'ws authToken fail', e);
               finish({ success: false, message: `authToken 失败：${String(e)}` });
             }
           })();
@@ -817,6 +854,7 @@ async function fnWsLoginOnce(
             data.msg !== undefined && data.msg.length > 0
               ? data.msg
               : '登录失败（未返回 succ/token）';
+          fnDiagRecord('W', TAG, 'ws login no succ/token');
           finish({ success: false, message: m });
         }
       }
@@ -857,12 +895,15 @@ export async function fnWs2faVerify(
 ): Promise<FnWsLoginResult> {
   const code = otpCode.trim();
   if (!/^\d{6}$/.test(code)) {
+    fnDiagRecord('W', TAG, 'ws login param invalid:2fa_code');
     return { success: false, message: '验证码须为 6 位数字' };
   }
   if (accessToken.length === 0) {
+    fnDiagRecord('W', TAG, 'ws login param invalid:2fa_token');
     return { success: false, message: '缺少 2FA 挑战令牌，请重新登录' };
   }
   if (deviceId.trim().length === 0) {
+    fnDiagRecord('W', TAG, 'ws login param invalid:did');
     return { success: false, message: '缺少设备标识 did，请重新登录' };
   }
   const did = deviceId.trim();
@@ -874,6 +915,9 @@ export async function fnWs2faVerify(
     last = await fnWs2faVerifyOnce(
       httpBaseNoSlash, accessToken, code, trustDevice, isTrustedHost, did
     );
+    if (last.success === true) {
+      fnDiagSetState('login', 'ok');
+    }
     // 主机名 + 连接层失败：改用解析出的 IP 字面量再试一次（绕开不可用的 AAAA）
     if (!ipFallbackTried && isTrustedHost &&
       isConnectLevelFailure(last.message !== undefined ? last.message : '')) {
@@ -881,11 +925,12 @@ export async function fnWs2faVerify(
       if (ipBase.length > 0) {
         ipFallbackTried = true;
         const hostHeader = wsHostHeaderOf(httpBaseNoSlash);
-        hilog.info(DOMAIN, TAG, 'WS 2FA retry via IP literal %{public}s', ipBase);
-        fnDiagRecord('I', TAG, `WS 2FA retry via IP literal ${ipBase}`);
+        hilog.info(DOMAIN, TAG, 'WS 2FA retry via IP literal %{public}s', fnDiagMaskUrl(ipBase));
+        fnDiagRecord('I', TAG, `WS 2FA retry via IP literal ${fnDiagMaskUrl(ipBase)}`);
         const ipResult = await fnWs2faVerifyOnce(
           ipBase, accessToken, code, trustDevice, isTrustedHost, did, httpBaseNoSlash, hostHeader);
         if (ipResult.success === true) {
+          fnDiagSetState('login', 'ok');
           return ipResult;
         }
         last = ipResult;
@@ -922,7 +967,7 @@ async function fnWs2faVerifyOnce(
   // 拨号地址可以是 IP 字面量；Origin 仍用原始域名
   const originBase = originBaseNoSlash.length > 0 ? originBaseNoSlash : httpBaseNoSlash;
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
-  hilog.info(DOMAIN, TAG, 'WS 2FA verify %{public}s', wsUrl);
+  hilog.info(DOMAIN, TAG, 'WS 2FA verify %{public}s', fnDiagMaskUrl(wsUrl));
 
   return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
     let done = false;
@@ -941,6 +986,7 @@ async function fnWs2faVerifyOnce(
     };
 
     const timer = setTimeout((): void => {
+      fnDiagRecord('W', TAG, 'ws 2fa timeout');
       finish({ success: false, message: '双重验证超时' });
     }, WS_TIMEOUT_MS);
 
@@ -963,6 +1009,8 @@ async function fnWs2faVerifyOnce(
       void (async (): Promise<void> => {
         try {
           const info = await resolveWsFailure(httpBaseNoSlash, err, isTrustedHost, fallbackMessage);
+          fnDiagRecord('E', TAG, `ws error ${maskWsFailureMessage(info.message, httpBaseNoSlash)}`);
+          fnDiagSetState('lastWsFail', info.certificateError ? 'cert' : 'connect');
           finish({
             success: false,
             message: info.message,
@@ -970,6 +1018,8 @@ async function fnWs2faVerifyOnce(
           });
         } catch (e) {
           const em = describeWsError(e);
+          fnDiagError(TAG, 'ws 2fa error resolve', e);
+          fnDiagSetState('lastWsFail', 'resolve-fail');
           finish({ success: false, message: em.length > 0 ? em : fallbackMessage });
         }
       })();
@@ -981,17 +1031,20 @@ async function fnWs2faVerifyOnce(
 
     ws.on('message', (err: Error, value: string | ArrayBuffer) => {
       if (err !== undefined) {
+        fnDiagRecord('W', TAG, 'ws 2fa msg carry err');
         return;
       }
       const text = messageToString(value);
       const data = parseJsonSafe(text);
       if (data === null) {
+        fnDiagRecord('W', TAG, `ws msg parse fail step=${step}`);
         if (step === 'waitAuth' && pendingAfterAuth !== null) {
           finish({ success: false, message: 'authToken 响应不是有效 JSON' });
         }
         return;
       }
       if (data.errno !== undefined && data.errno !== 0) {
+        fnDiagRecord('W', TAG, `ws biz errno=${data.errno} step=${step}`);
         const m = data.msg !== undefined && data.msg.length > 0 ? data.msg : `错误码 ${data.errno}`;
         finish({ success: false, message: m });
         return;
@@ -1013,6 +1066,7 @@ async function fnWs2faVerifyOnce(
               ws.send(fnWsStringifyEncryptedFrame(enc));
               step = 'waitLogin';
             } catch (e) {
+              fnDiagError(TAG, 'ws encrypt fail', e);
               finish({ success: false, message: `加密失败：${String(e)}` });
             }
           })();
@@ -1081,6 +1135,7 @@ async function fnWs2faVerifyOnce(
               step = 'waitAuth';
               ws.send(frame);
             } catch (e) {
+              fnDiagError(TAG, 'ws authToken fail', e);
               finish({ success: false, message: `authToken 失败：${String(e)}` });
             }
           })();
@@ -1089,6 +1144,7 @@ async function fnWs2faVerifyOnce(
             data.msg !== undefined && data.msg.length > 0
               ? data.msg
               : '验证码错误或已过期';
+          fnDiagRecord('W', TAG, 'ws login no succ/token');
           finish({ success: false, message: m });
         }
       }

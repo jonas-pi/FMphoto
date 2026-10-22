@@ -6,10 +6,13 @@ import { AppSession } from '../auth/AppSession';
 import { BackgroundKeepAliveController } from '../background/BackgroundKeepAliveController';
 import { FnTransferDirection, fnTransferDirectionLabel } from '../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { fileNameFromPickerUri } from './GalleryAutoSyncPicker';
 import { GalleryAutoSyncStore } from './GalleryAutoSyncStore';
 import { GalleryTimelineRefreshStore } from './GalleryTimelineRefreshStore';
 import { uploadLocalMediaUri } from './GalleryLiveSyncPayload';
+
+const TAG: string = 'FnUpload';
 
 export type GalleryUriUploadToast = (msg: string) => void;
 export type GalleryUriUploadOnSuccess = () => void;
@@ -51,9 +54,13 @@ export function galleryStartUriListUpload(
           if (res.success) {
             ok++;
             GalleryAutoSyncStore.markSynced([uri]);
-          } else if (firstFailMsg.length === 0) {
+          } else {
             const em = res.message ?? '';
-            firstFailMsg = em.length > 0 ? em : `${doneVerb}失败`;
+            // 逐项失败原因不能只留首条，否则后续失败完全不可见。
+            fnDiagRecord('E', TAG, `upload item failed ${em.substring(0, 80)}`);
+            if (firstFailMsg.length === 0) {
+              firstFailMsg = em.length > 0 ? em : `${doneVerb}失败`;
+            }
           }
         }
       });
