@@ -7,6 +7,11 @@ on:
       - "v*"
   # 允许手动触发，便于补发历史版本资产
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补发的版本标签，例如 v1.4.2.12'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,6 +22,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # 需要完整历史与全部标签：用于算出「上一个版本」和 Full Changelog 对比链接。
+          # 默认的浅克隆只带触发 ref，git tag 看不到其它标签，链接会退回到 v1.0.10。
+          fetch-depth: 0
+          # 手动补发时按输入的标签取树；推标签时取触发 ref
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Ensure HAP exists
         shell: bash
@@ -33,7 +44,7 @@ jobs:
         id: changelog
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
           VER="${TAG#v}"
           BODY="$(bash scripts/extract-changelog-section.sh "$VER")"
           if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
@@ -57,6 +68,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # 仅上传未签名包；签名包与密钥严禁上传
+          # 手动补发时发布到输入的标签，推标签时发布到触发标签
+          tag_name: ${{ inputs.tag || github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
           files: |
             entry/build/default/outputs/default/entry-default-unsigned.hap
@@ -64,4 +77,4 @@ jobs:
           generate_release_notes: false
           overwrite_files: true
           # 标签名含 beta / rc 时标记为预发布
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, 'beta') || contains(inputs.tag || github.ref_name, 'rc') }}
