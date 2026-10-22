@@ -113,6 +113,9 @@ export function runAutoSyncInBackground(
       const backupPrefs = getAlbumBackupSettingsCached();
       // 按本机来源相册名建 NAS 同名相册：仅在开关打开时做，失败不影响照片本身入库
       const archiveToAlbums = backupPrefs.syncCreateAlbum;
+      // 客户端指定目录的档位（按拍摄日期 / 按设备文件夹 / 保存在一个文件夹下）：
+      // 不走服务端 notice，照片 id 需等 NAS 扫盘，因此当次无法归档相册。
+      const clientDirMode = backupPrefs.folderManageMode !== 1;
       const albumPending: Map<string, string[]> = new Map<string, string[]>();
       let albumDirHint: string | undefined = undefined;
       if (backupPrefs.deviceBackupPath.trim().length > 0) {
@@ -157,10 +160,11 @@ export function runAutoSyncInBackground(
                           bucket.push(uploadedId);
                         }
                       } else if (albumKey.length > 0) {
-                        // 上传成功但拿不到 photoId（例如「已存在」的重复入库响应里没有 id）：
-                        // 这张照片没法归档，计数进摘要，避免「同步完成」却悄悄漏归档
+                        // 拿不到 photoId：要么是「已存在」的重复入库，要么是客户端指定目录的档位
+                        // （文件已落盘、照片 id 要等 NAS 扫盘才生成）。两种都没法归档，计数进摘要。
                         albumNotArchived++;
-                        hilog.info(DOMAIN, TAG, 'archive skipped no-photoId role=%{public}s', photo.role);
+                        hilog.info(DOMAIN, TAG, 'archive skipped no-photoId role=%{public}s clientDir=%{public}s',
+                          photo.role, forceDir ? '1' : '0');
                       }
                     }
                     const put = new LedgerPut();
@@ -223,6 +227,10 @@ export function runAutoSyncInBackground(
         });
       } finally {
         summary = ok > 0 ? `同步完成 ${ok}/${photos.length}` : (failMsg.length > 0 ? failMsg : '同步失败');
+        if (ok > 0 && clientDirMode) {
+          // 模式 2/3/4：文件按客户端算的目录落盘，入库与照片 id 等 NAS 扫盘
+          summary = `${summary}，已落盘，待 NAS 扫描入库`;
+        }
         if (albumNotArchived > 0) {
           summary = `${summary}，${albumNotArchived} 张未归档到相册`;
         }

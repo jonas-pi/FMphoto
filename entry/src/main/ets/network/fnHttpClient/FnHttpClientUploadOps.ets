@@ -991,7 +991,13 @@ export class FnHttpClientUploadOps {
     // forceDirHint：备份目录偏好不是「默认」时，必须用客户端按偏好算出来的目录，
     // 不能被 NAS 的 upload/path 提示（形如 <库根>/PhotoLibrary/YYYY/MM）覆盖。
     if (!forceDirHint) {
-      pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+      // 「默认」档走官方流程：先落到 <备份位置>/.@#local 中转目录，再由 notice 让 NAS 归档。
+      const stagingDir = albumUploadDirHint !== undefined ? albumUploadDirHint.trim() : '';
+      if (stagingDir.length > 0) {
+        pathHintBeforeUpload = `${stagingDir}/.@#local`;
+      } else {
+        pathHintBeforeUpload = await this.requestUploadPathHint(fileName, Math.min(15000, timeoutMs));
+      }
     }
     if (pathHintBeforeUpload.length === 0 && albumUploadDirHint !== undefined) {
       const d = albumUploadDirHint.trim();
@@ -1199,6 +1205,15 @@ export class FnHttpClientUploadOps {
       try {
         req.destroy();
       } catch (_e) {}
+    }
+    // 客户端指定目录的档位（按拍摄日期 / 按设备文件夹 / 保存在一个文件夹下）：
+    // 文件已经被 Trim-Path 直接写到最终目录，不在 <库根>/.@#local 中转目录里，
+    // 服务端 notice 找不到文件只会回 system busy，重试无用 → 直接跳过 notice。
+    // 代价：照片 id 要等 NAS 扫盘才生成，因此这条路径不能在上传当下建相册。
+    if (forceDirHint) {
+      hilog.warn(DOMAIN, TAG, '[upload] client-dir mode, notice skipped');
+      fnDiagRecord('I', TAG, 'upload landed to client dir, notice skipped');
+      return { success: true, message: '已落盘，待 NAS 扫描入库', uploadedPhotoId: '' };
     }
     const noticeTimeout = Math.min(30000, timeoutMs);
     const pathHintFromUpload = FnHttpClientUploadOps.firstUploadPathFromResponse(uploadRespText);
