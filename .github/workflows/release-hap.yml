@@ -43,8 +43,12 @@ jobs:
       - name: Extract changelog from CHANGELOG.md
         id: changelog
         shell: bash
+        env:
+          # 手动补发时用输入的标签，推标签时用触发标签。
+          # 显式经 env 传入最稳妥：workflow_dispatch 的输入不会自动变成 INPUT_* 环境变量。
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          TAG="${RELEASE_TAG}"
           VER="${TAG#v}"
           BODY="$(bash scripts/extract-changelog-section.sh "$VER")"
           if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
