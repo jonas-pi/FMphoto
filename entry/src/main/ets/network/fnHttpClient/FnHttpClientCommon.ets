@@ -183,6 +183,137 @@ export interface NetErrorLike {
   message?: string;
 }
 
+/** DNS 解析失败错误码（NetStack） */
+export const DNS_FAIL_CODE: number = 2300006;
+
+/** 异常拆解结果 */
+export interface FnNetErrorParts {
+  code: number;
+  message: string;
+}
+
+/**
+ * 把 NetStack / ArkTS 异常统一拆成 {code, message}。
+ *
+ * ArkTS 的网络异常是 BusinessError（不是 Error 实例），直接 String(e) 只会得到
+ * "[object Object]"，错误码会整个丢掉 —— 必须显式取 code / message 字段。
+ */
+export function fnNetErrorParts(e: Object | Error | string | undefined | null): FnNetErrorParts {
+  const out: FnNetErrorParts = { code: 0, message: '' };
+  if (e === undefined || e === null) {
+    return out;
+  }
+  if (typeof e === 'string') {
+    out.message = e.trim();
+    return out;
+  }
+  if (e instanceof Error) {
+    const m = e.message !== undefined ? e.message : (e.name !== undefined ? e.name : '');
+    out.message = m.trim();
+    return out;
+  }
+  const rec = e as Record<string, Object | undefined>;
+  const c = rec['code'];
+  if (typeof c === 'number' && Number.isFinite(c)) {
+    out.code = Math.floor(c);
+  } else if (typeof c === 'string' && c.trim().length > 0) {
+    const n = parseInt(c.trim(), 10);
+    if (!isNaN(n)) {
+      out.code = n;
+    }
+  }
+  const keys: string[] = ['message', 'msg', 'reason', 'errMsg', 'description'];
+  for (let i = 0; i < keys.length; i++) {
+    const v = rec[keys[i]];
+    if (typeof v === 'string' && v.trim().length > 0) {
+      out.message = v.trim();
+      break;
+    }
+  }
+  if (out.message.length === 0) {
+    try {
+      const j = JSON.stringify(e);
+      if (j !== undefined && j !== '{}') {
+        out.message = j;
+      }
+    } catch (_e) {
+    }
+  }
+  return out;
+}
+
+/**
+ * 面向用户的一句话。
+ *
+ * fallback 只在真的取不到任何信息时才用 —— 不要写成 `fnNetErrorText(e, fallback`，
+ * 那样对 BusinessError 恒为真，兜底文案永远不触发，用户只会看到 "[object Object]"。
+ */
+export function fnNetErrorText(e: Object | Error | string | undefined | null, fallback: string): string {
+  const p = fnNetErrorParts(e);
+  if (p.code === DNS_FAIL_CODE) {
+    return '无法解析服务器域名（DNS 失败）';
+  }
+  if (CERT_CODES.indexOf(p.code) >= 0) {
+    return '服务器证书不可信';
+  }
+  if (p.message.length === 0) {
+    return fallback;
+  }
+  return p.code !== 0 ? `${p.message}（错误码 ${p.code}）` : p.message;
+}
+
+/**
+ * HTTP 状态码 → 人话。飞牛语境下同一个码有多种成因，给用户方向而不是裸数字。
+ */
+export function fnHttpStatusMessage(code: number): string {
+  if (code === 401) {
+    return '登录已过期，请重新登录';
+  }
+  if (code === 403) {
+    return 'NAS 拒绝了该请求（常见原因：存储空间不足、目录权限不足、目录路径不合法）';
+  }
+  if (code === 404) {
+    return '接口不存在（NAS 版本可能不兼容）';
+  }
+  if (code === 407) {
+    return '需要代理认证';
+  }
+  if (code === 429) {
+    return '请求过于频繁，请稍后再试';
+  }
+  if (code >= 500) {
+    return `NAS 服务异常（HTTP ${code}）`;
+  }
+  return `HTTP ${code}`;
+}
+
+/** 飞牛业务码 → 人话（已收录的给明确说法，未收录的保留原文）。 */
+export function fnBizCodeMessage(code: number, fallback: string): string {
+  if (code === 4014) {
+    return '同名相册已存在';
+  }
+  if (code === 5000) {
+    return '签名错误';
+  }
+  if (code === 403) {
+    return '权限不足';
+  }
+  if (code === 401) {
+    return '登录已过期，请重新登录';
+  }
+  return fallback;
+}
+
+/** 带错误码的网络异常：抛给上层后 code 仍然可读（不要用 new Error(String(e)) 丢掉它）。 */
+export class FnNetRequestError extends Error {
+  code: number = 0;
+
+  constructor(message: string, code: number) {
+    super(message);
+    this.code = code;
+  }
+}
+
 export interface GalleryAssetSignParts {
   signPath: string;
   queryParams: Record<string, string | number | boolean>;

@@ -25,6 +25,9 @@ import {
   decodeUriPartSafely,
   encodeTrimPath,
   escapeJsonString,
+  fnHttpStatusMessage,
+  fnNetErrorParts,
+  fnNetErrorText,
   lastUnixPathSegment,
   localDayRangeByYmd,
   localDayRangeNow,
@@ -36,6 +39,17 @@ import {
 } from './FnHttpClientCommon';
 import { FnHttpClientUploadHost } from './FnHttpClientTypes';
 import { FnClientResult, GalleryListItem } from '../../model/FnApiTypes';
+
+/**
+ * 单次上传尝试的失败记录。
+ * kind: 'http' = 服务端返回非 2xx；'biz' = 2xx 但业务 code≠0；'exception' = 连接层异常。
+ */
+export interface UploadAttemptFail {
+  origin: string;
+  kind: string;
+  httpCode: number;
+  detail: string;
+}
 
 /**
  * 同步读整文件放到 TaskPool，避免主线程 openSync/readSync 冻 UI。
@@ -425,6 +439,34 @@ export class FnHttpClientUploadOps {
   private static uploadBodyLooksLikeSpa(body: string): boolean {
     const head = body.trimStart().substring(0, 64).toLowerCase();
     return head.startsWith('<!doctype') || head.startsWith('<html');
+  }
+
+  /**
+   * 从非 2xx 响应头里挑出可能带错误码的项（不记录 Cookie/Token 等敏感值）。
+   * 403 在飞牛有多重成因，响应头若带 errno 之类就能进一步定位。
+   */
+  private static errorHeaderHint(headers: Object): string {
+    const out: string[] = [];
+    try {
+      const rec = headers as Record<string, Object | undefined>;
+      const keys: string[] = Object.keys(rec);
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i].toLowerCase();
+        if (k.indexOf('cookie') >= 0 || k.indexOf('token') >= 0 || k.indexOf('auth') >= 0 ||
+          k.indexOf('session') >= 0) {
+          continue;
+        }
+        if (k.indexOf('err') >= 0 || k.indexOf('code') >= 0 || k.indexOf('reason') >= 0 ||
+          k.indexOf('message') >= 0 || k.indexOf('status') >= 0) {
+          const v = rec[keys[i]];
+          if (typeof v === 'string' && v.length > 0) {
+            out.push(`${keys[i]}=${v.substring(0, 60)}`);
+          }
+        }
+      }
+    } catch (_e) {
+    }
+    return out.join('; ');
   }
 
   /** 飞牛相册入库锁被占用时的文案。这时换请求体没有用，只能等锁放开再发同一份。 */
@@ -853,9 +895,9 @@ export class FnHttpClientUploadOps {
           }
           const okRes: UploadNoticeResult = { ok: true, message: '', photoId: noticePhotoId };
           return okRes;
-        } catch (_e) {
-          lastMsg = 'notice 请求异常';
-          fnDiagRecord('W', TAG, 'notice request exception');
+        } catch (e) {
+          lastMsg = fnNetErrorText(e, 'notice 请求异常');
+          fnDiagError(TAG, 'notice request exception', e);
           break;
         }
       }
@@ -1050,6 +1092,13 @@ export class FnHttpClientUploadOps {
       let softUploadAccepted = false;
       let lastCookieForLog = '';
       let lastUploadUrl = '';
+      /**
+       * 逐次尝试的失败清单。
+       * 之前只留 lastHttpCode/lastDetail（且不按 origin 重置），语义是"最后一次尝试"，
+       * 真实首因（通常是内网 origin 的连接异常）会被后面 origin 的状态码整个覆盖，
+       * 用户和排查者都只能看到最后那个 origin 的码。
+       */
+      const attemptFails: UploadAttemptFail[] = [];
       outerUpload:
       for (let bi = 0; bi < uploadOrigins.length; bi++) {
         const originBase = uploadOrigins[bi];
@@ -1121,8 +1170,12 @@ export class FnHttpClientUploadOps {
           try {
             rawResp = await req.request(uploadUrl, opt);
           } catch (e) {
-            lastDetail = String(e);
-            fnDiagRecord('W', TAG, `upload origin fail url=${fnDiagMaskUrl(uploadUrl)} ${lastDetail.substring(0, 160)}`);
+            // NetStack 异常是 BusinessError，直接 String(e) 只有 "[object Object]"，错误码会丢。
+            const parts = fnNetErrorParts(e);
+            const detail = parts.message.length > 0 ? parts.message : '连接异常';
+            attemptFails.push({ origin: originBase, kind: 'exception', httpCode: 0, detail: detail });
+            lastDetail = detail;
+            fnDiagError(TAG, `upload origin fail url=${fnDiagMaskUrl(uploadUrl)} code=${parts.code}`, e);
             break;
           }
           const code = Number(rawResp.responseCode);
@@ -1139,10 +1192,25 @@ export class FnHttpClientUploadOps {
                 lastDetail = uploadRespText.length > 120 ? `${uploadRespText.substring(0, 120)}...` : uploadRespText;
               }
             }
+            attemptFails.push({
+              origin: originBase,
+              kind: 'http',
+              httpCode: code,
+              detail: lastDetail
+            });
+            if (code === 403) {
+              // 403 在飞牛有多重成因（空间不足 / 目录权限 / 目录路径不合法 / Cookie 被精简），
+              // 响应头里若带 errno 之类就留个证据，便于进一步定位到底是哪一种。
+              const hint = FnHttpClientUploadOps.errorHeaderHint(rawResp.header);
+              if (hint.length > 0) {
+                fnDiagRecord('W', TAG, `upload 403 header hint ${hint}`);
+              }
+            }
             continue;
           }
           if (FnHttpClientUploadOps.uploadBodyLooksLikeSpa(uploadRespText)) {
             lastDetail = '上传接口返回了网页';
+            attemptFails.push({ origin: originBase, kind: 'http', httpCode: code, detail: lastDetail });
             fnDiagRecord('W', TAG, `upload spa shell url=${fnDiagMaskUrl(uploadUrl)} http=${code}`);
             break;
           }
@@ -1156,6 +1224,7 @@ export class FnHttpClientUploadOps {
                 if (low.indexOf('update failed') >= 0) {
                   softUploadAccepted = true;
                 }
+                attemptFails.push({ origin: originBase, kind: 'biz', httpCode: code, detail: lastDetail });
                 continue;
               }
             } catch (_e) {
@@ -1173,32 +1242,70 @@ export class FnHttpClientUploadOps {
         } else {
           const bodyPrev =
             uploadRespText.length > 256 ? `${uploadRespText.substring(0, 256)}…` : uploadRespText;
+          // 主因优先取"服务端给的判定"（HTTP 非 2xx / 业务错误），
+          // 没有才取连接层异常 —— 服务端的判定才是可执行的原因。
+          let primary: UploadAttemptFail | undefined = undefined;
+          for (let i = 0; i < attemptFails.length; i++) {
+            if (attemptFails[i].kind !== 'exception') {
+              primary = attemptFails[i];
+              break;
+            }
+          }
+          if (primary === undefined && attemptFails.length > 0) {
+            primary = attemptFails[0];
+          }
+          const attemptSummary = attemptFails
+            .map((f: UploadAttemptFail): string => {
+              const one = f.kind === 'exception'
+                ? '连接异常'
+                : (f.kind === 'biz' ? `业务错误${f.detail.length > 0 ? ':' + f.detail : ''}` : `HTTP${f.httpCode}`);
+              return `${fnDiagMaskUrl(f.origin)}=${one}`;
+            })
+            .join('|');
+          fnDiagRecord('W', TAG, `upload POST failed attempts=${attemptSummary}`);
           hilog.warn(
             DOMAIN,
             TAG,
-            '[upload] POST /upload failed url=%{public}s http=%{public}d detail=%{public}s trimPathLen=%{public}d sign×origins=%{public}d×%{public}d cookie(redacted)=%{public}s bodyLen=%{public}d',
+            '[upload] POST /upload failed url=%{public}s http=%{public}d detail=%{public}s trimPathLen=%{public}d sign×origins=%{public}d×%{public}d cookie(redacted)=%{public}s bodyLen=%{public}d attempts=%{public}s',
             lastUploadUrl.length > 0 ? fnDiagMaskUrl(lastUploadUrl) : '(none)',
-            lastHttpCode,
-            lastDetail.length > 0 ? lastDetail : '(none)',
+            primary !== undefined ? primary.httpCode : lastHttpCode,
+            primary !== undefined ? primary.detail : (lastDetail.length > 0 ? lastDetail : '(none)'),
             encodedTrimPath.length,
             allSigns.length,
             uploadOrigins.length,
             redactCookieHeaderForLog(lastCookieForLog),
-            bodyPrev.length
+            bodyPrev.length,
+            attemptSummary.length > 0 ? attemptSummary : '(none)'
           );
-          fnDiagRecord('W', TAG,
-            `upload POST failed http=${lastHttpCode} ${lastDetailIsRawBody ? '' : lastDetail} bodyLen=${bodyPrev.length}`);
+          let msg = '上传失败';
+          if (primary !== undefined) {
+            if (primary.kind === 'exception') {
+              msg = `上传失败：连接 ${fnDiagMaskUrl(primary.origin)} 出错（${primary.detail}）`;
+            } else if (primary.kind === 'biz') {
+              msg = `上传失败：${primary.detail.length > 0 ? primary.detail : 'NAS 拒绝了该请求'}`;
+            } else {
+              msg = `上传失败 ${fnHttpStatusMessage(primary.httpCode)}`;
+              if (primary.detail.length > 0) {
+                msg += `：${primary.detail}`;
+              }
+            }
+            if (attemptFails.length > 1) {
+              msg += `（另有 ${attemptFails.length - 1} 次其它地址尝试失败，详见诊断日志）`;
+            }
+          } else {
+            msg = `上传失败 ${fnHttpStatusMessage(lastHttpCode)}`;
+          }
           return {
             success: false,
-            message: lastDetail.length > 0 ? `上传失败 HTTP ${lastHttpCode}：${lastDetail}` : `上传失败 HTTP ${lastHttpCode}`
+            message: msg
           };
         }
       }
     } catch (e) {
-      const em = String(e);
+      const em = fnNetErrorText(e, '上传请求异常');
       hilog.warn(DOMAIN, TAG, '[upload] exception %{public}s', em.length > 0 ? em : 'unknown');
       const safeEm = em.split(oneUri).join('<local-uri>');
-      fnDiagRecord('W', TAG, `upload exception ${safeEm.length > 0 ? safeEm.substring(0, 160) : 'unknown'}`);
+      fnDiagError(TAG, `upload exception ${safeEm.length > 0 ? safeEm.substring(0, 160) : 'unknown'}`, e);
       return { success: false, message: em.length > 0 ? em : '上传请求异常' };
     } finally {
       this.unregisterPendingRequest(req);

@@ -10,6 +10,8 @@ import {
   RECYCLE_BIN_LIST_SIGN_PATH,
   TAG,
   escapeJsonString,
+  fnHttpStatusMessage,
+  fnNetErrorText,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
@@ -98,7 +100,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
             CertPolicy.isTrusted(activeBase)
           );
           if (raw.code < 200 || raw.code >= 300) {
-            lastMsg = `HTTP ${raw.code}`;
+            lastMsg = fnHttpStatusMessage(raw.code);
             continue;
           }
           let parsed: Record<string, string | number | Object | undefined>;
@@ -120,13 +122,13 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
             }
           }
         } catch (e) {
-          lastMsg = String(e) || '删除请求异常';
+          lastMsg = fnNetErrorText(e, '删除请求异常');
         }
       }
       return { success: false, message: lastMsg };
     } catch (e) {
       fnDiagError(TAG, 'addPhotoToRecycleBin exception', e);
-      return { success: false, message: String(e) || '删除请求异常' };
+      return { success: false, message: fnNetErrorText(e, '删除请求异常') };
     }
   }
 
@@ -176,7 +178,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
             CertPolicy.isTrusted(activeBase)
           );
           if (raw.code < 200 || raw.code >= 300) {
-            lastMsg = `HTTP ${raw.code}`;
+            lastMsg = fnHttpStatusMessage(raw.code);
             continue;
           }
           let parsed: Record<string, string | number | Object | undefined>;
@@ -198,13 +200,13 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
             }
           }
         } catch (e) {
-          lastMsg = String(e) || '收藏请求异常';
+          lastMsg = fnNetErrorText(e, '收藏请求异常');
         }
       }
       return { success: false, message: lastMsg };
     } catch (e) {
       fnDiagError(TAG, 'postPreviewCollect exception', e);
-      return { success: false, message: String(e) || '收藏请求异常' };
+      return { success: false, message: fnNetErrorText(e, '收藏请求异常') };
     }
   }
 
@@ -254,7 +256,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
             CertPolicy.isTrusted(activeBase)
           );
           if (raw.code < 200 || raw.code >= 300) {
-            lastMsg = `HTTP ${raw.code}`;
+            lastMsg = fnHttpStatusMessage(raw.code);
             continue;
           }
           let parsed: Record<string, string | number | Object | undefined>;
@@ -277,13 +279,13 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
             }
           }
         } catch (e) {
-          lastMsg = String(e) || '取消收藏请求异常';
+          lastMsg = fnNetErrorText(e, '取消收藏请求异常');
         }
       }
       return { success: false, message: lastMsg };
     } catch (e) {
       fnDiagError(TAG, 'postPreviewCollectCancel exception', e);
-      return { success: false, message: String(e) || '取消收藏请求异常' };
+      return { success: false, message: fnNetErrorText(e, '取消收藏请求异常') };
     }
   }
 
@@ -324,7 +326,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -339,7 +341,7 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
       return { success: false, message: errLine.length > 0 ? errLine : '恢复失败' };
     } catch (e) {
       fnDiagError(TAG, 'restoreRecycleBinPhotos exception', e);
-      return { success: false, message: String(e) || '恢复请求异常' };
+      return { success: false, message: fnNetErrorText(e, '恢复请求异常') };
     }
   }
 }

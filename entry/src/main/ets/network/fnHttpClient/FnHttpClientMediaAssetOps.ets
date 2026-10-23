@@ -12,6 +12,8 @@ import {
   GalleryAssetSignParts,
   TAG,
   escapeJsonString,
+  fnHttpStatusMessage,
+  fnNetErrorText,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost, VideoDecodePlayInfo, VideoDecodePlayRequest } from './FnHttpClientTypes';
 import { FnClientResult } from '../../model/FnApiTypes';
@@ -432,7 +434,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -455,7 +457,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         data: { playUrl: resolved, hlsTimeSec: hls }
       };
     } catch (e) {
-      return { success: false, message: String(e) || '转码请求异常' };
+      return { success: false, message: fnNetErrorText(e, '转码请求异常') };
     }
   }
 
@@ -491,7 +493,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -505,7 +507,7 @@ export class FnHttpClientMediaAssetOps extends FnHttpClientGalleryRequest {
       }
       return { success: false, message: FnHttpClientGalleryRequest.envelopeErrorLine(parsed) || 'quit 业务失败' };
     } catch (e) {
-      return { success: false, message: String(e) || 'quit 请求异常' };
+      return { success: false, message: fnNetErrorText(e, 'quit 请求异常') };
     }
   }
 

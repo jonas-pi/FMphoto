@@ -757,7 +757,7 @@ async function fnWsLoginOnce(
               step = 'waitLogin';
             } catch (e) {
               fnDiagError(TAG, 'ws encrypt fail', e);
-              finish({ success: false, message: `加密失败：${String(e)}` });
+              finish({ success: false, message: `加密失败：${describeWsError(e)}` });
             }
           })();
         }
@@ -846,7 +846,7 @@ async function fnWsLoginOnce(
               hilog.info(DOMAIN, TAG, '已发送 user.authToken（HMAC 前缀+JSON）');
             } catch (e) {
               fnDiagError(TAG, 'ws authToken fail', e);
-              finish({ success: false, message: `authToken 失败：${String(e)}` });
+              finish({ success: false, message: `authToken 失败：${describeWsError(e)}` });
             }
           })();
         } else {
@@ -1067,7 +1067,7 @@ async function fnWs2faVerifyOnce(
               step = 'waitLogin';
             } catch (e) {
               fnDiagError(TAG, 'ws encrypt fail', e);
-              finish({ success: false, message: `加密失败：${String(e)}` });
+              finish({ success: false, message: `加密失败：${describeWsError(e)}` });
             }
           })();
         }
@@ -1136,7 +1136,7 @@ async function fnWs2faVerifyOnce(
               ws.send(frame);
             } catch (e) {
               fnDiagError(TAG, 'ws authToken fail', e);
-              finish({ success: false, message: `authToken 失败：${String(e)}` });
+              finish({ success: false, message: `authToken 失败：${describeWsError(e)}` });
             }
           })();
         } else {

@@ -1,6 +1,7 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
-import { fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError } from '../common/FnDiagLog';
+import { FnNetRequestError, fnNetErrorParts, fnNetErrorText } from './fnHttpClient/FnHttpClientCommon';
 import { sha256DigestSafe } from './AuthxSigner';
 
 function utf8Encode(str: string): Uint8Array {
@@ -39,8 +40,9 @@ function base64ToUint8(str: string): Uint8Array {
 let reqSeq = 1;
 
 function rethrowCryptoError(scope: string, e: Object): never {
-  fnDiagRecord('E', 'FnWsCrypto', `${scope} failed`);
-  throw new Error(`${scope} failed: ${String(e)}`);
+  // 用 fnDiagError（第三参会序列化 BusinessError），否则诊断日志里只有 "[object Object]"
+  fnDiagError('FnWsCrypto', `${scope} failed`, e);
+  throw new FnNetRequestError(`${scope} failed: ${fnNetErrorText(e, 'unknown')}`, fnNetErrorParts(e).code);
 }
 
 export function fnWsMakeReqId(backId: string): string {

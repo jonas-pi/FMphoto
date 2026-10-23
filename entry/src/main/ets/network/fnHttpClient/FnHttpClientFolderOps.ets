@@ -16,6 +16,8 @@ import {
   PHOTO_FOLDER_LIST_SIGN_PATH,
   TAG,
   escapeJsonString,
+  fnHttpStatusMessage,
+  fnNetErrorText,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
@@ -75,7 +77,7 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
       return { success: true, data: data };
     } catch (e) {
       fnDiagError(TAG, 'photoFolderList exception', e);
-      return { success: false, message: String(e) || '文件夹列表加载异常' };
+      return { success: false, message: fnNetErrorText(e, '文件夹列表加载异常') };
     }
   }
 
@@ -122,7 +124,7 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
       return { success: true, data: data };
     } catch (e) {
       fnDiagError(TAG, 'folderViewFolderList exception', e);
-      return { success: false, message: String(e) || '文件夹列表加载异常' };
+      return { success: false, message: fnNetErrorText(e, '文件夹列表加载异常') };
     }
   }
 
@@ -167,7 +169,7 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -233,7 +235,7 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
       return { success: true, data: data };
     } catch (e) {
       fnDiagError(TAG, 'folderViewCover exception', e);
-      return { success: false, message: String(e) || '文件夹封面加载异常' };
+      return { success: false, message: fnNetErrorText(e, '文件夹封面加载异常') };
     }
   }
 
@@ -323,7 +325,7 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -338,7 +340,7 @@ export class FnHttpClientFolderOps extends FnHttpClientGalleryRequest {
       return { success: false, message: errLine.length > 0 ? errLine : '删除失败' };
     } catch (e) {
       fnDiagError(TAG, 'deleteFolderOrFile exception', e);
-      return { success: false, message: String(e) || '删除请求异常' };
+      return { success: false, message: fnNetErrorText(e, '删除请求异常') };
     }
   }
 

@@ -5,9 +5,10 @@
  */
 import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagMaskId, fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagMaskId, fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
 import { generateRandomDigits, md5HexUtf8, sha256DigestSafe } from './AuthxSigner';
 import { FN_DEFAULT_PORT_HTTP, FN_DEFAULT_PORT_HTTPS, normalizeServerUrl } from './ServerUrl';
+import { fnNetErrorText } from './fnHttpClient/FnHttpClientCommon';
 
 const DOMAIN = 0xFF00;
 const TAG = 'FnConnect';
@@ -661,9 +662,11 @@ export async function lookupFnConnect(fnId: string, useHttps: boolean): Promise<
       summary
     };
   } catch (e) {
-    hilog.error(DOMAIN, TAG, 'lookup failed: %{public}s', String(e));
-    fnDiagRecord('E', TAG, `lookup failed ${String(e)}`);
-    return fallbackFnosNet(id, useHttps, `FN Connect 请求失败：${String(e)}`);
+    // NetStack 异常是 BusinessError，String(e) 只有 "[object Object]"，DNS/超时等原因会整个丢掉。
+    const em = fnNetErrorText(e, '网络请求失败');
+    hilog.error(DOMAIN, TAG, 'lookup failed: %{public}s', em);
+    fnDiagError(TAG, `lookup failed ${em}`, e);
+    return fallbackFnosNet(id, useHttps, `FN Connect 请求失败：${em}`);
   } finally {
     try {
       req.destroy();

@@ -17,6 +17,8 @@ import {
   SEARCH_FILTERLIST_PATH_CANDIDATES,
   SEARCH_FILTERLIST_SIGN_PATH,
   TAG,
+  fnHttpStatusMessage,
+  fnNetErrorText,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
@@ -113,7 +115,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -130,7 +132,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: true, data: parsed['data'] as MagicSearchData };
     } catch (e) {
       fnDiagError(TAG, 'magicSearch exception', e);
-      return { success: false, message: String(e) || '搜索请求异常' };
+      return { success: false, message: fnNetErrorText(e, '搜索请求异常') };
     }
   }
 
@@ -167,7 +169,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: true, data: { list: list as MagicSearchItem[] } };
     } catch (e) {
       fnDiagError(TAG, 'magicSearchSimilar exception', e);
-      return { success: false, message: String(e) || '相似搜索异常' };
+      return { success: false, message: fnNetErrorText(e, '相似搜索异常') };
     }
   }
 
@@ -194,7 +196,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: true, data: FnHttpClientGalleryRequest.parseSearchFilterListData(res.data) };
     } catch (e) {
       fnDiagError(TAG, 'searchFilterList exception', e);
-      return { success: false, message: String(e) || '筛选项加载异常' };
+      return { success: false, message: fnNetErrorText(e, '筛选项加载异常') };
     }
   }
 
@@ -287,7 +289,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: true, data: merged };
     } catch (e) {
       fnDiagError(TAG, 'searchResultsByFilters exception', e);
-      return { success: false, message: String(e) || '筛选搜索异常' };
+      return { success: false, message: fnNetErrorText(e, '筛选搜索异常') };
     }
   }
 
@@ -464,7 +466,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: false, message: '分类结果为空' };
     } catch (e) {
       fnDiagError(TAG, 'searchResultsByCategory exception', e);
-      return { success: false, message: String(e) || '分类检索异常' };
+      return { success: false, message: fnNetErrorText(e, '分类检索异常') };
     }
   }
 
@@ -534,7 +536,7 @@ export class FnHttpClientSearchOps extends FnHttpClientGalleryRequest {
       return { success: false, message: '地点结果为空' };
     } catch (e) {
       fnDiagError(TAG, 'searchResultsByLocation exception', e);
-      return { success: false, message: String(e) || '地点检索异常' };
+      return { success: false, message: fnNetErrorText(e, '地点检索异常') };
     }
   }
 

@@ -23,10 +23,15 @@ import {
   DEFAULT_TIMEOUT,
   DOMAIN,
   FN_OPENAPI_PREFIX,
+  FnNetRequestError,
   MAX_REDIRECTS,
   NetErrorLike,
   RawHttpResult,
   TAG,
+  fnHttpStatusMessage,
+  fnBizCodeMessage,
+  fnNetErrorParts,
+  fnNetErrorText,
   getHeader,
   isRedirectCode,
   mergePostBody,
@@ -407,7 +412,11 @@ export class FnHttpClient {
 
   /** 异常摘要：截短后落日志，避免超长报文（含地址）写进诊断日志。 */
   private static errText(e: Object | Error | string | undefined | null): string {
-    const t = (e !== undefined && e !== null ? String(e) : '').trim();
+    const p = fnNetErrorParts(e);
+    let t = '';
+    if (p.message.length > 0) {
+      t = p.code !== 0 ? `${p.message} (code: ${p.code})` : p.message;
+    }
     return t.length > 100 ? t.substring(0, 100) : t;
   }
 
@@ -519,7 +528,7 @@ export class FnHttpClient {
             FnHttpClient.galleryFailBodyHint(raw.body, `GET ${activePath} HTTP ${raw.code}`);
             return {
               success: false,
-              message: `HTTP ${raw.code}`,
+              message: fnHttpStatusMessage(raw.code),
               errorBodyPreview: FnHttpClient.galleryErrorBodyPreview(raw.body)
             };
           }
@@ -564,7 +573,7 @@ export class FnHttpClient {
           if (!FnHttpClient.galleryEnvelopeBizOk(parsed)) {
             const showCode = FnHttpClient.envelopeCodeNum(parsed);
             FnHttpClient.galleryFailBodyHint(raw.body, `GET ${activePath} biz ${showCode}`);
-            const em = errLine.length > 0 ? errLine : `业务错误 ${showCode}`;
+            const em = errLine.length > 0 ? errLine : fnBizCodeMessage(showCode, `业务错误 ${showCode}`);
             let preview = FnHttpClient.galleryErrorBodyPreview(raw.body);
             if (preview.length === 0) {
               preview = FnHttpClient.galleryErrorBodyPreview(JSON.stringify(parsed));
@@ -587,7 +596,7 @@ export class FnHttpClient {
           const err = e as NetErrorLike;
           const code = err.code !== undefined ? err.code : 0;
           const msg = err.message !== undefined && err.message.length > 0 ? err.message : '网络错误';
-          const exPrev = FnHttpClient.galleryErrorBodyPreview(String(e));
+          const exPrev = FnHttpClient.galleryErrorBodyPreview(fnNetErrorParts(e).message);
           if (CERT_CODES.indexOf(code) >= 0 && !CertPolicy.isTrusted(activeBase)) {
             fnDiagRecord('W', TAG, `gallery cert err ${activePath} code=${code} ${msg}`);
             return {
@@ -707,7 +716,7 @@ export class FnHttpClient {
               CertPolicy.isTrusted(activeBase)
             );
           } catch (e) {
-            hilog.warn(DOMAIN, TAG, 'longToken probe rawRequest: %{public}s', String(e));
+            fnDiagError(TAG, 'longToken probe rawRequest fail', e);
             fnDiagRecord('W', TAG, `longToken probe fail ${FnHttpClient.errText(e)}`);
             break;
           }
@@ -728,7 +737,7 @@ export class FnHttpClient {
           }
           break;
         } catch (e) {
-          hilog.warn(DOMAIN, TAG, 'longToken probe iter: %{public}s', String(e));
+          fnDiagError(TAG, 'longToken probe iter fail', e);
           fnDiagRecord('W', TAG, `longToken probe fail ${FnHttpClient.errText(e)}`);
           break;
         }
@@ -816,8 +825,12 @@ export class FnHttpClient {
       try {
         resp = await httpRequest.request(fullUrl, opt);
       } catch (e) {
-        fnDiagError(TAG, `raw request fail ${FnHttpClient.errText(e)}`, e);
-        throw new Error(`http request failed: ${String(e)}`);
+        fnDiagError(TAG, 'raw request fail', e);
+        // 保留错误码：上层靠 err.code 判定证书类错误（CERT_CODES），
+        // 用 new Error(String(e)) 会把 code 整个丢掉，证书错误永远识别不出来。
+        const parts = fnNetErrorParts(e);
+        const msg = parts.message.length > 0 ? parts.message : '网络请求失败';
+        throw new FnNetRequestError(msg, parts.code);
       }
       let text = '';
       if (typeof resp.result === 'string') {
@@ -826,8 +839,10 @@ export class FnHttpClient {
         try {
           text = JSON.stringify(resp.result);
         } catch (e) {
-          fnDiagError(TAG, 'raw request fail serialize', e);
-          throw new Error(`serialize http response failed: ${String(e)}`);
+          fnDiagError(TAG, 'raw response serialize fail', e);
+          const parts = fnNetErrorParts(e);
+          const msg = parts.message.length > 0 ? parts.message : '响应解析失败';
+          throw new FnNetRequestError(msg, parts.code);
         }
       }
       const out: RawHttpResult = {
@@ -924,7 +939,7 @@ export class FnHttpClient {
 
         if (raw.code < 200 || raw.code >= 300) {
           fnDiagRecord('W', TAG, `openapi HTTP ${raw.code} ${path}`);
-          return { success: false, message: `HTTP ${raw.code}` };
+          return { success: false, message: fnHttpStatusMessage(raw.code) };
         }
 
         let parsed: Record<string, string | number | Object | undefined>;
@@ -949,7 +964,7 @@ export class FnHttpClient {
         }
 
         if (codeNum !== 0) {
-          const em = errLine.length > 0 ? errLine : `业务错误 ${codeNum}`;
+          const em = errLine.length > 0 ? errLine : fnBizCodeMessage(codeNum, `业务错误 ${codeNum}`);
           fnDiagRecord('W', TAG, `openapi biz ${codeNum} ${path} ${em}`);
           return { success: false, message: em };
         }

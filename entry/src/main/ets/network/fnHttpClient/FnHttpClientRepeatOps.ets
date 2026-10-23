@@ -19,7 +19,9 @@ import {
   TASK_PANEL_LIST_PATH_CANDIDATES,
   TASK_PANEL_LIST_SIGN_PATH,
   TAG,
-  escapeJsonString
+  escapeJsonString,
+  fnHttpStatusMessage,
+  fnNetErrorText,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
@@ -139,7 +141,7 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -154,7 +156,7 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
       return { success: false, message: errLine.length > 0 ? errLine : '清除已完成失败' };
     } catch (e) {
       fnDiagError(TAG, 'clearTaskPanelDone exception', e);
-      return { success: false, message: String(e) || '清除已完成失败' };
+      return { success: false, message: fnNetErrorText(e, '清除已完成失败') };
     }
   }
 
@@ -251,7 +253,7 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
         CertPolicy.isTrusted(activeBase)
       );
       if (raw.code < 200 || raw.code >= 300) {
-        return { success: false, message: `HTTP ${raw.code}` };
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
       }
       let parsed: Record<string, string | number | Object | undefined>;
       try {
@@ -267,7 +269,7 @@ export class FnHttpClientRepeatOps extends FnHttpClientGalleryRequest {
       return { success: false, message: errLine.length > 0 ? errLine : failText };
     } catch (e) {
       fnDiagError(TAG, 'repeatPhotoApi exception', e);
-      return { success: false, message: String(e) || failText };
+      return { success: false, message: fnNetErrorText(e, failText) };
     }
   }
 }

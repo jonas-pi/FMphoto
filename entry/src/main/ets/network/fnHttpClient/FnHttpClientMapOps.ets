@@ -17,6 +17,7 @@ import {
   MAP_TIMELINE_PATH_CANDIDATES,
   MAP_TIMELINE_SIGN_PATH,
   TAG,
+  fnNetErrorText,
 } from './FnHttpClientCommon';
 import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
@@ -297,7 +298,7 @@ export class FnHttpClientMapOps extends FnHttpClientGalleryRequest {
       };
     } catch (e) {
       fnDiagError(TAG, 'exploreGeos exception', e);
-      return { success: false, message: String(e) || '地理位置加载异常' };
+      return { success: false, message: fnNetErrorText(e, '地理位置加载异常') };
     }
   }
 }

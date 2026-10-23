@@ -8,6 +8,7 @@ import { fnDiagError, fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
 import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
 import { preferPublicEndpointUrl, resolvePublicHostnameToIpv6BaseUrl } from './PublicDns';
 import { isIpLiteralHost, normalizeServerUrl, parseNormalizedBaseUrl } from './ServerUrl';
+import { fnNetErrorText } from './fnHttpClient/FnHttpClientCommon';
 
 const DOMAIN = 0xFF00;
 const TAG = 'LoginEndpoint';
@@ -359,7 +360,7 @@ async function probeEndpointOnce(
       latencyMs: Date.now() - startedAt,
       bytesPerSecond: 0,
       score: 0,
-      message: String(e)
+      message: fnNetErrorText(e, '探测失败')
     };
   } finally {
     try {

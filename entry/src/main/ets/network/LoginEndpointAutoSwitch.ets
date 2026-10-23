@@ -202,7 +202,7 @@ async function runAutoSwitch(): Promise<void> {
       await probeAndSwitch(ctx, latest);
     }
   } catch (e) {
-    hilog.error(DOMAIN, TAG, 'auto switch error: %{public}s', String(e));
+    hilog.error(DOMAIN, TAG, 'auto switch error');
     fnDiagRecord('E', TAG, `auto switch error ${String(e)}`);
   }
 }
@@ -275,7 +275,7 @@ export function ensureStarted(ctx: common.UIAbilityContext): void {
     netConnection = netCon;
     hilog.info(DOMAIN, TAG, 'network listener registered');
   } catch (e) {
-    hilog.error(DOMAIN, TAG, 'start listener failed: %{public}s', String(e));
+    hilog.error(DOMAIN, TAG, 'start listener failed');
     fnDiagRecord('E', TAG, `start listener failed ${String(e)}`);
   }
 }
