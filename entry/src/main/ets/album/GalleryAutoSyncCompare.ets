@@ -34,6 +34,12 @@ export class ContentCompareResult {
   skippedOnNas: number = 0;
   compareFailed: number = 0;
   unreadable: number = 0;
+  /**
+   * 本轮是否真的用上了 NAS 的「文件名+大小」名单。
+   * false 表示名单没拿到（NAS 不可达/索引不可用），此时不能把「没命中」当成「NAS 上没有」，
+   * 首次扫描据此拒绝写基线、也不把整库当成待上传。
+   */
+  nasIndexUsable: boolean = false;
 }
 
 export interface ContentCompareProgress {
@@ -114,6 +120,7 @@ export async function compareLocalWithBackup(
     nasIndex = await GalleryAutoSyncNasIndex.getIndex(client, true, ctx, onNasDayProgress);
   }
   nasByName = GalleryAutoSyncNasIndex.nasIndexUsable();
+  result.nasIndexUsable = nasByName;
   const compareGrandTotal: number = nasDayTotal > 0 ? nasDayTotal + pending.length : pending.length;
   const compareDayBase: number = nasDayTotal > 0 ? nasDayTotal : 0;
   const progressStride: number = pending.length > 200 ? 25 : pending.length > 80 ? 10 : 1;

@@ -274,21 +274,11 @@ export class GalleryAutoSyncStore {
         throw new Error(SEEN_READ_FAIL_MESSAGE);
       }
       if (seenDiff.freshBaseline) {
-        GalleryAutoSyncStore.lastResult = {
-          unsynced: [],
-          detectedAt: now,
-          skippedOnNas: 0,
-          skippedInLedger: 0,
-          compareFailed: 0,
-          unreadable: 0
-        };
-        GalleryAutoSyncStore.lastDetectTime = now;
-        scanOk = true;
-        syncState = 'ok';
-        scanMessage = seenDiff.baselineCount > 0
-          ? `已记录本机现有 ${seenDiff.baselineCount} 项，之后新增的才会和 NAS 对比`
-          : '本机相册没有可同步的项目';
-        return GalleryAutoSyncStore.lastResult;
+        // 首次运行不再提前返回：要把本机条目全部交给 NAS 比对，基线才精确。
+        // seenDiff.added 此时是本机全部条目，比对后只有「确认 NAS 上已经有」的才写进基线，
+        // NAS 上没有的留在待同步里（见下面 remember(confirmed)）。
+        fnDiagRecord('I', 'AutoSyncSeen',
+          'fresh baseline: compare all local photos with NAS, candidates=' + String(seenDiff.added.length));
       }
       const addedPhotos = seenDiff.added;
       if (localPhotos.length === 0) {
@@ -327,6 +317,25 @@ export class GalleryAutoSyncStore {
       FnTransferQueueStore.update(taskId, 0, `本机新增 ${addedPhotos.length} 项，正在和 NAS 对比`, addedPhotos.length);
       const progress = new CompareQueueProgress(taskId);
       const compared = await compareLocalWithBackup(ctx, client, addedPhotos, progress);
+      if (seenDiff.freshBaseline && !compared.nasIndexUsable) {
+        // 首次扫描却拿不到 NAS 的文件名单：无法判断本机哪些已经在 NAS 上。
+        // 这时既不能把整库当成新照片去传，也不能写基线（写了就再也补不上）。
+        // 本轮什么都不做，等下一次扫描重试。
+        scanMessage = '暂时拿不到 NAS 文件名单，本轮先不处理，稍后重试';
+        GalleryAutoSyncStore.lastResult = {
+          unsynced: [],
+          detectedAt: now,
+          skippedOnNas: 0,
+          skippedInLedger: 0,
+          compareFailed: compared.compareFailed,
+          unreadable: compared.unreadable
+        };
+        GalleryAutoSyncStore.lastDetectTime = now;
+        scanOk = true;
+        syncState = 'ok';
+        fnDiagRecord('W', 'AutoSyncSeen', 'fresh baseline deferred: nas index unusable');
+        return GalleryAutoSyncStore.lastResult;
+      }
       const confirmed: LocalPhotoEntry[] = [];
       const pendingUris = new Set<string>();
       for (let i = 0; i < compared.pieces.length; i++) {
@@ -337,6 +346,7 @@ export class GalleryAutoSyncStore {
           confirmed.push(addedPhotos[i]);
         }
       }
+      // 精确基线：只有确认已在 NAS 上（或账本里已同步）的条目才写进「已见」快照。
       await GalleryAutoSyncLocalSeen.remember(ctx, confirmed);
       const filtered: AutoSyncResult = {
         unsynced: compared.pieces,
@@ -350,7 +360,11 @@ export class GalleryAutoSyncStore {
       GalleryAutoSyncStore.lastDetectTime = now;
       scanOk = true;
       syncState = (filtered.compareFailed + filtered.unreadable) > 0 ? 'failed: compare' : 'ok';
-      if (filtered.unsynced.length > 0) {
+      if (seenDiff.freshBaseline) {
+        scanMessage = filtered.unsynced.length > 0
+          ? `已确认 NAS 上已有 ${confirmed.length} 项，还有 ${filtered.unsynced.length} 项未同步`
+          : `已确认 NAS 上已有 ${confirmed.length} 项，本机相册都已在 NAS`;
+      } else if (filtered.unsynced.length > 0) {
         scanMessage = `还有 ${filtered.unsynced.length} 项未同步`;
       } else if (filtered.compareFailed + filtered.unreadable > 0) {
         scanMessage = '有照片没能完成对比';

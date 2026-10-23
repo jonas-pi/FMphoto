@@ -1,6 +1,8 @@
 /**
  * 本机已见照片快照。
- * 第一次扫描只记下当前图库，不上传（官方客户端往往已经传过）。
+ *
+ * 第一次扫描只记下「确认 NAS 上已经有」的照片，不上传（官方客户端往往已经传过）；
+ * NAS 上没有的会留在待同步里，第一次扫描后就该由用户/后台同步流程处理。
  * 之后只有新增或改过的照片才拿去和 NAS 去重。
  */
 import { common } from '@kit.AbilityKit';
@@ -122,16 +124,20 @@ export class GalleryAutoSyncLocalSeen {
       return result;
     }
     if (snap.state === 'missing') {
-      const keys = new Set<string>();
+      // 首次运行：基线要精确，不能把本机图库一股脑记成「已见」。
+      // 这里不落盘：把所有本机条目交给 NAS 比对（调用方 GalleryAutoSyncStore），
+      // 只有「确认 NAS 上已经有（同名同大小）」的才写进基线；NAS 上没有的留在待同步里，
+      // 等同步成功后再由 remember() 记入。这样首装的存量照片既不会重复传，也不会被漏掉。
+      const candidates: LocalPhotoEntry[] = [];
       for (let i = 0; i < photos.length; i++) {
         if (photos[i].uri.length > 0) {
-          keys.add(seenKey(photos[i]));
+          candidates.push(photos[i]);
         }
       }
-      await GalleryAutoSyncLocalSeen.writeKeys(ctx, keys);
       result.freshBaseline = true;
-      result.baselineCount = keys.size;
-      hilog.info(DOMAIN, TAG, 'baseline count=%{public}d', keys.size);
+      result.baselineCount = photos.length;
+      result.added = candidates;
+      hilog.info(DOMAIN, TAG, 'fresh baseline candidates=%{public}d', candidates.length);
       return result;
     }
     const known = snap.keys;
