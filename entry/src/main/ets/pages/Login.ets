@@ -388,7 +388,7 @@ struct Login {
     openApiAuthxSecret: string,
     longTokenFromWs?: string
   ): Promise<void> {
-    /** 内置 Web 固定 https:5667，与登录 base 可能不同，一并加入信任列表（自签证书） */
+    /** 图库与登录用同一条地址；https 会话时把该地址记入自签证书信任列表。 */
     CertPolicy.addTrusted(fnWebViewBaseUrl(base));
     let longTok = longTokenFromWs !== undefined && longTokenFromWs.length > 0 ? longTokenFromWs : '';
     const fnId = this.parsedFnId();

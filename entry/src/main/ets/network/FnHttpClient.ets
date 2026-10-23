@@ -335,8 +335,8 @@ export class FnHttpClient {
   }
 
   /**
-   * 与 fnos_client.fetch_gallery_*：`p_referer = f"https://{host}:{https_port}/p/"`（固定 https:5667）
-   * 不可使用会话里的 http://…:5666，否则与 Python use_https=True 不一致，图库易失败。
+   * Referer 与图库请求同一条会话地址。
+   * 用户填 http 就用 http，填 https 就用 https，不再单独改成 https:5667。
    */
   private galleryPhotoReferer(): string {
     return `${fnWebViewBaseUrl(this.baseUrl)}/p/`;
@@ -677,7 +677,7 @@ export class FnHttpClient {
 
   /**
    * 跟随重定向探测 fnos-long-token；headers 由 makeHeaders(activePath) 生成。
-   * @param initialBase 须与图库/Web 一致：登录为 http:5666 时仍应用 `fnWebViewBaseUrl`，否则 long-token 与 `/p/api`（https:5667）不同源，易报业务 update failed。
+   * @param initialBase 须与图库请求同一条会话地址（协议和端口都不改），否则 long-token 与 `/p/api` 不同源。
    */
   private async probeLongTokenWithHeaders(
     initialBase: string,

@@ -214,10 +214,12 @@ export default function localUnitTest() {
       expect(smartCategoryCount(patched[1])).assertEqual(8);
     });
 
-    it('fnWebViewBaseUrl_preserves_domain_https_port', 0, () => {
+    it('fnWebViewBaseUrl_keeps_session_scheme_and_port', 0, () => {
+      expect(fnWebViewBaseUrl('http://ddns.example:5666')).assertEqual('http://ddns.example:5666');
+      expect(fnWebViewBaseUrl('https://nas.local:5667')).assertEqual('https://nas.local:5667');
       expect(fnWebViewBaseUrl('https://nas.local:443')).assertEqual('https://nas.local:443');
-      expect(fnWebViewBaseUrl('https://nas.local:8443')).assertEqual('https://nas.local:8443');
-      expect(fnWebViewBaseUrl('http://192.168.1.2:5666')).assertEqual('https://192.168.1.2:5667');
+      expect(fnWebViewBaseUrl('http://192.168.1.2:5666')).assertEqual('http://192.168.1.2:5666');
+      expect(fnWebViewBaseUrl('http://abc.fnos.net:5666/fid')).assertEqual('https://abc.fnos.net/fid');
     });
 
     it('loginSecretLooksWrapped_v1_blob', 0, () => {

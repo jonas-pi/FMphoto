@@ -329,32 +329,31 @@ export function fnWebUiBaseUrl(apiBaseNoSlash: string, sessionUseHttps: boolean)
 }
 
 /**
- * 内置 Web 管理端根地址（与 sample/fnos_window.py、fnos-third-party-login.md 一致）：
- * 固定 **https://主机:5667**，与 wss 同端口；不因登录勾选 HTTP 而改走 5666。
+ * 图库、上传、内置 Web 与登录会话用同一条地址。
+ * 用户填 http 就保持 http 和端口，填 https 就保持 https 和端口。
+ * 不要把 http://主机:5666 升成 https://主机:5666：公网 5666 常是明文 nginx，对它做 TLS 会握手失败。
+ * FN Connect 官方中继仍固定 https，并去掉误带的 5666/5667。
  */
 export function fnWebViewBaseUrl(apiBaseNoSlash: string): string {
   let rest = apiBaseNoSlash.trim();
   if (rest.endsWith('/')) {
     rest = rest.substring(0, rest.length - 1);
   }
+  let scheme = 'https://';
   if (rest.startsWith('https://')) {
     rest = rest.substring('https://'.length);
   } else if (rest.startsWith('http://')) {
+    scheme = 'http://';
     rest = rest.substring('http://'.length);
   }
   const slash = rest.indexOf('/');
   const authority = slash >= 0 ? rest.substring(0, slash) : rest;
-  // FN Connect 门户保留 path，勿改写为 :5667
+  // 中继门户保留 path，协议固定 https，不改成 NAS 的 5666/5667。
   if (isFnConnectRelayAuthority(authority)) {
     const path = slash >= 0 ? rest.substring(slash) : '';
     return trimTrailingSlash(`https://${stripFnConnectRelayPort(authority)}${path}`);
   }
-  const parsed = parseAuthority(authority);
-  const parsedForBuild: ParsedAuthority = isDirectParsedAuthority(parsed)
-    ? { useBracket: parsed.useBracket, hostRaw: parsed.hostRaw, port: null }
-    : parsed;
-  const newAuth = buildAuthority(parsedForBuild, defaultPort(true, isDirectParsedAuthority(parsed)));
-  return trimTrailingSlash(`https://${newAuth}`);
+  return trimTrailingSlash(`${scheme}${authority}`);
 }
 
 function normalizeServerUrlMode(domainInput: string, useHttps: boolean, fnDefaultPort: boolean): string {
