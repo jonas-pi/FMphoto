@@ -181,6 +181,20 @@ export function fnHdsDialogSystemMaterial(): uiMaterial.Material | undefined {
   return cachedDialogMaterial;
 }
 
+/**
+ * 官方沉浸光感文档「按钮与选择类组件」：材质用较薄的样式（ULTRA_THIN 或 THIN），
+ * 通过通用属性 .systemMaterial() 生效（SDK @since 26）。
+ */
+export function fnHdsPillSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  // @SuppressWarnings compatibility
+  return new uiMaterial.ImmersiveMaterial({
+    style: uiMaterial.ImmersiveStyle.THIN
+  });
+}
+
 export function fnHdsSheetOptions(
   title: ResourceStr,
   onDisappear: () => void,

@@ -46,6 +46,7 @@ import {
   FN_IMMERSIVE_LIGHT_STORAGE_KEY
 } from '../../common/FnImmersiveSettings';
 import { FN_UI_FADE_TOGGLE_CURVE, FN_UI_FADE_TOGGLE_DURATION } from '../../common/FnMotion';
+import { GALLERY_BATCH_DESTRUCTIVE_BG } from '../../common/GalleryButtonStyles';
 import { FN_RESOLVED_ACCENT_KEY } from '../../common/FnThemeColors';
 import { galleryPreviewToolbarAlpha } from './GalleryPreviewDetailsLogic';
 import { GALLERY_PREVIEW_DETAILS_COVER_KEY, GALLERY_PREVIEW_TOOLBAR_VISIBLE_KEY } from './GalleryPreviewToolbarStore';
@@ -527,6 +528,14 @@ export struct GalleryPreviewChrome {
     return this.purgeMode ? '\u5f7b\u5e95\u5220\u9664' : '\u5220\u9664';
   }
 
+  /** 彻底删除是不可恢复操作，与其它按钮区分开用危险色。 */
+  private deleteDockColor(): ResourceColor {
+    if (this.deleting) {
+      return this.dimmedColor();
+    }
+    return this.purgeMode ? GALLERY_BATCH_DESTRUCTIVE_BG : this.fgColor;
+  }
+
   private onPreviewHdsAction(index: number): void {
     if (!this.chromeInteractive()) {
       return;
@@ -644,7 +653,7 @@ export struct GalleryPreviewChrome {
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.trash'),
         this.deleteDockLabel(),
-        this.previewActionColor(this.deleting)
+        this.deleteDockColor()
       ))
     }
     .width('100%')
@@ -734,7 +743,7 @@ export struct GalleryPreviewChrome {
           5,
           $r('sys.symbol.trash'),
           this.deleteDockLabel(),
-          this.previewActionColor(this.deleting)
+          this.deleteDockColor()
         )
       } else {
         this.previewBottomFallbackAction(
@@ -747,7 +756,7 @@ export struct GalleryPreviewChrome {
           3,
           $r('sys.symbol.trash'),
           this.deleteDockLabel(),
-          this.previewActionColor(this.deleting)
+          this.deleteDockColor()
         )
       }
     }
