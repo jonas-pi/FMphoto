@@ -28,6 +28,7 @@ import {
   PersonInPhotoData,
   PhotoBackupPathInfo,
   PhotoFolderListData,
+  RecycleBinDeleteData,
   RecycleBinListData,
   RepeatPhotoGroup,
   RepeatPhotoListData,
@@ -431,6 +432,10 @@ export class FnHttpClientGalleryOps {
 
   async restoreRecycleBinPhotos(ids: number[], timeoutMs: number = 30000): Promise<FnClientResult<Object>> {
     return this.recycle.restoreRecycleBinPhotos(ids, timeoutMs);
+  }
+
+  async deleteRecycleBinPhotos(ids: number[], timeoutMs: number = 30000): Promise<FnClientResult<RecycleBinDeleteData>> {
+    return this.recycle.deleteRecycleBinPhotos(ids, timeoutMs);
   }
 
   async getRepeatPhotoList(offset: number, size: number, timeoutMs: number = 20000): Promise<FnClientResult<RepeatPhotoListData>> {

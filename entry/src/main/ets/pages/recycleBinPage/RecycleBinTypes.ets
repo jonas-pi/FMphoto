@@ -1,6 +1,12 @@
 export const RB_PAGE_LIMIT = 80;
 export const RB_SAFETY_MAX_OFFSET = 50000;
 
+/** 彻底删除每批提交的 id 上限：请求体小，失败时也容易定位到具体批次。 */
+export const RB_DELETE_BATCH_SIZE = 100;
+/** delete 返回只表示任务已受理，轮询列表确认真正删掉的间隔与总时长。 */
+export const RB_DELETE_SETTLE_POLL_MS = 1500;
+export const RB_DELETE_SETTLE_TIMEOUT_MS = 30000;
+
 export interface RbThumbHitRect {
   left: number;
   top: number;

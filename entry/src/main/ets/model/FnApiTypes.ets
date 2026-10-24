@@ -358,6 +358,36 @@ export interface RecycleBinListData {
   now?: number;
 }
 
+/**
+ * `POST /p/api/v1/recycle-bin/delete` 返回的 data.taskInfo。
+ * 成功只表示任务已受理：受理瞬间 done=false、successCount=0，照片尚未删完。
+ */
+export interface RecycleBinDeleteTaskInfo {
+  id?: string;
+  type?: string;
+  name?: string;
+  state?: string;
+  total?: number;
+  successCount?: number;
+  failCount?: number;
+  done?: boolean;
+  canceled?: boolean;
+  canceledCount?: number;
+  errCode?: number;
+  errMsg?: string;
+  /** 服务端标记可取消，但取消接口地址未抓包，客户端暂不主动取消 */
+  cancellable?: boolean;
+  /** 失败后不要自动重发 */
+  retryable?: boolean;
+  createdAt?: string;
+  doneAt?: string;
+}
+
+/** `POST /p/api/v1/recycle-bin/delete` 的 data */
+export interface RecycleBinDeleteData {
+  taskInfo?: RecycleBinDeleteTaskInfo;
+}
+
 /** `GET /p/api/v1/repeat-photo/list` 单组（官方 similar 页：id / photos / datetimes / recommendedIndex） */
 export class RepeatPhotoGroup {
   id: string = '';

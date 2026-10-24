@@ -40,6 +40,7 @@ import {
 } from '../common/FnMotion';
 import {
   recycleBinConfirmBatchDownload,
+  recycleBinConfirmClearAll,
   recycleBinConfirmRestore,
   recycleBinLoadAll,
   RecycleBinActionsHost
@@ -83,6 +84,8 @@ import {
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../album/GalleryGridSlideTouch';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
+import { RecycleBinClearBar, RECYCLE_BIN_CLEAR_BAR_HEIGHT_VP } from './recycleBinPage/RecycleBinClearBar';
+import { RecycleBinClearingMask } from './recycleBinPage/RecycleBinClearingMask';
 import { GalleryGridChrome } from '../album/galleryList/GalleryGridChrome';
 import {
   GalleryListBackStep,
@@ -134,6 +137,14 @@ struct RecycleBinPage {
   @State private restoring: boolean = false;
   @State private rbBatchDownloading: boolean = false;
   @State private rbBackgroundLoading: boolean = false;
+  /** 列表是否完整拉完：清空前必须为 true，否则清空只能删掉一部分 */
+  @State private rbListComplete: boolean = false;
+  /** 正在永久删除：挡住还原与下载 */
+  @State private clearing: boolean = false;
+  /** 用户请求停止：批与批之间生效 */
+  @State private clearingCancelRequested: boolean = false;
+  @State private clearingSubmitted: number = 0;
+  @State private clearingTotal: number = 0;
   @State private error: string = '';
   @State @Watch('onItemsChanged') private items: RecycleBinListItem[] = [];
   @State private selectionMode: boolean = false;
@@ -452,6 +463,15 @@ struct RecycleBinPage {
     await recycleBinConfirmRestore(this.asActionsHost());
   }
 
+  private async confirmClearAll(): Promise<void> {
+    await recycleBinConfirmClearAll(this.asActionsHost());
+  }
+
+  /** 底部「清空回收站」入口：列表非空且不在多选时显示。 */
+  private showClearEntry(): boolean {
+    return this.items.length > 0 && !this.selectionMode;
+  }
+
   private clearRbThumbResumeTimer(): void {
     if (this.session.overlay.rbThumbResumeTimer >= 0) {
       clearTimeout(this.session.overlay.rbThumbResumeTimer);
@@ -652,6 +672,9 @@ struct RecycleBinPage {
       get rbBackgroundLoading(): boolean { return self.rbBackgroundLoading; }
       set rbBackgroundLoading(v: boolean) { self.rbBackgroundLoading = v; }
 
+      get rbListComplete(): boolean { return self.rbListComplete; }
+      set rbListComplete(v: boolean) { self.rbListComplete = v; }
+
       get error(): string { return self.error; }
       set error(v: string) { self.error = v; }
 
@@ -660,6 +683,18 @@ struct RecycleBinPage {
 
       get selectedIds(): number[] { return self.session.selection.selectedIds; }
       set selectedIds(v: number[]) { self.setSelectedIdsState(v); }
+
+      get clearing(): boolean { return self.clearing; }
+      set clearing(v: boolean) { self.clearing = v; }
+
+      get clearingCancelRequested(): boolean { return self.clearingCancelRequested; }
+      set clearingCancelRequested(v: boolean) { self.clearingCancelRequested = v; }
+
+      get clearingSubmitted(): number { return self.clearingSubmitted; }
+      set clearingSubmitted(v: number) { self.clearingSubmitted = v; }
+
+      get clearingTotal(): number { return self.clearingTotal; }
+      set clearingTotal(v: number) { self.clearingTotal = v; }
 
       toast(msg: string): void { self.toast(msg); }
       exitSelection(): void { self.exitSelection(); }
@@ -916,6 +951,8 @@ struct RecycleBinPage {
           }
           .width('100%')
           .height('100%')
+          // 给底部「清空回收站」文字入口让位
+          .padding({ bottom: this.showClearEntry() ? RECYCLE_BIN_CLEAR_BAR_HEIGHT_VP : 0 })
 
           if (this.selectionMode && this.selectedCount > 0) {
             RecycleBinBatchBar({
@@ -933,10 +970,30 @@ struct RecycleBinPage {
               .height(GALLERY_BATCH_BAR_TOTAL_HEIGHT_VP)
           }
 
+          if (this.showClearEntry()) {
+            RecycleBinClearBar({
+              onClear: (): void => {
+                void this.confirmClearAll();
+              }
+            })
+              .width('100%')
+              .height(RECYCLE_BIN_CLEAR_BAR_HEIGHT_VP)
+          }
+
           if (this.restoring || this.rbBatchDownloading) {
             FnFullLoadingMask({
               text: this.restoring ? '正在还原…' : '下载中…',
               topOffsetVp: 0
+            })
+          }
+          if (this.clearing) {
+            RecycleBinClearingMask({
+              submitted: this.clearingSubmitted,
+              total: this.clearingTotal,
+              waiting: this.clearingTotal > 0 && this.clearingSubmitted >= this.clearingTotal,
+              onStop: (): void => {
+                this.clearingCancelRequested = true;
+              }
             })
           }
           if (this.previewOpening) {

@@ -17,6 +17,7 @@ import { FnHttpClientGalleryHost } from './FnHttpClientTypes';
 import { FnHttpClientGalleryRequest } from './FnHttpClientGalleryRequest';
 import {
   FnClientResult,
+  RecycleBinDeleteData,
   RecycleBinListData
 } from '../../model/FnApiTypes';
 
@@ -342,6 +343,69 @@ export class FnHttpClientRecycleOps extends FnHttpClientGalleryRequest {
     } catch (e) {
       fnDiagError(TAG, 'restoreRecycleBinPhotos exception', e);
       return { success: false, message: fnNetErrorText(e, '恢复请求异常') };
+    }
+  }
+
+  /**
+   * 彻底删除回收站项目：POST /p/api/v1/recycle-bin/delete，body `{"ids":[240764,240240]}`
+   *
+   * 没有「清空全部」开关，也没有 query：清空就是把回收站里的数字 id 全部放进这一个数组。
+   * 签名沿用相册 POST 的 authx（按这条 path 和这份 body 现算）。
+   *
+   * HTTP 200 + 业务码 0 只表示任务已受理：data.taskInfo.done 受理瞬间为 false，
+   * 照片还没删完；taskInfo.retryable 为 false，失败的批次不要自动重发。
+   */
+  async deleteRecycleBinPhotos(
+    ids: number[],
+    timeoutMs: number = 30000
+  ): Promise<FnClientResult<RecycleBinDeleteData>> {
+    const clean: number[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const n = Math.floor(Number(ids[i]));
+      if (Number.isFinite(n) && n > 0) {
+        clean.push(n);
+      }
+    }
+    if (clean.length === 0) {
+      return { success: false, message: 'ids 无效' };
+    }
+    try {
+      const activeBase = fnWebViewBaseUrl(this.baseUrl);
+      const path = `${FN_PHOTO_API_PREFIX}/recycle-bin/delete`;
+      const cookie = mergeGalleryWebCookieIntoNativeHeader(
+        buildFnApiCookieHeader(this.token, this.longToken),
+        activeBase
+      );
+      const bodyStr = `{"ids":[${clean.join(',')}]}`;
+      const authx = await genFnGalleryAuthxPostRaw(path, bodyStr);
+      const headers = this.buildGalleryFetchHeaders(authx, cookie);
+      headers['Content-Type'] = 'application/json';
+      headers['Accept'] = 'application/json';
+      const raw = await this.rawRequest(
+        `${activeBase}${path}`,
+        http.RequestMethod.POST,
+        headers,
+        bodyStr,
+        timeoutMs,
+        CertPolicy.isTrusted(activeBase)
+      );
+      if (raw.code < 200 || raw.code >= 300) {
+        return { success: false, message: fnHttpStatusMessage(raw.code) };
+      }
+      let parsed: Record<string, string | number | Object | undefined>;
+      try {
+        parsed = JSON.parse(raw.body) as Record<string, string | number | Object | undefined>;
+      } catch (_e) {
+        return { success: false, message: '响应解析失败' };
+      }
+      if (FnHttpClientGalleryRequest.galleryEnvelopeBizOk(parsed)) {
+        return { success: true, data: parsed['data'] as RecycleBinDeleteData };
+      }
+      const errLine = FnHttpClientGalleryRequest.envelopeErrorLine(parsed);
+      return { success: false, message: errLine.length > 0 ? errLine : '删除失败' };
+    } catch (e) {
+      fnDiagError(TAG, 'deleteRecycleBinPhotos exception', e);
+      return { success: false, message: fnNetErrorText(e, '删除请求异常') };
     }
   }
 }
