@@ -1260,6 +1260,7 @@ struct GalleryPreview {
         downloadProgressPct: this.downloadProgressPct,
         downloadProgressKnown: this.downloadProgressKnown,
         deleting: this.deleting,
+        purgeMode: GalleryPreviewNavStore.sourceRootId === GALLERY_PREVIEW_SOURCE_RECYCLE_ID,
         favoriteToggling: this.favoriteToggling,
         starFilled: this.starFilled(),
         favoriteStarTint: this.favoriteStarTint(),

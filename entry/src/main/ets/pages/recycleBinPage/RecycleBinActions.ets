@@ -1,4 +1,4 @@
-import { UIContext } from '@kit.ArkUI';
+import { UIContext, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { runBatchDownloadGalleryItemsInBackground } from '../../album/GalleryBatchDownload';
 import {
@@ -7,6 +7,7 @@ import {
 } from '../../album/livephoto/LivePhotoSaveActionSheet';
 import { AppSession } from '../../auth/AppSession';
 import { fnDiagRecord } from '../../common/FnDiagLog';
+import { fnHdsDialogSystemMaterial } from '../../common/FnHdsOverlay';
 import { FnHttpClient } from '../../network/FnHttpClient';
 import { RecycleBinListItem } from '../../model/FnApiTypes';
 import { recycleBinGalleryListForSelection, recycleBinNumericIdOf } from './RecycleBinSelectionController';
@@ -311,14 +312,20 @@ export async function recycleBinConfirmClearAll(host: RecycleBinActionsHost): Pr
     message = `${message}\n其中 ${skipped} 项没有可用的数字 ID，无法通过此接口删除。`;
   }
   try {
-    const dlg = await host.getUIContext().getPromptAction().showDialog({
+    const opts: promptAction.ShowDialogOptions = {
       title: '清空回收站',
       message: message,
       buttons: [
         { text: '取消', color: '#99000000' },
         { text: '清空', color: '#E5484D' }
       ]
-    });
+    };
+    // 沉浸光感：材质通过 options.systemMaterial 生效（官方文档「弹出框（Dialog）」，ULTRA_THICK）。
+    const material = fnHdsDialogSystemMaterial();
+    if (material !== undefined) {
+      opts.systemMaterial = material;
+    }
+    const dlg = await host.getUIContext().getPromptAction().showDialog(opts);
     if (dlg.index !== 1) {
       return;
     }

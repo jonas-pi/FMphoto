@@ -1,12 +1,14 @@
-import { UIContext } from '@kit.ArkUI';
+import { UIContext, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { fileIo, fileUri as fileUriUtil } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { systemShare } from '@kit.ShareKit';
 import { CategoryGalleryNavStore } from '../../album/CategoryGalleryNavStore';
 import { GalleryDeleteSyncStore } from '../../album/GalleryDeleteSyncStore';
+import { GalleryPurgeSyncStore } from '../../album/GalleryPurgeSyncStore';
 import { GalleryPreviewNavStore } from '../../album/GalleryPreviewNavStore';
-import { GALLERY_PREVIEW_SOURCE_CATEGORY_ID } from '../../album/GallerySharedTransition';
+import { GALLERY_PREVIEW_SOURCE_CATEGORY_ID, GALLERY_PREVIEW_SOURCE_RECYCLE_ID } from '../../album/GallerySharedTransition';
+import { fnHdsDialogSystemMaterial } from '../../common/FnHdsOverlay';
 import { copyGalleryUriContentToAlbumUri } from '../../album/GalleryAlbumSaveToAlbum';
 import { GalleryTimelineRefreshStore } from '../../album/GalleryTimelineRefreshStore';
 import { isVideoItem, nasUrl, pickOriginal, pickThumb, pickVideo } from '../../album/GalleryAlbumCommon';
@@ -337,7 +339,10 @@ export async function galleryPreviewToggleFavorite(host: GalleryPreviewActionsHo
   }
 }
 
-export function galleryPreviewApplyDeleteCurrentItem(host: GalleryPreviewActionsHost): void {
+export function galleryPreviewApplyDeleteCurrentItem(
+  host: GalleryPreviewActionsHost,
+  purge: boolean = false
+): void {
   if (host.swiperIndex < 0 || host.swiperIndex >= host.previewItems.length) {
     return;
   }
@@ -352,16 +357,21 @@ export function galleryPreviewApplyDeleteCurrentItem(host: GalleryPreviewActions
   host.detailsPhotoId = '';
   host.originalShowing = false;
   if (deletedId.length > 0) {
-    GalleryDeleteSyncStore.markDeleted(deletedId);
-    GalleryTimelineRefreshStore.bump();
-    galleryPreviewRemoveIdFromCategoryGalleryNavStore(deletedId);
+    if (purge) {
+      // 彻底删除：只通知回收站页增量移除，不动图库时间线与分类栈。
+      GalleryPurgeSyncStore.markPurged(Math.floor(Number(deletedId)));
+    } else {
+      GalleryDeleteSyncStore.markDeleted(deletedId);
+      GalleryTimelineRefreshStore.bump();
+      galleryPreviewRemoveIdFromCategoryGalleryNavStore(deletedId);
+    }
   }
   const targetIdx = galleryPreviewIndexAfterDelete(oldIdx, left);
   if (targetIdx < 0) {
     host.itemSource.reloadAll([]);
     GalleryPreviewNavStore.items = [];
     GalleryPreviewNavStore.startIndex = 0;
-    host.toast('已移入回收站');
+    host.toast(purge ? '已彻底删除' : '已移入回收站');
     host.routerBack();
     return;
   }
@@ -372,7 +382,7 @@ export function galleryPreviewApplyDeleteCurrentItem(host: GalleryPreviewActions
   setTimeout((): void => {
     host.swiperCtrl.changeIndex(targetIdx, false);
   }, 50);
-  host.toast('已移入回收站');
+  host.toast(purge ? '已彻底删除' : '已移入回收站');
 }
 
 export async function galleryPreviewDeleteCurrentItem(host: GalleryPreviewActionsHost): Promise<void> {
@@ -382,6 +392,11 @@ export async function galleryPreviewDeleteCurrentItem(host: GalleryPreviewAction
   const id = host.currentItemId();
   if (id.length === 0) {
     host.toast('当前媒体无有效 ID');
+    return;
+  }
+  // 回收站里打开的预览：再删就是彻底删除，不能再走「移入回收站」。
+  if (GalleryPreviewNavStore.sourceRootId === GALLERY_PREVIEW_SOURCE_RECYCLE_ID) {
+    await galleryPreviewPurgeCurrentItem(host, id);
     return;
   }
   try {
@@ -410,6 +425,60 @@ export async function galleryPreviewDeleteCurrentItem(host: GalleryPreviewAction
       return;
     }
     galleryPreviewApplyDeleteCurrentItem(host);
+  } finally {
+    host.deleting = false;
+  }
+}
+
+/**
+ * 彻底删除回收站中的当前项。
+ *
+ * 二次确认走 promptAction.showDialog + systemMaterial：
+ * 与项目其它弹出层一致，沉浸光感的材质通过 options.systemMaterial 生效
+ * （官方沉浸光感文档「弹出框（Dialog）」，ULTRA_THICK）。
+ */
+async function galleryPreviewPurgeCurrentItem(
+  host: GalleryPreviewActionsHost,
+  id: string
+): Promise<void> {
+  const nid = Math.floor(Number(id));
+  if (!Number.isFinite(nid) || nid <= 0) {
+    host.toast('该项没有可用的数字 ID，无法彻底删除');
+    return;
+  }
+  const client = AppSession.getClient();
+  if (client === null) {
+    host.toast('未登录');
+    return;
+  }
+  const opts: promptAction.ShowDialogOptions = {
+    title: '彻底删除',
+    message: '将永久删除当前媒体，无法恢复。',
+    buttons: [
+      { text: '取消', color: '#99000000' },
+      { text: '彻底删除', color: '#E5484D' }
+    ]
+  };
+  const material = fnHdsDialogSystemMaterial();
+  if (material !== undefined) {
+    opts.systemMaterial = material;
+  }
+  try {
+    const dlg = await host.getUIContext().getPromptAction().showDialog(opts);
+    if (dlg.index !== 1) {
+      return;
+    }
+  } catch (_e) {
+    return;
+  }
+  host.deleting = true;
+  try {
+    const res = await client.deleteRecycleBinPhotos([nid], 30000);
+    if (!res.success) {
+      host.toast(res.message ?? '彻底删除失败');
+      return;
+    }
+    galleryPreviewApplyDeleteCurrentItem(host, true);
   } finally {
     host.deleting = false;
   }

@@ -20,6 +20,7 @@ const FN_ARKUI_SYSTEM_MATERIAL_API: number = 26;
 
 let cachedSheetMaterial: uiMaterial.Material | undefined = undefined;
 let cachedMenuMaterial: uiMaterial.Material | undefined = undefined;
+let cachedDialogMaterial: uiMaterial.Material | undefined = undefined;
 let cachedInputMaterial: uiMaterial.Material | undefined = undefined;
 let cachedLoginCardMaterial: uiMaterial.Material | undefined = undefined;
 let cachedLoginInputMaterial: uiMaterial.Material | undefined = undefined;
@@ -160,6 +161,24 @@ export function fnHdsMenuSystemMaterial(): uiMaterial.Material | undefined {
     });
   }
   return cachedMenuMaterial;
+}
+
+/**
+ * 官方沉浸光感文档「弹出框（Dialog）」：材质通过 options.systemMaterial 生效，
+ * 沉浸式系统材质样式默认取值为 ULTRA_THICK。
+ * 适用于 promptAction.showDialog / showActionMenu 的 options（SDK @since 26）。
+ */
+export function fnHdsDialogSystemMaterial(): uiMaterial.Material | undefined {
+  if (!fnCanUseArkUiSystemMaterial()) {
+    return undefined;
+  }
+  if (cachedDialogMaterial === undefined) {
+    // @SuppressWarnings compatibility
+    cachedDialogMaterial = new uiMaterial.ImmersiveMaterial({
+      style: uiMaterial.ImmersiveStyle.ULTRA_THICK
+    });
+  }
+  return cachedDialogMaterial;
 }
 
 export function fnHdsSheetOptions(

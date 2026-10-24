@@ -162,6 +162,8 @@ export struct GalleryPreviewChrome {
   @Prop downloadProgressPct: number = 0;
   @Prop downloadProgressKnown: boolean = false;
   @Prop deleting: boolean = false;
+  /** 来源是回收站：底栏删除按钮语义变为「彻底删除」 */
+  @Prop purgeMode: boolean = false;
   @Prop favoriteToggling: boolean = false;
   @Prop starFilled: boolean = false;
   @Prop favoriteStarTint: ResourceColor = '#FFD60A';
@@ -517,6 +519,14 @@ export struct GalleryPreviewChrome {
     }
   }
 
+  /** 回收站里打开的预览：删除即彻底删除，标签要跟着改。 */
+  private deleteDockLabel(): string {
+    if (this.deleting) {
+      return '\u5220\u9664\u4e2d';
+    }
+    return this.purgeMode ? '\u5f7b\u5e95\u5220\u9664' : '\u5220\u9664';
+  }
+
   private onPreviewHdsAction(index: number): void {
     if (!this.chromeInteractive()) {
       return;
@@ -633,7 +643,7 @@ export struct GalleryPreviewChrome {
       }
       .tabBar(fnHdsBottomDockActionTabStyle(
         $r('sys.symbol.trash'),
-        this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+        this.deleteDockLabel(),
         this.previewActionColor(this.deleting)
       ))
     }
@@ -723,7 +733,7 @@ export struct GalleryPreviewChrome {
         this.previewBottomFallbackAction(
           5,
           $r('sys.symbol.trash'),
-          this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+          this.deleteDockLabel(),
           this.previewActionColor(this.deleting)
         )
       } else {
@@ -736,7 +746,7 @@ export struct GalleryPreviewChrome {
         this.previewBottomFallbackAction(
           3,
           $r('sys.symbol.trash'),
-          this.deleting ? '\u5220\u9664\u4e2d' : '\u5220\u9664',
+          this.deleteDockLabel(),
           this.previewActionColor(this.deleting)
         )
       }

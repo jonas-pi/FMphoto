@@ -23,7 +23,7 @@ import {
   fnClampGridColumns
 } from '../common/FnWindowBreakpoint';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
-import { FN_SYSTEM_TOP_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
+import { FN_SYSTEM_TOP_INSET_VP_KEY, FN_NAV_INDICATOR_INSET_VP_KEY, fnPublishSystemAvoidArea } from '../common/FnSystemAvoidArea';
 import { RecycleBinListItem } from '../model/FnApiTypes';
 import {
   FnFullLoadingMask,
@@ -84,8 +84,9 @@ import {
   GALLERY_GRID_SEQUENCE_LONG_PRESS_MS
 } from '../album/GalleryGridSlideTouch';
 import { RecycleBinBatchBar } from './recycleBinPage/RecycleBinBatchBar';
-import { RecycleBinClearBar, RECYCLE_BIN_CLEAR_BAR_HEIGHT_VP } from './recycleBinPage/RecycleBinClearBar';
+import { RecycleBinClearBar, recycleBinClearBarTotalHeightVp } from './recycleBinPage/RecycleBinClearBar';
 import { RecycleBinClearingMask } from './recycleBinPage/RecycleBinClearingMask';
+import { GALLERY_PURGE_SYNC_VERSION_KEY, GalleryPurgeSyncStore } from '../album/GalleryPurgeSyncStore';
 import { GalleryGridChrome } from '../album/galleryList/GalleryGridChrome';
 import {
   GalleryListBackStep,
@@ -145,6 +146,11 @@ struct RecycleBinPage {
   @State private clearingCancelRequested: boolean = false;
   @State private clearingSubmitted: number = 0;
   @State private clearingTotal: number = 0;
+  /** 导航条 / 手势区避让：底部「清空回收站」必须让开，否则落进系统手势区 */
+  @StorageProp(FN_NAV_INDICATOR_INSET_VP_KEY) private navIndicatorInsetVp: number = 0;
+  /** 预览页彻底删除后增量移除，不整页重载 */
+  @StorageProp(GALLERY_PURGE_SYNC_VERSION_KEY) @Watch('onPurgedChanged') private purgeVersion: number = 0;
+  private consumedPurgeVersion: number = 0;
   @State private error: string = '';
   @State @Watch('onItemsChanged') private items: RecycleBinListItem[] = [];
   @State private selectionMode: boolean = false;
@@ -470,6 +476,35 @@ struct RecycleBinPage {
   /** 底部「清空回收站」入口：列表非空且不在多选时显示。 */
   private showClearEntry(): boolean {
     return this.items.length > 0 && !this.selectionMode;
+  }
+
+  /**
+   * 预览页彻底删除后同步：按 GalleryPurgeSyncStore 增量移除，
+   * 不重新拉列表，保留滚动位置。
+   */
+  onPurgedChanged(): void {
+    if (this.purgeVersion <= this.consumedPurgeVersion) {
+      return;
+    }
+    this.consumedPurgeVersion = this.purgeVersion;
+    const purged = GalleryPurgeSyncStore.purgedIds;
+    if (purged.length === 0 || this.items.length === 0) {
+      return;
+    }
+    const want: Set<number> = new Set<number>();
+    for (let i = 0; i < purged.length; i++) {
+      want.add(purged[i]);
+    }
+    const kept: RecycleBinListItem[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const nid = recycleBinNumericIdOf(this.items[i]);
+      if (nid < 0 || !want.has(nid)) {
+        kept.push(this.items[i]);
+      }
+    }
+    if (kept.length !== this.items.length) {
+      this.items = kept;
+    }
   }
 
   private clearRbThumbResumeTimer(): void {
@@ -951,8 +986,8 @@ struct RecycleBinPage {
           }
           .width('100%')
           .height('100%')
-          // 给底部「清空回收站」文字入口让位
-          .padding({ bottom: this.showClearEntry() ? RECYCLE_BIN_CLEAR_BAR_HEIGHT_VP : 0 })
+          // 给底部「清空回收站」文字入口让位（含导航条避让）
+          .padding({ bottom: this.showClearEntry() ? recycleBinClearBarTotalHeightVp(this.navIndicatorInsetVp) : 0 })
 
           if (this.selectionMode && this.selectedCount > 0) {
             RecycleBinBatchBar({
@@ -972,12 +1007,13 @@ struct RecycleBinPage {
 
           if (this.showClearEntry()) {
             RecycleBinClearBar({
+              bottomInsetVp: this.navIndicatorInsetVp,
               onClear: (): void => {
                 void this.confirmClearAll();
               }
             })
               .width('100%')
-              .height(RECYCLE_BIN_CLEAR_BAR_HEIGHT_VP)
+              .height(recycleBinClearBarTotalHeightVp(this.navIndicatorInsetVp))
           }
 
           if (this.restoring || this.rbBatchDownloading) {
