@@ -183,7 +183,12 @@ export function fnHdsDialogSystemMaterial(): uiMaterial.Material | undefined {
 
 /**
  * 官方沉浸光感文档「按钮与选择类组件」：材质用较薄的样式（ULTRA_THIN 或 THIN），
- * 通过通用属性 .systemMaterial() 生效（SDK @since 26）。
+ * 通过通用属性 .systemMaterial() 设置。
+ *
+ * 注意限制（官方《开启沉浸光感》）：应用 targetSDKVersion 需不低于 26.0.0；
+ * 且「其他组件仅在 Navigation/NavDestination 标题栏或横向 Tabs 的底部 TabBar 中生效，
+ * 在其他区域中设置沉浸光感效果不生效」。页面正文里的普通按钮/胶囊因此拿不到该效果，
+ * 那些位置请改用 fnImmersiveBackgroundEffect + fnLiquidGlassGradient 的液态玻璃配方。
  */
 export function fnHdsPillSystemMaterial(): uiMaterial.Material | undefined {
   if (!fnCanUseArkUiSystemMaterial()) {
