@@ -5,7 +5,7 @@
  * 自建反代 / Lucky 直连不带 mode=relay，避免被当成中继通道、握手停在 HTTP。
  */
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagError, fnDiagMaskUrl, fnDiagRecord, fnDiagRecordResolve, fnDiagSetState } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagMaskUrl, fnDiagRecord, fnDiagRecordResolve, fnDiagSetState, fnDiagTiming } from '../common/FnDiagLog';
 import { http } from '@kit.NetworkKit';
 import webSocket from '@ohos.net.webSocket';
 import { isFnRelayBaseUrl } from './FnConnectApi';
@@ -584,12 +584,15 @@ export async function fnWsLogin(
     return { success: false, message: '缺少设备标识 did' };
   }
   const did = deviceId.trim();
-  const maxAttempts = isFnRelayBaseUrl(httpBaseNoSlash) ? RELAY_WS_CONNECT_ATTEMPTS : 1;
+  const isRelay = isFnRelayBaseUrl(httpBaseNoSlash);
+  const maxAttempts = isRelay ? RELAY_WS_CONNECT_ATTEMPTS : 1;
   let last: FnWsLoginResult = { success: false, message: '无法连接 WebSocket' };
   let timeoutRetries = 0;
   let ipFallbackTried = false;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const onceT0 = Date.now();
     last = await fnWsLoginOnce(httpBaseNoSlash, username, password, isTrustedHost, did);
+    fnDiagTiming(TAG, `wsOnce relay=${String(isRelay)} attempt=${attempt}`, Date.now() - onceT0);
     if (last.success === true) {
       fnDiagSetState('login', 'ok');
     }
@@ -602,8 +605,10 @@ export async function fnWsLogin(
         const hostHeader = wsHostHeaderOf(httpBaseNoSlash);
         hilog.info(DOMAIN, TAG, 'WS retry via IP literal %{public}s', fnDiagMaskUrl(ipBase));
         fnDiagRecord('I', TAG, `WS retry via IP literal ${fnDiagMaskUrl(ipBase)}`);
+        const ipT0 = Date.now();
         const ipResult = await fnWsLoginOnce(
           ipBase, username, password, isTrustedHost, did, httpBaseNoSlash, hostHeader);
+        fnDiagTiming(TAG, 'wsOnce ipFallback', Date.now() - ipT0);
         if (ipResult.success === true || ipResult.requires2fa === true ||
           ipResult.requires2faSetup === true) {
           if (ipResult.success === true) {
@@ -625,6 +630,7 @@ export async function fnWsLogin(
       timeoutRetries++;
       if (timeoutRetries > RELAY_WS_TIMEOUT_RETRY_MAX) {
         fnDiagRecord('W', TAG, `ws login final fail msg=${maskWsFailureMessage(last.message, httpBaseNoSlash)}`);
+        fnDiagRecord('I', TAG, `wsRelayTimeoutRetryCap hit timeoutRetries=${timeoutRetries}`);
         return last;
       }
     }
@@ -653,9 +659,17 @@ async function fnWsLoginOnce(
     fnDiagMaskUrl(wsUrl), String(isTrustedHost), String(relay));
   fnDiagRecord('I', TAG, `WS connect ${fnDiagMaskUrl(wsUrl)} trusted=${String(isTrustedHost)} relay=${String(relay)}`);
 
+  // 握手分段计时：连接 / 取 RSA 公钥 / user.login / user.authToken。
+  // 28s 硬超时是整段共用的，拆开才知道慢在「连不上」还是「连上了拿不到 token」。
+  // 注：wsStage user.login 的起点是公钥到达，中间的本地 RSA 加密也计在里面，
+  // 它比纯网络往返长；以后要拿这个数拆 28s 时得算上。
+  const wsStart = Date.now();
   return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
     let done = false;
     let failureInFlight = false;
+    let openAt = 0;
+    let pubAt = 0;
+    let loginAt = 0;
     const finish = (r: FnWsLoginResult): void => {
       if (done) {
         return;
@@ -670,7 +684,9 @@ async function fnWsLoginOnce(
     };
 
     const timer = setTimeout((): void => {
-      fnDiagRecord('W', TAG, 'ws login timeout');
+      // step 说明卡在哪一段：waitPub=等公钥，waitLogin=等登录响应，waitAuth=等 authToken。
+      // step=waitPub 有两种情况：还没连上（conn=0）和连上了在等公钥（conn=1），用 conn 区分。
+      fnDiagRecord('W', TAG, `ws login timeout step=${step} conn=${openAt > 0 ? '1' : '0'}`);
       finish({
         success: false,
         message: relay
@@ -746,6 +762,10 @@ async function fnWsLoginOnce(
         if (data.pub !== undefined && data.pub.length > 0 && data.si !== undefined) {
           pubPem = data.pub;
           si = data.si;
+          pubAt = Date.now();
+          if (openAt > 0) {
+            fnDiagTiming(TAG, 'wsStage getRSAPub', pubAt - openAt);
+          }
           void (async (): Promise<void> => {
             try {
               aesKey32 = await fnWsRandomAesKey32();
@@ -770,6 +790,9 @@ async function fnWsLoginOnce(
         }
         const p = pendingAfterAuth;
         pendingAfterAuth = null;
+        if (loginAt > 0) {
+          fnDiagTiming(TAG, 'wsStage user.authToken', Date.now() - loginAt);
+        }
         hilog.info(DOMAIN, TAG, 'user.authToken 响应已收');
         finish({
           success: true,
@@ -805,6 +828,10 @@ async function fnWsLoginOnce(
         }
         if (isFinalLoginSuccess(data)) {
           const token = data.token as string;
+          loginAt = Date.now();
+          if (pubAt > 0) {
+            fnDiagTiming(TAG, 'wsStage user.login', loginAt - pubAt);
+          }
           const secretB64 = data.secret !== undefined ? data.secret : '';
           const bid = data.backId !== undefined && data.backId.length > 0 ? data.backId : backId;
           let siForAuth = si;
@@ -865,6 +892,8 @@ async function fnWsLoginOnce(
         handleWsFailure(err, 'WebSocket 打开失败');
         return;
       }
+      openAt = Date.now();
+      fnDiagTiming(TAG, 'wsStage connect', openAt - wsStart);
       const reqid = fnWsMakeReqId(backId);
       const first = `{"reqid":${JSON.stringify(reqid)},"req":"util.crypto.getRSAPub"}`;
       ws.send(first);
@@ -912,9 +941,11 @@ export async function fnWs2faVerify(
   let timeoutRetries = 0;
   let ipFallbackTried = false;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const onceT0 = Date.now();
     last = await fnWs2faVerifyOnce(
       httpBaseNoSlash, accessToken, code, trustDevice, isTrustedHost, did
     );
+    fnDiagTiming(TAG, `ws2faOnce attempt=${attempt}`, Date.now() - onceT0);
     if (last.success === true) {
       fnDiagSetState('login', 'ok');
     }
@@ -943,6 +974,8 @@ export async function fnWs2faVerify(
     if (msg === '双重验证超时') {
       timeoutRetries++;
       if (timeoutRetries > RELAY_WS_TIMEOUT_RETRY_MAX) {
+        fnDiagRecord('W', TAG, `ws 2fa final fail msg=${maskWsFailureMessage(last.message, httpBaseNoSlash)}`);
+        fnDiagRecord('I', TAG, `ws2faRelayTimeoutRetryCap hit timeoutRetries=${timeoutRetries}`);
         return last;
       }
     }
@@ -969,9 +1002,14 @@ async function fnWs2faVerifyOnce(
   const wsUrl = buildFnMainWebSocketUrl(httpBaseNoSlash);
   hilog.info(DOMAIN, TAG, 'WS 2FA verify %{public}s', fnDiagMaskUrl(wsUrl));
 
+  // 与 fnWsLoginOnce 同口径的握手分段计时
+  const wsStart = Date.now();
   return new Promise<FnWsLoginResult>((resolve: (r: FnWsLoginResult) => void) => {
     let done = false;
     let failureInFlight = false;
+    let openAt = 0;
+    let pubAt = 0;
+    let loginAt = 0;
     const finish = (r: FnWsLoginResult): void => {
       if (done) {
         return;
@@ -986,7 +1024,7 @@ async function fnWs2faVerifyOnce(
     };
 
     const timer = setTimeout((): void => {
-      fnDiagRecord('W', TAG, 'ws 2fa timeout');
+      fnDiagRecord('W', TAG, `ws 2fa timeout step=${step} conn=${openAt > 0 ? '1' : '0'}`);
       finish({ success: false, message: '双重验证超时' });
     }, WS_TIMEOUT_MS);
 
@@ -1054,6 +1092,10 @@ async function fnWs2faVerifyOnce(
         if (data.pub !== undefined && data.pub.length > 0 && data.si !== undefined) {
           pubPem = data.pub;
           si = data.si;
+          pubAt = Date.now();
+          if (openAt > 0) {
+            fnDiagTiming(TAG, 'wsStage getRSAPub', pubAt - openAt);
+          }
           void (async (): Promise<void> => {
             try {
               aesKey32 = await fnWsRandomAesKey32();
@@ -1080,6 +1122,9 @@ async function fnWs2faVerifyOnce(
         }
         const p = pendingAfterAuth;
         pendingAfterAuth = null;
+        if (loginAt > 0) {
+          fnDiagTiming(TAG, 'wsStage user.authToken', Date.now() - loginAt);
+        }
         finish({
           success: true,
           token: p.token,
@@ -1096,6 +1141,10 @@ async function fnWs2faVerifyOnce(
       if (step === 'waitLogin') {
         if (isFinalLoginSuccess(data)) {
           const token = data.token as string;
+          loginAt = Date.now();
+          if (pubAt > 0) {
+            fnDiagTiming(TAG, 'wsStage user.login', loginAt - pubAt);
+          }
           const secretB64 = data.secret !== undefined ? data.secret : '';
           const bid = data.backId !== undefined && data.backId.length > 0 ? data.backId : backId;
           let siForAuth = si;
@@ -1155,6 +1204,8 @@ async function fnWs2faVerifyOnce(
         handleWsFailure(err, 'WebSocket 打开失败');
         return;
       }
+      openAt = Date.now();
+      fnDiagTiming(TAG, 'wsStage connect', openAt - wsStart);
       const reqid = fnWsMakeReqId(backId);
       ws.send(`{"reqid":${JSON.stringify(reqid)},"req":"util.crypto.getRSAPub"}`);
     });

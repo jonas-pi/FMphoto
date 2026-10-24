@@ -6,7 +6,7 @@
  */
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagMaskUrl, fnDiagRecord, fnDiagError } from '../common/FnDiagLog';
+import { fnDiagMaskUrl, fnDiagRecord, fnDiagError, fnDiagTiming } from '../common/FnDiagLog';
 import { openFeedbackPage } from './FeedbackPage';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { CertPolicy } from '../network/CertPolicy';
@@ -23,13 +23,14 @@ import {
   LOGIN_ENDPOINT_PREF_BANDWIDTH,
   LOGIN_ENDPOINT_PREF_LATENCY,
   LOGIN_ENDPOINT_PREF_PUBLIC,
+  LoginEndpointSelectionResult,
   orderedWsLoginServers,
   resolveLoginRedirectServer,
   selectAmongEndpointPool
 } from '../network/LoginEndpointSelector';
-import { isFnRelayBaseUrl, lookupFnConnect, FnIdOrHostParts, splitFnIdOrHostInput } from '../network/FnConnectApi';
+import { isFnRelayBaseUrl, lookupFnConnect, FnConnectLookupResult, FnIdOrHostParts, splitFnIdOrHostInput } from '../network/FnConnectApi';
 import { preferPublicEndpointUrl } from '../network/PublicDns';
-import { fnWs2faVerify, fnWsLogin, shouldTryNextLoginEndpoint } from '../network/FnWsLogin';
+import { fnWs2faVerify, fnWsLogin, FnWsLoginResult, shouldTryNextLoginEndpoint } from '../network/FnWsLogin';
 import { AppSession } from '../auth/AppSession';
 import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
 import { loadAlbumBackupSettings } from '../sync/AlbumBackupSettings';
@@ -71,6 +72,18 @@ const LOGIN_FIELD_HEIGHT_VP: number = 44;
 const LOGIN_HERO_ICON_VP: number = 72;
 /** 前景卡片相对状态栏 / 小白条的额外留白，上下共用 */
 const LOGIN_PANEL_EDGE_GAP_VP: number = 12;
+/**
+ * 键盘高度变化小于该值不重排。
+ * 输入法候选栏增减这类微调，不值得触发一次面板重排（上架要求点击响应 ≤250ms）。
+ * 注意：这滤不掉数字键盘↔全键盘的切换——那种高度差是几十 vp，本来就该重排。
+ */
+const LOGIN_KEYBOARD_INSET_EPSILON_VP: number = 8;
+
+/** avoidAreaChange 回调载荷：只取软键盘区（TYPE_KEYBOARD） */
+interface FnLoginAvoidAreaInfo {
+  type: window.AvoidAreaType;
+  area: window.AvoidArea;
+}
 
 /**
  * 日志脱敏：把消息里的裸主机名 / IP 掩掉。
@@ -80,6 +93,41 @@ function fnLoginMaskHosts(text: string): string {
   let out: string = text.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/g, '<ipv4>');
   out = out.replace(/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:\d+)?/g, '<host>');
   return out;
+}
+
+/**
+ * WS 登录的停止原因分类，供耗时埋点用。
+ * 只看结果与文案，不含主机名；分类顺序与 FnWsLogin 内部判定保持一致。
+ */
+function fnWsStopReason(r: FnWsLoginResult): string {
+  if (r.success === true) {
+    return 'ok';
+  }
+  if (r.requires2fa === true) {
+    return 'need2fa';
+  }
+  if (r.requires2faSetup === true) {
+    return 'need2faSetup';
+  }
+  if (r.certificateError === true) {
+    return 'cert';
+  }
+  const m: string = (r.message !== undefined ? r.message : '').toLowerCase();
+  // 与 FnWsLogin.isRetryableRelayWsFailure 的判定口径保持一致：
+  // 2FA 路径的文案是「双重验证超时」，不是「WebSocket 登录超时」。
+  if (m.indexOf('websocket 登录超时') >= 0 || m.indexOf('双重验证超时') >= 0) {
+    return 'timeout';
+  }
+  if (m.indexOf('无法连接') >= 0 || m.indexOf('连接失败') >= 0 || m.indexOf('打开失败') >= 0) {
+    return 'connectFail';
+  }
+  if (m.indexOf('找不到') >= 0 || m.indexOf('host') >= 0 || m.indexOf('dns') >= 0) {
+    return 'dns';
+  }
+  if (m.indexOf('密码') >= 0 || m.indexOf('登录失败') >= 0) {
+    return 'authFail';
+  }
+  return 'other';
 }
 
 @Entry
@@ -108,6 +156,17 @@ struct Login {
   /** 登录页不随键盘上抬，避免点密码框时整页重布局叠在安全键盘切换上 */
   private loginKeyboardAvoidApplied: boolean = false;
   private previousKeyboardAvoid: KeyboardAvoidMode = KeyboardAvoidMode.OFFSET;
+  /**
+   * 软键盘遮挡高度（vp）。登录页自己订阅 avoidAreaChange 的 TYPE_KEYBOARD 取。
+   * 不并入 fnBindSystemAvoidArea：那是全应用的状态栏/挖孔/导航条状态，
+   * 其它页已经在吃系统避让，全局再发一份键盘高度会重复顶。
+   */
+  @State private keyboardInsetVp: number = 0;
+  private keyboardAvoidBound: boolean = false;
+  /** 订阅代次：防止退订后在途的 getLastWindow 回调把监听又挂回去 */
+  private keyboardAvoidGeneration: number = 0;
+  private keyboardAvoidCallback: ((info: FnLoginAvoidAreaInfo) => void) | null = null;
+  private keyboardBoundWindow: window.Window | null = null;
   /** 密码校验通过，等待第二步 OTP */
   @State private show2faStep: boolean = false;
   /** 登录成功后淡出登录页，再进入首页。 */
@@ -138,12 +197,14 @@ struct Login {
 
   onPageShow(): void {
     this.applyLoginKeyboardAvoid(true);
+    this.bindKeyboardAvoidArea();
     this.applySystemBarTheme();
     this.tryConsumeShareInbox();
   }
 
   onPageHide(): void {
     this.applyLoginKeyboardAvoid(false);
+    this.unbindKeyboardAvoidArea();
   }
 
   private onShareInboxVersionChanged(): void {
@@ -177,6 +238,7 @@ struct Login {
 
   aboutToAppear(): void {
     this.applyLoginKeyboardAvoid(true);
+    this.bindKeyboardAvoidArea();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     void SessionPreferences.loadLoginFormDefaults(ctx).then((d) => {
       this.fnIdInput = this.combinedHostFieldFromDefaults(d);
@@ -201,6 +263,7 @@ struct Login {
 
   aboutToDisappear(): void {
     this.applyLoginKeyboardAvoid(false);
+    this.unbindKeyboardAvoidArea();
   }
 
   private applyLoginKeyboardAvoid(enable: boolean): void {
@@ -219,6 +282,97 @@ struct Login {
         this.loginKeyboardAvoidApplied = false;
       }
     } catch (_e) {
+    }
+  }
+
+  /**
+   * 登录页自行订阅软键盘避让区。
+   *
+   * 为什么不用系统自动避让：KeyboardAvoidMode.OFFSET 会在键盘弹出时整页上抬，
+   * 实时模糊把点击响应拖到 600ms+，上架要求 ≤250ms（见 FnLoginTextField 头注释）。
+   * 这里固定用 NONE（系统完全不做避让，键盘会盖住下半屏），改成自己抬面板：
+   * 只改外层 Column 的 padding.bottom，面板与内部 Scroll 变矮，
+   * 焦点输入框能滚到；背景层不动，也没有整页位移动画。
+   *
+   * 官方做法见 faqs-arkui-54（TYPE_KEYBOARD + margin 顶起底部组件）。
+   */
+  private bindKeyboardAvoidArea(): void {
+    if (this.keyboardAvoidBound) {
+      return;
+    }
+    // 代次：getLastWindow 是异步的，返回时可能已经退订过（页面已不可见），
+    // 或被后一次订阅取代。代次不一致就不要再 on。
+    const gen = ++this.keyboardAvoidGeneration;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      window.getLastWindow(ctx).then((win: window.Window): void => {
+        if (this.keyboardAvoidBound) {
+          return;
+        }
+        if (gen !== this.keyboardAvoidGeneration) {
+          return;
+        }
+        const cb = (data: FnLoginAvoidAreaInfo): void => {
+          if (data.type !== window.AvoidAreaType.TYPE_KEYBOARD) {
+            return;
+          }
+          this.applyKeyboardInset(data.area.bottomRect.height);
+        };
+        this.keyboardAvoidCallback = cb;
+        this.keyboardBoundWindow = win;
+        this.keyboardAvoidBound = true;
+        try {
+          win.on('avoidAreaChange', cb);
+        } catch (_e) {
+          this.keyboardAvoidBound = false;
+          this.keyboardBoundWindow = null;
+          this.keyboardAvoidCallback = null;
+          return;
+        }
+        // 订阅生效前键盘可能已经弹着，先取一次当前高度兜底
+        try {
+          const area = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_KEYBOARD);
+          this.applyKeyboardInset(area.bottomRect.height);
+        } catch (_e) {
+        }
+      }).catch((_e: Error): void => {});
+    } catch (_e) {
+    }
+  }
+
+  private unbindKeyboardAvoidArea(): void {
+    // 代次 +1：在途的 getLastWindow 回调回来时作废，避免页面已不可见却又 on 一次
+    this.keyboardAvoidGeneration++;
+    if (this.keyboardBoundWindow !== null && this.keyboardAvoidCallback !== null) {
+      try {
+        // 必须传同一个函数引用：不带参数的 off('avoidAreaChange') 会摘掉全部监听，
+        // 包括 fnBindSystemAvoidArea 注册的那个。
+        this.keyboardBoundWindow.off('avoidAreaChange', this.keyboardAvoidCallback);
+      } catch (_e) {
+      }
+    }
+    this.keyboardBoundWindow = null;
+    this.keyboardAvoidCallback = null;
+    this.keyboardAvoidBound = false;
+    this.keyboardInsetVp = 0;
+  }
+
+  /** 键盘高度（px）转 vp 并做抖动过滤。 */
+  private applyKeyboardInset(px: number): void {
+    const vp = this.pxToVp(px);
+    const cur = this.keyboardInsetVp;
+    // 弹出/收起一定要更新；两个非零值之间的小幅变化忽略
+    if (vp > 0 && cur > 0 && Math.abs(vp - cur) < LOGIN_KEYBOARD_INSET_EPSILON_VP) {
+      return;
+    }
+    this.keyboardInsetVp = vp > 0 ? vp : 0;
+  }
+
+  private pxToVp(px: number): number {
+    try {
+      return this.getUIContext().px2vp(px);
+    } catch (_e) {
+      return px;
     }
   }
 
@@ -266,6 +420,22 @@ struct Login {
   private loginBottomChromeInsetVp(): number {
     const chrome = Math.max(this.systemBottomInsetVp, this.navIndicatorInsetVp);
     return chrome > 0 ? chrome : 20;
+  }
+
+  /**
+   * 登录面板的底部留白。
+   * 键盘弹起时用键盘高度（导航条/小白条已被键盘盖住，不再叠加 chrome inset），
+   * 否则用系统导航条高度。
+   *
+   * 这里必须是外层 Column 的 padding，不能给面板加 margin：
+   * 面板是 height('100%')，父容器是 layoutWeight(1) 的定高容器，
+   * margin 会把面板顶出父容器，里面的 Scroll 视口不会变矮，输入框照样被遮。
+   */
+  private loginBottomInsetVp(): number {
+    if (this.keyboardInsetVp > 0) {
+      return this.keyboardInsetVp + LOGIN_PANEL_EDGE_GAP_VP;
+    }
+    return this.loginBottomChromeInsetVp() + LOGIN_PANEL_EDGE_GAP_VP;
   }
 
   /**
@@ -422,9 +592,12 @@ struct Login {
     };
 
     let existing: StoredSession | null = null;
+    const loadT0 = Date.now();
     try {
       existing = await SessionPreferences.load(ctx);
+      fnDiagTiming(LOGIN_TAG, 'prefsLoad', Date.now() - loadT0);
     } catch (_e) {
+      fnDiagTiming(LOGIN_TAG, 'prefsLoad throw', Date.now() - loadT0);
       existing = null;
     }
     const accountChanged = existing === null || existing.account !== stored.account ||
@@ -441,6 +614,7 @@ struct Login {
 
     try {
       AppSession.setLoginPassword(pass);
+      const formT0 = Date.now();
       await SessionPreferences.saveLoginFormDefaults(ctx, {
         fnIdInput: fnId,
         domainInput: stored.domainInput,
@@ -455,8 +629,15 @@ struct Login {
         savedUsers: upsertSavedUser(this.savedUsers, stored.account, this.rememberPassword ? pass : '',
           this.rememberPassword)
       });
+      fnDiagTiming(LOGIN_TAG, 'prefsSaveFormDefaults', Date.now() - formT0);
+      // 口令单独封存一次：与上面 persistSavedUsersSealed 里的封存是同一份密码，
+      // 两次 HUKS 会话 + 两次解封回环；单独计时以便确认是否值得合并。
+      const pwdT0 = Date.now();
       await SessionPreferences.saveSessionPassword(ctx, pass);
+      fnDiagTiming(LOGIN_TAG, 'prefsSaveSessionPassword', Date.now() - pwdT0);
+      const saveT0 = Date.now();
       await SessionPreferences.save(ctx, stored);
+      fnDiagTiming(LOGIN_TAG, 'prefsSaveSession', Date.now() - saveT0);
     } catch (e) {
       hilog.error(LOGIN_DOMAIN, LOGIN_TAG, 'SessionPreferences.save: %{public}s', String(e));
       fnDiagRecord('E', LOGIN_TAG, `SessionPreferences.save ${String(e)}`);
@@ -467,9 +648,12 @@ struct Login {
     // 新登录没有 AppSession.restore 这一步，不主动加载的话备份设置缓存为空：
     // 「仅备份照片/使用流量备份/同步创建相册/重命名/目录偏好」会被当成默认值，
     // 要等下次冷启动才生效。这里登录成功后立刻读一次。
+    const backupT0 = Date.now();
     try {
       await loadAlbumBackupSettings(ctx);
+      fnDiagTiming(LOGIN_TAG, 'loadAlbumBackupSettings', Date.now() - backupT0);
     } catch (e) {
+      fnDiagTiming(LOGIN_TAG, 'loadAlbumBackupSettings throw', Date.now() - backupT0);
       fnDiagError('Login', 'loadAlbumBackupSettings fail', e);
     }
     // 跳转前清空密码框，降低系统根据「提交后仍带密文的输入框」关联保险箱更新提示的概率
@@ -543,8 +727,12 @@ struct Login {
     promptCert: boolean = true
   ): Promise<boolean> {
     const trusted = CertPolicy.isTrusted(server);
+    const didT0 = Date.now();
     const deviceId = await SessionPreferences.ensureWsDeviceId(ctx);
+    fnDiagTiming(LOGIN_TAG, 'ensureWsDeviceId', Date.now() - didT0);
+    const wsT0 = Date.now();
     const wsRes = await fnWsLogin(server, user, pass, trusted, deviceId);
+    fnDiagTiming(LOGIN_TAG, `wsLogin ${fnWsStopReason(wsRes)} ${fnDiagMaskUrl(server)}`, Date.now() - wsT0);
     if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
       hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok %{public}s', fnDiagMaskUrl(server));
       const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
@@ -609,6 +797,22 @@ struct Login {
     return !shouldTryNextLoginEndpoint(wsRes);
   }
 
+  /**
+   * 记录一步的耗时；异常也记录后原样抛出。
+   * 登录链上每一步都是串行阻塞，埋点齐了才能判断慢在哪一环。
+   */
+  private async timedStep<T>(name: string, step: () => Promise<T>): Promise<T> {
+    const t0 = Date.now();
+    try {
+      const r = await step();
+      fnDiagTiming(LOGIN_TAG, name, Date.now() - t0);
+      return r;
+    } catch (e) {
+      fnDiagTiming(LOGIN_TAG, `${name} throw`, Date.now() - t0);
+      throw e as Error;
+    }
+  }
+
   private describeLoginError(err: Object | Error | string | undefined | null): string {
     if (err === undefined || err === null) {
       return '';
@@ -666,6 +870,7 @@ struct Login {
       return;
     }
     this.loading = true;
+    const flowT0 = Date.now();
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       this.show2faStep = false;
@@ -694,7 +899,9 @@ struct Login {
 
       // 仅在填写了 FN ID 时走 FN Connect；手填地址优先于云端结果
       if (fnId.length > 0) {
-        const looked = await lookupFnConnect(fnId, this.useHttps);
+        const looked = await this.timedStep('lookupFnConnect', (): Promise<FnConnectLookupResult> => {
+          return lookupFnConnect(fnId, this.useHttps);
+        });
         const hasAny = looked.publicDomainServer.length > 0 || looked.publicIpServer.length > 0 ||
           looked.lanServer.length > 0 || looked.relayServer.length > 0;
         if (!looked.ok || !hasAny) {
@@ -729,14 +936,16 @@ struct Login {
           this.pendingEndpointPublicIpUrl : this.pendingEndpointPublicIpv6Url
       );
 
-      const selected = await selectAmongEndpointPool({
-        lanIpv4Url: this.pendingEndpointLanUrl,
-        lanIpv6Url: this.pendingEndpointLanIpv6Url,
-        publicDomainUrl: this.pendingEndpointPublicDomainUrl,
-        publicIpv4Url: this.pendingEndpointPublicIpUrl,
-        publicIpv6Url: this.pendingEndpointPublicIpv6Url,
-        relayUrl: this.pendingEndpointRelayUrl
-      }, this.endpointPreference);
+      const selected = await this.timedStep('selectAmongEndpointPool', (): Promise<LoginEndpointSelectionResult> => {
+        return selectAmongEndpointPool({
+          lanIpv4Url: this.pendingEndpointLanUrl,
+          lanIpv6Url: this.pendingEndpointLanIpv6Url,
+          publicDomainUrl: this.pendingEndpointPublicDomainUrl,
+          publicIpv4Url: this.pendingEndpointPublicIpUrl,
+          publicIpv6Url: this.pendingEndpointPublicIpv6Url,
+          relayUrl: this.pendingEndpointRelayUrl
+        }, this.endpointPreference);
+      });
       if (selected.server.length === 0 || !selected.selectedOk) {
         fnDiagRecord('E', LOGIN_TAG, 'all endpoints unreachable');
         this.errorText = selected.summary.length > 0
@@ -756,7 +965,9 @@ struct Login {
         extraRelay = this.pendingEndpointRelayUrl;
       }
       const servers = orderedWsLoginServers(selected, extraRelay);
-      const redirectServer = await resolveLoginRedirectServer(selected.server);
+      const redirectServer = await this.timedStep('resolveLoginRedirectServer', (): Promise<string> => {
+        return resolveLoginRedirectServer(selected.server);
+      });
       if (redirectServer.length > 0 && redirectServer !== selected.server) {
         for (let i = servers.length - 1; i >= 0; i--) {
           if (servers[i] === redirectServer) {
@@ -787,6 +998,7 @@ struct Login {
       fnDiagRecord('E', LOGIN_TAG, `login flow ${safeMsg}`);
       this.errorText = msg.length > 0 ? `请求异常：${msg}` : '网络异常';
     } finally {
+      fnDiagTiming(LOGIN_TAG, 'loginFlowTotal', Date.now() - flowT0);
       this.loading = false;
     }
   }
@@ -808,6 +1020,7 @@ struct Login {
     this.loading = true;
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const trusted = CertPolicy.isTrusted(this.pendingServer);
+    const faT0 = Date.now();
     try {
       const wsRes = await fnWs2faVerify(
         this.pendingServer,
@@ -817,6 +1030,7 @@ struct Login {
         trusted,
         this.pendingDeviceId
       );
+      fnDiagTiming(LOGIN_TAG, `ws2faVerify ${fnWsStopReason(wsRes)}`, Date.now() - faT0);
       if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
         const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
         const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
@@ -1278,7 +1492,7 @@ struct Login {
       .padding({
         left: 20,
         right: 20,
-        bottom: this.loginBottomChromeInsetVp() + LOGIN_PANEL_EDGE_GAP_VP
+        bottom: this.loginBottomInsetVp()
       })
       .width('100%')
       .height('100%')
