@@ -7,7 +7,7 @@ import { dataSharePredicates } from '@kit.ArkData';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
-  fnEnsureReadImageVideoGranted,
+  fnCheckReadImageVideoGranted,
   fnRequestReadImageVideoAccess,
   FnReadImageVideoAuth
 } from '../common/FnMediaPermission';
@@ -346,7 +346,7 @@ export async function scanLocalBackupSourcePhotos(
   const seenUri: Set<string> = new Set<string>();
   const matchedKeys: Set<string> = new Set<string>();
   try {
-    const granted = await fnEnsureReadImageVideoGranted(ctx);
+    const granted = await fnCheckReadImageVideoGranted(ctx);
     if (!granted) {
       result.granted = false;
       result.failed = true;
@@ -501,7 +501,7 @@ export class LocalAlbumRef {
 export async function buildLocalAlbumRefIndex(ctx: common.UIAbilityContext): Promise<Map<string, LocalAlbumRef>> {
   const index: Map<string, LocalAlbumRef> = new Map<string, LocalAlbumRef>();
   try {
-    const granted = await fnEnsureReadImageVideoGranted(ctx);
+    const granted = await fnCheckReadImageVideoGranted(ctx);
     if (!granted) {
       hilog.info(DOMAIN, TAG, 'album ref index skipped: no permission');
       fnDiagRecord('W', TAG, 'no permission, album ref index skipped');
@@ -894,7 +894,7 @@ export async function scanLocalBackupSourceAlbums(
   const result = new LocalBackupSourceScan();
   const auth = requestIfNeeded
     ? await fnRequestReadImageVideoAccess(ctx)
-    : (await fnEnsureReadImageVideoGranted(ctx) ? FnReadImageVideoAuth.GRANTED : FnReadImageVideoAuth.DENIED);
+    : (await fnCheckReadImageVideoGranted(ctx) ? FnReadImageVideoAuth.GRANTED : FnReadImageVideoAuth.DENIED);
   result.auth = auth;
   if (auth !== FnReadImageVideoAuth.GRANTED) {
     return result;

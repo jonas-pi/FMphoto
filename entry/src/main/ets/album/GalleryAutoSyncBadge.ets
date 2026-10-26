@@ -10,7 +10,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 
 import { AppSession } from '../auth/AppSession';
 
-import { fnEnsureReadImageVideoGranted } from '../common/FnMediaPermission';
+import { fnCheckReadImageVideoGranted } from '../common/FnMediaPermission';
 import { fnDiagRecord } from '../common/FnDiagLog';
 
 import { GalleryListItem } from '../model/FnApiTypes';
@@ -43,10 +43,11 @@ export function triggerAutoSyncDetection(
         onDetected({ unsyncedCount: 0, state: 'offline' });
         return;
       }
-      const granted = await fnEnsureReadImageVideoGranted(ctx);
+      // 图库首屏不是用户点的功能。未授权就跳过，不能在这里弹「图片和视频」权限。
+      const granted = await fnCheckReadImageVideoGranted(ctx);
       if (!granted) {
-        hilog.info(DOMAIN, TAG, 'auto sync skipped: read permission denied');
-        fnDiagRecord('W', TAG, 'read permission denied, sync skipped');
+        hilog.info(DOMAIN, TAG, 'auto sync skipped: read permission not granted');
+        fnDiagRecord('I', TAG, 'read permission not granted, sync skipped without prompt');
         onDetected({ unsyncedCount: 0, state: 'denied' });
         return;
       }
