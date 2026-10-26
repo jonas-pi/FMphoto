@@ -84,3 +84,4 @@ entry/build/**/*-signed.hap
 
 # 本地备忘录（仅留本机，不入库）
 /notes/
+/docs/official-android-sync-analysis.md
