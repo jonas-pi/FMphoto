@@ -28,6 +28,12 @@ const TAG = 'FnWsLogin';
 
 const WS_TIMEOUT_MS = 28000;
 const WS_CONNECT_PROBE_TIMEOUT_MS = 5000;
+/**
+ * 主机名 WebSocket 迟迟没有 open 时的上限。
+ * 整段 28s 超时表示协议已经连上，不能拿来换 IP；握手没建立则按连接失败，才能改走 IPv4。
+ * 只用于已信任的主机名（IP 回退要求跳过证书校验）。文案不能含「超时」。
+ */
+const WS_OPEN_BUDGET_MS = 4500;
 const DEFAULT_BACK_ID = '0000000000000000';
 const WS_CONNECT_FAILED_CODE = '200';
 const WS_CERT_ERROR_CODES: number[] = [2300060, 2300058, 2300059, 2300077];
@@ -425,6 +431,7 @@ function wsHostHeaderOf(baseUrl: string): string {
  *
  * 不把「超时」算进来：'WebSocket 登录超时' / '双重验证超时' 说明协议已经连上，
  * 这时再按 IP 拨一次等于把刚建立起来的会话重做一遍。
+ * 握手在 WS_OPEN_BUDGET_MS 内没有 open，走的是「无法连接」，这里会认。
  */
 function isConnectLevelFailure(message: string): boolean {
   const m = message.toLowerCase();
@@ -662,6 +669,10 @@ async function fnWsLoginOnce(
       }
       done = true;
       clearTimeout(timer);
+      if (openTimer >= 0) {
+        clearTimeout(openTimer);
+        openTimer = -1;
+      }
       try {
         ws.close();
       } catch (_e) {
@@ -678,6 +689,8 @@ async function fnWsLoginOnce(
           : '公网 WebSocket 登录超时，可改自动选路或使用中继'
       });
     }, WS_TIMEOUT_MS);
+    // 仅已信任的主机名：open 不来就按连接失败结束，外层才会改拨 IPv4。已在 IP 上回退时不再缩短。
+    let openTimer: number = -1;
 
     let backId = DEFAULT_BACK_ID;
     let pubPem = '';
@@ -861,6 +874,10 @@ async function fnWsLoginOnce(
     });
 
     ws.on('open', (err: Error) => {
+      if (openTimer >= 0) {
+        clearTimeout(openTimer);
+        openTimer = -1;
+      }
       if (err !== undefined) {
         handleWsFailure(err, 'WebSocket 打开失败');
         return;
@@ -876,6 +893,15 @@ async function fnWsLoginOnce(
       }
     };
 
+    // AAAA 黑洞时 open 往往一直不来，原先要等满 28s。这里提前按连接失败结束，外层改拨 IPv4。
+    // 文案固定为「无法连接」，不能写成超时，否则不会换地址。
+    // 中继不走这条：提前掐断会误把 fnos.net 换成解析出的 IP，中继通道就断了。
+    if (isTrustedHost && !relay && hostOverride.length === 0 && isHostnameBaseUrl(httpBaseNoSlash)) {
+      openTimer = setTimeout((): void => {
+        fnDiagRecord('W', TAG, 'ws open budget exceeded');
+        finish({ success: false, message: '无法连接 WebSocket' });
+      }, WS_OPEN_BUDGET_MS);
+    }
     ws.connect(wsUrl, connectOptions, onConnect);
   });
 }

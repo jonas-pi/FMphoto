@@ -26,14 +26,24 @@ const FOREGROUND_PROBE_MIN_INTERVAL_MS = 5 * 60 * 1000;
 let lastForegroundProbeAtMs: number = 0;
 
 /**
- * 是否为 HTTP 401（FnHttpClient.requestJson 失败文案为 `HTTP ${code}`）。
+ * 401 的现用文案，须与 fnHttpStatusMessage(401) / fnBizCodeMessage(401) 保持一致。
+ * 图库请求失败会带上这句；认不出它，静默重登就不会跑，用户直接看到「登录已过期」。
+ */
+const SESSION_EXPIRED_MESSAGE = '登录已过期，请重新登录';
+
+/**
+ * 是否为未授权 / 登录失效。
+ * 现用失败文案是「登录已过期，请重新登录」；旧文案 `HTTP 401` 仍识别。
  */
 export function isHttpUnauthorizedMessage(msg: string | undefined): boolean {
   if (msg === undefined || msg.length === 0) {
     return false;
   }
   const t = msg.trim();
-  return t === 'HTTP 401' || t.indexOf('HTTP 401') === 0;
+  if (t === 'HTTP 401' || t.indexOf('HTTP 401') === 0) {
+    return true;
+  }
+  return t === SESSION_EXPIRED_MESSAGE || t.indexOf(SESSION_EXPIRED_MESSAGE) === 0;
 }
 
 /**

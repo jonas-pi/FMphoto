@@ -4,7 +4,8 @@ import {
   fnosDirectPortFallbackUrl,
   fnWebViewBaseUrl,
   normalizeServerUrl,
-  normalizeUserServerUrl
+  normalizeUserServerUrl,
+  replaceBaseUrlHost
 } from '../main/ets/network/ServerUrl';
 import { isUnusableIpv6Host, splitFnIdOrHostInput } from '../main/ets/network/FnConnectApi';
 import { resolveLoginRedirectLocation } from '../main/ets/network/LoginEndpointSelector';
@@ -212,6 +213,14 @@ export default function localUnitTest() {
       );
       expect(smartCategoryCount(patched[0])).assertEqual(276);
       expect(smartCategoryCount(patched[1])).assertEqual(8);
+    });
+
+    it('replaceBaseUrlHost_keeps_implicit_443_when_host_becomes_ip', 0, () => {
+      expect(replaceBaseUrlHost('https://nas.example', '2001:db8::1')).assertEqual('https://[2001:db8::1]:443');
+      expect(replaceBaseUrlHost('https://nas.example', '203.0.113.8')).assertEqual('https://203.0.113.8:443');
+      expect(replaceBaseUrlHost('http://nas.example', '2001:db8::1')).assertEqual('http://[2001:db8::1]:80');
+      expect(replaceBaseUrlHost('https://nas.example:5667', '2001:db8::1')).assertEqual('https://[2001:db8::1]:5667');
+      expect(replaceBaseUrlHost('https://192.0.2.10', '198.51.100.8')).assertEqual('https://198.51.100.8:5667');
     });
 
     it('fnWebViewBaseUrl_keeps_session_scheme_and_port', 0, () => {

@@ -6,7 +6,7 @@ import { http } from '@kit.NetworkKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagError, fnDiagMaskUrl, fnDiagRecord } from '../common/FnDiagLog';
 import { fnRelayProbeUrl, isFnRelayBaseUrl } from './FnConnectApi';
-import { preferPublicEndpointUrl, resolvePublicHostnameToIpv6BaseUrl } from './PublicDns';
+import { preferPublicEndpointUrl } from './PublicDns';
 import { isIpLiteralHost, normalizeServerUrl, parseNormalizedBaseUrl } from './ServerUrl';
 import { fnNetErrorText } from './fnHttpClient/FnHttpClientCommon';
 
@@ -380,37 +380,31 @@ async function probeEndpoint(
     return probeEndpointOnce(
       candidate, bandwidthMode, v6ProbeBudget(probeTimeoutMs), http.AddressFamily.ONLY_V6);
   }
-  const first = await probeEndpointOnce(
-    candidate, bandwidthMode, probeTimeoutMs, http.AddressFamily.DEFAULT);
-  if (first.ok || !isDnsHostnameBaseUrl(candidate.baseUrl)) {
+  // IP 字面量没有 A/AAAA 之争，保持默认地址族
+  if (!isDnsHostnameBaseUrl(candidate.baseUrl)) {
+    return probeEndpointOnce(
+      candidate, bandwidthMode, probeTimeoutMs, http.AddressFamily.DEFAULT);
+  }
+  // 域名同时探 IPv4 与 IPv6。IPv4 先通则直接用这条域名。
+  // IPv4 失败但 IPv6 通了，也仍用原域名登录，不改成 IP 字面量。
+  const v4Promise = probeEndpointOnce(
+    candidate, bandwidthMode, probeTimeoutMs, http.AddressFamily.ONLY_V4);
+  const v6Promise = probeEndpointOnce(
+    candidate, bandwidthMode, v6ProbeBudget(probeTimeoutMs), http.AddressFamily.ONLY_V6);
+  const first = await v4Promise;
+  if (first.ok) {
     return first;
   }
-  // 纯 AAAA 域名在部分网络上会被 NetStack 当成解析失败；IPv4 不通时再强制走 IPv6
-  const second = await probeEndpointOnce(
-    candidate, bandwidthMode, v6ProbeBudget(probeTimeoutMs), http.AddressFamily.ONLY_V6);
+  const second = await v6Promise;
   if (!second.ok) {
     hilog.info(DOMAIN, TAG, 'v6 probe miss %{public}s %{public}s', fnDiagMaskUrl(candidate.baseUrl), second.message);
     fnDiagRecord('W', TAG, `v6 probe miss ${fnDiagMaskUrl(candidate.baseUrl)}`);
     return first;
   }
-  if (isFnRelayBaseUrl(candidate.baseUrl)) {
-    return second;
-  }
-  const literal = await resolvePublicHostnameToIpv6BaseUrl(candidate.baseUrl);
-  if (literal.length === 0) {
-    hilog.info(DOMAIN, TAG, 'v6 probe ok but no AAAA %{public}s', fnDiagMaskUrl(candidate.baseUrl));
-    return second;
-  }
-  hilog.info(DOMAIN, TAG, 'v6 probe rewrite %{public}s -> %{public}s',
-    fnDiagMaskUrl(candidate.baseUrl), fnDiagMaskUrl(literal));
-  return {
-    candidate: { kind: candidate.kind, baseUrl: literal },
-    ok: true,
-    latencyMs: second.latencyMs,
-    bytesPerSecond: second.bytesPerSecond,
-    score: 0,
-    message: ''
-  };
+  // IPv6 只说明这条域名的 AAAA 能通。登录必须仍用原域名：
+  // 换成 IP 后 TLS 的 SNI 和 Host 都不再是域名，443 反代和证书会对不上。
+  hilog.info(DOMAIN, TAG, 'v6 probe ok keep host %{public}s', fnDiagMaskUrl(candidate.baseUrl));
+  return second;
 }
 
 function assignScores(
@@ -943,6 +937,95 @@ function selectionFromProbes(
   };
 }
 
+/** 已有一条直连成功后，再给其它候选这么久，用来赶上稍慢的内网；不等不可达地址把整次登录拖满。 */
+const PROBE_SUCCESS_GRACE_MS = 800;
+
+/**
+ * 带宽模式要等全部下完才能比速度。自动/延迟模式在第一条直连成功后再等一小段，
+ * 没返回的候选直接丢掉，避免一条 IPv6 超时挡住已经探通的域名。
+ * 公网域名必须等它自己返回：它往往比云端给的 IPv6:5667 慢，提前收场会把通的 443 丢掉。
+ */
+async function awaitProbeBatch(
+  candidates: LoginEndpointCandidate[],
+  bandwidthMode: boolean,
+  probeTimeoutMs: number,
+  waitForAll: boolean
+): Promise<LoginEndpointProbeResult[]> {
+  const probes: Promise<LoginEndpointProbeResult>[] = [];
+  for (let n = 0; n < candidates.length; n++) {
+    probes.push(probeEndpoint(candidates[n], bandwidthMode, probeTimeoutMs));
+  }
+  if (waitForAll || probes.length === 0) {
+    return await Promise.all(probes);
+  }
+  const settled: LoginEndpointProbeResult[] = [];
+  let pending = probes.length;
+  let domainLeft = 0;
+  for (let d = 0; d < candidates.length; d++) {
+    if (candidates[d].kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN) {
+      domainLeft++;
+    }
+  }
+  let closed = false;
+  let graceTimer: number = -1;
+  await new Promise<void>((resolve: () => void) => {
+    const close = (): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      if (graceTimer >= 0) {
+        clearTimeout(graceTimer);
+        graceTimer = -1;
+      }
+      resolve();
+    };
+    const armGraceIfDirectOk = (): void => {
+      if (graceTimer >= 0 || domainLeft > 0) {
+        return;
+      }
+      for (let s = 0; s < settled.length; s++) {
+        if (settled[s].ok && !isRelayKind(settled[s].candidate.kind)) {
+          graceTimer = setTimeout(close, PROBE_SUCCESS_GRACE_MS);
+          return;
+        }
+      }
+    };
+    for (let i = 0; i < probes.length; i++) {
+      const kind = candidates[i].kind;
+      probes[i].then((one: LoginEndpointProbeResult) => {
+        if (closed) {
+          return;
+        }
+        settled.push(one);
+        pending--;
+        if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN && domainLeft > 0) {
+          domainLeft--;
+        }
+        if (pending <= 0) {
+          close();
+          return;
+        }
+        armGraceIfDirectOk();
+      }).catch((_e: Error): void => {
+        if (closed) {
+          return;
+        }
+        pending--;
+        if (kind === LOGIN_ENDPOINT_PREF_PUBLIC_DOMAIN && domainLeft > 0) {
+          domainLeft--;
+        }
+        if (pending <= 0) {
+          close();
+          return;
+        }
+        armGraceIfDirectOk();
+      });
+    }
+  });
+  return settled;
+}
+
 /**
  * 在内网 V4/V6、公网域名 / IPv4 / IPv6、官方中继中并行短探测选路。
  * 中继优先级最低：仅当直连候选都不可达时选用。
@@ -963,9 +1046,7 @@ export async function selectAmongEndpointPool(
   }
   // 单条候选也探测，便于登录页展示路径与延迟
   const bandwidthMode = preference === LOGIN_ENDPOINT_PREF_BANDWIDTH;
-  const probed = await Promise.all(
-    candidates.map((c: LoginEndpointCandidate) => probeEndpoint(c, bandwidthMode, probeTimeoutMs))
-  );
+  const probed = await awaitProbeBatch(candidates, bandwidthMode, probeTimeoutMs, bandwidthMode);
   let scored = assignScores(probed, preference);
   let best = pickBest(scored);
   // 直连都失败时：中继 DNS 可能尚未就绪，短间隔再探，不臆造其它集群
