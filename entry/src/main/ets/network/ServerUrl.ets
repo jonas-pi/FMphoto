@@ -647,7 +647,11 @@ export function isHomeLanHost(host: string): boolean {
   return false;
 }
 
-/** 用新主机替换 baseUrl 中的 host（保留协议与端口） */
+/**
+ * 用新主机替换 baseUrl 中的 host，协议和端口保持原样。
+ * 原地址没写端口时，默认端口按原主机算：https 域名是 443，直连 IP 才是 5667。
+ * 不能因为换成 IPv6 就改判成 IP 默认端口，否则探测打在 443，登录却拨到 5667。
+ */
 export function replaceBaseUrlHost(baseUrl: string, newHost: string): string {
   const parts = parseNormalizedBaseUrl(baseUrl);
   if (parts === null || newHost.trim().length === 0) {
@@ -660,7 +664,15 @@ export function replaceBaseUrlHost(baseUrl: string, newHost: string): string {
     hostRaw: host,
     port: parts.port
   };
-  const def = defaultPort(parts.scheme === 'https', isDirectParsedAuthority(auth));
+  let def = defaultPort(parts.scheme === 'https', isDirectParsedAuthority(auth));
+  if (parts.port === null) {
+    const sourceAuth: ParsedAuthority = {
+      useBracket: parts.useBracket,
+      hostRaw: parts.host,
+      port: null
+    };
+    def = defaultPort(parts.scheme === 'https', isDirectParsedAuthority(sourceAuth));
+  }
   return trimTrailingSlash(`${parts.scheme}://${buildAuthority(auth, def)}`);
 }
 

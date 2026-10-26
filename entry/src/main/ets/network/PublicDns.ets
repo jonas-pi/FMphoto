@@ -74,65 +74,6 @@ export async function resolvePublicDomainToIpBaseUrl(domainBaseUrl: string): Pro
   }
 }
 
-function stripIpv6Brackets(ip: string): string {
-  let h = ip.trim();
-  if (h.startsWith('[')) {
-    const close = h.indexOf(']');
-    if (close > 1) {
-      h = h.substring(1, close);
-    }
-  }
-  return h;
-}
-
-function firstGlobalIpv6(addrs: Array<connection.NetAddress>): string {
-  for (let i = 0; i < addrs.length; i++) {
-    const raw = addrs[i].address !== undefined ? String(addrs[i].address).trim() : '';
-    const ip = stripIpv6Brackets(raw);
-    if (ip.indexOf(':') < 0 || ip.indexOf('%') >= 0) {
-      continue;
-    }
-    if (ip.toLowerCase().startsWith('fe80:')) {
-      continue;
-    }
-    return ip;
-  }
-  return '';
-}
-
-async function lookupGlobalIpv6(host: string): Promise<string> {
-  try {
-    const addrs = await connection.getAddressesByName(host);
-    return firstGlobalIpv6(addrs);
-  } catch (e) {
-    hilog.warn(DOMAIN, TAG, 'dns v6 failed %{public}s', fnDiagMaskHost(host));
-    fnDiagError(TAG, `dns v6 failed ${fnDiagMaskHost(host)}`, e);
-    return '';
-  }
-}
-
-/**
- * 域名探测只有 IPv6 走通时，换成同端口的 IPv6 字面量。
- * WebSocket 不能指定地址族，继续用主机名会再次撞上「只有 AAAA 被当成解析失败」。
- */
-export async function resolvePublicHostnameToIpv6BaseUrl(domainBaseUrl: string): Promise<string> {
-  const base = domainBaseUrl.trim();
-  if (base.length === 0) {
-    return '';
-  }
-  const parts = parseNormalizedBaseUrl(base);
-  if (parts === null || parts.host.length === 0 || isIpLiteralHost(parts.host)) {
-    return '';
-  }
-  const ipv6 = await lookupGlobalIpv6(parts.host);
-  if (ipv6.length === 0) {
-    return '';
-  }
-  const rebuilt = replaceBaseUrlHost(base, ipv6);
-  hilog.info(DOMAIN, TAG, 'aaaa %{public}s -> %{public}s', fnDiagMaskHost(parts.host), fnDiagMaskHost(ipv6));
-  return rebuilt;
-}
-
 /** 公网切换地址：有域名用域名，否则用 IP */
 export function preferPublicEndpointUrl(domainUrl: string, ipUrl: string): string {
   const d = domainUrl.trim();
