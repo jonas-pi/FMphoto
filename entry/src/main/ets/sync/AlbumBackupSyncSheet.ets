@@ -7,6 +7,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { AppSession } from '../auth/AppSession';
 import { SessionPreferences } from '../auth/SessionPreferences';
 import { fnDiagRecord } from '../common/FnDiagLog';
+import { GalleryAutoSyncStore } from '../album/GalleryAutoSyncStore';
 import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { fnRequestReadImageVideoAccess, FnReadImageVideoAuth } from '../common/FnMediaPermission';
 import {
@@ -111,6 +112,8 @@ export struct AlbumBackupSyncSheet {
   @State private modeSubtitle: string = '';
   /** 是否已从磁盘读到真实设置。未读到之前不允许回写，避免用默认空列表覆盖磁盘。 */
   @State private settingsHydrated: boolean = false;
+  /** 正在把整机现有照片记成已处理。避免连点两次各扫一遍。 */
+  @State private ignoringExisting: boolean = false;
 
   aboutToAppear(): void {
     AlbumBackupPageBack.pop = (): void => {
@@ -205,6 +208,57 @@ export struct AlbumBackupSyncSheet {
 
   private hostContext(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
+  }
+
+  /**
+   * 把当前手机上的照片记成已处理。确认后再扫整机。
+   * 只影响现在登录的账号和 NAS，新拍或改过的照片仍会上传。
+   */
+  private async confirmIgnoreExisting(): Promise<void> {
+    if (this.ignoringExisting) {
+      return;
+    }
+    let proceed = false;
+    try {
+      const dlg = await this.getUIContext().getPromptAction().showDialog({
+        title: '忽略现有照片',
+        message: '当前手机上的照片会记成已处理，不再上传到现在登录的账号。之后只有新拍或改过的照片会上传。还没传到这个账号的旧照片也不会补传。',
+        buttons: [
+          { text: '取消', color: '#99000000' },
+          { text: '忽略现有照片', color: '#FF2563EB' }
+        ]
+      });
+      proceed = dlg.index === 1;
+    } catch (_e) {
+      return;
+    }
+    if (!proceed) {
+      return;
+    }
+    const auth = await fnRequestReadImageVideoAccess(this.hostContext());
+    if (auth !== FnReadImageVideoAuth.GRANTED) {
+      this.toast('请允许访问相册后再忽略');
+      return;
+    }
+    this.ignoringExisting = true;
+    try {
+      const total = await GalleryAutoSyncStore.ignoreExistingLibrary(this.hostContext());
+      if (total === 0) {
+        this.toast('没有读到本机照片，没有忽略');
+        return;
+      }
+      this.toast('已忽略现有照片，之后只上传新拍或改过的');
+    } catch (e) {
+      const msg = String(e);
+      fnDiagRecord('W', 'AlbumBackup', `ignore existing failed ${msg.substring(0, 80)}`);
+      if (msg.indexOf('正在扫描') >= 0) {
+        this.toast('正在扫描，请稍后再忽略');
+      } else {
+        this.toast('忽略失败，现有照片仍可能被上传');
+      }
+    } finally {
+      this.ignoringExisting = false;
+    }
   }
 
   private toast(message: string): void {
@@ -524,6 +578,30 @@ export struct AlbumBackupSyncSheet {
    * 直接读 @State。
    */
   @Builder
+  private ignoreExistingRow() {
+    Row() {
+      Column({ space: 4 }) {
+        Text($r('app.string.album_backup_ignore_existing_title'))
+          .fontSize(16)
+          .fontColor(fnResolvedTextPrimary(this.themeTextPrimary))
+        Text(this.ignoringExisting ? '正在读取本机照片…' : $r('app.string.album_backup_ignore_existing_sub'))
+          .fontSize(12)
+          .fontColor(fnResolvedTextSecondary(this.themeTextSecondary))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .alignItems(VerticalAlign.Center)
+    .onClick((): void => {
+      void this.confirmIgnoreExisting();
+    })
+  }
+
+  @Builder
   private navRow(title: Resource, kind: BackupRowSubtitle, onTap: () => void) {
     Row() {
       Column({ space: 4 }) {
@@ -643,6 +721,8 @@ export struct AlbumBackupSyncSheet {
               void this.persistLocal();
             }
           )
+          Divider().strokeWidth(0.5).opacity(0.2)
+          this.ignoreExistingRow()
         }
         .width('100%')
         .backgroundColor(fnResolvedCardFill(this.cardBg))

@@ -2,13 +2,14 @@
  * 前台同步：本机账本快筛 → NAS 文件名+大小索引 → 未命中的才上传。
  */
 import { common } from '@kit.AbilityKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagError, fnDiagRecord, fnDiagSetState } from '../common/FnDiagLog';
 import { GalleryListItem } from '../model/FnApiTypes';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { buildNasDedupeIndex, localPhotoOfficialFingerprint } from './GalleryAutoSyncOfficialFingerprint';
 import { compareLocalWithBackup, ContentCompareProgress, SyncUploadPiece } from './GalleryAutoSyncCompare';
-import { GalleryAutoSyncLedger } from './GalleryAutoSyncLedger';
+import { GalleryAutoSyncLedger, LedgerPut } from './GalleryAutoSyncLedger';
 import { GalleryAutoSyncNasIndex } from './GalleryAutoSyncNasIndex';
 import { FnTransferDirection } from '../common/FnTransferProgress';
 import { FnTransferQueueStore } from '../common/FnTransferQueueStore';
@@ -104,6 +105,79 @@ export class GalleryAutoSyncStore {
 
   static disarmLaunch(): void {
     GalleryAutoSyncStore.launchArmed = false;
+  }
+
+  /**
+   * 忽略现有照片后，清掉上一轮检查留下的待上传列表。
+   * 上次扫描时间也清掉：下次检查仍会跑，新拍的照片不会被这 5 分钟缓存挡住。
+   */
+  static clearPreparedUploads(): void {
+    GalleryAutoSyncStore.disarmLaunch();
+    if (GalleryAutoSyncStore.lastResult === null) {
+      return;
+    }
+    const previous = GalleryAutoSyncStore.lastResult;
+    GalleryAutoSyncStore.lastResult = {
+      unsynced: [],
+      detectedAt: Date.now(),
+      skippedOnNas: previous.skippedOnNas,
+      skippedInLedger: previous.skippedInLedger,
+      compareFailed: 0,
+      unreadable: 0
+    };
+    GalleryAutoSyncStore.lastDetectTime = 0;
+  }
+
+  /**
+   * 把当前手机上的全部照片记成已处理，只留给以后新拍或改过的照片上传。
+   * 范围是整机，不看备份源：私有相册哪怕已经勾进备份源，现有文件也不再传。
+   * 只写当前账号和当前 NAS 的账本、已见快照，换账号或换 NAS 不受影响。
+   * 扫描没读完就中止，不写一半，避免没扫到的私有照片仍被上传。
+   * @returns 记入已见快照的条数
+   */
+  static async ignoreExistingLibrary(ctx: common.UIAbilityContext): Promise<number> {
+    if (GalleryAutoSyncStore.detecting || GalleryAutoSyncStore.inflight !== null) {
+      throw new Error('正在扫描，请稍后再忽略');
+    }
+    const photos = await queryLocalPhotos(ctx, null, true);
+    if (photos.length === 0) {
+      return 0;
+    }
+    const marked: LocalPhotoEntry[] = [];
+    const puts: LedgerPut[] = [];
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i];
+      if (photo.uri.length === 0) {
+        continue;
+      }
+      marked.push(photo);
+      const moving = photo.photoSubtype === photoAccessHelper.PhotoSubtype.MOVING_PHOTO;
+      if (!moving && photo.fileSize <= 0) {
+        // 大小异常的条目比对时会被丢掉，账本记不进去。已见快照仍要记下，避免下次被当成新照片。
+        continue;
+      }
+      const put = new LedgerPut();
+      put.uri = photo.uri;
+      put.size = moving ? 0 : photo.fileSize;
+      put.mtimeMs = moving ? 0 : photo.dateModifiedMs;
+      put.role = moving ? 'live' : 'file';
+      puts.push(put);
+    }
+    if (marked.length === 0) {
+      return 0;
+    }
+    const total = await GalleryAutoSyncLocalSeen.ignoreCurrent(ctx, marked);
+    // 已见快照已经能挡住旧照片。账本是第二道：快照以后被清掉时，比对仍会跳过这些文件。
+    if (puts.length > 0) {
+      try {
+        await GalleryAutoSyncLedger.rememberMany(ctx, puts);
+      } catch (e) {
+        fnDiagError(TAG, 'ignore existing ledger write failed', e);
+      }
+    }
+    GalleryAutoSyncStore.clearPreparedUploads();
+    fnDiagRecord('I', TAG, `ignore existing library photos=${marked.length} seen=${total}`);
+    return total;
   }
 
   static getUnsyncedCount(): number {
@@ -221,6 +295,17 @@ export class GalleryAutoSyncStore {
           ' albums=' + String(scanResult.albumsScanned) + ' selected=' + String(scope.keys.length));
       } else {
         localPhotos = await queryLocalPhotos(ctx, new LocalScanQueueProgress(taskId));
+      }
+      // 全库扫描才能判断「手机上没有了」。只扫部分备份源时，没出现的照片可能还在别的相册里。
+      if (!scope.scoped) {
+        const liveUris = new Set<string>();
+        for (let u = 0; u < localPhotos.length; u++) {
+          if (localPhotos[u].uri.length > 0) {
+            liveUris.add(localPhotos[u].uri);
+          }
+        }
+        await GalleryAutoSyncLedger.pruneAbsent(ctx, liveUris);
+        await GalleryAutoSyncLocalSeen.pruneAbsent(ctx, liveUris);
       }
       // 统一补齐：全库扫描没有相册信息；按备份源扫描时用户相册/系统相册没有 lpath。
       // 两条路径都补成「优先用 SOURCE 相册的设备内路径」，否则 mode 3 会落到备份根目录。

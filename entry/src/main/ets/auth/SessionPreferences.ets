@@ -34,6 +34,8 @@ const K_LOGIN_VIA_WS = 'login_via_ws';
 const K_WS_SIGN_KEY_B64 = 'ws_sign_key_b64';
 const K_OPENAPI_AUTHX_KEY = 'openapi_authx_key';
 const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
+/** 登录后向 NAS 问到的机器码。空表示没问到，账本退回 FN ID 或地址。 */
+const K_NAS_MACHINE_ID = 'nas_machine_id';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
 /** 政策正文变更后递增；与已存值不同则下次启动需重新同意。 */
 export const PRIVACY_POLICY_VERSION = '202610202';
@@ -92,6 +94,11 @@ export interface StoredSession {
   wsSignKeyB64: string;
   openApiAuthxKey: string;
   openApiAuthxSecret: string;
+  /**
+   * 飞牛本机机器码。登录问到才写入。
+   * 占位码（多台设备相同）不会存进来；退出登录时清掉，避免下一台 NAS 沿用。
+   */
+  machineId: string;
 }
 
 export interface LoginSavedUser {
@@ -419,7 +426,8 @@ export class SessionPreferences {
       prefsGetString(p, K_ENDPOINT_LAN_IPV6_URL, ''),
       prefsGetString(p, K_ENDPOINT_PUBLIC_IPV6_URL, ''),
       prefsGetString(p, K_PUBLIC_IP_INPUT, ''),
-      prefsGetString(p, K_PUBLIC_IPV6_INPUT, '')
+      prefsGetString(p, K_PUBLIC_IPV6_INPUT, ''),
+      prefsGetString(p, K_NAS_MACHINE_ID, '')
     ]);
     return {
       baseUrl: prefsValues[0],
@@ -445,7 +453,8 @@ export class SessionPreferences {
       endpointLanIpv6Url: prefsValues[19],
       endpointPublicIpv6Url: prefsValues[20],
       publicIpInput: prefsValues[21],
-      publicIpv6Input: prefsValues[22]
+      publicIpv6Input: prefsValues[22],
+      machineId: prefsValues[23]
     };
   }
 
@@ -475,6 +484,7 @@ export class SessionPreferences {
     await prefsPutString(p, K_WS_SIGN_KEY_B64, s.wsSignKeyB64.length > 0 ? s.wsSignKeyB64 : '');
     await prefsPutString(p, K_OPENAPI_AUTHX_KEY, s.openApiAuthxKey.length > 0 ? s.openApiAuthxKey : '');
     await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, s.openApiAuthxSecret.length > 0 ? s.openApiAuthxSecret : '');
+    await prefsPutString(p, K_NAS_MACHINE_ID, s.machineId);
     await prefsFlush(p);
   }
 
@@ -615,6 +625,7 @@ export class SessionPreferences {
     await prefsPutString(p, K_WS_SIGN_KEY_B64, '');
     await prefsPutString(p, K_OPENAPI_AUTHX_KEY, '');
     await prefsPutString(p, K_OPENAPI_AUTHX_SECRET, '');
+    await prefsPutString(p, K_NAS_MACHINE_ID, '');
     await prefsFlush(p);
   }
 

@@ -1,20 +1,16 @@
 /**
- * 本机同步账本：记录本机媒体是否已经在 NAS。
+ * 本机同步账本：记录本机媒体是否已经在当前账号的这台 NAS。
  * 键是 uri + 大小 + 修改时间。大小和修改时间没变就直接跳过，不再读文件。
- * 不保存 NAS 全库索引。退出登录时整份删除。
+ * 文件按账号和 NAS 分开，退出登录不删除，同一账号再进来还能接着用。
+ * 不保存 NAS 全库索引。
  */
-import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fnDiagError } from '../common/FnDiagLog';
+import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
+import { dropUnscopedSyncFiles, gallerySyncScopeToken } from './GalleryAutoSyncScope';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
 
-const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncLedger';
-const PREF_NAME = 'fnos_client_prefs';
-const K_AUTO_SYNC_LEDGER = 'auto_sync_ledger_v2';
-const LEDGER_FILE = 'auto_sync_ledger_v3.txt';
 
 export class LedgerPut {
   uri: string = '';
@@ -35,10 +31,13 @@ class LedgerRow {
 
 export class GalleryAutoSyncLedger {
   private static rows: Map<string, LedgerRow> | null = null;
+  /** rows 属于哪一份账本。换账号或换 NAS 后必须重读，不能沿用内存里的上一份。 */
+  private static loadedScope: string = '';
   private static tail: Promise<void> = Promise.resolve();
 
   static invalidate(): void {
     GalleryAutoSyncLedger.rows = null;
+    GalleryAutoSyncLedger.loadedScope = '';
   }
 
   static isSettled(uri: string, size: number, mtimeMs: number): boolean {
@@ -70,18 +69,21 @@ export class GalleryAutoSyncLedger {
   }
 
   static async load(ctx: common.UIAbilityContext): Promise<void> {
-    if (GalleryAutoSyncLedger.rows !== null) {
+    const scope = gallerySyncScopeToken();
+    if (GalleryAutoSyncLedger.rows !== null && GalleryAutoSyncLedger.loadedScope === scope) {
       return;
     }
+    await dropUnscopedSyncFiles(ctx);
     const rows = new Map<string, LedgerRow>();
     try {
-      const text = await fileIo.readText(GalleryAutoSyncLedger.filePath(ctx));
+      const text = await fileIo.readText(GalleryAutoSyncLedger.filePath(ctx, scope));
       GalleryAutoSyncLedger.parseInto(text, rows);
     } catch (e) {
       // 账本读不出来时所有条目都会被当成未同步，重复上传。
       fnDiagError(TAG, 'ledger load failed', e);
     }
     GalleryAutoSyncLedger.rows = rows;
+    GalleryAutoSyncLedger.loadedScope = scope;
   }
 
   static remember(ctx: common.UIAbilityContext, put: LedgerPut): Promise<void> {
@@ -99,16 +101,52 @@ export class GalleryAutoSyncLedger {
     return run;
   }
 
+  /**
+   * 只清当前账号这份账本。退出登录不要调用：换回去还要用。
+   * 全库扫描发现本机已经没有的照片，用 pruneAbsent。
+   */
   static async clear(ctx: common.UIAbilityContext): Promise<void> {
+    const scope = gallerySyncScopeToken();
     GalleryAutoSyncLedger.rows = new Map<string, LedgerRow>();
-    await GalleryAutoSyncLedger.deleteFile(GalleryAutoSyncLedger.filePath(ctx));
-    try {
-      const prefs = await preferences.getPreferences(ctx, PREF_NAME);
-      await prefs.put(K_AUTO_SYNC_LEDGER, '');
-      await prefs.flush();
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'clear old ledger prefs failed: %{public}s', String(e));
+    GalleryAutoSyncLedger.loadedScope = scope;
+    await GalleryAutoSyncLedger.deleteFile(GalleryAutoSyncLedger.filePath(ctx, scope));
+  }
+
+  /**
+   * 丢掉 URI 已经不在本机图库里的行。只在扫过全部相册之后调用。
+   * 只扫部分备份源时不能调用，那些没扫到的照片还在手机上。
+   */
+  static pruneAbsent(ctx: common.UIAbilityContext, liveUris: Set<string>): Promise<void> {
+    const run = GalleryAutoSyncLedger.tail.then((): Promise<void> => {
+      return GalleryAutoSyncLedger.pruneAbsentBody(ctx, liveUris);
+    });
+    GalleryAutoSyncLedger.tail = run.then((): void => {
+    }, (): void => {
+    });
+    return run;
+  }
+
+  private static async pruneAbsentBody(ctx: common.UIAbilityContext, liveUris: Set<string>): Promise<void> {
+    await GalleryAutoSyncLedger.load(ctx);
+    const rows = GalleryAutoSyncLedger.rows;
+    if (rows === null || rows.size === 0) {
+      return;
     }
+    const kept = new Map<string, LedgerRow>();
+    let dropped = 0;
+    rows.forEach((row: LedgerRow, key: string): void => {
+      if (liveUris.has(row.uri)) {
+        kept.set(key, row);
+      } else {
+        dropped++;
+      }
+    });
+    if (dropped === 0) {
+      return;
+    }
+    GalleryAutoSyncLedger.rows = kept;
+    await GalleryAutoSyncLedger.persist(ctx);
+    fnDiagRecord('I', TAG, `ledger prune dropped=${dropped} kept=${kept.size}`);
   }
 
   private static async rememberManyBody(ctx: common.UIAbilityContext, puts: LedgerPut[]): Promise<void> {
@@ -145,8 +183,8 @@ export class GalleryAutoSyncLedger {
     return `0\t0\t${uri}`;
   }
 
-  private static filePath(ctx: common.UIAbilityContext): string {
-    return `${ctx.filesDir}/${LEDGER_FILE}`;
+  private static filePath(ctx: common.UIAbilityContext, scope: string): string {
+    return `${ctx.filesDir}/auto_sync_ledger_v4_${scope}.txt`;
   }
 
   private static parseInto(text: string, rows: Map<string, LedgerRow>): void {
@@ -251,7 +289,7 @@ export class GalleryAutoSyncLedger {
         lines.push(`${enc}\t0\t0\tlive\t1`);
       }
     });
-    const path = GalleryAutoSyncLedger.filePath(ctx);
+    const path = GalleryAutoSyncLedger.filePath(ctx, GalleryAutoSyncLedger.loadedScope);
     const file = await fileIo.open(path, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     try {
       await fileIo.write(file.fd, lines.join('\n'));

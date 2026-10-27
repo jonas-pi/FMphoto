@@ -35,6 +35,7 @@ import { AppSession } from '../auth/AppSession';
 import { openPrivacyPolicyPage } from '../auth/PrivacyConsentNav';
 import { loadAlbumBackupSettings } from '../sync/AlbumBackupSettings';
 import { LoginFormDefaults, LoginSavedUser, SessionPreferences, StoredSession, upsertSavedUser } from '../auth/SessionPreferences';
+import { nasFallbackIdentity, usableNasMachineId } from '../album/GalleryAutoSyncScope';
 import { GalleryTimelineRefreshStore } from '../album/GalleryTimelineRefreshStore';
 import { stopGalleryVideoLanPrefetch } from '../album/GalleryVideoLanPrefetch';
 import { FnLoginPrimaryButton, FnLoginSecondaryButton } from '../common/FnLoginButtons';
@@ -556,7 +557,8 @@ struct Login {
     wsSignKeyB64: string,
     openApiAuthxKey: string,
     openApiAuthxSecret: string,
-    longTokenFromWs?: string
+    longTokenFromWs?: string,
+    machineIdFromWs?: string
   ): Promise<void> {
     /** 图库与登录用同一条地址；https 会话时把该地址记入自签证书信任列表。 */
     CertPolicy.addTrusted(fnWebViewBaseUrl(base));
@@ -588,7 +590,8 @@ struct Login {
       wsSignKeyB64: wsSignKeyB64,
       // Authx 改为登录后动态注入：此处持久化用于冷启动恢复，避免源码硬编码。
       openApiAuthxKey: openApiAuthxKey,
-      openApiAuthxSecret: openApiAuthxSecret
+      openApiAuthxSecret: openApiAuthxSecret,
+      machineId: usableNasMachineId(machineIdFromWs !== undefined ? machineIdFromWs : '')
     };
 
     let existing: StoredSession | null = null;
@@ -610,6 +613,11 @@ struct Login {
     if (existing !== null && existing.albumParentGuid.length > 0 &&
       existing.account === stored.account && existing.baseUrl === stored.baseUrl) {
       stored.albumParentGuid = existing.albumParentGuid;
+    }
+    // 这次没问到机器码时，同一账号、同一入口才沿用上次的。换了 NAS 不能把旧编号带过去。
+    if (stored.machineId.length === 0 && existing !== null && existing.account === stored.account &&
+      nasFallbackIdentity(existing) === nasFallbackIdentity(stored)) {
+      stored.machineId = usableNasMachineId(existing.machineId);
     }
 
     try {
@@ -705,14 +713,16 @@ struct Login {
     pass: string,
     token: string,
     signKeyB64: string,
-    longToken?: string
+    longToken?: string,
+    machineId?: string
   ): Promise<void> {
     if (signKeyB64.length === 0) {
       fnDiagRecord('E', LOGIN_TAG, 'ws login ok but sign key missing');
       this.errorText = '登录成功但未拿到签名密钥，请重试';
       return;
     }
-    await this.persistSessionAndGoHome(ctx, server, user, pass, token, signKeyB64, token, signKeyB64, longToken);
+    await this.persistSessionAndGoHome(
+      ctx, server, user, pass, token, signKeyB64, token, signKeyB64, longToken, machineId);
   }
 
   /**
@@ -737,7 +747,8 @@ struct Login {
       hilog.info(LOGIN_DOMAIN, LOGIN_TAG, 'login via WebSocket ok %{public}s', fnDiagMaskUrl(server));
       const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
       const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-      await this.finishWsLoginSuccess(ctx, server, user, pass, wsRes.token, sk, lt);
+      const mid = wsRes.machineId !== undefined ? wsRes.machineId : '';
+      await this.finishWsLoginSuccess(ctx, server, user, pass, wsRes.token, sk, lt, mid);
       return true;
     }
     if (wsRes.requires2fa === true) {
@@ -1034,7 +1045,9 @@ struct Login {
       if (wsRes.success === true && wsRes.token !== undefined && wsRes.token.length > 0) {
         const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
         const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-        await this.finishWsLoginSuccess(ctx, this.pendingServer, this.pendingUser, this.pendingPass, wsRes.token, sk, lt);
+        const mid = wsRes.machineId !== undefined ? wsRes.machineId : '';
+        await this.finishWsLoginSuccess(
+          ctx, this.pendingServer, this.pendingUser, this.pendingPass, wsRes.token, sk, lt, mid);
         return;
       }
       if (wsRes.certificateError === true && !trusted) {

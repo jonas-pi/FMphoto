@@ -16,6 +16,7 @@ import {
   fnWsBuildEncryptedLogin,
   fnWsHmacKeyBytesToB64,
   fnWsHmacSha256SignConcatJson,
+  fnWsHmacSha256SignConcatJsonFromStoredB64,
   fnWsMakeReqId,
   fnWsRandomAesKey32,
   fnWsRandomIv16,
@@ -42,6 +43,12 @@ const RELAY_WS_CONNECT_ATTEMPTS = 3;
 const RELAY_WS_RETRY_DELAY_MS = 1200;
 /** 整段登录超时（28s）最多再试 1 次，避免中继抖动时卡太久 */
 const RELAY_WS_TIMEOUT_RETRY_MAX = 1;
+/**
+ * 登录成功后补问机器码的上限。
+ * 问到就用来区分 NAS；问不到或超时仍算登录成功，账本退回 FN ID / 地址。
+ */
+const MACHINE_ID_WAIT_MS = 1200;
+const MACHINE_ID_REQ = 'appcgi.sysinfo.getMachineId';
 
 export interface FnWsLoginResult {
   success: boolean;
@@ -62,6 +69,11 @@ export interface FnWsLoginResult {
   requires2faSetup?: boolean;
   /** 2FA 挑战令牌，供 user.2fa.loginVerify 使用 */
   accessToken?: string;
+  /**
+   * 飞牛本机机器码（appcgi.sysinfo.getMachineId 的 data.machineId）。
+   * 只在这次登录问到时带上；空表示没问到，调用方不要因此清掉上次存下的编号。
+   */
+  machineId?: string;
 }
 
 interface WsJson {
@@ -83,6 +95,11 @@ interface WsJson {
   isBindTwofaSecret?: boolean;
   isTrustedDevice?: boolean;
   isTwofaEnforced?: boolean;
+  data?: WsMachineIdData;
+}
+
+interface WsMachineIdData {
+  machineId?: string;
 }
 
 interface PendingAfterAuth {
@@ -103,6 +120,37 @@ interface WsFailureInfo {
 /** 与 Python json.dumps(..., separators=(',', ':')) 键序一致：req -> token -> si，不含 main */
 function buildAuthTokenJson(tokenVal: string, siVal: string): string {
   return `{"req":"user.authToken","token":${JSON.stringify(tokenVal)},"si":${JSON.stringify(siVal)}}`;
+}
+
+/** 紧凑 JSON。键序与 pyfnos request_payload 一致：先 req，再 reqid。不带 si。 */
+function buildMachineIdJson(reqid: string): string {
+  return `{"req":${JSON.stringify(MACHINE_ID_REQ)},"reqid":${JSON.stringify(reqid)}}`;
+}
+
+/** 只认成功响应里的 machineId 原文。占位码留给账本侧丢掉，这里不改写。 */
+function machineIdFromWs(data: WsJson): string {
+  if (data.result !== undefined && data.result !== 'succ') {
+    return '';
+  }
+  if (data.data === undefined || data.data.machineId === undefined) {
+    return '';
+  }
+  return data.data.machineId.trim();
+}
+
+function loginSuccessFromPending(p: PendingAfterAuth, machineId: string): FnWsLoginResult {
+  const id = machineId.trim();
+  return {
+    success: true,
+    token: p.token,
+    secretCipherB64: p.secretCipherB64,
+    signKeyB64: p.signKeyB64,
+    longToken: p.longToken,
+    backId: p.backId,
+    uid: p.uid,
+    admin: p.admin,
+    machineId: id.length > 0 ? id : undefined
+  };
 }
 
 /**
@@ -687,6 +735,10 @@ async function fnWsLoginOnce(
         clearTimeout(openTimer);
         openTimer = -1;
       }
+      if (machineTimer >= 0) {
+        clearTimeout(machineTimer);
+        machineTimer = -1;
+      }
       try {
         ws.close();
       } catch (_e) {
@@ -713,11 +765,53 @@ async function fnWsLoginOnce(
     let si = '';
     let aesKey32: Uint8Array | null = null;
     let iv: Uint8Array | null = null;
-    let step: 'waitPub' | 'waitLogin' | 'waitAuth' = 'waitPub';
+    let step: 'waitPub' | 'waitLogin' | 'waitAuth' | 'waitMachine' = 'waitPub';
     let pendingAfterAuth: PendingAfterAuth | null = null;
+    let authed: PendingAfterAuth | null = null;
+    let machineTimer: number = -1;
 
     const ws = webSocket.createWebSocket();
     const connectOptions = buildWsConnectOptions(originBase, isTrustedHost, hostOverride);
+
+    // authToken 已成功后再问机器码。计时从这里开始，签名和往返都算在 1.2 秒里。
+    const armMachineIdQuery = (pending: PendingAfterAuth): void => {
+      authed = pending;
+      step = 'waitMachine';
+      machineTimer = setTimeout((): void => {
+        fnDiagRecord('W', TAG, 'machine id wait exceeded');
+        if (authed !== null) {
+          finish(loginSuccessFromPending(authed, ''));
+        }
+      }, MACHINE_ID_WAIT_MS);
+      void (async (): Promise<void> => {
+        try {
+          const reqid = fnWsMakeReqId(pending.backId);
+          const frame = await fnWsHmacSha256SignConcatJsonFromStoredB64(
+            pending.signKeyB64, buildMachineIdJson(reqid));
+          if (done) {
+            return;
+          }
+          ws.send(frame);
+        } catch (e) {
+          fnDiagError(TAG, 'machine id request fail', e);
+          finish(loginSuccessFromPending(pending, ''));
+        }
+      })();
+    };
+
+    const acceptMachineIdReply = (reply: WsJson): void => {
+      const id = machineIdFromWs(reply);
+      const answered = reply.req === MACHINE_ID_REQ || id.length > 0;
+      if (!answered || authed === null) {
+        return;
+      }
+      if (id.length > 0) {
+        fnDiagRecord('I', TAG, 'machine id ok');
+      } else {
+        fnDiagRecord('W', TAG, 'machine id empty');
+      }
+      finish(loginSuccessFromPending(authed, id));
+    };
 
     const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
       if (done || failureInFlight) {
@@ -766,6 +860,14 @@ async function fnWsLoginOnce(
         return;
       }
       if (data.errno !== undefined && data.errno !== 0) {
+        // 机器码问失败不能把已经成功的登录判失败，否则用户会卡在登录页。
+        if (step === 'waitMachine') {
+          fnDiagRecord('W', TAG, `machine id errno=${data.errno}`);
+          if (authed !== null) {
+            finish(loginSuccessFromPending(authed, ''));
+          }
+          return;
+        }
         const m = data.msg !== undefined && data.msg.length > 0 ? data.msg : `错误码 ${data.errno}`;
         finish({ success: false, message: m });
         return;
@@ -807,16 +909,13 @@ async function fnWsLoginOnce(
           fnDiagTiming(TAG, 'wsStage user.authToken', Date.now() - loginAt);
         }
         hilog.info(DOMAIN, TAG, 'user.authToken 响应已收');
-        finish({
-          success: true,
-          token: p.token,
-          secretCipherB64: p.secretCipherB64,
-          signKeyB64: p.signKeyB64,
-          longToken: p.longToken,
-          backId: p.backId,
-          uid: p.uid,
-          admin: p.admin
-        });
+        // 登录已经成功。接着在这条连接上问机器码，问不到也照常进首页。
+        armMachineIdQuery(p);
+        return;
+      }
+
+      if (step === 'waitMachine') {
+        acceptMachineIdReply(data);
         return;
       }
 
@@ -1042,6 +1141,10 @@ async function fnWs2faVerifyOnce(
       }
       done = true;
       clearTimeout(timer);
+      if (machineTimer >= 0) {
+        clearTimeout(machineTimer);
+        machineTimer = -1;
+      }
       try {
         ws.close();
       } catch (_e) {
@@ -1059,11 +1162,52 @@ async function fnWs2faVerifyOnce(
     let si = '';
     let aesKey32: Uint8Array | null = null;
     let iv: Uint8Array | null = null;
-    let step: 'waitPub' | 'waitLogin' | 'waitAuth' = 'waitPub';
+    let step: 'waitPub' | 'waitLogin' | 'waitAuth' | 'waitMachine' = 'waitPub';
     let pendingAfterAuth: PendingAfterAuth | null = null;
+    let authed: PendingAfterAuth | null = null;
+    let machineTimer: number = -1;
 
     const ws = webSocket.createWebSocket();
     const connectOptions = buildWsConnectOptions(originBase, isTrustedHost, hostOverride);
+
+    const armMachineIdQuery = (pending: PendingAfterAuth): void => {
+      authed = pending;
+      step = 'waitMachine';
+      machineTimer = setTimeout((): void => {
+        fnDiagRecord('W', TAG, 'machine id wait exceeded');
+        if (authed !== null) {
+          finish(loginSuccessFromPending(authed, ''));
+        }
+      }, MACHINE_ID_WAIT_MS);
+      void (async (): Promise<void> => {
+        try {
+          const reqid = fnWsMakeReqId(pending.backId);
+          const frame = await fnWsHmacSha256SignConcatJsonFromStoredB64(
+            pending.signKeyB64, buildMachineIdJson(reqid));
+          if (done) {
+            return;
+          }
+          ws.send(frame);
+        } catch (e) {
+          fnDiagError(TAG, 'machine id request fail', e);
+          finish(loginSuccessFromPending(pending, ''));
+        }
+      })();
+    };
+
+    const acceptMachineIdReply = (reply: WsJson): void => {
+      const id = machineIdFromWs(reply);
+      const answered = reply.req === MACHINE_ID_REQ || id.length > 0;
+      if (!answered || authed === null) {
+        return;
+      }
+      if (id.length > 0) {
+        fnDiagRecord('I', TAG, 'machine id ok');
+      } else {
+        fnDiagRecord('W', TAG, 'machine id empty');
+      }
+      finish(loginSuccessFromPending(authed, id));
+    };
 
     const handleWsFailure = (err: Object | Error | string | undefined | null, fallbackMessage: string): void => {
       if (done || failureInFlight) {
@@ -1109,6 +1253,12 @@ async function fnWs2faVerifyOnce(
       }
       if (data.errno !== undefined && data.errno !== 0) {
         fnDiagRecord('W', TAG, `ws biz errno=${data.errno} step=${step}`);
+        if (step === 'waitMachine') {
+          if (authed !== null) {
+            finish(loginSuccessFromPending(authed, ''));
+          }
+          return;
+        }
         const m = data.msg !== undefined && data.msg.length > 0 ? data.msg : `错误码 ${data.errno}`;
         finish({ success: false, message: m });
         return;
@@ -1151,16 +1301,12 @@ async function fnWs2faVerifyOnce(
         if (loginAt > 0) {
           fnDiagTiming(TAG, 'wsStage user.authToken', Date.now() - loginAt);
         }
-        finish({
-          success: true,
-          token: p.token,
-          secretCipherB64: p.secretCipherB64,
-          signKeyB64: p.signKeyB64,
-          longToken: p.longToken,
-          backId: p.backId,
-          uid: p.uid,
-          admin: p.admin
-        });
+        armMachineIdQuery(p);
+        return;
+      }
+
+      if (step === 'waitMachine') {
+        acceptMachineIdReply(data);
         return;
       }
 

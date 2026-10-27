@@ -1,5 +1,5 @@
 /**
- * 本机已见照片快照。
+ * 本机已见照片快照。按账号和 NAS 分文件，和同步账本同一份身份。
  *
  * 第一次扫描只记下「确认 NAS 上已经有」的照片，不上传（官方客户端往往已经传过）；
  * NAS 上没有的会留在待同步里，第一次扫描后就该由用户/后台同步流程处理。
@@ -10,11 +10,11 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fnDiagError, fnDiagRecord } from '../common/FnDiagLog';
+import { dropUnscopedSyncFiles, gallerySyncScopeToken } from './GalleryAutoSyncScope';
 import { LocalPhotoEntry } from './GalleryAutoSyncService';
 
 const DOMAIN = 0xFF00;
 const TAG = 'AutoSyncSeen';
-const SEEN_FILE = 'auto_sync_local_seen_v1.txt';
 /** 文件不存在（ENOENT）；其它错误码都算「读不了」。 */
 const SEEN_ENOENT = 13900002;
 
@@ -44,7 +44,7 @@ export class GalleryAutoSyncLocalSeen {
   private static lastReadError: Object | Error | null = null;
 
   private static filePath(ctx: common.UIAbilityContext): string {
-    return `${ctx.filesDir}/${SEEN_FILE}`;
+    return `${ctx.filesDir}/auto_sync_seen_v2_${gallerySyncScopeToken()}.txt`;
   }
 
   /**
@@ -66,6 +66,7 @@ export class GalleryAutoSyncLocalSeen {
   }
 
   private static async readSnapshot(ctx: common.UIAbilityContext): Promise<SeenSnapshot> {
+    await dropUnscopedSyncFiles(ctx);
     const path = GalleryAutoSyncLocalSeen.filePath(ctx);
     const st = await GalleryAutoSyncLocalSeen.statState(path);
     if (st === 'missing') {
@@ -155,6 +156,72 @@ export class GalleryAutoSyncLocalSeen {
     result.baselineCount = known.size;
     hilog.info(DOMAIN, TAG, 'seen=%{public}d added=%{public}d', known.size, added.length);
     return result;
+  }
+
+  /**
+   * 丢掉本机图库里已经没有的 URI。只在扫过全部相册之后调用。
+   * 读失败时不写回，避免把快照盖成空的。
+   */
+  static async pruneAbsent(ctx: common.UIAbilityContext, liveUris: Set<string>): Promise<void> {
+    const snap = await GalleryAutoSyncLocalSeen.readSnapshot(ctx);
+    if (snap.state !== 'ok' || snap.keys.size === 0) {
+      return;
+    }
+    const removed: string[] = [];
+    snap.keys.forEach((key: string): void => {
+      const tab = key.indexOf('\t');
+      const encoded = tab >= 0 ? key.substring(0, tab) : key;
+      let uri = '';
+      try {
+        uri = decodeURIComponent(encoded);
+      } catch (_e) {
+        removed.push(key);
+        return;
+      }
+      if (!liveUris.has(uri)) {
+        removed.push(key);
+      }
+    });
+    if (removed.length === 0) {
+      return;
+    }
+    for (let i = 0; i < removed.length; i++) {
+      snap.keys.delete(removed[i]);
+    }
+    await GalleryAutoSyncLocalSeen.writeKeys(ctx, snap.keys);
+    fnDiagRecord('I', TAG, `seen prune dropped=${removed.length} kept=${snap.keys.size}`);
+  }
+
+  /**
+   * 把当前这些照片直接记成已见，不再和 NAS 核对。
+   * 只用于用户在同步设置里点「忽略现有照片」：测试账号不能把已经在手机上的私有相册传上去。
+   * 之后只有没出现在这份快照里的新照片或改过的照片才会进入待上传。
+   * 读失败时抛出，不能用空快照把原来的记录盖掉。
+   */
+  static async ignoreCurrent(ctx: common.UIAbilityContext, photos: LocalPhotoEntry[]): Promise<number> {
+    const snap = await GalleryAutoSyncLocalSeen.readSnapshot(ctx);
+    if (snap.state === 'failed') {
+      fnDiagRecord('W', TAG, 'ignore skipped: snapshot unreadable');
+      throw new Error('seen snapshot unreadable');
+    }
+    const known = snap.keys;
+    let added = 0;
+    for (let i = 0; i < photos.length; i++) {
+      if (photos[i].uri.length === 0) {
+        continue;
+      }
+      const key = seenKey(photos[i]);
+      if (!known.has(key)) {
+        known.add(key);
+        added++;
+      }
+    }
+    if (added > 0 || snap.state === 'missing') {
+      // 第一次忽略也要落盘。否则文件仍不存在，下次扫描会当成没有基线，把整库再拿去比对。
+      await GalleryAutoSyncLocalSeen.writeKeys(ctx, known);
+    }
+    fnDiagRecord('I', TAG, `ignore current added=${added} total=${known.size}`);
+    return known.size;
   }
 
   static async remember(ctx: common.UIAbilityContext, photos: LocalPhotoEntry[]): Promise<void> {

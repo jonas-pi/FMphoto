@@ -11,6 +11,7 @@ import { SessionPreferences, StoredSession } from '../auth/SessionPreferences';
 import { CertPolicy } from './CertPolicy';
 import { FnHttpClient } from './FnHttpClient';
 import { fnWs2faVerify, fnWsLogin } from './FnWsLogin';
+import { usableNasMachineId } from '../album/GalleryAutoSyncScope';
 import {
   LOGIN_ENDPOINT_PREF_LAN,
   LOGIN_ENDPOINT_PREF_LAN_IPV6,
@@ -418,7 +419,8 @@ async function finishSwitchSession(
   token: string,
   signKeyB64: string,
   longToken?: string,
-  deferLongTokenProbe: boolean = false
+  deferLongTokenProbe: boolean = false,
+  machineId: string = ''
 ): Promise<EndpointSwitchResult> {
   if (signKeyB64.length === 0) {
     fnDiagRecord('E', TAG, 'switch no sign key');
@@ -442,6 +444,10 @@ async function finishSwitchSession(
   stored.openApiAuthxSecret = signKeyB64;
   stored.fnosLongToken = longTok;
   stored.trustedHosts = CertPolicy.dumpAll();
+  const mid = usableNasMachineId(machineId);
+  if (mid.length > 0) {
+    stored.machineId = mid;
+  }
   AppSession.apply(stored);
   await SessionPreferences.save(ctx, stored);
   hilog.info(DOMAIN, TAG, 'endpoint switched to %{public}s', fnDiagMaskUrl(newBaseUrl));
@@ -565,7 +571,8 @@ export async function switchStoredLoginEndpointToUrl(
   }
   const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
   const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt, deferLongTokenProbe);
+  const mid = wsRes.machineId !== undefined ? wsRes.machineId : '';
+  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt, deferLongTokenProbe, mid);
 }
 
 export async function switchStoredLoginEndpoint(
@@ -635,5 +642,6 @@ export async function completeStoredEndpointSwitchWith2fa(
   }
   const sk = wsRes.signKeyB64 !== undefined && wsRes.signKeyB64.length > 0 ? wsRes.signKeyB64 : '';
   const lt = wsRes.longToken !== undefined && wsRes.longToken.length > 0 ? wsRes.longToken : undefined;
-  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt, deferLongTokenProbe);
+  const mid = wsRes.machineId !== undefined ? wsRes.machineId : '';
+  return finishSwitchSession(ctx, stored, target, wsRes.token, sk, lt, deferLongTokenProbe, mid);
 }

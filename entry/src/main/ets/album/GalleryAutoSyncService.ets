@@ -163,7 +163,8 @@ export async function queryLocalPhotosInAlbums(
  */
 export async function queryLocalPhotos(
   ctx: common.UIAbilityContext,
-  progress: LocalPhotoScanProgress | null = null
+  progress: LocalPhotoScanProgress | null = null,
+  failOnError: boolean = false
 ): Promise<LocalPhotoEntry[]> {
   const entries: LocalPhotoEntry[] = [];
   let offset = 0;
@@ -175,6 +176,10 @@ export async function queryLocalPhotos(
       }
       if (offset > 0 && page[0].uri === entries[0].uri) {
         hilog.warn(DOMAIN, TAG, 'queryLocalPhotos offset ignored at %{public}d', offset);
+        // 分页没往前走。忽略现有照片时不能只记下前面几页，否则后面的私有照片仍会被上传。
+        if (failOnError) {
+          throw new Error('local photo scan incomplete');
+        }
         break;
       }
       for (let i = 0; i < page.length; i++) {
@@ -197,6 +202,10 @@ export async function queryLocalPhotos(
     return entries;
   } catch (e) {
     // 扫描失败时只返回部分结果，界面却会显示「没有新增照片」。
+    // 忽略现有照片必须整库都读到，读到一半就抛出，避免只忽略前半部分。
+    if (failOnError) {
+      throw e as Error;
+    }
     const em: string = String(e);
     hilog.warn(DOMAIN, TAG, 'queryLocalPhotos failed: %{public}s', String(e));
     fnDiagRecord('W', TAG, `local photo scan failed, got ${entries.length} ${em.substring(0, 90)}`);

@@ -16,6 +16,7 @@ import { SessionPreferences } from './SessionPreferences';
 import { CertPolicy } from '../network/CertPolicy';
 import { FnHttpClient } from '../network/FnHttpClient';
 import { fnWsLogin } from '../network/FnWsLogin';
+import { usableNasMachineId } from '../album/GalleryAutoSyncScope';
 
 const DOMAIN = 0xFF00;
 const TAG = 'SessionReauth';
@@ -96,6 +97,10 @@ export async function tryRecoverSessionAfterAuthFailure(ctx: common.UIAbilityCon
         stored.openApiAuthxKey = wsRes.token;
         stored.openApiAuthxSecret = sk;
         stored.fnosLongToken = lt;
+        const mid = usableNasMachineId(wsRes.machineId !== undefined ? wsRes.machineId : '');
+        if (mid.length > 0) {
+          stored.machineId = mid;
+        }
         AppSession.apply(stored);
         await SessionPreferences.save(ctx, stored);
         hilog.info(DOMAIN, TAG, 'session recovered: silent WebSocket relogin');

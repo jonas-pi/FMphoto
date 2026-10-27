@@ -469,6 +469,14 @@
       "value": "上传时按拍摄日期重命名"
     },
     {
+      "name": "album_backup_ignore_existing_title",
+      "value": "忽略现有照片"
+    },
+    {
+      "name": "album_backup_ignore_existing_sub",
+      "value": "当前手机上的照片不再上传，之后只上传新拍或改过的"
+    },
+    {
       "name": "album_backup_pick_folder_title",
       "value": "选择备份位置"
     },

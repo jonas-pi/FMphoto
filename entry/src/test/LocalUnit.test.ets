@@ -10,6 +10,8 @@ import {
 import { isUnusableIpv6Host, splitFnIdOrHostInput } from '../main/ets/network/FnConnectApi';
 import { resolveLoginRedirectLocation } from '../main/ets/network/LoginEndpointSelector';
 import { wsDeviceDisplayCode } from '../main/ets/network/FnWsDeviceId';
+import { StoredSession } from '../main/ets/auth/SessionPreferences';
+import { nasIdentityOf, stableSyncHost, syncScopeTokenFrom, usableNasMachineId } from '../main/ets/album/GalleryAutoSyncScope';
 import { GalleryListItem } from '../main/ets/model/FnApiTypes';
 import {
   buildNasDedupeIndex,
@@ -223,6 +225,32 @@ export default function localUnitTest() {
       expect(replaceBaseUrlHost('https://192.0.2.10', '198.51.100.8')).assertEqual('https://198.51.100.8:5667');
     });
 
+    it('syncScope_uses_fn_id_not_current_url', 0, () => {
+      expect(stableSyncHost('https://nas.example:443/p')).assertEqual('nas.example');
+      expect(stableSyncHost('[2001:db8::1]:5667')).assertEqual('2001:db8::1');
+      const sameNas = syncScopeSession('alice', 'chalmers', 'https://nas.example', 'https://192.168.1.2:5667');
+      const otherAccount = syncScopeSession('bob', 'chalmers', 'https://nas.example', 'https://192.168.1.2:5667');
+      const relayOnly = syncScopeSession('alice', 'chalmers', '', 'https://chalmers.fnos.net');
+      expect(nasIdentityOf(sameNas)).assertEqual('fn:chalmers');
+      expect(nasIdentityOf(relayOnly)).assertEqual(nasIdentityOf(sameNas));
+      expect(syncScopeTokenFrom(sameNas.account, nasIdentityOf(sameNas)))
+        .assertEqual(syncScopeTokenFrom(relayOnly.account, nasIdentityOf(relayOnly)));
+      expect(syncScopeTokenFrom(sameNas.account, nasIdentityOf(sameNas)) ===
+        syncScopeTokenFrom(otherAccount.account, nasIdentityOf(otherAccount))).assertFalse();
+      const domainNas = syncScopeSession('alice', '', 'NAS.Example:443', 'https://192.168.1.2:5667');
+      expect(nasIdentityOf(domainNas)).assertEqual('host:nas.example');
+      const machine = '0123456789abcdef0123456789abcdef';
+      sameNas.machineId = machine;
+      relayOnly.machineId = machine.toUpperCase();
+      expect(usableNasMachineId(machine.toUpperCase())).assertEqual(machine);
+      expect(nasIdentityOf(sameNas)).assertEqual(`mid:${machine}`);
+      expect(nasIdentityOf(relayOnly)).assertEqual(nasIdentityOf(sameNas));
+      expect(usableNasMachineId('000000000000000000000000000000005452494d')).assertEqual('');
+      expect(usableNasMachineId('00000000')).assertEqual('');
+      sameNas.machineId = '000000000000000000000000000000005452494d';
+      expect(nasIdentityOf(sameNas)).assertEqual('fn:chalmers');
+    });
+
     it('fnWebViewBaseUrl_keeps_session_scheme_and_port', 0, () => {
       expect(fnWebViewBaseUrl('http://ddns.example:5666')).assertEqual('http://ddns.example:5666');
       expect(fnWebViewBaseUrl('https://nas.local:5667')).assertEqual('https://nas.local:5667');
@@ -359,4 +387,34 @@ export default function localUnitTest() {
       expect(clean.indexOf('wss://nas.example/websocket')).assertNotEqual(-1);
     });
   });
+}
+
+function syncScopeSession(account: string, fnId: string, domain: string, baseUrl: string): StoredSession {
+  return {
+    baseUrl: baseUrl,
+    token: '',
+    account: account,
+    fnIdInput: fnId,
+    domainInput: domain,
+    lanInput: '',
+    publicIpInput: '',
+    publicIpv6Input: '',
+    endpointPublicUrl: '',
+    endpointPublicDomainUrl: '',
+    endpointPublicIpUrl: '',
+    endpointLanUrl: '',
+    endpointLanIpv6Url: '',
+    endpointPublicIpv6Url: '',
+    endpointRelayUrl: '',
+    loginEndpointPreference: '',
+    useHttps: true,
+    albumParentGuid: '',
+    trustedHosts: [],
+    fnosLongToken: '',
+    loginViaWebSocket: true,
+    wsSignKeyB64: '',
+    openApiAuthxKey: '',
+    openApiAuthxSecret: '',
+    machineId: ''
+  };
 }
