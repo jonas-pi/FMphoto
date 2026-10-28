@@ -74,9 +74,9 @@ const LOGIN_HERO_ICON_VP: number = 72;
 /** 前景卡片相对状态栏 / 小白条的额外留白，上下共用 */
 const LOGIN_PANEL_EDGE_GAP_VP: number = 12;
 /**
- * 键盘高度变化小于该值不重排。
- * 输入法候选栏增减这类微调，不值得触发一次面板重排（上架要求点击响应 ≤250ms）。
- * 注意：这滤不掉数字键盘↔全键盘的切换——那种高度差是几十 vp，本来就该重排。
+ * 键盘已经弹起时，高度变化小于该值不写状态。
+ * 底部留白只看键盘是否弹起，不看具体高度；候选栏这种小幅变化没必要刷新页面
+ * （上架要求点击响应 ≤250ms）。
  */
 const LOGIN_KEYBOARD_INSET_EPSILON_VP: number = 8;
 
@@ -154,13 +154,14 @@ struct Login {
   @State private errorText: string = '';
   /** 表单默认值读完再挂输入框，避免 TextInput 先以空 seed 建好后回填不刷新 */
   @State private formReady: boolean = false;
-  /** 登录页不随键盘上抬，避免点密码框时整页重布局叠在安全键盘切换上 */
+  /** 已记下进入登录页之前的避让模式。离开页面时设回去。 */
   private loginKeyboardAvoidApplied: boolean = false;
   private previousKeyboardAvoid: KeyboardAvoidMode = KeyboardAvoidMode.OFFSET;
   /**
-   * 软键盘遮挡高度（vp）。登录页自己订阅 avoidAreaChange 的 TYPE_KEYBOARD 取。
-   * 不并入 fnBindSystemAvoidArea：那是全应用的状态栏/挖孔/导航条状态，
-   * 其它页已经在吃系统避让，全局再发一份键盘高度会重复顶。
+   * 软键盘高度（vp）。只用来判断弹起还是收起，不加进底部留白。
+   * 压缩由 RESIZE_WITH_CARET 完成。单独订阅 TYPE_KEYBOARD，
+   * 不并入 fnBindSystemAvoidArea：那是全应用的状态栏、挖孔和导航条，
+   * 其它页已经在吃系统避让。
    */
   @State private keyboardInsetVp: number = 0;
   private keyboardAvoidBound: boolean = false;
@@ -275,7 +276,7 @@ struct Login {
           this.previousKeyboardAvoid = ui.getKeyboardAvoidMode();
           this.loginKeyboardAvoidApplied = true;
         }
-        ui.setKeyboardAvoidMode(KeyboardAvoidMode.NONE);
+        ui.setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE_WITH_CARET);
         return;
       }
       if (this.loginKeyboardAvoidApplied) {
@@ -287,15 +288,19 @@ struct Login {
   }
 
   /**
-   * 登录页自行订阅软键盘避让区。
+   * 登录页订阅软键盘避让区，只用来判断键盘是否弹起。
+   * 模式在 applyLoginKeyboardAvoid 里设为 RESIZE_WITH_CARET，离开页面时恢复原模式。
    *
-   * 为什么不用系统自动避让：KeyboardAvoidMode.OFFSET 会在键盘弹出时整页上抬，
-   * 实时模糊把点击响应拖到 600ms+，上架要求 ≤250ms（见 FnLoginTextField 头注释）。
-   * 这里固定用 NONE（系统完全不做避让，键盘会盖住下半屏），改成自己抬面板：
-   * 只改外层 Column 的 padding.bottom，面板与内部 Scroll 变矮，
-   * 焦点输入框能滚到；背景层不动，也没有整页位移动画。
+   * 官方《软键盘布局适配》（bpta-keyboard-layout-adapt）：
+   * - 默认 OFFSET 是上抬模式，Page 整体上抬。登录页背景有实时模糊，
+   *   整页上抬会把点击拖过上架要求的 250ms（见 FnLoginTextField 头注释）。
+   * - RESIZE 是压缩模式：键盘高度变化时调整 Page 大小。
+   *   百分比宽高和 layoutWeight 跟着压缩，写死宽高的组件保持原尺寸。
+   * - RESIZE_WITH_CARET 同样是压缩。光标位置变化时系统会再避让，
+   *   保证光标留在可视区域内。枚举见 arkts-apis-uicontext-e，API 14 起提供。
    *
-   * 官方做法见 faqs-arkui-54（TYPE_KEYBOARD + margin 顶起底部组件）。
+   * faqs-arkui-1412 是另一套：先设 NONE，再按整段键盘高度做 offset。
+   * 压缩模式已经把页面压到键盘上方，不能再按那套把键盘高度加进留白。
    */
   private bindKeyboardAvoidArea(): void {
     if (this.keyboardAvoidBound) {
@@ -425,16 +430,18 @@ struct Login {
 
   /**
    * 登录面板的底部留白。
-   * 键盘弹起时用键盘高度（导航条/小白条已被键盘盖住，不再叠加 chrome inset），
-   * 否则用系统导航条高度。
    *
-   * 这里必须是外层 Column 的 padding，不能给面板加 margin：
-   * 面板是 height('100%')，父容器是 layoutWeight(1) 的定高容器，
-   * margin 会把面板顶出父容器，里面的 Scroll 视口不会变矮，输入框照样被遮。
+   * 键盘弹起时：RESIZE 已经按键盘高度压缩 Page（百分比宽高和 layoutWeight 跟着变矮），
+   * 这里只留 12vp。再叠加键盘高度会压两次。小白条已被键盘盖住，不再留导航条高度。
+   * 键盘收起时：留系统导航条（小白条）高度。
+   *
+   * 留白加在外层 Column 的 padding 上。面板是 height('100%')，
+   * 父容器是 layoutWeight(1)；给面板加 margin 会把它顶出父容器，
+   * 里面的 Scroll 视口不会变矮。
    */
   private loginBottomInsetVp(): number {
     if (this.keyboardInsetVp > 0) {
-      return this.keyboardInsetVp + LOGIN_PANEL_EDGE_GAP_VP;
+      return LOGIN_PANEL_EDGE_GAP_VP;
     }
     return this.loginBottomChromeInsetVp() + LOGIN_PANEL_EDGE_GAP_VP;
   }
