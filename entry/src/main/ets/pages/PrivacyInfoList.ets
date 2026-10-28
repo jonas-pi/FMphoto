@@ -145,7 +145,14 @@ struct PrivacyInfoList {
       this.bullet('使用目的：上传到 NAS。')
       this.bullet('使用场景：你主动点击上传或同步。')
       this.bullet('是否必要：可选。')
-      this.bullet('处理方式：经系统选择器读取，发送到你的 NAS。公开发布包不扫描本机相册。')
+      this.bullet('处理方式：经系统选择器读取，发送到你的 NAS。')
+
+      this.sectionTitle('本机相册（检测未同步或备份）')
+      this.bullet('信息种类：你授权后读取的本机照片与视频，含文件、文件名、大小、拍摄时间，用于和 NAS 比对或上传。')
+      this.bullet('使用目的：找出尚未同步到 NAS 的照片，或按你的设置备份到 NAS。')
+      this.bullet('使用场景：你主动使用「检测本机相册中尚未同步到 NAS 的照片」或「备份到 NAS」（含选择备份源、忽略现有照片）。')
+      this.bullet('是否必要：可选。未使用这些功能时不读取本机相册。')
+      this.bullet('处理方式：只发送到你自己的 NAS，不经过开发者服务器。')
 
       this.sectionTitle('配置同步（可选）')
       this.bullet('信息种类：登录配置、备份路径与策略、相册布局、智能分类、主题和幻灯片。记住密码开启时含登录口令。不含 token、签名密钥、WebDAV 账号密码、本机设备名和自动同步账本。')

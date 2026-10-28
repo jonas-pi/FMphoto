@@ -1,4 +1,4 @@
-import { common } from '@kit.AbilityKit';
+import { common, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { AppSession } from '../auth/AppSession';
 import {
@@ -107,6 +107,14 @@ const ME_LAN_BURST_SWITCH_ROW_HEIGHT_VP: number = 80;
 const ME_IMMERSIVE_SWITCH_ROW_RADIUS_VP: number = 22;
 const ME_ACTION_GAP_VP: number = 18;
 const ME_CONNECTION_ROW_RADIUS_VP: number = 22;
+
+/**
+ * App 备案号（工信部要求在 App 显著位置标注，并且可以点开查询页）。
+ * 网站备案号不能代替 App 备案号：网站是 -2，App 是 -1A。
+ */
+const ME_ICP_NUMBER: string = '湘ICP备2026040961号-1A';
+/** 工信部 ICP 备案管理系统。点备案号打开这一页。 */
+const ME_ICP_URL: string = 'https://beian.miit.gov.cn';
 
 /** 色块只靠 @Prop 改颜色和选中圈，不销毁重建。 */
 @Component
@@ -1086,6 +1094,22 @@ export struct MePanel {
     })
   }
 
+  /**
+   * 打开工信部备案查询页。
+   * 用 viewData 隐式 Want，由系统浏览器打开；module.json5 已声明 querySchemes 含 https。
+   */
+  private openIcpSite(): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: ME_ICP_URL
+    };
+    ctx.startAbility(want).catch((e: Error): void => {
+      fnDiagRecord('W', 'MePanel', `open icp failed ${String(e).substring(0, 90)}`);
+    });
+  }
+
   @Builder
   private privacyPolicyLink() {
     Column({ space: 10 }) {
@@ -1666,6 +1690,18 @@ export struct MePanel {
           .height(ME_ACTION_GAP_VP)
 
         this.privacyPolicyLink()
+
+        if (ME_ICP_NUMBER.length > 0) {
+          Text(ME_ICP_NUMBER)
+            .fontSize(12)
+            .fontColor(this.accent)
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .margin({ top: 16 })
+            .onClick((): void => {
+              this.openIcpSite();
+            })
+        }
         }
         .width('100%')
         .justifyContent(FlexAlign.Start)

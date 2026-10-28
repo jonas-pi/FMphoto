@@ -62,6 +62,12 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
+    // 备案号、隐私政策里的网页和邮箱都用隐式 Want 打开。
+    // API 12 起必须声明，系统才允许查询能处理这些协议的应用。
+    "querySchemes": [
+      "https",
+      "mailto"
+    ],
     "pages": "$profile:main_pages",
     "metadata": [
       {

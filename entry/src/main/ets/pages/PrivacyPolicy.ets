@@ -1,6 +1,7 @@
-import { common } from '@kit.AbilityKit';
+import { common, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { PrivacyConsentState, SessionPreferences } from '../auth/SessionPreferences';
+import { fnDiagRecord } from '../common/FnDiagLog';
 import { FnHdsSimpleChrome } from '../common/FnHdsSimpleChrome';
 import { fnApplyImmersiveSystemBarColors } from '../common/FnSplashTheme';
 import {
@@ -176,6 +177,34 @@ struct PrivacyPolicy {
     .alignItems(VerticalAlign.Top)
   }
 
+  /**
+   * 联系方式里的蓝色文字。邮箱交给系统邮件，网页交给浏览器。
+   * mailto 和 https 都已写进 module.json5 的 querySchemes。
+   */
+  private openExternal(uri: string): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: uri
+    };
+    ctx.startAbility(want).catch((e: Error): void => {
+      fnDiagRecord('W', 'PrivacyPolicy', `open link failed ${String(e).substring(0, 90)}`);
+    });
+  }
+
+  @Builder
+  private externalLink(label: string, uri: string) {
+    Text(label)
+      .fontSize(14)
+      .fontColor(this.accent)
+      .lineHeight(22)
+      .width('100%')
+      .onClick((): void => {
+        this.openExternal(uri);
+      })
+  }
+
   build() {
     Column() {
       FnHdsSimpleChrome({
@@ -226,7 +255,7 @@ struct PrivacyPolicy {
           this.bullet('本机设备标识：应用会生成并保存一个 WebSocket 设备标识（did），用于飞牛登录和两步验证「信任本设备」。该标识不是 IMEI、OAID 或硬件序列号，退出登录时默认保留。')
           this.bullet('相册数据：从 NAS 返回的照片、视频、缩略图、原图地址、文件名、大小、拍摄时间、收藏、回收站、人物 / 分类 / 搜索结果等。')
           this.bullet('媒体元数据：详情或地图可能展示 NAS 返回的相机型号、曝光、文件路径、经纬度、地点聚合等。')
-          this.bullet('用户选择的本地媒体：你主动上传时，应用通过系统图片选择器读取所选文件并发送到你的 NAS。公开发布包不申请读取本机相册权限，也不会在未经你操作时扫描媒体库。')
+          this.bullet('用户选择的本地媒体：你主动上传时，应用通过系统图片选择器读取所选文件并发送到你的 NAS。除你在「检测本机相册中尚未同步到 NAS 的照片」或「备份到 NAS」中主动授权外，应用不会扫描媒体库。')
           this.bullet('配置同步（可选）：二维码在本机展示或扫描。若你填写 WebDAV 地址，相关配置会发往该地址。若你使用华为云空间，应用会把同一份配置在端侧加密后写入你的华为账号云空间；记住密码开启时，其中包含登录口令。token、签名密钥、WebDAV 账号密码、本机设备名和自动同步账本不会写入。同步开关在系统「设置 - 云空间」中管理。')
           // this.bullet('赞赏（可选）：通过华为应用内支付购买消耗型商品。应用不接收银行卡或支付密码，也不因此解锁功能。')
           this.bullet('本地临时文件：下载、预览、保存到系统相册等可能在缓存目录创建临时文件，完成后会尽量清理。')
@@ -252,7 +281,8 @@ struct PrivacyPolicy {
           this.bullet('获取网络状态：判断连接状态，辅助请求和错误提示。')
           this.bullet('后台运行 / 数据传输：你主动上传或下载时维持短时间后台任务。')
           this.bullet('振动：长按、多选等交互反馈。')
-          this.bullet('系统图片选择器和保存到相册：由你主动选图上传，或把 NAS 中的内容保存到系统相册。不申请读取本机相册权限。')
+          this.bullet('系统图片选择器和保存到相册：由你主动选图上传，或把 NAS 中的内容保存到系统相册。')
+          this.bullet('读取图片和视频（需你授权）：仅在「检测本机相册中尚未同步到 NAS 的照片」或「备份到 NAS」功能中申请，用于读取本机相册的照片与视频，与你的 NAS 比对或上传。文件只发送到你自己的 NAS，不经过开发者服务器；未使用这些功能时不读取本机相册。')
 
           this.sectionTitle('定位和地图')
           this.paragraph('应用不申请设备定位权限，也不读取设备实时位置。地图使用 NAS 返回的照片地理元数据。内置网页地图已关闭网页地理定位。')
@@ -273,21 +303,9 @@ struct PrivacyPolicy {
 
           this.sectionTitle('联系方式')
           this.paragraph('开发者：皮朝猛。如对隐私政策或数据处理有疑问、投诉或行使查阅 / 复制 / 更正 / 删除 / 撤回同意等权利，请通过客服邮箱或 GitHub 联系，我们将在验证后十五个工作日内答复：')
-          Text('pichaomeng@gmail.com')
-            .fontSize(14)
-            .fontColor(this.accent)
-            .lineHeight(22)
-            .width('100%')
-          Text('https://github.com/jonas-pi/FMphoto')
-            .fontSize(14)
-            .fontColor(this.accent)
-            .lineHeight(22)
-            .width('100%')
-          Text('https://jonas-pi.github.io/FMphoto/privacy.html')
-            .fontSize(14)
-            .fontColor(this.accent)
-            .lineHeight(22)
-            .width('100%')
+          this.externalLink('pichaomeng@gmail.com', 'mailto:pichaomeng@gmail.com')
+          this.externalLink('https://github.com/jonas-pi/FMphoto', 'https://github.com/jonas-pi/FMphoto')
+          this.externalLink('https://fmphoto.top/privacy.html', 'https://fmphoto.top/privacy.html')
 
           Blank()
             .height(18)

@@ -37,8 +37,11 @@ const K_OPENAPI_AUTHX_SECRET = 'openapi_authx_secret';
 /** 登录后向 NAS 问到的机器码。空表示没问到，账本退回 FN ID 或地址。 */
 const K_NAS_MACHINE_ID = 'nas_machine_id';
 const K_PRIVACY_ACCEPTED = 'privacy_policy_accepted';
-/** 政策正文变更后递增；与已存值不同则下次启动需重新同意。 */
-export const PRIVACY_POLICY_VERSION = '202610202';
+/**
+ * 政策正文变更后递增；与已存值不同则下次启动需重新同意。
+ * 202610281：补充本机相册读取说明，公网全文改为 fmphoto.top。
+ */
+export const PRIVACY_POLICY_VERSION = '202610281';
 
 /**
  * 隐私同意读取结果。
